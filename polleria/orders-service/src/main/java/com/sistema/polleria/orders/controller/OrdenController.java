@@ -10,10 +10,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.List;
 
 @RestController
@@ -23,14 +23,13 @@ public class OrdenController {
 
     private final OrdenService ordenService;
 
-    // Cliente, mozo o chatbot crean una orden
     @PostMapping
     public ResponseEntity<OrdenResponse> crear(
             @Valid @RequestBody CrearOrdenRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
+            Principal principal
     ) {
-        Long usuarioId = extraerUserId(userDetails);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ordenService.crear(request, usuarioId));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ordenService.crear(request, extraerUserId(principal)));
     }
 
     @GetMapping("/{id}")
@@ -38,32 +37,25 @@ public class OrdenController {
         return ResponseEntity.ok(ordenService.obtener(id));
     }
 
-    // Vista cocina — solo pedidos pendientes y en preparación
     @GetMapping("/cocina")
-    @PreAuthorize("hasAnyRole('ADMIN', 'COCINA')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','COCINA')")
     public ResponseEntity<List<OrdenResponse>> listarParaCocina() {
         return ResponseEntity.ok(ordenService.listarParaCocina());
     }
 
-    // Vista admin — todos los activos
     @GetMapping("/activos")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MOZO')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
     public ResponseEntity<List<OrdenResponse>> listarActivos() {
         return ResponseEntity.ok(ordenService.listarActivos());
     }
 
-    // Historial del cliente autenticado
     @GetMapping("/mis-ordenes")
-    public ResponseEntity<List<OrdenResponse>> misOrdenes(
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        Long clienteId = extraerUserId(userDetails);
-        return ResponseEntity.ok(ordenService.listarPorCliente(clienteId));
+    public ResponseEntity<List<OrdenResponse>> misOrdenes(Principal principal) {
+        return ResponseEntity.ok(ordenService.listarPorCliente(extraerUserId(principal)));
     }
 
-    // Filtrar por estado
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MOZO', 'COCINA', 'REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR')")
     public ResponseEntity<List<OrdenResponse>> listarPorEstado(
             @RequestParam(required = false) OrdenEstado estado
     ) {
@@ -73,21 +65,22 @@ public class OrdenController {
         return ResponseEntity.ok(ordenService.listarActivos());
     }
 
-    // Cocina, mozo o repartidor actualizan el estado
     @PatchMapping("/{id}/estado")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MOZO', 'COCINA', 'REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR')")
     public ResponseEntity<OrdenResponse> actualizarEstado(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarEstadoRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
+            Principal principal
     ) {
-        Long usuarioId = extraerUserId(userDetails);
-        return ResponseEntity.ok(ordenService.actualizarEstado(id, request, usuarioId));
+        return ResponseEntity.ok(ordenService.actualizarEstado(id, request, extraerUserId(principal)));
     }
 
-    private Long extraerUserId(UserDetails userDetails) {
-        // El username es el email; el ID real viene en el token como claim
-        // Por simplicidad usamos 0L como fallback — en producción extraer del JWT directamente
+    private Long extraerUserId(Principal principal) {
+        if (principal instanceof UsernamePasswordAuthenticationToken token) {
+            Object creds = token.getCredentials();
+            if (creds instanceof Long id) return id;
+            if (creds instanceof Integer id) return id.longValue();
+        }
         return 0L;
     }
 }

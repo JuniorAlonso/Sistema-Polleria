@@ -20,7 +20,6 @@ public class ProductoController {
 
     private final ProductoService productoService;
 
-    // Carta pública — cualquiera puede verla (incluye cliente con QR)
     @GetMapping
     public ResponseEntity<List<ProductoResponse>> listar(
             @RequestParam(required = false) Categoria categoria,
@@ -39,15 +38,14 @@ public class ProductoController {
         return ResponseEntity.ok(productoService.obtener(id));
     }
 
-    // Solo ADMIN puede gestionar la carta
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<ProductoResponse> crear(@Valid @RequestBody ProductoRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(productoService.crear(request));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<ProductoResponse> actualizar(
             @PathVariable Long id,
             @Valid @RequestBody ProductoRequest request
@@ -56,13 +54,13 @@ public class ProductoController {
     }
 
     @PatchMapping("/{id}/disponibilidad")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<ProductoResponse> toggleDisponibilidad(@PathVariable Long id) {
         return ResponseEntity.ok(productoService.toggleDisponibilidad(id));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<Void> eliminar(@PathVariable Long id) {
         productoService.eliminar(id);
         return ResponseEntity.noContent().build();

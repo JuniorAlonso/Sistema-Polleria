@@ -18,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 
 @Slf4j
@@ -124,21 +123,13 @@ public class PagoService {
     }
 
     /**
-     * Notifica al orders-service de forma asíncrona que el pago fue aprobado
-     * para que actualice el estado de la orden a CONFIRMADO.
+     * Registra en log que el pago fue aprobado.
+     * La transición de estado de la orden la maneja el personal (cocina/mozo)
+     * una vez que reciben la orden. Cuando se integre mensajería (RabbitMQ/Kafka)
+     * este método publicará un evento PaymentApproved en lugar de una llamada síncrona.
      */
     @Async
     protected void notificarOrdenAsync(Long ordenId, String bearerToken) {
-        try {
-            ordersRestClient.patch()
-                    .uri("/ordenes/{id}/estado", ordenId)
-                    .header("Authorization", bearerToken)
-                    .body(Map.of("estado", "CONFIRMADO"))
-                    .retrieve()
-                    .toBodilessEntity();
-            log.info("Orden {} actualizada a CONFIRMADO tras pago aprobado", ordenId);
-        } catch (Exception e) {
-            log.error("No se pudo notificar al orders-service para orden {}: {}", ordenId, e.getMessage());
-        }
+        log.info("Pago aprobado para orden {} — la cocina procesará la orden en su panel", ordenId);
     }
 }
