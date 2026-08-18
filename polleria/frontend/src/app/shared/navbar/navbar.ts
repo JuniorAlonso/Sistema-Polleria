@@ -19,6 +19,10 @@ import { AuthService } from '../../core/services/auth';
   ],
   templateUrl: './navbar.html',
   styles: [`
+    mat-toolbar {
+      background-color: #bf360c !important;
+      color: white !important;
+    }
     .logo {
       font-size: 1.3rem;
       font-weight: 700;
@@ -32,14 +36,23 @@ import { AuthService } from '../../core/services/auth';
     .nav-link {
       margin: 0 4px;
       color: white !important;
+      --mdc-text-button-label-text-color: white;
     }
     .nav-link.active-link {
-      background: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.2) !important;
       border-radius: 4px;
     }
     .user-name {
       margin-right: 8px;
       font-size: 0.9rem;
+      color: white;
+    }
+    button.mat-mdc-button {
+      --mdc-text-button-label-text-color: white;
+      color: white !important;
+    }
+    button.mat-mdc-button .mat-icon {
+      color: white !important;
     }
   `],
 })
