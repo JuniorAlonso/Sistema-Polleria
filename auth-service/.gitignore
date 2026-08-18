@@ -1,0 +1,16 @@
+# Variables de entorno (NUNCA subir)
+.env
+.env.local
+.env.*.local
+
+# Maven
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.DS_Store
