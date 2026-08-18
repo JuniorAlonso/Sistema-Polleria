@@ -1,0 +1,150 @@
+<div class="cocina-container">
+  <div class="page-header">
+    <h1 class="page-title">🍳 Panel de Cocina</h1>
+    <span class="refresh-info">Actualización automática cada 30 segundos</span>
+  </div>
+
+  <div class="panel-grid">
+    @if (loading()) {
+      <div class="loading-container">
+        <mat-spinner diameter="48"></mat-spinner>
+      </div>
+    } @else {
+      <!-- Columna: RECIBIDO (Nuevos pedidos) -->
+      <div class="column-recibido">
+        <div class="column-title">
+          🔔 Nuevos Pedidos ({{ ordenesRecibidas().length }})
+        </div>
+
+        @if (ordenesRecibidas().length === 0) {
+          <div class="empty-column">
+            <mat-icon style="font-size: 3rem; width: 3rem; height: 3rem; color: #e0e0e0;">check_circle</mat-icon>
+            <p>Sin pedidos nuevos</p>
+          </div>
+        }
+
+        @for (orden of ordenesRecibidas(); track orden.id) {
+          <mat-card class="orden-card">
+            <mat-card-content>
+              <div class="orden-header">
+                <div>
+                  <span class="orden-id">#{{ orden.id }}</span>
+                  <span class="orden-tipo"> · {{ labelMesaTipo(orden) }}</span>
+                </div>
+                <span
+                  class="tiempo-transcurrido"
+                  [class.tiempo-urgente]="esUrgente(orden.creadoEn)"
+                >
+                  ⏱ {{ tiempoTranscurrido(orden.creadoEn) }}
+                </span>
+              </div>
+
+              @if (orden.nombreCliente) {
+                <p style="font-size: 0.85rem; color: #555; margin: 4px 0;">
+                  👤 {{ orden.nombreCliente }}
+                </p>
+              }
+
+              <ul class="orden-items">
+                @for (item of orden.items; track item.productoId) {
+                  <li class="orden-item">
+                    <span class="item-cantidad">×{{ item.cantidad }}</span>
+                    <div>
+                      <span>{{ item.productoNombre }}</span>
+                      @if (item.notas) {
+                        <div class="item-notas">{{ item.notas }}</div>
+                      }
+                    </div>
+                  </li>
+                }
+              </ul>
+
+              @if (orden.observaciones) {
+                <p style="font-size: 0.8rem; background: #fff8e1; padding: 4px 8px; border-radius: 4px; margin-top: 4px;">
+                  📝 {{ orden.observaciones }}
+                </p>
+              }
+            </mat-card-content>
+            <mat-card-actions align="end">
+              <button
+                mat-raised-button
+                color="primary"
+                (click)="avanzarEstado(orden)"
+              >
+                {{ labelBotonAvanzar(orden.estado) }}
+              </button>
+            </mat-card-actions>
+          </mat-card>
+        }
+      </div>
+
+      <!-- Columna: EN_PREPARACION -->
+      <div class="column-preparacion">
+        <div class="column-title">
+          🔥 En Preparación ({{ ordenesEnPreparacion().length }})
+        </div>
+
+        @if (ordenesEnPreparacion().length === 0) {
+          <div class="empty-column">
+            <mat-icon style="font-size: 3rem; width: 3rem; height: 3rem; color: #e0e0e0;">local_dining</mat-icon>
+            <p>Nada en preparación</p>
+          </div>
+        }
+
+        @for (orden of ordenesEnPreparacion(); track orden.id) {
+          <mat-card class="orden-card">
+            <mat-card-content>
+              <div class="orden-header">
+                <div>
+                  <span class="orden-id">#{{ orden.id }}</span>
+                  <span class="orden-tipo"> · {{ labelMesaTipo(orden) }}</span>
+                </div>
+                <span
+                  class="tiempo-transcurrido"
+                  [class.tiempo-urgente]="esUrgente(orden.creadoEn)"
+                >
+                  ⏱ {{ tiempoTranscurrido(orden.creadoEn) }}
+                </span>
+              </div>
+
+              @if (orden.nombreCliente) {
+                <p style="font-size: 0.85rem; color: #555; margin: 4px 0;">
+                  👤 {{ orden.nombreCliente }}
+                </p>
+              }
+
+              <ul class="orden-items">
+                @for (item of orden.items; track item.productoId) {
+                  <li class="orden-item">
+                    <span class="item-cantidad">×{{ item.cantidad }}</span>
+                    <div>
+                      <span>{{ item.productoNombre }}</span>
+                      @if (item.notas) {
+                        <div class="item-notas">{{ item.notas }}</div>
+                      }
+                    </div>
+                  </li>
+                }
+              </ul>
+
+              @if (orden.observaciones) {
+                <p style="font-size: 0.8rem; background: #fff8e1; padding: 4px 8px; border-radius: 4px; margin-top: 4px;">
+                  📝 {{ orden.observaciones }}
+                </p>
+              }
+            </mat-card-content>
+            <mat-card-actions align="end">
+              <button
+                mat-raised-button
+                color="accent"
+                (click)="avanzarEstado(orden)"
+              >
+                {{ labelBotonAvanzar(orden.estado) }}
+              </button>
+            </mat-card-actions>
+          </mat-card>
+        }
+      </div>
+    }
+  </div>
+</div>
