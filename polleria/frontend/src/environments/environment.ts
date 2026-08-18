@@ -1,6 +1,6 @@
 export const environment = {
   production: true,
-  authApiUrl: 'http://TU_EC2_AUTH:8081',
-  ordersApiUrl: 'http://TU_EC2_ORDERS:8082',
-  paymentsApiUrl: 'http://TU_EC2_PAYMENTS:8083',
+  authApiUrl: 'http://98.86.149.179:8081',
+  ordersApiUrl: 'http://100.53.223.167:8082',
+  paymentsApiUrl: 'http://44.203.62.89:8083',
 };
