@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -31,12 +32,19 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final IpBlacklistFilter ipBlacklistFilter;
     private final UserRepository userRepository;
+
+    public SecurityConfig(@Lazy JwtAuthFilter jwtAuthFilter,
+                          IpBlacklistFilter ipBlacklistFilter,
+                          UserRepository userRepository) {
+        this.jwtAuthFilter = jwtAuthFilter;
+        this.ipBlacklistFilter = ipBlacklistFilter;
+        this.userRepository = userRepository;
+    }
 
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
