@@ -29,6 +29,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/pedidos/detalle-pedido/detalle-pedido').then(m => m.DetallePedidoComponent),
     canActivate: [authGuard],
   },
+  {
+    path: 'pago/:id',
+    loadComponent: () => import('./features/pedidos/pago-pedido/pago-pedido').then(m => m.PagoPedidoComponent),
+    canActivate: [authGuard],
+  },
 
   // Cocina
   {

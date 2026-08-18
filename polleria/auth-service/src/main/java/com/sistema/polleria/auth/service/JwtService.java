@@ -1,5 +1,6 @@
 package com.sistema.polleria.auth.service;
 
+import com.sistema.polleria.auth.entity.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -25,7 +26,13 @@ public class JwtService {
 
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> extraClaims = new HashMap<>();
-        extraClaims.put("role", userDetails.getAuthorities().iterator().next().getAuthority());
+        if (userDetails instanceof User user) {
+            // Almacenamos el nombre del rol SIN prefijo ROLE_ para que
+            // hasAuthority('ADMIN') funcione en todos los microservicios.
+            extraClaims.put("role", user.getRole().name());
+            extraClaims.put("userId", user.getId());
+            extraClaims.put("name", user.getName());
+        }
         return buildToken(extraClaims, userDetails);
     }
 

@@ -69,3 +69,28 @@ export interface CarritoItem {
   cantidad: number;
   notas?: string;
 }
+
+// ── Pagos ──────────────────────────────────────────────
+export type MetodoPago = 'CONTRAENTREGA' | 'TARJETA' | 'YAPE_PLIN';
+export type EstadoPago = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
+
+export interface IniciarPagoRequest {
+  ordenId: number;
+  monto: number;
+  metodoPago: MetodoPago;
+  tokenPasarela?: string;
+  telefonoYape?: string;
+}
+
+export interface Pago {
+  id: number;
+  ordenId: number;
+  clienteId: number;
+  monto: number;
+  metodoPago: MetodoPago;
+  estado: EstadoPago;
+  referenciaExterna?: string;
+  detalle?: string;
+  creadoEn: string;
+  actualizadoEn?: string;
+}

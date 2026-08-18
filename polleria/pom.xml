@@ -30,8 +30,8 @@
     <modules>
         <module>auth-service</module>
         <module>orders-service</module>
-        <!-- Próximos módulos:
         <module>payments-service</module>
+        <!-- Próximos módulos:
         <module>inventory-service</module>
         <module>finance-service</module>
         <module>whatsapp-service</module>

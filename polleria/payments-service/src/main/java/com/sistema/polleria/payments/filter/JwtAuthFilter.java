@@ -1,4 +1,4 @@
-package com.sistema.polleria.orders.filter;
+package com.sistema.polleria.payments.filter;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -21,10 +21,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-/**
- * Valida el JWT de forma autónoma usando el mismo secreto compartido.
- * Cada microservicio valida el token sin llamar al auth-service (menos acoplamiento).
- */
 @Slf4j
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
@@ -53,9 +49,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     .parseSignedClaims(token)
                     .getPayload();
 
-            String email  = claims.getSubject();
-            String role   = claims.get("role", String.class);
-            Long   userId = claims.get("userId", Long.class);
+            String email = claims.getSubject();
+            String role  = claims.get("role", String.class);
+            Long userId  = claims.get("userId", Long.class);
 
             if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 var auth = new UsernamePasswordAuthenticationToken(
@@ -64,7 +60,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 SecurityContextHolder.getContext().setAuthentication(auth);
             }
         } catch (Exception e) {
-            log.warn("Token inválido en orders-service: {}", e.getMessage());
+            log.warn("Token inválido en payments-service: {}", e.getMessage());
         }
 
         filterChain.doFilter(request, response);
