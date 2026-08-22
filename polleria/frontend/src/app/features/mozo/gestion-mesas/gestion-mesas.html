@@ -1,0 +1,114 @@
+<div class="mesas-container">
+  <div class="page-header">
+    <h1 class="page-title">🪑 Gestión de Mesas</h1>
+    <button mat-raised-button color="primary" (click)="cargarMesas()">
+      <mat-icon>refresh</mat-icon>
+      Actualizar
+    </button>
+  </div>
+
+  @if (loading()) {
+    <div class="loading-container">
+      <mat-spinner diameter="48"></mat-spinner>
+    </div>
+  } @else {
+    <!-- Estadísticas -->
+    <div class="stats-bar">
+      <div class="stat libre">
+        <span class="stat-number">{{ mesasLibres() }}</span>
+        <span class="stat-label">Libres</span>
+      </div>
+      <div class="stat ocupada">
+        <span class="stat-number">{{ mesasOcupadas() }}</span>
+        <span class="stat-label">Ocupadas</span>
+      </div>
+      <div class="stat reservada">
+        <span class="stat-number">{{ mesasReservadas() }}</span>
+        <span class="stat-label">Reservadas</span>
+      </div>
+    </div>
+
+    <!-- Leyenda -->
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background: #4caf50;"></div>
+        <span>Libre</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background: #f44336;"></div>
+        <span>Ocupada</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background: #ff9800;"></div>
+        <span>Reservada</span>
+      </div>
+    </div>
+
+    <!-- Plano de mesas -->
+    <div class="mesas-grid">
+      @for (mesa of mesas(); track mesa.id) {
+        <mat-card class="mesa-card" [class]="claseEstado(mesa.estado)">
+          <mat-card-content>
+            <div class="mesa-icon">{{ iconMesa(mesa.estado) }}</div>
+            <div class="mesa-numero">Mesa {{ mesa.numero }}</div>
+            <div class="mesa-info">Capacidad: {{ mesa.capacidad }} pers.</div>
+            <div class="mesa-estado" [class]="'estado-' + claseEstado(mesa.estado)">
+              {{ labelEstado(mesa.estado) }}
+            </div>
+
+            <div class="mesa-actions">
+              @if (mesa.estado === 'LIBRE') {
+                <button
+                  mat-mini-fab
+                  color="primary"
+                  title="Iniciar pedido"
+                  (click)="iniciarPedido(mesa)"
+                >
+                  <mat-icon>add</mat-icon>
+                </button>
+                <button
+                  mat-mini-fab
+                  style="background: #ff9800; color: white;"
+                  title="Reservar"
+                  (click)="cambiarEstado(mesa, 'RESERVADA')"
+                >
+                  <mat-icon>bookmark</mat-icon>
+                </button>
+              }
+
+              @if (mesa.estado === 'OCUPADA') {
+                <button
+                  mat-mini-fab
+                  color="warn"
+                  title="Liberar mesa"
+                  (click)="cambiarEstado(mesa, 'LIBRE')"
+                >
+                  <mat-icon>lock_open</mat-icon>
+                </button>
+              }
+
+              @if (mesa.estado === 'RESERVADA') {
+                <button
+                  mat-mini-fab
+                  color="primary"
+                  title="Sentar clientes"
+                  (click)="cambiarEstado(mesa, 'OCUPADA')"
+                >
+                  <mat-icon>people</mat-icon>
+                </button>
+                <button
+                  mat-mini-fab
+                  color="basic"
+                  title="Cancelar reserva"
+                  (click)="cambiarEstado(mesa, 'LIBRE')"
+                >
+                  <mat-icon>cancel</mat-icon>
+                </button>
+              }
+            </div>
+          </mat-card-content>
+        </mat-card>
+      }
+    </div>
+  }
+</div>

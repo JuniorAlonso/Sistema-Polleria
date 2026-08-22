@@ -1,0 +1,37 @@
+<mat-card>
+  @if (producto.imagenUrl) {
+    <img mat-card-image [src]="producto.imagenUrl" [alt]="producto.nombre" class="product-image" />
+  } @else {
+    <div class="product-image-placeholder">🍗</div>
+  }
+
+  <mat-card-content>
+    <p class="product-name">{{ producto.nombre }}</p>
+    @if (producto.descripcion) {
+      <p class="product-description">{{ producto.descripcion }}</p>
+    }
+    <div class="product-footer">
+      <span class="product-price">S/ {{ producto.precio | number:'1.2-2' }}</span>
+      <mat-chip-set>
+        <mat-chip class="categoria-chip" color="primary" highlighted>
+          {{ producto.categoria }}
+        </mat-chip>
+      </mat-chip-set>
+    </div>
+  </mat-card-content>
+
+  <mat-card-actions align="end">
+    @if (producto.disponible) {
+      <button
+        mat-raised-button
+        color="primary"
+        (click)="onAgregar()"
+      >
+        <mat-icon>add_shopping_cart</mat-icon>
+        Agregar
+      </button>
+    } @else {
+      <span class="not-available">No disponible</span>
+    }
+  </mat-card-actions>
+</mat-card>
