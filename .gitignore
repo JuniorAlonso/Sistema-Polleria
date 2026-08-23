@@ -1,0 +1,11 @@
+# VS Code
+.vscode/
+
+# Node
+**/node_modules/
+
+# Configuraciones locales
+**/application-local.properties
+
+# Variables y secretos
+**/.env
