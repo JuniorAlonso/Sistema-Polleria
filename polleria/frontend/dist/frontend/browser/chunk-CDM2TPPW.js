@@ -1,0 +1,1 @@
+import{Hb as t,Ib as i,fc as m,jb as a}from"./chunk-3ERAQQI7.js";var o=class n{static \u0275fac=function(e){return new(e||n)};static \u0275cmp=a({type:n,selectors:[["app-panel-admin"]],decls:2,vars:0,template:function(e,l){e&1&&(t(0,"p"),m(1,"panel-admin works!"),i())},encapsulation:2})};export{o as PanelAdmin,o as PanelAdminComponent};

@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: polleria-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: polleria
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - polleria_postgres_data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: polleria-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+
+volumes:
+  polleria_postgres_data:
