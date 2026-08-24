@@ -1376,7 +1376,7 @@ interface IncidenteSoporte {
                   Fase 4 - Próximamente
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Documentación de fallas operativas, causa raíz y soluciones aplicadas (RF34).</p>
+              <p class="text-xs text-slate-400">Documentación de fallas operativas, causa raíz y soluciones aplicadas.</p>
             </div>
             <button 
               (click)="registrarIncidenteModal()"

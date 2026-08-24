@@ -73,7 +73,7 @@ import { AuthService } from '../../../core/services/auth.service';
             }
           </button>
 
-          <!-- User Profile Icon -->
+          <!-- User Profile & Staff Dashboard Shortcut -->
           @if (!auth.isAuthenticated()) {
             <a 
               routerLink="/login"
@@ -86,6 +86,16 @@ import { AuthService } from '../../../core/services/auth.service';
             </a>
           } @else {
             <div class="flex items-center gap-2">
+              @if (auth.isStaff()) {
+                <a 
+                  [routerLink]="getStaffDashboardUrl()"
+                  class="px-2.5 py-1 rounded-lg bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/30 text-xs font-bold hover:bg-polleria-gold hover:text-slate-950 transition flex items-center gap-1 cursor-pointer"
+                  title="Ir a mi panel de trabajo"
+                >
+                  <span>Panel {{ auth.currentUser()?.rol }}</span>
+                </a>
+              }
+
               <span class="text-xs font-bold text-slate-300 hidden lg:inline">
                 {{ auth.currentUser()?.nombre?.split(' ')?.at(0) }}
               </span>
@@ -109,4 +119,13 @@ import { AuthService } from '../../../core/services/auth.service';
 export class NavbarComponent {
   readonly cart = inject(CartService);
   readonly auth = inject(AuthService);
+
+  getStaffDashboardUrl(): string {
+    const rol = this.auth.currentUser()?.rol;
+    if (rol === 'ADMIN') return '/admin';
+    if (rol === 'CHEF') return '/cocina';
+    if (rol === 'MOZO') return '/mozo';
+    if (rol === 'REPARTIDOR') return '/delivery';
+    return '/admin';
+  }
 }

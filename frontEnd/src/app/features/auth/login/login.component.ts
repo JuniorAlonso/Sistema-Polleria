@@ -186,10 +186,14 @@ export class LoginComponent {
   }
 
   private redirectAfterLogin(rol: string): void {
-    if (rol === 'ADMIN' || rol === 'MOZO' || rol === 'REPARTIDOR') {
+    if (rol === 'ADMIN') {
       this.router.navigate(['/admin']);
     } else if (rol === 'CHEF' || rol === 'COCINA') {
       this.router.navigate(['/cocina']);
+    } else if (rol === 'MOZO') {
+      this.router.navigate(['/mozo']);
+    } else if (rol === 'REPARTIDOR') {
+      this.router.navigate(['/delivery']);
     } else {
       this.router.navigate(['/menu']);
     }

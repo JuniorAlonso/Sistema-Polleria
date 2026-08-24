@@ -27,7 +27,7 @@ export const routes: Routes = [
     title: 'Finalizar Pedido y Pago - San Pollo de Ica'
   },
 
-  // 3. Admin Backoffice (Solo ADMIN, MOZO, REPARTIDOR)
+  // 3. Admin Backoffice (Solo ADMIN)
   {
     path: 'admin',
     loadComponent: () => import('./features/admin/dashboard/admin-dashboard.component').then(m => m.AdminDashboardComponent),
@@ -41,6 +41,22 @@ export const routes: Routes = [
     loadComponent: () => import('./features/kitchen/kitchen-kds.component').then(m => m.KitchenKdsComponent),
     canActivate: [staffGuard],
     title: 'KDS Cocina & Horno - San Pollo de Ica'
+  },
+
+  // 5. Módulo Mozo & Salón (Solo MOZO y ADMIN)
+  {
+    path: 'mozo',
+    loadComponent: () => import('./features/mozo/mozo-salon.component').then(m => m.MozoSalonComponent),
+    canActivate: [staffGuard],
+    title: 'Gestión de Salón & Mesas - San Pollo Mozo'
+  },
+
+  // 6. Módulo Repartidor / Delivery (Solo REPARTIDOR y ADMIN)
+  {
+    path: 'delivery',
+    loadComponent: () => import('./features/delivery/repartidor-delivery.component').then(m => m.RepartidorDeliveryComponent),
+    canActivate: [staffGuard],
+    title: 'Hoja de Ruta & Reparto - San Pollo Delivery'
   },
 
   // 5. Main App routes (Clientes y navegación general)

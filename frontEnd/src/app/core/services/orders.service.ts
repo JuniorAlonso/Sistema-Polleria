@@ -365,7 +365,7 @@ export class OrdersService {
   }
 
   /**
-   * Helper para avance secuencial de estado en cocina
+   * Helper para avance secuencial de estado exclusivo en cocina (PAGADO -> EN_PREPARACION -> LISTO_COCINA)
    */
   advanceKitchenStatus(orderId: string): void {
     const order = this.orders().find(o => o.id === orderId || this.extractNumericId(o.id) === this.extractNumericId(orderId));
@@ -375,14 +375,6 @@ export class OrdersService {
       this.updateOrderStatus(order.id, 'EN_PREPARACION').subscribe();
     } else if (order.estado === 'EN_PREPARACION') {
       this.updateOrderStatus(order.id, 'LISTO_COCINA').subscribe();
-    } else if (order.estado === 'LISTO_COCINA') {
-      if (order.tipo === 'DELIVERY') {
-        this.updateOrderStatus(order.id, 'EN_REPARTO').subscribe();
-      } else {
-        this.updateOrderStatus(order.id, 'COMPLETADO').subscribe();
-      }
-    } else if (order.estado === 'EN_REPARTO') {
-      this.updateOrderStatus(order.id, 'COMPLETADO').subscribe();
     }
   }
 
