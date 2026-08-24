@@ -27,21 +27,21 @@ import { AuthService } from '../../../core/services/auth.service';
             [routerLinkActiveOptions]="{exact: true}"
             class="text-slate-300 hover:text-white transition tracking-wide text-base font-semibold"
           >
-            Menú
+            Inicio
           </a>
           <a 
             routerLink="/menu" 
             routerLinkActive="text-white border-b-2 border-white pb-1 font-bold"
             class="text-slate-300 hover:text-white transition tracking-wide text-base font-semibold"
           >
-            Promos
+            Carta
           </a>
           <a 
             routerLink="/tracking" 
             routerLinkActive="text-white border-b-2 border-white pb-1 font-bold"
             class="text-slate-300 hover:text-white transition tracking-wide text-base font-semibold"
           >
-            Locales
+            Pedidos
           </a>
         </nav>
 

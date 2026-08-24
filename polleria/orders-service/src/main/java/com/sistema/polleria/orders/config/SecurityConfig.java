@@ -36,8 +36,11 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // La carta es pública (permite GET a /productos y cualquier subruta/parámetro)
+                        // La carta, el tracking de órdenes y actualización de estado son públicos en dev
                         .requestMatchers("/productos/**").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.POST, "/ordenes").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/ordenes/**").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.PATCH, "/ordenes/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)

@@ -1,14 +1,12 @@
 export const environment = {
   production: true,
-  apiGatewayUrl: '/api/v1',
+  authApiUrl: 'http://localhost:8081',
+  ordersApiUrl: 'http://localhost:8082',
+  paymentsApiUrl: 'http://localhost:8083',
   services: {
-    auth: '/api/v1/auth',
-    products: '/api/v1/products',
-    orders: '/api/v1/orders',
-    payments: '/api/v1/payments',
-    tables: '/api/v1/tables',
-    notifications: '/api/v1/ws',
-    feedback: '/api/v1/feedback',
-    inventory: '/api/v1/inventory'
+    auth: 'http://localhost:8081/auth',
+    products: 'http://localhost:8082/productos',
+    orders: 'http://localhost:8082/ordenes',
+    payments: 'http://localhost:8083/pagos'
   }
 };

@@ -195,8 +195,8 @@ export class RegisterComponent {
         this.notify.showSuccess(`¡Bienvenido/a, ${this.nombre}!`, 'Tu cuenta ha sido creada exitosamente.');
         this.router.navigate(['/menu']);
       },
-      error: () => {
-        this.notify.showError('Error al crear la cuenta');
+      error: (err) => {
+        this.notify.showError(err.message || 'Error al crear la cuenta');
       }
     });
   }

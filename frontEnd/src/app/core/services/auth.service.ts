@@ -1,9 +1,11 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
+import { Observable, tap, catchError, throwError, map } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
+import { BackendAuthResponse } from '../models/api-contracts.model';
+import { AuthAdapter } from '../adapters/auth.adapter';
 import { environment } from '../../../environments/environment';
-import { of, tap, delay } from 'rxjs';
 
 @Injectable({
   providedIn: 'root'
@@ -11,18 +13,20 @@ import { of, tap, delay } from 'rxjs';
 export class AuthService {
   private http = inject(HttpClient);
   private platformId = inject(PLATFORM_ID);
+  private readonly API_URL = environment.authApiUrl || 'http://localhost:8081';
 
-  // State Signals (React state equivalent)
+  // Reactive State Signals
   readonly currentUser = signal<User | null>(null);
   readonly token = signal<string | null>(null);
   readonly isLoading = signal<boolean>(false);
 
   // Computed derivations
-  readonly isAuthenticated = computed(() => !!this.currentUser());
+  readonly isAuthenticated = computed(() => !!this.token() && !!this.currentUser());
   readonly userRole = computed<UserRole | null>(() => this.currentUser()?.rol ?? null);
   readonly isAdmin = computed(() => this.currentUser()?.rol === 'ADMIN');
   readonly isChef = computed(() => this.currentUser()?.rol === 'CHEF');
   readonly isMozo = computed(() => this.currentUser()?.rol === 'MOZO');
+  readonly isRepartidor = computed(() => this.currentUser()?.rol === 'REPARTIDOR');
 
   constructor() {
     this.restoreSession();
@@ -44,73 +48,68 @@ export class AuthService {
   }
 
   /**
-   * RF02: Inicio de Sesión (soporta microservicio y fallback mock para desarrollo)
+   * RF02: Inicio de Sesión conectando a auth-service (:8081)
    */
-  login(credentials: LoginRequest) {
+  login(credentials: LoginRequest): Observable<AuthResponse> {
     this.isLoading.set(true);
+    const backendReq = AuthAdapter.toBackendLogin(credentials);
 
-    // Mock initial user for rapid frontend dev & testing if microservice is offline
-    const isMock = true; // cambiar o conectar a this.http.post<AuthResponse>(`${environment.services.auth}/login`, credentials)
-    
-    if (isMock) {
-      // Determinar rol simulado según correo para pruebas
-      let rol: UserRole = 'CLIENTE';
-      if (credentials.correoOrCelular.includes('admin')) rol = 'ADMIN';
-      else if (credentials.correoOrCelular.includes('cocina') || credentials.correoOrCelular.includes('chef')) rol = 'CHEF';
-      else if (credentials.correoOrCelular.includes('mozo')) rol = 'MOZO';
-
-      const mockResponse: AuthResponse = {
-        token: 'mock-jwt-token-xyz123',
-        user: {
-          id: 'usr-1',
-          nombre: credentials.correoOrCelular.split('@')[0] || 'Cliente Pollería',
-          correo: credentials.correoOrCelular,
-          celular: '999888777',
-          rol: rol
+    return this.http.post<BackendAuthResponse>(`${this.API_URL}/auth/login`, backendReq).pipe(
+      map(dto => AuthAdapter.toAuthResponse(dto)),
+      tap(authResp => {
+        this.isLoading.set(false);
+        if (authResp.token) {
+          this.setSession(authResp);
         }
-      };
-
-      return of(mockResponse).pipe(
-        delay(600),
-        tap(res => {
-          this.setSession(res);
-          this.isLoading.set(false);
-        })
-      );
-    }
-
-    return this.http.post<AuthResponse>(`${environment.services.auth}/login`, credentials).pipe(
-      tap({
-        next: (res) => {
-          this.setSession(res);
-          this.isLoading.set(false);
-        },
-        error: () => this.isLoading.set(false)
+      }),
+      catchError(err => {
+        this.isLoading.set(false);
+        const errMsg = err?.error?.message || err?.error || 'Credenciales inválidas o servicio no disponible';
+        return throwError(() => new Error(typeof errMsg === 'string' ? errMsg : 'Error de autenticación'));
       })
     );
   }
 
   /**
-   * RF01: Registro de Clientes
+   * RF01: Registro de Clientes conectando a auth-service (:8081)
    */
-  register(data: RegisterRequest) {
+  register(data: RegisterRequest): Observable<AuthResponse> {
     this.isLoading.set(true);
-    const mockResponse: AuthResponse = {
-      token: 'mock-jwt-token-register',
-      user: {
-        id: 'usr-' + Date.now(),
-        nombre: data.nombre,
-        correo: data.correo,
-        celular: data.celular,
-        rol: 'CLIENTE'
-      }
-    };
+    const backendReq = AuthAdapter.toBackendRegister(data);
 
-    return of(mockResponse).pipe(
-      delay(600),
-      tap(res => {
-        this.setSession(res);
+    return this.http.post<BackendAuthResponse>(`${this.API_URL}/auth/register`, backendReq).pipe(
+      map(dto => AuthAdapter.toAuthResponse(dto)),
+      tap(authResp => {
         this.isLoading.set(false);
+        if (authResp.token) {
+          this.setSession(authResp);
+        }
+      }),
+      catchError(err => {
+        this.isLoading.set(false);
+        const errMsg = err?.error?.message || err?.error || 'Error al registrar usuario';
+        return throwError(() => new Error(typeof errMsg === 'string' ? errMsg : 'Error de registro'));
+      })
+    );
+  }
+
+  /**
+   * RF05: Verificación 2FA
+   */
+  verifyTwoFactor(email: string, code: string): Observable<AuthResponse> {
+    this.isLoading.set(true);
+    return this.http.post<BackendAuthResponse>(`${this.API_URL}/auth/verify-2fa`, { email, code }).pipe(
+      map(dto => AuthAdapter.toAuthResponse(dto)),
+      tap(authResp => {
+        this.isLoading.set(false);
+        if (authResp.token) {
+          this.setSession(authResp);
+        }
+      }),
+      catchError(err => {
+        this.isLoading.set(false);
+        const errMsg = err?.error?.message || 'Código 2FA incorrecto o expirado';
+        return throwError(() => new Error(errMsg));
       })
     );
   }
@@ -124,6 +123,7 @@ export class AuthService {
     if (isPlatformBrowser(this.platformId)) {
       localStorage.removeItem('polleria_user');
       localStorage.removeItem('polleria_token');
+      localStorage.removeItem('polleria_my_order_ids');
     }
   }
 
@@ -133,6 +133,7 @@ export class AuthService {
     if (isPlatformBrowser(this.platformId)) {
       localStorage.setItem('polleria_user', JSON.stringify(auth.user));
       localStorage.setItem('polleria_token', auth.token);
+      localStorage.removeItem('polleria_my_order_ids');
     }
   }
 }

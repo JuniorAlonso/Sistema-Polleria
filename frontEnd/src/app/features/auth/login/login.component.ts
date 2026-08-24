@@ -5,11 +5,12 @@ import { Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-hero.component';
+import { TwoFactorModalComponent } from '../../../shared/components/two-factor-modal/two-factor-modal.component';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, AuthHeroComponent],
+  imports: [CommonModule, FormsModule, RouterModule, AuthHeroComponent, TwoFactorModalComponent],
   template: `
     <div class="min-h-screen w-full flex flex-col lg:flex-row bg-polleria-dark font-sans text-slate-100 selection:bg-polleria-gold selection:text-slate-900">
       
@@ -132,6 +133,15 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
         </div>
       </div>
 
+      <!-- Modal de Verificación 2FA Personalizado -->
+      <app-two-factor-modal 
+        [isOpen]="show2FAModal"
+        [email]="correo"
+        [password]="password"
+        (verified)="on2FAVerified($event)"
+        (closed)="show2FAModal = false"
+      />
+
     </div>
   `
 })
@@ -142,6 +152,7 @@ export class LoginComponent {
 
   correo = '';
   password = '';
+  show2FAModal = false;
 
   handleLogin(): void {
     if (!this.correo || !this.password) {
@@ -154,19 +165,34 @@ export class LoginComponent {
       password: this.password
     }).subscribe({
       next: (res) => {
-        this.notify.showSuccess(`¡Hola de nuevo, ${res.user.nombre}!`);
-        if (res.user.rol === 'CHEF') {
-          this.router.navigate(['/cocina']);
-        } else if (res.user.rol === 'ADMIN') {
-          this.router.navigate(['/admin']);
-        } else {
-          this.router.navigate(['/menu']);
+        if (res.requires2FA) {
+          this.show2FAModal = true;
+          return;
         }
+
+        this.notify.showSuccess(`¡Hola de nuevo, ${res.user.nombre}!`);
+        this.redirectAfterLogin(res.user.rol);
       },
-      error: () => {
-        this.notify.showError('Credenciales incorrectas');
+      error: (err) => {
+        this.notify.showError(err.message || 'Credenciales incorrectas');
       }
     });
+  }
+
+  on2FAVerified(data: { user: any; token: string }): void {
+    this.show2FAModal = false;
+    this.notify.showSuccess(`¡Autenticación 2FA exitosa, ${data.user.nombre}!`);
+    this.redirectAfterLogin(data.user.rol);
+  }
+
+  private redirectAfterLogin(rol: string): void {
+    if (rol === 'ADMIN' || rol === 'MOZO' || rol === 'REPARTIDOR') {
+      this.router.navigate(['/admin']);
+    } else if (rol === 'CHEF' || rol === 'COCINA') {
+      this.router.navigate(['/cocina']);
+    } else {
+      this.router.navigate(['/menu']);
+    }
   }
 
   handleForgotPassword(): void {

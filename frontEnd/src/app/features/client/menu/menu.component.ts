@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ProductsService } from '../../../core/services/products.service';
@@ -221,7 +221,7 @@ import { Product, ProductCategory } from '../../../core/models/product.model';
     }
   `
 })
-export class MenuComponent {
+export class MenuComponent implements OnInit {
   readonly productsService = inject(ProductsService);
   readonly cart = inject(CartService);
   private notify = inject(NotificationService);
@@ -229,6 +229,10 @@ export class MenuComponent {
   readonly selectedProductForModal = signal<Product | null>(null);
   modalQty = 1;
   modalNotas = '';
+
+  ngOnInit(): void {
+    this.productsService.loadProducts();
+  }
 
   selectCategory(key: string): void {
     this.productsService.setCategory(key as ProductCategory | 'TODOS');

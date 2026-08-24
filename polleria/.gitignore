@@ -36,3 +36,5 @@ build/
 
 ### Configuración local ###
 **/application-local.properties
+**/.env
+**/.env.local

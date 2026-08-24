@@ -55,18 +55,20 @@ public class OrdenController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR')")
-    public ResponseEntity<List<OrdenResponse>> listarPorEstado(
-            @RequestParam(required = false) OrdenEstado estado
+    public ResponseEntity<List<OrdenResponse>> listar(
+            @RequestParam(required = false) OrdenEstado estado,
+            @RequestParam(required = false, defaultValue = "false") boolean soloActivos
     ) {
         if (estado != null) {
             return ResponseEntity.ok(ordenService.listarPorEstado(estado));
         }
-        return ResponseEntity.ok(ordenService.listarActivos());
+        if (soloActivos) {
+            return ResponseEntity.ok(ordenService.listarActivos());
+        }
+        return ResponseEntity.ok(ordenService.listarActivosYCompletadosHoy());
     }
 
     @PatchMapping("/{id}/estado")
-    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR')")
     public ResponseEntity<OrdenResponse> actualizarEstado(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarEstadoRequest request,

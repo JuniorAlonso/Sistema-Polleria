@@ -458,7 +458,8 @@ export class HomeComponent {
   private notify = inject(NotificationService);
 
   quickAdd(productId: string): void {
-    const product = this.productsService.products().find(p => p.id === productId);
+    const clean = productId.replace('prod-', '');
+    const product = this.productsService.products().find(p => p.id === productId || p.id.replace('prod-', '') === clean);
     if (product) {
       this.cart.addItem(product, 1);
       this.notify.showSuccess(`+1 ${product.nombre} añadido al pedido`);

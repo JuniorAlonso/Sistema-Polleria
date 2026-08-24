@@ -132,31 +132,6 @@ import { RouterModule } from '@angular/router';
       </div>
 
 
-      <!-- Mid Section: Medios de Pago & Sellos de Seguridad -->
-      <div class="border-t border-white/10 bg-black/40 py-6">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          
-          <!-- Payment methods badges -->
-          <div class="flex flex-wrap items-center justify-center gap-2">
-            <span class="text-[11px] text-slate-400 font-bold uppercase mr-2">Pagos Aceptados:</span>
-            <span class="px-2.5 py-1 rounded bg-white/10 font-mono text-[10px] text-white font-bold">VISA</span>
-            <span class="px-2.5 py-1 rounded bg-white/10 font-mono text-[10px] text-white font-bold">MASTERCARD</span>
-            <span class="px-2.5 py-1 rounded bg-purple-900/60 border border-purple-500/40 font-mono text-[10px] text-purple-300 font-bold">YAPE</span>
-            <span class="px-2.5 py-1 rounded bg-cyan-900/60 border border-cyan-500/40 font-mono text-[10px] text-cyan-300 font-bold">PLIN</span>
-            <span class="px-2.5 py-1 rounded bg-emerald-900/60 border border-emerald-500/40 font-mono text-[10px] text-emerald-300 font-bold">EFECTIVO</span>
-          </div>
-
-          <!-- Security certification -->
-          <div class="flex items-center gap-2 text-[11px] text-slate-400">
-            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-            </svg>
-            <span class="text-emerald-400 font-bold">SSL Seguro 256-bit</span>
-            <span>• Transacciones protegidas</span>
-          </div>
-
-        </div>
-      </div>
 
 
       <!-- Bottom Section: Advertencia Legal de Alcohol (Ley N° 28681) & Copyright -->

@@ -73,6 +73,14 @@ public class OrdenService {
         return ordenRepository.findActivos().stream().map(OrdenResponse::from).toList();
     }
 
+    public List<OrdenResponse> listarActivosYCompletadosHoy() {
+        return ordenRepository.findActivosYCompletadosHoy().stream().map(OrdenResponse::from).toList();
+    }
+
+    public List<OrdenResponse> listarTodos() {
+        return ordenRepository.findAllByOrderByCreadoEnDesc().stream().map(OrdenResponse::from).toList();
+    }
+
     public List<OrdenResponse> listarParaCocina() {
         return ordenRepository.findParaCocina().stream().map(OrdenResponse::from).toList();
     }
@@ -121,18 +129,19 @@ public class OrdenService {
     }
 
     private void validarTransicionEstado(OrdenEstado actual, OrdenEstado nuevo, OrdenTipo tipo) {
+        if (actual == nuevo) return;
+        if (nuevo == OrdenEstado.CANCELADO) return;
+
         boolean valido = switch (actual) {
-            case RECIBIDO -> nuevo == OrdenEstado.EN_PREPARACION || nuevo == OrdenEstado.CANCELADO;
-            case EN_PREPARACION -> nuevo == OrdenEstado.LISTO || nuevo == OrdenEstado.CANCELADO;
-            case LISTO -> tipo == OrdenTipo.DELIVERY
-                    ? nuevo == OrdenEstado.EN_CAMINO
-                    : nuevo == OrdenEstado.ENTREGADO;
-            case EN_CAMINO -> nuevo == OrdenEstado.ENTREGADO || nuevo == OrdenEstado.CANCELADO;
-            default -> false;
+            case RECIBIDO -> true;
+            case EN_PREPARACION -> true;
+            case LISTO -> true;
+            case EN_CAMINO -> nuevo == OrdenEstado.ENTREGADO;
+            case ENTREGADO -> true;
+            case CANCELADO -> false;
         };
         if (!valido) {
-            throw new IllegalArgumentException(
-                    "Transición de estado inválida: " + actual + " → " + nuevo);
+            log.warn("Transición de estado administrativa: {} → {}", actual, nuevo);
         }
     }
 

@@ -1,6 +1,8 @@
-import { Component, inject, computed } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, inject, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
+import { CommonModule, isPlatformBrowser } from '@angular/common';
+import { Router } from '@angular/router';
 import { OrdersService } from '../../core/services/orders.service';
+import { AuthService } from '../../core/services/auth.service';
 import { OrderStatusBadgeComponent } from '../../shared/components/order-status-badge/order-status-badge.component';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
@@ -32,6 +34,21 @@ import { Order } from '../../core/models/order.model';
           <div class="px-4 py-2 rounded-2xl bg-slate-800 border border-slate-700 text-xs">
             <span class="text-slate-400 block font-medium">Listos para Servir:</span>
             <span class="text-xl font-extrabold text-purple-400">{{ readyCount() }}</span>
+          </div>
+
+          <!-- User Info & Logout Button -->
+          <div class="flex items-center gap-2 pl-3 border-l border-slate-700">
+            <button 
+              type="button"
+              (click)="cerrarSesion()"
+              class="px-3 py-2 rounded-2xl bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/20 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow"
+              title="Cerrar Sesión"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+              </svg>
+              <span>Salir</span>
+            </button>
           </div>
         </div>
       </div>
@@ -151,9 +168,13 @@ import { Order } from '../../core/models/order.model';
     </div>
   `
 })
-export class KitchenKdsComponent {
+export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
+  readonly authService = inject(AuthService);
   private notify = inject(NotificationService);
+  private router = inject(Router);
+  private platformId = inject(PLATFORM_ID);
+  private pollInterval?: any;
 
   readonly preparingCount = computed(() =>
     this.ordersService.orders().filter(o => o.estado === 'EN_PREPARACION').length
@@ -163,8 +184,29 @@ export class KitchenKdsComponent {
     this.ordersService.orders().filter(o => o.estado === 'LISTO_COCINA').length
   );
 
+  ngOnInit(): void {
+    if (isPlatformBrowser(this.platformId)) {
+      this.ordersService.loadKitchenOrders();
+      this.pollInterval = setInterval(() => {
+        this.ordersService.loadKitchenOrders();
+      }, 2500);
+    }
+  }
+
+  ngOnDestroy(): void {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+    }
+  }
+
   advanceStatus(order: Order): void {
     this.ordersService.advanceKitchenStatus(order.id);
     this.notify.showSuccess(`Orden ${order.codigoSeguimiento} actualizada`);
+  }
+
+  cerrarSesion(): void {
+    this.authService.logout();
+    this.notify.showInfo('Sesión finalizada', 'Has salido de la vista de cocina.');
+    this.router.navigate(['/login']);
   }
 }
