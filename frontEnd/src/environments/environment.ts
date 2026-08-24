@@ -1,12 +1,12 @@
 export const environment = {
   production: true,
-  authApiUrl: 'http://localhost:8081',
-  ordersApiUrl: 'http://localhost:8082',
-  paymentsApiUrl: 'http://localhost:8083',
+  authApiUrl: 'http://98.86.149.179:8081',
+  ordersApiUrl: 'http://100.53.223.167:8082',
+  paymentsApiUrl: 'http://44.203.62.89:8083',
   services: {
-    auth: 'http://localhost:8081/auth',
-    products: 'http://localhost:8082/productos',
-    orders: 'http://localhost:8082/ordenes',
-    payments: 'http://localhost:8083/pagos'
+    auth: 'http://98.86.149.179:8081/auth',
+    products: 'http://100.53.223.167:8082/productos',
+    orders: 'http://100.53.223.167:8082/ordenes',
+    payments: 'http://44.203.62.89:8083/pagos'
   }
 };
