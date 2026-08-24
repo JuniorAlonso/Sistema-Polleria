@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
@@ -7,6 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatSnackBar } from '@angular/material/snack-bar';
 
 import { OrdenService } from '../../../core/services/orden';
 import { Orden } from '../../../core/models/orden.models';
@@ -95,21 +96,66 @@ import { Orden } from '../../../core/models/orden.models';
     .chip-cancelado    { background: #ffebee !important; color: #b71c1c !important; }
   `]
 })
-export class MisPedidosComponent implements OnInit {
+export class MisPedidosComponent implements OnInit, OnDestroy {
 
-  private ordenSvc = inject(OrdenService);
-  private router   = inject(Router);
+  private ordenSvc  = inject(OrdenService);
+  private router    = inject(Router);
+  private snackBar  = inject(MatSnackBar);
 
-  ordenes  = signal<Orden[]>([]);
-  cargando = signal(true);
-  error    = signal<string | null>(null);
+  ordenes   = signal<Orden[]>([]);
+  cargando  = signal(true);
+  error     = signal<string | null>(null);
+
+  /** Mapa estadoAnterior por ordenId para detectar cambios */
+  private estadosAnteriores = new Map<number, string>();
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+
+  private readonly LABELS: Record<string, string> = {
+    RECIBIDO:       '📋 Recibido',
+    EN_PREPARACION: '👨‍🍳 En preparación',
+    LISTO:          '✅ Listo para entregar',
+    EN_CAMINO:      '🚀 En camino',
+    ENTREGADO:      '🎉 Entregado',
+    CANCELADO:      '❌ Cancelado',
+  };
 
   ngOnInit() {
+    this.cargar(true);
+    // Polling cada 12 segundos para detectar cambios de estado
+    this.intervalId = setInterval(() => this.cargar(false), 12000);
+  }
+
+  ngOnDestroy() {
+    if (this.intervalId) clearInterval(this.intervalId);
+  }
+
+  cargar(inicial: boolean) {
     this.ordenSvc.misOrdenes().subscribe({
-      next: os => { this.ordenes.set(os); this.cargando.set(false); },
-      error: () => {
-        this.error.set('No se pudieron cargar tus pedidos');
+      next: os => {
+        if (!inicial) {
+          // Detectar cambios de estado y notificar
+          os.forEach(orden => {
+            const estadoPrevio = this.estadosAnteriores.get(orden.id);
+            if (estadoPrevio && estadoPrevio !== orden.estado) {
+              const label = this.LABELS[orden.estado] ?? orden.estado;
+              this.snackBar.open(
+                `Pedido #${orden.id}: ${label}`,
+                'Ver',
+                { duration: 6000, panelClass: ['snack-estado'] }
+              ).onAction().subscribe(() => this.router.navigate(['/pedido', orden.id]));
+            }
+          });
+        }
+        // Actualizar mapa de estados anteriores
+        os.forEach(o => this.estadosAnteriores.set(o.id, o.estado));
+        this.ordenes.set(os);
         this.cargando.set(false);
+      },
+      error: () => {
+        if (inicial) {
+          this.error.set('No se pudieron cargar tus pedidos');
+          this.cargando.set(false);
+        }
       },
     });
   }
