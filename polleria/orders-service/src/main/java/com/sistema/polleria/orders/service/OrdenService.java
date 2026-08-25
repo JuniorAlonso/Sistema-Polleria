@@ -20,6 +20,7 @@ public class OrdenService {
     private final OrdenRepository ordenRepository;
     private final ProductoService productoService;
     private final MesaService mesaService;
+    private final NotificationService notificationService;
 
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
@@ -114,6 +115,7 @@ public class OrdenService {
 
         ordenRepository.save(orden);
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
+        notificationService.notificarCambioEstado(orden, request.getEstado());
         return OrdenResponse.from(orden);
     }
 
