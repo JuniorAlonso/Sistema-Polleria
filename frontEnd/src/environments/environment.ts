@@ -8,5 +8,6 @@ export const environment = {
     products: 'http://100.53.223.167:8082/productos',
     orders: 'http://100.53.223.167:8082/ordenes',
     payments: 'http://44.203.62.89:8083/pagos'
-  }
+  },
+  mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
 };

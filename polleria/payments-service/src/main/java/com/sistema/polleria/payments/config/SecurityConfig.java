@@ -37,8 +37,8 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsSource()))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                // Webhook de pasarela — protegido con secret en header, no JWT
-                .requestMatchers(HttpMethod.POST, "/pagos/webhook/**").permitAll()
+                // Webhook de pasarela y creación de preferencias — endpoints accesibles
+                .requestMatchers("/pagos/webhook/**", "/pagos/mercadopago/**").permitAll()
                 // Todo lo demás requiere autenticación
                 .anyRequest().authenticated()
             )

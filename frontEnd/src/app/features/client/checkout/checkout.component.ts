@@ -10,6 +10,12 @@ import { Order, PaymentMethod } from '../../../core/models/order.model';
 import { ProductsService } from '../../../core/services/products.service';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { environment } from '../../../../environments/environment';
+
+import { PLATFORM_ID } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+
+declare const MercadoPago: any;
 
 @Component({
   selector: 'app-checkout',
@@ -195,7 +201,7 @@ import { AuthService } from '../../../core/services/auth.service';
                   'border-2 border-polleria-gold bg-black/40 text-white shadow-md' : 
                   'border-white/15 bg-black/20 text-white/70 hover:bg-black/30'"
               >
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
                 </svg>
                 <span>TARJETA</span>
@@ -266,6 +272,24 @@ import { AuthService } from '../../../core/services/auth.service';
                   />
                 </div>
               </div>
+
+              <!-- Botón Oficial de Mercado Pago Checkout Pro (Abajito) -->
+              <div class="pt-2">
+                <button 
+                  type="button" 
+                  (click)="payWithMercadoPago()"
+                  [disabled]="isProcessing() || cart.isEmpty()"
+                  class="w-full py-3 px-4 rounded-xl bg-[#009ee3] hover:bg-[#0081ba] active:scale-98 text-white font-bold text-xs sm:text-sm tracking-wider uppercase transition shadow-lg flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
+                >
+                  <svg class="w-6 h-4" viewBox="0 0 100 60" fill="none">
+                    <rect width="100" height="60" rx="10" fill="#FFFFFF"/>
+                    <path d="M50 15C38 15 28 23 25 32C28 41 38 49 50 49C62 49 72 41 75 32C72 23 62 15 50 15Z" fill="#009EE3"/>
+                    <path d="M43 28C41.5 28 40.5 29 40.5 30.5C40.5 32 41.5 33 43 33H47C48 33 49 34 49 35C49 36 48 37 47 37H41V39H44V41H46V39H47C49.5 39 51 37.5 51 35.5C51 33.5 49.5 32 47 32H43C42 32 41 31.5 41 30.5C41 29.5 42 29 43 29H48V27H46V25H44V27H43V28Z" fill="#FFFFFF"/>
+                  </svg>
+                  <span>PAGAR CON MERCADO PAGO</span>
+                </button>
+              </div>
+
             } @else {
               <div class="p-3 rounded-xl bg-black/20 text-xs text-slate-200">
                 Pagas al repartidor en efectivo al recibir tu pedido en la puerta.
@@ -341,6 +365,75 @@ export class CheckoutComponent implements OnInit {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
   }
 
+  payWithMercadoPago(): void {
+    if (!this.direccion) {
+      this.notify.showError('Por favor ingresa la dirección de entrega');
+      return;
+    }
+    if (this.cart.isEmpty()) {
+      this.notify.showError('Tu carrito está vacío');
+      return;
+    }
+
+    this.isProcessing.set(true);
+    const currentUser = this.auth.currentUser();
+    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
+    const clienteCelular = currentUser?.celular || '987654321';
+
+    const orderData: Order = {
+      id: '0',
+      codigoSeguimiento: '',
+      cliente: {
+        nombre: clienteNombre,
+        celular: clienteCelular,
+        correo: currentUser?.correo,
+        direccion: this.direccion,
+        referencia: this.instrucciones
+      },
+      items: [...this.cart.items()],
+      tipo: 'DELIVERY',
+      estado: 'EN_PREPARACION',
+      metodoPago: 'TARJETA',
+      subtotal: this.cart.subtotal(),
+      costoEnvio: this.cart.costoEnvio(),
+      descuento: this.cart.descuento(),
+      total: this.cart.total(),
+      notasGenerales: this.instrucciones,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // 1. Crear el pedido
+    this.ordersService.createOrder(orderData).subscribe({
+      next: (createdOrder) => {
+        // 2. Crear la preferencia de Mercado Pago y redirigir inmediatamente
+        this.paymentService.crearPreferenciaMercadoPago(createdOrder.id, createdOrder.total).subscribe({
+          next: (pref) => {
+            this.cart.clearCart();
+            this.isProcessing.set(false);
+            const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
+            if (redirectUrl) {
+              this.notify.showSuccess('¡Pedido registrado! Redirigiendo a Mercado Pago...');
+              window.location.href = redirectUrl;
+            } else {
+              this.notify.showError('No se pudo obtener la URL de pago de Mercado Pago');
+              this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
+            }
+          },
+          error: (err) => {
+            this.isProcessing.set(false);
+            console.error('Error al conectar con Mercado Pago:', err);
+            this.notify.showError('No se pudo iniciar Mercado Pago. Verifica que el microservicio de pagos (:8083) esté encendido.');
+          }
+        });
+      },
+      error: () => {
+        this.isProcessing.set(false);
+        this.notify.showError('Error al crear la orden. Intenta nuevamente.');
+      }
+    });
+  }
+
   confirmOrder(): void {
     if (!this.direccion) {
       this.notify.showError('Por favor ingresa la dirección de entrega');
@@ -387,7 +480,7 @@ export class CheckoutComponent implements OnInit {
           next: () => {
             this.cart.clearCart();
             this.isProcessing.set(false);
-            this.notify.showSuccess(`¡Pedido ${createdOrder.codigoSeguimiento} confirmado y pagado!`);
+            this.notify.showSuccess(`¡Pedido ${createdOrder.codigoSeguimiento} confirmado!`);
             this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
           },
           error: () => {

@@ -11,7 +11,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 
-import java.security.Principal;
+import com.sistema.polleria.payments.dto.PreferenceResponse;
+import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
 import java.util.List;
 
 @RestController
@@ -20,6 +21,7 @@ import java.util.List;
 public class PagoController {
 
     private final PagoService pagoService;
+    private final MercadoPagoGateway mercadoPagoGateway;
 
     /** Iniciar pago — CLIENTE, MOZO (para delivery/recojo online) */
     @PostMapping
@@ -33,6 +35,19 @@ public class PagoController {
         Long clienteId = extractUserId(principal);
         return pagoService.iniciar(request, clienteId, authorization);
     }
+
+    /** Crear Preferencia de Mercado Pago (Checkout Pro) */
+    @PostMapping("/mercadopago/preferencia")
+    @ResponseStatus(HttpStatus.CREATED)
+    public PreferenceResponse crearPreferenciaMercadoPago(
+            @Valid @RequestBody IniciarPagoRequest request,
+            Principal principal) {
+
+        Long clienteId = extractUserId(principal);
+        return mercadoPagoGateway.crearPreferencia(request, clienteId);
+    }
+
+
 
     /** Detalle de un pago */
     @GetMapping("/{id}")

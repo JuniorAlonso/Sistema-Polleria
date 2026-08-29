@@ -391,8 +391,24 @@ export class OrderTrackingComponent implements OnInit {
     this.ordersService.loadActiveOrders();
     this.ordersService.loadMyOrders();
 
-    // 2. Comprobar parámetros de la URL
+    // 2. Comprobar parámetros de la URL (soporta códigos internos y retornos de Mercado Pago)
     this.route.queryParams.subscribe(params => {
+      // Retorno de Mercado Pago (status / collection_status)
+      if (params['collection_status'] || params['status']) {
+        const mpStatus = params['collection_status'] || params['status'];
+        const externalRef = params['external_reference'];
+        if (mpStatus === 'approved') {
+          this.notify.showSuccess('¡Tu pago en Mercado Pago ha sido aprobado con éxito!');
+        } else if (mpStatus === 'pending' || mpStatus === 'in_process') {
+          this.notify.showInfo('Pago en proceso', 'Tu pago en Mercado Pago se encuentra en revisión.');
+        } else if (mpStatus === 'rejected') {
+          this.notify.showError('El pago en Mercado Pago fue rechazado.');
+        }
+        if (externalRef) {
+          this.loadOrder(externalRef);
+        }
+      }
+
       if (params['code']) {
         this.searchCode = params['code'];
         this.loadOrder(this.searchCode);
