@@ -78,17 +78,22 @@ public class MercadoPagoGateway {
                 .build();
 
         // 3. URLs de retorno para redirección del cliente
+        String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/tracking";
+        String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout?status=failure";
+        String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout?status=pending";
+
+        log.debug("Back URLs → success={}, failure={}, pending={}", safeSuccessUrl, safeFailureUrl, safePendingUrl);
+
         PreferenceBackUrlsRequest backUrls = PreferenceBackUrlsRequest.builder()
-                .success(successUrl)
-                .failure(failureUrl)
-                .pending(pendingUrl)
+                .success(safeSuccessUrl)
+                .failure(safeFailureUrl)
+                .pending(safePendingUrl)
                 .build();
 
-        // 4. Armar la solicitud de preferencia
+        // 4. Armar la solicitud de preferencia (sin autoReturn para sandbox/localhost)
         PreferenceRequest.PreferenceRequestBuilder preferenceBuilder = PreferenceRequest.builder()
                 .items(List.of(itemRequest))
                 .backUrls(backUrls)
-                .autoReturn("approved")
                 .externalReference(String.valueOf(pago.getId()));
 
         if (webhookUrl != null && !webhookUrl.isBlank()) {

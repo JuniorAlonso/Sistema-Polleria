@@ -79,6 +79,8 @@ export class PaymentService {
 
   /**
    * Mercado Pago Checkout Pro: Crear Preferencia
+   * Primero intenta el microservicio (:8083).
+   * Si falla, usa el proxy de Angular (/mp-api) para evitar CORS.
    */
   crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<{
     preferenceId: string;
@@ -88,7 +90,9 @@ export class PaymentService {
     ordenId: number;
   }> {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
-    
+    const montoFinal = Math.round(monto * 100) / 100;
+
+    // === INTENTO 1: microservicio de pagos propio (:8083) ===
     return this.http.post<{
       preferenceId: string;
       initPoint: string;
@@ -97,21 +101,22 @@ export class PaymentService {
       ordenId: number;
     }>(`${this.API_URL}/pagos/mercadopago/preferencia`, {
       ordenId: cleanOrderId,
-      monto: Math.round(monto * 100) / 100,
+      monto: montoFinal,
       metodoPago: 'TARJETA'
     }).pipe(
       catchError(() => {
-        // Fallback directo a la API de Mercado Pago con el Access Token oficial
+        // === INTENTO 2 (fallback): llamar a MP vía proxy de Angular (/mp-api) ===
+        // El proxy redirige /mp-api → https://api.mercadopago.com  (sin CORS)
         const mpToken = 'APP_USR-2733300582350003-082916-7d60b458fb460f2ef2eb803852c0935e-3645988283';
         const body = {
           items: [
             {
               id: String(cleanOrderId),
               title: `Pedido #${cleanOrderId} - El San Pollo`,
-              description: 'Consumo polleria / delivery',
+              description: 'Consumo pollería / delivery',
               quantity: 1,
               currency_id: 'PEN',
-              unit_price: Math.round(monto * 100) / 100
+              unit_price: montoFinal
             }
           ],
           back_urls: {
@@ -119,11 +124,11 @@ export class PaymentService {
             failure: 'http://localhost:4200/checkout?status=failure',
             pending: 'http://localhost:4200/checkout?status=pending'
           },
-          auto_return: 'approved',
           external_reference: String(cleanOrderId)
         };
 
-        return this.http.post<any>('https://api.mercadopago.com/checkout/preferences', body, {
+        // Usa /mp-api/checkout/preferences (proxy evita CORS en navegador)
+        return this.http.post<any>('/mp-api/checkout/preferences', body, {
           headers: {
             Authorization: `Bearer ${mpToken}`,
             'Content-Type': 'application/json'

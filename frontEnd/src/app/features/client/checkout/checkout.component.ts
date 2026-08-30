@@ -376,60 +376,30 @@ export class CheckoutComponent implements OnInit {
     }
 
     this.isProcessing.set(true);
-    const currentUser = this.auth.currentUser();
-    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
-    const clienteCelular = currentUser?.celular || '987654321';
 
-    const orderData: Order = {
-      id: '0',
-      codigoSeguimiento: '',
-      cliente: {
-        nombre: clienteNombre,
-        celular: clienteCelular,
-        correo: currentUser?.correo,
-        direccion: this.direccion,
-        referencia: this.instrucciones
-      },
-      items: [...this.cart.items()],
-      tipo: 'DELIVERY',
-      estado: 'EN_PREPARACION',
-      metodoPago: 'TARJETA',
-      subtotal: this.cart.subtotal(),
-      costoEnvio: this.cart.costoEnvio(),
-      descuento: this.cart.descuento(),
-      total: this.cart.total(),
-      notasGenerales: this.instrucciones,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    // Usamos un ID temporal para la preferencia de Mercado Pago
+    // El pedido real se registrará después del pago exitoso vía webhook
+    const tempOrderId = Date.now() % 1000000; // número manejable para MP
+    const totalAPagar = this.cart.total();
 
-    // 1. Crear el pedido
-    this.ordersService.createOrder(orderData).subscribe({
-      next: (createdOrder) => {
-        // 2. Crear la preferencia de Mercado Pago y redirigir inmediatamente
-        this.paymentService.crearPreferenciaMercadoPago(createdOrder.id, createdOrder.total).subscribe({
-          next: (pref) => {
-            this.cart.clearCart();
-            this.isProcessing.set(false);
-            const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
-            if (redirectUrl) {
-              this.notify.showSuccess('¡Pedido registrado! Redirigiendo a Mercado Pago...');
-              window.location.href = redirectUrl;
-            } else {
-              this.notify.showError('No se pudo obtener la URL de pago de Mercado Pago');
-              this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
-            }
-          },
-          error: (err) => {
-            this.isProcessing.set(false);
-            console.error('Error al conectar con Mercado Pago:', err);
-            this.notify.showError('No se pudo iniciar Mercado Pago. Verifica que el microservicio de pagos (:8083) esté encendido.');
-          }
-        });
-      },
-      error: () => {
+    this.paymentService.crearPreferenciaMercadoPago(tempOrderId, totalAPagar).subscribe({
+      next: (pref) => {
         this.isProcessing.set(false);
-        this.notify.showError('Error al crear la orden. Intenta nuevamente.');
+        const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
+        if (redirectUrl) {
+          this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+          // Pequeña pausa para mostrar el toast antes de redirigir
+          setTimeout(() => {
+            window.location.href = redirectUrl;
+          }, 800);
+        } else {
+          this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
+        }
+      },
+      error: (err) => {
+        this.isProcessing.set(false);
+        console.error('Error Mercado Pago:', err);
+        this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos (:8083) esté encendido.');
       }
     });
   }

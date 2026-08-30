@@ -1,0 +1,11 @@
+{
+  "/mp-api": {
+    "target": "https://api.mercadopago.com",
+    "secure": true,
+    "changeOrigin": true,
+    "pathRewrite": {
+      "^/mp-api": ""
+    },
+    "logLevel": "debug"
+  }
+}

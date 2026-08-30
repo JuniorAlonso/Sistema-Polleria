@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import com.sistema.polleria.payments.dto.PreferenceResponse;
 import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
+import java.security.Principal;
 import java.util.List;
 
 @RestController
