@@ -1,7 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { ProductsService } from '../../../core/services/products.service';
 import { CartService } from '../../../core/services/cart.service';
 import { NotificationService } from '../../../core/services/notification.service';
 
@@ -453,17 +452,37 @@ import { NotificationService } from '../../../core/services/notification.service
   `
 })
 export class HomeComponent {
-  private productsService = inject(ProductsService);
   private cart = inject(CartService);
   private notify = inject(NotificationService);
 
+  private readonly STATIC_PRODUCTS: Record<string, { nombre: string; precio: number; precioDescuento?: number; descripcion: string; imagenUrl: string; categoria: string }> = {
+    'prod-1': { nombre: 'Pollo Entero', precio: 65.00, descripcion: '1 Pollo a la brasa jugoso, porción familiar de papas fritas crujientes y ensalada fresca con vinagreta de la casa.', imagenUrl: '/assets/images/hero-panoramic.jpg', categoria: 'POLLOS_A_LA_BRASA' },
+    'prod-2': { nombre: 'Medio Pollo', precio: 35.00, descripcion: '1/2 Pollo a la brasa, porción personal abundante de papas fritas y ensalada clásica.', imagenUrl: '/assets/images/medio-pollo.jpg', categoria: 'POLLOS_A_LA_BRASA' },
+    'prod-3': { nombre: '1/4 de Pollo', precio: 20.00, descripcion: '1/4 Pollo a la brasa (pecho o pierna), papas fritas y ensalada. Ideal para el antojo personal.', imagenUrl: '/assets/images/cuarto-pollo.jpg', categoria: 'POLLOS_A_LA_BRASA' },
+    'prod-4': { nombre: 'Combo Urbano Máximo', precio: 79.90, precioDescuento: 79.90, descripcion: '1 Pollo entero + Porción extra grande de papas + Ensalada Familiar + Gaseosa 1.5L + 4 salsas de la casa.', imagenUrl: '/assets/images/combo-urbano-maximo.jpg', categoria: 'COMBOS_FAMILIARES' },
+    'prod-5': { nombre: 'Combo x1.5', precio: 95.00, descripcion: '1 1/2 Pollos + Papas Familiares + Ensalada Grande.', imagenUrl: '/assets/images/combo-uno-y-medio.jpg', categoria: 'COMBOS_FAMILIARES' },
+    'prod-6': { nombre: 'Tequeños Brasa (8 uds)', precio: 22.00, descripcion: 'Rellenos de pollo a la brasa deshilachado con guacamole artesanal.', imagenUrl: 'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?auto=format&fit=crop&w=800&q=80', categoria: 'PIQUEOS_Y_BEBIDAS' },
+    'prod-7': { nombre: 'Anticuchos Criollos (2 palos)', precio: 26.00, descripcion: 'Marinados en ají panca, vinagre y especias con papas doradas y choclo.', imagenUrl: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=800&q=80', categoria: 'PIQUEOS_Y_BEBIDAS' },
+    'prod-8': { nombre: 'Chicha Morada (1 Litro)', precio: 14.00, descripcion: 'Maíz morado de valle hervido con piña, manzana, canela y clavo.', imagenUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80', categoria: 'PIQUEOS_Y_BEBIDAS' },
+  };
+
   quickAdd(productId: string): void {
-    const clean = productId.replace('prod-', '');
-    const product = this.productsService.products().find(p => p.id === productId || p.id.replace('prod-', '') === clean);
-    if (product) {
-      this.cart.addItem(product, 1);
-      this.notify.showSuccess(`+1 ${product.nombre} añadido al pedido`);
-    }
+    const data = this.STATIC_PRODUCTS[productId];
+    if (!data) return;
+    const product = {
+      id: productId,
+      nombre: data.nombre,
+      precio: data.precio,
+      precioDescuento: data.precioDescuento,
+      descripcion: data.descripcion,
+      imagenUrl: data.imagenUrl,
+      categoria: data.categoria as any,
+      agotado: false,
+      destacado: true,
+      tiempoEstimadoMin: 20
+    };
+    this.cart.addItem(product, 1);
+    this.notify.showSuccess(`+1 ${product.nombre} añadido al pedido`);
   }
 
   scrollToSection(sectionId: string): void {

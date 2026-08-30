@@ -31,8 +31,8 @@ public class AuthService {
     private final IpBlacklistService ipBlacklistService;
     private final TwoFactorService twoFactorService;
 
-    // Roles que requieren 2FA
-    private static final Set<Role> ROLES_WITH_2FA = Set.of(Role.ADMIN, Role.MOZO, Role.COCINA, Role.REPARTIDOR);
+    // Roles que requieren 2FA (deshabilitado para POC — credenciales SMTP no configuradas)
+    private static final Set<Role> ROLES_WITH_2FA = Set.of();
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {

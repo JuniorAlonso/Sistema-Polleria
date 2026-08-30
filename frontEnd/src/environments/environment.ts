@@ -1,13 +1,13 @@
 export const environment = {
   production: true,
-  authApiUrl: 'http://98.86.149.179:8081',
-  ordersApiUrl: 'http://100.53.223.167:8082',
-  paymentsApiUrl: 'http://44.203.62.89:8083',
+  authApiUrl: 'https://canvas-exclude-legislation-receivers.trycloudflare.com',
+  ordersApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
+  paymentsApiUrl: 'https://catalogue-informed-let-debian.trycloudflare.com',
   services: {
-    auth: 'http://98.86.149.179:8081/auth',
-    products: 'http://100.53.223.167:8082/productos',
-    orders: 'http://100.53.223.167:8082/ordenes',
-    payments: 'http://44.203.62.89:8083/pagos'
+    auth: 'https://canvas-exclude-legislation-receivers.trycloudflare.com/auth',
+    products: 'https://gsm-asking-graphs-bobby.trycloudflare.com/productos',
+    orders: 'https://gsm-asking-graphs-bobby.trycloudflare.com/ordenes',
+    payments: 'https://catalogue-informed-let-debian.trycloudflare.com/pagos'
   },
   mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
 };
