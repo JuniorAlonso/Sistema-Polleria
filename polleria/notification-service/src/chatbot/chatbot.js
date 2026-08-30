@@ -10,8 +10,8 @@ async function processMessage(msg, userId, conversation) {
 
     const texto = (msg.body || msg.caption || '').toLowerCase().trim();
 
-    console.log(`🤖 Procesando conversación de: ${userId}`);
-    console.log(`📌 Estado en chatbot: ${conversation.state}`);
+    console.log(` Procesando conversación de: ${userId}`);
+    console.log(` Estado en chatbot: ${conversation.state}`);
 
 
     // ==========================================
@@ -23,7 +23,7 @@ async function processMessage(msg, userId, conversation) {
         const codigoPedido = (msg.body || msg.caption || '').trim();
 
         await msg.reply(
-            `🔎 Recibí tu código de pedido: *${codigoPedido}*`
+            ` Recibí tu código de pedido: *${codigoPedido}*`
         );
 
         clearConversation(userId);

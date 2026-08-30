@@ -19,8 +19,8 @@ async function handleMessage(msg) {
 
     const conversation = getConversation(userId);
 
-    console.log(`📩 Mensaje recibido de ${msg.from}: "${texto}"`);
-    console.log(`📌 Estado actual: ${conversation.state}`);
+    console.log(` Mensaje recibido de ${msg.from}: "${texto}"`);
+    console.log(` Estado actual: ${conversation.state}`);
 
     try {
 
