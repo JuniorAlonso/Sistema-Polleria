@@ -11,6 +11,7 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | auth-service | `http://localhost:8081` | 8081 |
 | orders-service | `http://localhost:8082` | 8082 |
 | payments-service | `http://localhost:8083` | 8083 |
+| notification-service | `http://localhost:3001` | 3001 |
 
 ---
 
@@ -40,6 +41,19 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 
 ---
 
+## Mesas (orders-service → :8082)
+
+| Método | Endpoint | Auth | Rol | Descripción |
+| :---: | :--- | :---: | :--- | :--- |
+| `GET` | `/mesas` | 🔒 | ADMIN, MOZO | Listar todas las mesas |
+| `GET` | `/mesas/libres` | 🔒 | ADMIN, MOZO | Listar mesas con estado LIBRE |
+| `GET` | `/mesas/{id}` | 🔒 | ADMIN, MOZO | Detalle de una mesa |
+| `POST` | `/mesas` | 🔒 | ADMIN | Crear mesa |
+| `PATCH` | `/mesas/{id}/estado` | 🔒 | ADMIN, MOZO | Cambiar estado de una mesa |
+| `DELETE` | `/mesas/{id}` | 🔒 | ADMIN | Eliminar mesa |
+
+---
+
 ## Órdenes (orders-service → :8082)
 
 | Método | Endpoint | Auth | Rol | Descripción |
@@ -49,8 +63,10 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | `GET` | `/ordenes/mis-ordenes` | 🔒 | Cualquiera | Historial del cliente |
 | `GET` | `/ordenes/cocina` | 🔒 | ADMIN, COCINA | Órdenes para la cocina |
 | `GET` | `/ordenes/activos` | 🔒 | ADMIN, MOZO | Órdenes activas (no finalizadas) |
-| `GET` | `/ordenes?estado=X` | 🔒 | ADMIN, MOZO, COCINA, REPARTIDOR | Filtrar por estado |
-| `PATCH` | `/ordenes/{id}/estado` | 🔒 | ADMIN, MOZO, COCINA, REPARTIDOR | Cambiar estado del pedido |
+| `GET` | `/ordenes` | 🔒 | Cualquiera | Listar (activos + completados hoy) |
+| `GET` | `/ordenes?estado=X` | 🔒 | Cualquiera | Filtrar por estado |
+| `GET` | `/ordenes?soloActivos=true` | 🔒 | Cualquiera | Solo órdenes activas |
+| `PATCH` | `/ordenes/{id}/estado` | 🔒 | Cualquiera | Cambiar estado del pedido |
 
 ---
 
@@ -59,12 +75,23 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | Método | Endpoint | Auth | Rol | Descripción |
 | :---: | :--- | :---: | :--- | :--- |
 | `POST` | `/pagos` | 🔒 | CLIENTE, MOZO, ADMIN | Iniciar pago |
+| `POST` | `/pagos/mercadopago/preferencia` | 🔒 | Cualquiera | Crear preferencia Mercado Pago (Checkout Pro) |
 | `GET` | `/pagos/{id}` | 🔒 | CLIENTE, MOZO, ADMIN, REPARTIDOR | Detalle de un pago |
 | `GET` | `/pagos/orden/{ordenId}` | 🔒 | CLIENTE, MOZO, ADMIN, REPARTIDOR | Pago de una orden |
 | `GET` | `/pagos/mis-pagos` | 🔒 | CLIENTE, MOZO | Historial de pagos del cliente |
 | `GET` | `/pagos` | 🔒 | ADMIN | Todos los pagos |
 | `PATCH` | `/pagos/{id}/confirmar` | 🔒 | ADMIN, REPARTIDOR | Confirmar pago (contraentrega) |
 | `PATCH` | `/pagos/{id}/cancelar` | 🔒 | ADMIN, CLIENTE | Cancelar pago |
+| `POST/GET` | `/pagos/webhook/mercadopago` | 🔓 | — | Webhook de Mercado Pago (público) |
+
+---
+
+## Notificaciones (notification-service → :3001)
+
+| Método | Endpoint | Auth | Rol | Descripción |
+| :---: | :--- | :---: | :--- | :--- |
+| `POST` | `/notificar` | 🔓 | — | Enviar notificación WhatsApp (uso inter-servicio) |
+| `GET` | `/status` | 🔓 | — | Health check del servicio y estado de WhatsApp |
 
 ---
 
