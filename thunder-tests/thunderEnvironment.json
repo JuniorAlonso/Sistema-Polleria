@@ -22,11 +22,27 @@
       "value": "http://localhost:3001"
     },
     {
+      "name": "TOKEN",
+      "value": ""
+    },
+    {
       "name": "TOKEN_ADMIN",
       "value": ""
     },
     {
       "name": "TOKEN_CLIENTE",
+      "value": ""
+    },
+    {
+      "name": "TOKEN_MOZO",
+      "value": ""
+    },
+    {
+      "name": "TOKEN_COCINA",
+      "value": ""
+    },
+    {
+      "name": "TOKEN_REPARTIDOR",
       "value": ""
     },
     {

@@ -21,7 +21,7 @@
     },
     {
       "_id": "fldr_lvl2_auth",
-      "name": "2.1 Auth Admin",
+      "name": "2.1 Autenticacion Multi-Rol (5 Roles)",
       "containerId": "fldr_lvl2",
       "created": "2026-08-30",
       "sortNum": 21000
@@ -41,43 +41,36 @@
       "sortNum": 23000
     },
     {
-      "_id": "fldr_lvl2_auth_cli",
-      "name": "2.4 Auth Cliente",
+      "_id": "fldr_lvl2_ordenes",
+      "name": "2.4 Órdenes (Cliente/Cocina/Mozo)",
       "containerId": "fldr_lvl2",
       "created": "2026-08-30",
       "sortNum": 24000
     },
     {
-      "_id": "fldr_lvl2_ordenes",
-      "name": "2.5 Órdenes",
+      "_id": "fldr_lvl2_pagos",
+      "name": "2.5 Pagos",
       "containerId": "fldr_lvl2",
       "created": "2026-08-30",
       "sortNum": 25000
     },
     {
-      "_id": "fldr_lvl2_pagos",
-      "name": "2.6 Pagos",
+      "_id": "fldr_lvl2_estados",
+      "name": "2.6 Ciclo de Estados y Entrega",
       "containerId": "fldr_lvl2",
       "created": "2026-08-30",
       "sortNum": 26000
     },
     {
-      "_id": "fldr_lvl2_estados",
-      "name": "2.7 Ciclo de Estados",
+      "_id": "fldr_lvl2_notif",
+      "name": "2.7 Notificaciones WhatsApp",
       "containerId": "fldr_lvl2",
       "created": "2026-08-30",
       "sortNum": 27000
     },
     {
-      "_id": "fldr_lvl2_notif",
-      "name": "2.8 Notificaciones",
-      "containerId": "fldr_lvl2",
-      "created": "2026-08-30",
-      "sortNum": 28000
-    },
-    {
       "_id": "fldr_lvl3",
-      "name": "3. Nivel 3 - Seguridad & RBAC (401 / 403)",
+      "name": "3. Nivel 3 - Seguridad & RBAC (401 / 403 por Rol)",
       "containerId": "",
       "created": "2026-08-30",
       "sortNum": 30000
@@ -162,7 +155,7 @@
       "_id": "req_auth_reg_admin",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_auth",
-      "name": "2.1.1 Registrar Admin",
+      "name": "2.1.1 Registrar Usuario ADMIN",
       "url": "{{AUTH_URL}}/auth/register",
       "method": "POST",
       "sortNum": 21100,
@@ -173,12 +166,11 @@
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"name\": \"Admin San Pollo\",\n  \"email\": \"admin@sanpollo.com\",\n  \"phone\": \"987654321\",\n  \"password\": \"admin123\",\n  \"role\": \"ADMIN\"\n}",
+        "raw": "{\n  \"name\": \"Admin Polleria\",\n  \"email\": \"admin@sanpollo.com\",\n  \"phone\": \"987654321\",\n  \"password\": \"admin123\",\n  \"role\": \"ADMIN\"\n}",
         "form": []
       },
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
-        { "type": "res-body", "custom": "json.email", "action": "equal", "value": "admin@sanpollo.com" },
         { "type": "res-body", "custom": "json.role", "action": "equal", "value": "ADMIN" }
       ]
     },
@@ -186,7 +178,7 @@
       "_id": "req_auth_login_admin",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_auth",
-      "name": "2.1.2 Login Admin (Extrae TOKEN_ADMIN)",
+      "name": "2.1.2 Login ADMIN (Guarda TOKEN_ADMIN y TOKEN)",
       "url": "{{AUTH_URL}}/auth/login",
       "method": "POST",
       "sortNum": 21200,
@@ -203,26 +195,200 @@
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
         { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
-        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_ADMIN" }
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_ADMIN" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN" }
       ]
     },
     {
-      "_id": "req_auth_val_admin",
+      "_id": "req_auth_reg_cli",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_auth",
-      "name": "2.1.3 Validar Token Admin",
-      "url": "{{AUTH_URL}}/auth/validate",
-      "method": "GET",
+      "name": "2.1.3 Registrar Usuario CLIENTE",
+      "url": "{{AUTH_URL}}/auth/register",
+      "method": "POST",
       "sortNum": 21300,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Content-Type", "value": "application/json" }
       ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Juan Cliente\",\n  \"email\": \"cliente@sanpollo.com\",\n  \"phone\": \"912345678\",\n  \"password\": \"cliente123\",\n  \"role\": \"CLIENTE\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
+        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "CLIENTE" }
+      ]
+    },
+    {
+      "_id": "req_auth_login_cli",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.4 Login CLIENTE (Guarda TOKEN_CLIENTE y TOKEN)",
+      "url": "{{AUTH_URL}}/auth/login",
+      "method": "POST",
+      "sortNum": 21400,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"identifier\": \"cliente@sanpollo.com\",\n  \"password\": \"cliente123\"\n}",
+        "form": []
+      },
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
-        { "type": "res-body", "custom": "json.valid", "action": "equal", "value": "true" },
-        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "ADMIN" }
+        { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_CLIENTE" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN" }
+      ]
+    },
+    {
+      "_id": "req_auth_reg_mozo",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.5 Registrar Usuario MOZO",
+      "url": "{{AUTH_URL}}/auth/register",
+      "method": "POST",
+      "sortNum": 21500,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Carlos Mozo\",\n  \"email\": \"mozo@sanpollo.com\",\n  \"phone\": \"922334455\",\n  \"password\": \"mozo123\",\n  \"role\": \"MOZO\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
+        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "MOZO" }
+      ]
+    },
+    {
+      "_id": "req_auth_login_mozo",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.6 Login MOZO (Guarda TOKEN_MOZO y TOKEN)",
+      "url": "{{AUTH_URL}}/auth/login",
+      "method": "POST",
+      "sortNum": 21600,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"identifier\": \"mozo@sanpollo.com\",\n  \"password\": \"mozo123\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
+        { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_MOZO" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN" }
+      ]
+    },
+    {
+      "_id": "req_auth_reg_cocina",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.7 Registrar Usuario COCINA",
+      "url": "{{AUTH_URL}}/auth/register",
+      "method": "POST",
+      "sortNum": 21700,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Chef Mario Cocina\",\n  \"email\": \"cocina@sanpollo.com\",\n  \"phone\": \"933445566\",\n  \"password\": \"cocina123\",\n  \"role\": \"COCINA\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
+        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "COCINA" }
+      ]
+    },
+    {
+      "_id": "req_auth_login_cocina",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.8 Login COCINA (Guarda TOKEN_COCINA y TOKEN)",
+      "url": "{{AUTH_URL}}/auth/login",
+      "method": "POST",
+      "sortNum": 21800,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"identifier\": \"cocina@sanpollo.com\",\n  \"password\": \"cocina123\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
+        { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_COCINA" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN" }
+      ]
+    },
+    {
+      "_id": "req_auth_reg_rep",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.9 Registrar Usuario REPARTIDOR",
+      "url": "{{AUTH_URL}}/auth/register",
+      "method": "POST",
+      "sortNum": 21900,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Pedro Repartidor\",\n  \"email\": \"repartidor@sanpollo.com\",\n  \"phone\": \"944556677\",\n  \"password\": \"repartidor123\",\n  \"role\": \"REPARTIDOR\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
+        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "REPARTIDOR" }
+      ]
+    },
+    {
+      "_id": "req_auth_login_rep",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl2_auth",
+      "name": "2.1.10 Login REPARTIDOR (Guarda TOKEN_REPARTIDOR y TOKEN)",
+      "url": "{{AUTH_URL}}/auth/login",
+      "method": "POST",
+      "sortNum": 21950,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"identifier\": \"repartidor@sanpollo.com\",\n  \"password\": \"repartidor123\"\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
+        { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_REPARTIDOR" },
+        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN" }
       ]
     },
     {
@@ -254,7 +420,7 @@
       "_id": "req_prod_list_all",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_prod",
-      "name": "2.2.2 Listar Productos",
+      "name": "2.2.2 Listar Productos (Publico)",
       "url": "{{ORDERS_URL}}/productos",
       "method": "GET",
       "sortNum": 22200,
@@ -300,7 +466,7 @@
       "_id": "req_prod_toggle_disp",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_prod",
-      "name": "2.2.5 Toggle Disponibilidad Producto",
+      "name": "2.2.5 Toggle Disponibilidad Producto (Admin)",
       "url": "{{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad",
       "method": "PATCH",
       "sortNum": 22500,
@@ -339,44 +505,44 @@
       ]
     },
     {
-      "_id": "req_mesa_list",
+      "_id": "req_mesa_list_mozo",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_mesas",
-      "name": "2.3.2 Listar Todas las Mesas",
+      "name": "2.3.2 Listar Todas las Mesas (Mozo)",
       "url": "{{ORDERS_URL}}/mesas",
       "method": "GET",
       "sortNum": 23200,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_MOZO}}" }
       ],
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "200" }
       ]
     },
     {
-      "_id": "req_mesa_libres",
+      "_id": "req_mesa_libres_mozo",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_mesas",
-      "name": "2.3.3 Listar Mesas Libres",
+      "name": "2.3.3 Listar Mesas Libres (Mozo)",
       "url": "{{ORDERS_URL}}/mesas/libres",
       "method": "GET",
       "sortNum": 23300,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_MOZO}}" }
       ],
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "200" }
       ]
     },
     {
-      "_id": "req_mesa_patch_status",
+      "_id": "req_mesa_patch_status_mozo",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_mesas",
-      "name": "2.3.4 Cambiar Estado de Mesa a OCUPADA",
+      "name": "2.3.4 Cambiar Estado de Mesa a OCUPADA (Mozo)",
       "url": "{{ORDERS_URL}}/mesas/{{MESA_ID}}/estado",
       "method": "PATCH",
       "sortNum": 23400,
@@ -384,7 +550,7 @@
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_MOZO}}" }
       ],
       "body": {
         "type": "json",
@@ -397,60 +563,13 @@
       ]
     },
     {
-      "_id": "req_auth_reg_cli",
-      "colId": "col_polleria_fase1",
-      "containerId": "fldr_lvl2_auth_cli",
-      "name": "2.4.1 Registrar Cliente",
-      "url": "{{AUTH_URL}}/auth/register",
-      "method": "POST",
-      "sortNum": 24100,
-      "created": "2026-08-30",
-      "modified": "2026-08-30",
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
-      "body": {
-        "type": "json",
-        "raw": "{\n  \"name\": \"Juan Perez\",\n  \"email\": \"juan.perez@cliente.com\",\n  \"phone\": \"912345678\",\n  \"password\": \"cliente123\",\n  \"role\": \"CLIENTE\"\n}",
-        "form": []
-      },
-      "tests": [
-        { "type": "res-code", "custom": "", "action": "equal", "value": "201" },
-        { "type": "res-body", "custom": "json.role", "action": "equal", "value": "CLIENTE" }
-      ]
-    },
-    {
-      "_id": "req_auth_login_cli",
-      "colId": "col_polleria_fase1",
-      "containerId": "fldr_lvl2_auth_cli",
-      "name": "2.4.2 Login Cliente (Extrae TOKEN_CLIENTE)",
-      "url": "{{AUTH_URL}}/auth/login",
-      "method": "POST",
-      "sortNum": 24200,
-      "created": "2026-08-30",
-      "modified": "2026-08-30",
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
-      "body": {
-        "type": "json",
-        "raw": "{\n  \"identifier\": \"juan.perez@cliente.com\",\n  \"password\": \"cliente123\"\n}",
-        "form": []
-      },
-      "tests": [
-        { "type": "res-code", "custom": "", "action": "equal", "value": "200" },
-        { "type": "res-body", "custom": "json.token", "action": "is-not-empty", "value": "" },
-        { "type": "set-env-var", "custom": "json.token", "action": "set-to", "value": "TOKEN_CLIENTE" }
-      ]
-    },
-    {
       "_id": "req_orden_create_delivery",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_ordenes",
-      "name": "2.5.1 Crear Orden Delivery (Extrae ORDEN_ID)",
+      "name": "2.4.1 Crear Orden Delivery (Extrae ORDEN_ID)",
       "url": "{{ORDERS_URL}}/ordenes",
       "method": "POST",
-      "sortNum": 25100,
+      "sortNum": 24100,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -459,7 +578,7 @@
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"tipo\": \"DELIVERY\",\n  \"direccionEntrega\": \"Av. Los Maestros 123, Ica\",\n  \"referencia\": \"Frente al parque principal\",\n  \"nombreCliente\": \"Juan Perez\",\n  \"telefonoCliente\": \"912345678\",\n  \"observaciones\": \"Tocar timbre 2 veces\",\n  \"items\": [\n    {\n      \"productoId\": {{PRODUCTO_ID}},\n      \"cantidad\": 2,\n      \"notas\": \"Extra aji y cremas\"\n    }\n  ]\n}",
+        "raw": "{\n  \"tipo\": \"DELIVERY\",\n  \"direccionEntrega\": \"Av. Los Maestros 123, Ica\",\n  \"referencia\": \"Frente al parque principal\",\n  \"nombreCliente\": \"Juan Cliente\",\n  \"telefonoCliente\": \"912345678\",\n  \"observaciones\": \"Tocar timbre 2 veces\",\n  \"items\": [\n    {\n      \"productoId\": {{PRODUCTO_ID}},\n      \"cantidad\": 2,\n      \"notas\": \"Extra aji y cremas\"\n    }\n  ]\n}",
         "form": []
       },
       "tests": [
@@ -473,10 +592,10 @@
       "_id": "req_orden_get_id",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_ordenes",
-      "name": "2.5.2 Consultar Orden por ID",
+      "name": "2.4.2 Consultar Orden por ID (Cliente)",
       "url": "{{ORDERS_URL}}/ordenes/{{ORDEN_ID}}",
       "method": "GET",
-      "sortNum": 25200,
+      "sortNum": 24200,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -491,10 +610,10 @@
       "_id": "req_orden_mis_ordenes",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_ordenes",
-      "name": "2.5.3 Mis Ordenes (Historial Cliente)",
+      "name": "2.4.3 Mis Ordenes (Historial Cliente)",
       "url": "{{ORDERS_URL}}/ordenes/mis-ordenes",
       "method": "GET",
-      "sortNum": 25300,
+      "sortNum": 24300,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -508,14 +627,14 @@
       "_id": "req_orden_cocina",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_ordenes",
-      "name": "2.5.4 Ordenes para Cocina (Admin)",
+      "name": "2.4.4 Ordenes para Cocina (Rol COCINA)",
       "url": "{{ORDERS_URL}}/ordenes/cocina",
       "method": "GET",
-      "sortNum": 25400,
+      "sortNum": 24400,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_COCINA}}" }
       ],
       "tests": [
         { "type": "res-code", "custom": "", "action": "equal", "value": "200" }
@@ -525,10 +644,10 @@
       "_id": "req_pago_create_contraentrega",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_pagos",
-      "name": "2.6.1 Iniciar Pago Contraentrega (Extrae PAGO_ID)",
+      "name": "2.5.1 Iniciar Pago Contraentrega (Extrae PAGO_ID)",
       "url": "{{PAYMENTS_URL}}/pagos",
       "method": "POST",
-      "sortNum": 26100,
+      "sortNum": 25100,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -550,10 +669,10 @@
       "_id": "req_pago_get_id",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_pagos",
-      "name": "2.6.2 Obtener Pago por ID",
+      "name": "2.5.2 Obtener Pago por ID (Cliente)",
       "url": "{{PAYMENTS_URL}}/pagos/{{PAGO_ID}}",
       "method": "GET",
-      "sortNum": 26200,
+      "sortNum": 25200,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -568,10 +687,10 @@
       "_id": "req_pago_get_by_orden",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_pagos",
-      "name": "2.6.3 Obtener Pago por Orden ID",
+      "name": "2.5.3 Obtener Pago por Orden ID (Cliente)",
       "url": "{{PAYMENTS_URL}}/pagos/orden/{{ORDEN_ID}}",
       "method": "GET",
-      "sortNum": 26300,
+      "sortNum": 25300,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -582,18 +701,18 @@
       ]
     },
     {
-      "_id": "req_estado_preparacion",
+      "_id": "req_estado_preparacion_cocina",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_estados",
-      "name": "2.7.1 Cambiar Estado a EN_PREPARACION",
+      "name": "2.6.1 Cocina Inicia Preparacion (EN_PREPARACION)",
       "url": "{{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado",
       "method": "PATCH",
-      "sortNum": 27100,
+      "sortNum": 26100,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_COCINA}}" }
       ],
       "body": {
         "type": "json",
@@ -606,18 +725,18 @@
       ]
     },
     {
-      "_id": "req_estado_listo",
+      "_id": "req_estado_listo_cocina",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_estados",
-      "name": "2.7.2 Cambiar Estado a LISTO",
+      "name": "2.6.2 Cocina Termina Plato (LISTO)",
       "url": "{{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado",
       "method": "PATCH",
-      "sortNum": 27200,
+      "sortNum": 26200,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_COCINA}}" }
       ],
       "body": {
         "type": "json",
@@ -630,18 +749,18 @@
       ]
     },
     {
-      "_id": "req_estado_camino",
+      "_id": "req_estado_camino_rep",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_estados",
-      "name": "2.7.3 Cambiar Estado a EN_CAMINO",
+      "name": "2.6.3 Repartidor Toma Pedido (EN_CAMINO)",
       "url": "{{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado",
       "method": "PATCH",
-      "sortNum": 27300,
+      "sortNum": 26300,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_REPARTIDOR}}" }
       ],
       "body": {
         "type": "json",
@@ -654,22 +773,22 @@
       ]
     },
     {
-      "_id": "req_pago_confirmar",
+      "_id": "req_pago_confirmar_rep",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_estados",
-      "name": "2.7.4 Confirmar Pago Contraentrega (Admin)",
+      "name": "2.6.4 Repartidor Confirma Cobro Contraentrega",
       "url": "{{PAYMENTS_URL}}/pagos/{{PAGO_ID}}/confirmar",
       "method": "PATCH",
-      "sortNum": 27400,
+      "sortNum": 26400,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_REPARTIDOR}}" }
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"referenciaExterna\": \"EFECTIVO-REC-001\",\n  \"detalle\": \"Pago recibido en efectivo contraentrega\"\n}",
+        "raw": "{\n  \"referenciaExterna\": \"EFECTIVO-REC-001\",\n  \"detalle\": \"Cobrado en puerta del cliente por repartidor\"\n}",
         "form": []
       },
       "tests": [
@@ -678,18 +797,18 @@
       ]
     },
     {
-      "_id": "req_estado_entregado",
+      "_id": "req_estado_entregado_rep",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_estados",
-      "name": "2.7.5 Cambiar Estado a ENTREGADO",
+      "name": "2.6.5 Repartidor Marca Pedido ENTREGADO",
       "url": "{{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado",
       "method": "PATCH",
-      "sortNum": 27500,
+      "sortNum": 26500,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {{TOKEN_ADMIN}}" }
+        { "name": "Authorization", "value": "Bearer {{TOKEN_REPARTIDOR}}" }
       ],
       "body": {
         "type": "json",
@@ -705,10 +824,10 @@
       "_id": "req_notif_whatsapp",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl2_notif",
-      "name": "2.8.1 Enviar Notificacion WhatsApp Directa",
+      "name": "2.7.1 Enviar Notificacion WhatsApp Directa",
       "url": "{{NOTIF_URL}}/notificar",
       "method": "POST",
-      "sortNum": 28100,
+      "sortNum": 27100,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
@@ -716,7 +835,7 @@
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"telefono\": \"912345678\",\n  \"orderId\": {{ORDEN_ID}},\n  \"estado\": \"RECIBIDO\",\n  \"nombreCliente\": \"Juan Perez\"\n}",
+        "raw": "{\n  \"telefono\": \"912345678\",\n  \"orderId\": {{ORDEN_ID}},\n  \"estado\": \"RECIBIDO\",\n  \"nombreCliente\": \"Juan Cliente\"\n}",
         "form": []
       },
       "tests": [
@@ -749,7 +868,7 @@
       "_id": "req_sec_prod_cli_token",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl3",
-      "name": "3.2 Crear Producto con Token de Cliente (403)",
+      "name": "3.2 Crear Producto con Token CLIENTE (403)",
       "url": "{{ORDERS_URL}}/productos",
       "method": "POST",
       "sortNum": 30200,
@@ -772,7 +891,7 @@
       "_id": "req_sec_mesas_cli_token",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl3",
-      "name": "3.3 Crear Mesa con Token de Cliente (403)",
+      "name": "3.3 Crear Mesa con Token CLIENTE (403)",
       "url": "{{ORDERS_URL}}/mesas",
       "method": "POST",
       "sortNum": 30300,
@@ -792,11 +911,11 @@
       ]
     },
     {
-      "_id": "req_sec_pagos_all_cli_token",
+      "_id": "req_sec_cocina_cli_token",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl3",
-      "name": "3.4 Ver Todos los Pagos con Token Cliente (403)",
-      "url": "{{PAYMENTS_URL}}/pagos",
+      "name": "3.4 Ver Pantalla Cocina con Token CLIENTE (403)",
+      "url": "{{ORDERS_URL}}/ordenes/cocina",
       "method": "GET",
       "sortNum": 30400,
       "created": "2026-08-30",
@@ -809,13 +928,53 @@
       ]
     },
     {
+      "_id": "req_sec_mesas_cocina_token",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl3",
+      "name": "3.5 Crear Mesas con Token COCINA (403)",
+      "url": "{{ORDERS_URL}}/mesas",
+      "method": "POST",
+      "sortNum": 30500,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{TOKEN_COCINA}}" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"numero\": 88,\n  \"capacidad\": 4\n}",
+        "form": []
+      },
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "403" }
+      ]
+    },
+    {
+      "_id": "req_sec_pagos_all_rep_token",
+      "colId": "col_polleria_fase1",
+      "containerId": "fldr_lvl3",
+      "name": "3.6 Ver Todos los Pagos con Token REPARTIDOR (403)",
+      "url": "{{PAYMENTS_URL}}/pagos",
+      "method": "GET",
+      "sortNum": 30600,
+      "created": "2026-08-30",
+      "modified": "2026-08-30",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{TOKEN_REPARTIDOR}}" }
+      ],
+      "tests": [
+        { "type": "res-code", "custom": "", "action": "equal", "value": "403" }
+      ]
+    },
+    {
       "_id": "req_sec_invalid_jwt",
       "colId": "col_polleria_fase1",
       "containerId": "fldr_lvl3",
-      "name": "3.5 Token JWT Invalido o Manipulado (401)",
+      "name": "3.7 Token JWT Invalido o Manipulado (401)",
       "url": "{{AUTH_URL}}/auth/validate",
       "method": "GET",
-      "sortNum": 30500,
+      "sortNum": 30700,
       "created": "2026-08-30",
       "modified": "2026-08-30",
       "headers": [
