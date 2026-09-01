@@ -1,0 +1,30 @@
+###############################################################################
+# SISTEMA POLLERÍA - FASE 1 (TESTS MULTI-NIVEL)
+# Extensión: REST Client (humao.rest-client)
+###############################################################################
+
+# Variables de URLs de Microservicios (AWS EC2)
+@AUTH_URL = http://98.86.149.179:8081
+@ORDERS_URL = http://100.53.223.167:8082
+@PAYMENTS_URL = http://44.203.62.89:8083
+@NOTIF_URL = https://high-ones-kerry-mobiles.trycloudflare.com
+
+# ==============================================================================
+# LEVEL 1: SMOKE & HEALTH TESTS
+# ==============================================================================
+
+### 1.1 Health Check - Notification Service
+# Esperado: HTTP 200
+GET {{NOTIF_URL}}/status
+
+### 1.2 Catalogo Publico - Orders Service
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos
+
+### 1.3 Endpoint Protegido Sin Token - Auth Validate (401)
+# Esperado: HTTP 401
+GET {{AUTH_URL}}/auth/validate
+
+### 1.4 Endpoint Protegido Sin Token - Payments (401)
+# Esperado: HTTP 401
+GET {{PAYMENTS_URL}}/pagos

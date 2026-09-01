@@ -1,0 +1,503 @@
+###############################################################################
+# SISTEMA POLLERÍA - FASE 1 (TESTS MULTI-NIVEL)
+# Extensión: REST Client (humao.rest-client)
+###############################################################################
+
+# Variables de URLs de Microservicios (AWS EC2)
+@AUTH_URL = http://98.86.149.179:8081
+@ORDERS_URL = http://100.53.223.167:8082
+@PAYMENTS_URL = http://44.203.62.89:8083
+@NOTIF_URL = http://100.53.223.167:3001
+
+# Tokens extraídos dinámicamente de las respuestas de login
+@TOKEN_ADMIN = {{loginAdmin.response.body.token}}
+@TOKEN_CLIENTE = {{loginCliente.response.body.token}}
+@TOKEN_MOZO = {{loginMozo.response.body.token}}
+@TOKEN_COCINA = {{loginCocina.response.body.token}}
+@TOKEN_REPARTIDOR = {{loginRepartidor.response.body.token}}
+
+# IDs extraídos dinámicamente de las creaciones
+@PRODUCTO_ID = {{createProduct.response.body.id}}
+@MESA_ID = {{createMesa.response.body.id}}
+@ORDEN_ID = {{createOrder.response.body.id}}
+@PAGO_ID = {{createPayment.response.body.id}}
+
+
+================================================================================
+# 1. NIVEL 1 - SMOKE & HEALTH TESTS
+================================================================================
+
+### 1.1 Health Check - Notification Service
+# Esperado: HTTP 200
+GET {{NOTIF_URL}}/status
+
+### 1.2 Catalogo Publico - Orders Service
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos
+
+### 1.3 Endpoint Protegido Sin Token - Auth Validate (401)
+# Esperado: HTTP 401
+GET {{AUTH_URL}}/auth/validate
+
+### 1.4 Endpoint Protegido Sin Token - Payments (401)
+# Esperado: HTTP 401
+GET {{PAYMENTS_URL}}/pagos
+
+
+================================================================================
+# 2. NIVEL 2 - HAPPY PATH & FLUJO E2E
+================================================================================
+
+
+------------------------------------------------------------
+# 2.1 Autenticacion Multi-Rol (5 Roles)
+------------------------------------------------------------
+
+### 2.1.1 Registrar Usuario ADMIN
+# Esperado: HTTP 201
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Admin Polleria",
+  "email": "admin@sanpollo.com",
+  "phone": "987654321",
+  "password": "admin123",
+  "role": "ADMIN"
+}
+
+### 2.1.2 Login ADMIN (Guarda TOKEN_ADMIN y TOKEN)
+# Esperado: HTTP 200
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "admin@sanpollo.com",
+  "password": "admin123"
+}
+
+### 2.1.3 Registrar Usuario CLIENTE
+# Esperado: HTTP 201
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Juan Cliente",
+  "email": "cliente@sanpollo.com",
+  "phone": "912345678",
+  "password": "cliente123",
+  "role": "CLIENTE"
+}
+
+### 2.1.4 Login CLIENTE (Guarda TOKEN_CLIENTE y TOKEN)
+# Esperado: HTTP 200
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "cliente@sanpollo.com",
+  "password": "cliente123"
+}
+
+### 2.1.5 Registrar Usuario MOZO
+# Esperado: HTTP 201
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Carlos Mozo",
+  "email": "mozo@sanpollo.com",
+  "phone": "922334455",
+  "password": "mozo123",
+  "role": "MOZO"
+}
+
+### 2.1.6 Login MOZO (Guarda TOKEN_MOZO y TOKEN)
+# Esperado: HTTP 200
+# @name loginMozo
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "mozo@sanpollo.com",
+  "password": "mozo123"
+}
+
+### 2.1.7 Registrar Usuario COCINA
+# Esperado: HTTP 201
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Chef Mario Cocina",
+  "email": "cocina@sanpollo.com",
+  "phone": "933445566",
+  "password": "cocina123",
+  "role": "COCINA"
+}
+
+### 2.1.8 Login COCINA (Guarda TOKEN_COCINA y TOKEN)
+# Esperado: HTTP 200
+# @name loginCocina
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "cocina@sanpollo.com",
+  "password": "cocina123"
+}
+
+### 2.1.9 Registrar Usuario REPARTIDOR
+# Esperado: HTTP 201
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Pedro Repartidor",
+  "email": "repartidor@sanpollo.com",
+  "phone": "944556677",
+  "password": "repartidor123",
+  "role": "REPARTIDOR"
+}
+
+### 2.1.10 Login REPARTIDOR (Guarda TOKEN_REPARTIDOR y TOKEN)
+# Esperado: HTTP 200
+# @name loginRepartidor
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "repartidor@sanpollo.com",
+  "password": "repartidor123"
+}
+
+
+------------------------------------------------------------
+# 2.2 Productos (Admin)
+------------------------------------------------------------
+
+### 2.2.1 Crear Producto (Extrae PRODUCTO_ID)
+# Esperado: HTTP 201
+# @name createProduct
+POST {{ORDERS_URL}}/productos
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+{
+  "nombre": "1/4 Pollo a la Brasa Clasico",
+  "descripcion": "1/4 de pollo con papas fritas y ensalada fresca",
+  "precio": 24.50,
+  "categoria": "CUARTO_POLLO",
+  "imagenUrl": "https://images.unsplash.com/photo-1598103442097-8b74394b95c6",
+  "disponible": true
+}
+
+### 2.2.2 Listar Productos (Publico)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos
+
+### 2.2.3 Filtrar Productos por Categoria
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos?categoria=CUARTO_POLLO
+
+### 2.2.4 Obtener Producto por ID
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+
+### 2.2.5 Toggle Disponibilidad Producto (Admin)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+
+------------------------------------------------------------
+# 2.3 Mesas (Admin/Mozo)
+------------------------------------------------------------
+
+### 2.3.1 Crear Mesa (Extrae MESA_ID)
+# Esperado: HTTP 201
+# @name createMesa
+POST {{ORDERS_URL}}/mesas
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+{
+  "numero": 10,
+  "capacidad": 4
+}
+
+### 2.3.2 Listar Todas las Mesas (Mozo)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 2.3.3 Listar Mesas Libres (Mozo)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/mesas/libres
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 2.3.4 Cambiar Estado de Mesa a OCUPADA (Mozo)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_MOZO}}
+
+{
+  "estado": "OCUPADA"
+}
+
+
+------------------------------------------------------------
+# 2.4 Órdenes (Cliente/Cocina/Mozo)
+------------------------------------------------------------
+
+### 2.4.1 Crear Orden Delivery (Extrae ORDEN_ID)
+# Esperado: HTTP 201
+# @name createOrder
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+{
+  "tipo": "DELIVERY",
+  "direccionEntrega": "Av. Los Maestros 123, Ica",
+  "referencia": "Frente al parque principal",
+  "nombreCliente": "Juan Cliente",
+  "telefonoCliente": "912345678",
+  "observaciones": "Tocar timbre 2 veces",
+  "items": [
+    {
+      "productoId": {{PRODUCTO_ID}},
+      "cantidad": 2,
+      "notas": "Extra aji y cremas"
+    }
+  ]
+}
+
+### 2.4.2 Consultar Orden por ID (Cliente)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.4.3 Mis Ordenes (Historial Cliente)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/ordenes/mis-ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.4.4 Ordenes para Cocina (Rol COCINA)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/ordenes/cocina
+Authorization: Bearer {{TOKEN_COCINA}}
+
+
+------------------------------------------------------------
+# 2.5 Pagos
+------------------------------------------------------------
+
+### 2.5.1 Iniciar Pago Contraentrega (Extrae PAGO_ID)
+# Esperado: HTTP 201
+# @name createPayment
+POST {{PAYMENTS_URL}}/pagos
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+{
+  "ordenId": {{ORDEN_ID}},
+  "monto": 49.00,
+  "metodoPago": "CONTRAENTREGA",
+  "tokenPasarela": null,
+  "telefonoYape": null
+}
+
+### 2.5.2 Obtener Pago por ID (Cliente)
+# Esperado: HTTP 200
+GET {{PAYMENTS_URL}}/pagos/{{PAGO_ID}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.5.3 Obtener Pago por Orden ID (Cliente)
+# Esperado: HTTP 200
+GET {{PAYMENTS_URL}}/pagos/orden/{{ORDEN_ID}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+
+------------------------------------------------------------
+# 2.6 Ciclo de Estados y Entrega
+------------------------------------------------------------
+
+### 2.6.1 Cocina Inicia Preparacion (EN_PREPARACION)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_COCINA}}
+
+{
+  "estado": "EN_PREPARACION"
+}
+
+### 2.6.2 Cocina Termina Plato (LISTO)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_COCINA}}
+
+{
+  "estado": "LISTO"
+}
+
+### 2.6.3 Repartidor Toma Pedido (EN_CAMINO)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+{
+  "estado": "EN_CAMINO",
+  "repartidorId": 1
+}
+
+### 2.6.4 Repartidor Confirma Cobro Contraentrega
+# Esperado: HTTP 200
+PATCH {{PAYMENTS_URL}}/pagos/{{PAGO_ID}}/confirmar
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+{
+  "referenciaExterna": "EFECTIVO-REC-001",
+  "detalle": "Cobrado en puerta del cliente por repartidor"
+}
+
+### 2.6.5 Repartidor Marca Pedido ENTREGADO
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+{
+  "estado": "ENTREGADO"
+}
+
+
+------------------------------------------------------------
+# 2.7 Notificaciones WhatsApp
+------------------------------------------------------------
+
+### 2.7.1 Enviar Notificacion WhatsApp Directa
+# Esperado: HTTP 200
+POST {{NOTIF_URL}}/notificar
+Content-Type: application/json
+
+{
+  "telefono": "912345678",
+  "orderId": {{ORDEN_ID}},
+  "estado": "RECIBIDO",
+  "nombreCliente": "Juan Cliente"
+}
+
+
+================================================================================
+# 3. NIVEL 3 - SEGURIDAD & RBAC (401 / 403 POR ROL)
+================================================================================
+
+### 3.1 Crear Producto sin Token (401)
+# Esperado: HTTP 401
+POST {{ORDERS_URL}}/productos
+Content-Type: application/json
+
+{
+  "nombre": "Producto Invalido",
+  "precio": 10.0,
+  "categoria": "BEBIDA"
+}
+
+### 3.2 Crear Producto con Token CLIENTE (403)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/productos
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+{
+  "nombre": "Producto Hack",
+  "precio": 1.0,
+  "categoria": "BEBIDA",
+  "disponible": true
+}
+
+### 3.3 Crear Mesa con Token CLIENTE (403)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/mesas
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+{
+  "numero": 99,
+  "capacidad": 4
+}
+
+### 3.4 Ver Pantalla Cocina con Token CLIENTE (403)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/cocina
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 3.5 Crear Mesas con Token COCINA (403)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/mesas
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_COCINA}}
+
+{
+  "numero": 88,
+  "capacidad": 4
+}
+
+### 3.6 Ver Todos los Pagos con Token REPARTIDOR (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+### 3.7 Token JWT Invalido o Manipulado (401)
+# Esperado: HTTP 401
+GET {{AUTH_URL}}/auth/validate
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.invalid.payload
+
+
+================================================================================
+# 4. NIVEL 4 - VALIDACIONES Y CASOS BORDE (400 / 404)
+================================================================================
+
+### 4.1 Login con Password Incorrecto (400/401)
+# Esperado: HTTP 401
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "admin@sanpollo.com",
+  "password": "wrongPassword123"
+}
+
+### 4.2 Consultar Producto Inexistente (404)
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/productos/999999
+
+### 4.3 Crear Orden con Lista de Items Vacia (400)
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+{
+  "tipo": "SALON",
+  "mesaId": {{MESA_ID}},
+  "items": []
+}
+
+### 4.4 Cambiar a Estado Invalido (400)
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Content-Type: application/json
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+{
+  "estado": "ESTADO_INEXISTENTE"
+}
