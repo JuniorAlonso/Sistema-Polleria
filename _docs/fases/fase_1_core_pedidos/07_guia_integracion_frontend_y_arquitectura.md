@@ -11,8 +11,7 @@
 | :--- | :--- | :---: | :--- |
 | **`auth-service`** | `http://localhost:8081` | 8081 | Identidad, Registro, Login, 2FA, Emisión/Rotación de JWT y Sesiones. |
 | **`orders-service`** | `http://localhost:8082` | 8082 | Gestión de Carta, Mesas, Pedidos (Órdenes) y Estados de Cocina/Salón. |
-| **`payments-service`** | `http://localhost:8083` | 8083 | Transacciones, Métodos de Pago, Preferencias y Webhook de Mercado Pago. |
-| **`notification-service`** | `http://localhost:3001` | 3001 | Notificaciones en tiempo real vía WhatsApp (Node.js/Express). |
+| **`payments-service`** | `http://localhost:8083` | 8083 | Transacciones, Métodos de Pago (Contraentrega/Mock) y Ciclo de Estados de Pago. |
 
 ---
 
@@ -112,7 +111,7 @@ export interface Mesa {
   numero: number;
   capacidad: number;
   estado: EstadoMesa;
-  qrCode?: string;
+  qrUrl?: string;
 }
 
 // ==========================================
@@ -200,12 +199,6 @@ export interface PagoResponse {
   detalle?: string;
   creadoEn: string;
   actualizadoEn: string;
-}
-
-export interface MercadoPagoPreferenceResponse {
-  preferenceId: string;
-  initPoint: string;
-  sandboxInitPoint: string;
 }
 ```
 

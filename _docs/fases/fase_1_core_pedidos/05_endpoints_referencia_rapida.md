@@ -11,7 +11,6 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | auth-service | `http://localhost:8081` | 8081 |
 | orders-service | `http://localhost:8082` | 8082 |
 | payments-service | `http://localhost:8083` | 8083 |
-| notification-service | `http://localhost:3001` | 3001 |
 
 ---
 
@@ -76,24 +75,16 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 
 | Método | Endpoint | Auth | Rol | Descripción |
 | :---: | :--- | :---: | :--- | :--- |
-| `POST` | `/pagos` | 🔒 | CLIENTE, MOZO, ADMIN | Iniciar pago |
-| `POST` | `/pagos/mercadopago/preferencia` | 🔒 | Cualquiera | Crear preferencia Mercado Pago (Checkout Pro) |
+| `POST` | `/pagos` | 🔒 | CLIENTE, MOZO, ADMIN | Iniciar pago (Contraentrega / Mock) |
 | `GET` | `/pagos/{id}` | 🔒 | CLIENTE, MOZO, ADMIN, REPARTIDOR | Detalle de un pago |
 | `GET` | `/pagos/orden/{ordenId}` | 🔒 | CLIENTE, MOZO, ADMIN, REPARTIDOR | Pago de una orden |
 | `GET` | `/pagos/mis-pagos` | 🔒 | CLIENTE, MOZO | Historial de pagos del cliente |
 | `GET` | `/pagos` | 🔒 | ADMIN | Todos los pagos |
 | `PATCH` | `/pagos/{id}/confirmar` | 🔒 | ADMIN, REPARTIDOR | Confirmar pago (contraentrega) |
 | `PATCH` | `/pagos/{id}/cancelar` | 🔒 | ADMIN, CLIENTE | Cancelar pago |
-| `POST/GET` | `/pagos/webhook/mercadopago` | 🔓 | — | Webhook de Mercado Pago (público) |
 
----
-
-## Notificaciones (notification-service → :3001)
-
-| Método | Endpoint | Auth | Rol | Descripción |
-| :---: | :--- | :---: | :--- | :--- |
-| `POST` | `/notificar` | 🔓 | — | Enviar notificación WhatsApp (uso inter-servicio) |
-| `GET` | `/status` | 🔓 | — | Health check del servicio y estado de WhatsApp |
+> 💳 *La pasarela oficial de Mercado Pago (Checkout Pro y Webhooks IPN) se encuentra documentada en la [Fase 5](../fase_5_pagos_mercadopago/README.md).*  
+> 📲 *El microservicio de notificaciones por WhatsApp (`notification-service`) se encuentra documentado en la [Fase 3](../fase_3_notificaciones_wasap/README.md).*
 
 ---
 

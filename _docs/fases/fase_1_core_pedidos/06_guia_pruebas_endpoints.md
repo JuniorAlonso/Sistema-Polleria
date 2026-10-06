@@ -20,7 +20,6 @@ Verificar que los 4 servicios estén arriba:
 | auth-service | `GET http://localhost:8081/auth/validate` | `401` (sin token) |
 | orders-service | `GET http://localhost:8082/productos` | `200` + lista |
 | payments-service | `GET http://localhost:8083/pagos` | `401` (sin token) |
-| notification-service | `GET http://localhost:3001/status` | `200` + `{ status: "ok" }` |
 
 ### 1.2 Herramienta recomendada
 
@@ -672,21 +671,7 @@ curl -X POST http://localhost:8083/pagos \
 
 ---
 
-### 7.2 Crear preferencia Mercado Pago
-
-```
-POST http://localhost:8083/pagos/mercadopago/preferencia
-Authorization: Bearer {{TOKEN}}
-Content-Type: application/json
-```
-
-**Body:** Mismo formato que iniciar pago.
-
-**Respuesta:** URL de checkout para redirigir al cliente.
-
----
-
-### 7.3 Obtener pago por ID
+### 7.2 Obtener pago por ID
 
 ```
 GET http://localhost:8083/pagos/1
@@ -695,7 +680,7 @@ Authorization: Bearer {{TOKEN}}
 
 ---
 
-### 7.4 Pago por orden
+### 7.3 Pago por orden
 
 ```
 GET http://localhost:8083/pagos/orden/1
@@ -704,7 +689,7 @@ Authorization: Bearer {{TOKEN}}
 
 ---
 
-### 7.5 Mis pagos (CLIENTE, MOZO)
+### 7.4 Mis pagos (CLIENTE, MOZO)
 
 ```
 GET http://localhost:8083/pagos/mis-pagos
@@ -713,7 +698,7 @@ Authorization: Bearer {{TOKEN}}
 
 ---
 
-### 7.6 Todos los pagos (ADMIN)
+### 7.5 Todos los pagos (ADMIN)
 
 ```
 GET http://localhost:8083/pagos
@@ -722,7 +707,7 @@ Authorization: Bearer {{TOKEN}}
 
 ---
 
-### 7.7 Confirmar pago (ADMIN, REPARTIDOR)
+### 7.6 Confirmar pago (ADMIN, REPARTIDOR)
 
 ```
 PATCH http://localhost:8083/pagos/1/confirmar
@@ -748,7 +733,7 @@ curl -X PATCH http://localhost:8083/pagos/1/confirmar \
 
 ---
 
-### 7.8 Cancelar pago (ADMIN, CLIENTE)
+### 7.7 Cancelar pago (ADMIN, CLIENTE)
 
 ```
 PATCH http://localhost:8083/pagos/1/cancelar
@@ -757,90 +742,12 @@ Authorization: Bearer {{TOKEN}}
 
 > Sin body requerido.
 
----
-
-### 7.9 Webhook Mercado Pago (público)
-
-```
-POST http://localhost:8083/pagos/webhook/mercadopago?type=payment&data.id=12345
-Content-Type: application/json
-```
-
-**Body (simulación):**
-```json
-{
-  "action": "payment.created",
-  "type": "payment",
-  "data": {
-    "id": "12345"
-  }
-}
-```
-
-> Este endpoint es público (sin auth). En producción, lo llama Mercado Pago automáticamente.
+> 💡 *Para la guía de pruebas de Mercado Pago (Checkout Pro y Webhooks), consultar la [Fase 5](../fase_5_pagos_mercadopago/README.md).*  
+> 💡 *Para la guía de pruebas de Notificaciones WhatsApp (`notification-service`), consultar la [Fase 3](../fase_3_notificaciones_wasap/README.md).*
 
 ---
 
-## 8. notification-service (`:3001`)
-
-### 8.1 Health check
-
-```
-GET http://localhost:3001/status
-```
-
-**Respuesta esperada:**
-```json
-{
-  "status": "ok",
-  "whatsapp": "connected"
-}
-```
-
-> Si dice `"waiting_qr"`, se debe escanear el QR que aparece en la consola del servicio.
-
----
-
-### 8.2 Enviar notificación WhatsApp
-
-> Este endpoint es de **uso inter-servicio** (orders-service lo llama al cambiar estado). Se puede probar manualmente.
-
-```
-POST http://localhost:3001/notificar
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "telefono": "987654321",
-  "orderId": 1,
-  "estado": "RECIBIDO",
-  "nombreCliente": "Juan Pérez"
-}
-```
-
-**Estados y mensajes:**
-
-| Estado | Mensaje enviado |
-| :--- | :--- |
-| `RECIBIDO` | ✅ Hola *Juan*, tu pedido *#1* fue recibido y está en cola. 🍗 |
-| `EN_PREPARACION` | 👨‍🍳 Tu pedido *#1* está siendo preparado. ¡Ya casi! |
-| `LISTO` | 🔔 Tu pedido *#1* está *listo*. ¡Lo estamos empacando! |
-| `EN_CAMINO` | 🛵 Tu pedido *#1* va *en camino*. El repartidor está cerca. |
-| `ENTREGADO` | 🎉 Pedido *#1* entregado. ¡Buen provecho! |
-| `CANCELADO` | ❌ Tu pedido *#1* fue cancelado. |
-
-**cURL:**
-```bash
-curl -X POST http://localhost:3001/notificar \
-  -H "Content-Type: application/json" \
-  -d '{"telefono":"987654321","orderId":1,"estado":"RECIBIDO","nombreCliente":"Juan"}'
-```
-
----
-
-## 9. Escenario de Prueba Completo (E2E)
+## 8. Escenario de Prueba Completo (E2E)
 
 Secuencia completa para validar todo el flujo de negocio:
 
@@ -869,7 +776,7 @@ Paso  Endpoint                                 Acción
 
 ---
 
-## 10. Errores Comunes y Troubleshooting
+## 9. Errores Comunes y Troubleshooting
 
 | Código | Causa probable | Solución |
 | :---: | :--- | :--- |
@@ -896,7 +803,7 @@ docker compose -f docker-compose.local.yml restart auth-service
 
 ---
 
-## 11. Referencia de Enums
+## 10. Referencia de Enums
 
 ### Roles de usuario
 `CLIENTE` · `MOZO` · `COCINA` · `ADMIN` · `REPARTIDOR`

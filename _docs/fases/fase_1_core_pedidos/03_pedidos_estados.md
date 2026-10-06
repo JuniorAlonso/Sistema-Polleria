@@ -51,7 +51,7 @@ RECIBIDO, EN_PREPARACION, LISTO, EN_CAMINO, ENTREGADO, CANCELADO
 
 ---
 
-## Máquina de Estados
+## Máquina de Estados (RF15)
 
 ```
                 ┌──────────────┐
@@ -100,7 +100,7 @@ Cualquier transición inválida retorna `400: "Transición de estado inválida: 
 
 ## Endpoints
 
-### 1. Crear Pedido (RF15, RF16)
+### 1. Crear Pedido (RF13, RF14)
 
 ```
 POST /ordenes
@@ -221,7 +221,7 @@ GET /ordenes/{id}
 
 ---
 
-### 3. Mis Órdenes — Historial del Cliente (RF18)
+### 3. Mis Órdenes — Historial del Cliente (RF17)
 
 ```
 GET /ordenes/mis-ordenes
@@ -233,7 +233,7 @@ GET /ordenes/mis-ordenes
 
 ---
 
-### 4. Listar Órdenes para Cocina (RF19)
+### 4. Listar Órdenes para Cocina (RF16)
 
 ```
 GET /ordenes/cocina
@@ -277,7 +277,7 @@ Si no se envía `estado`, retorna las órdenes activas (equivale a `/ordenes/act
 
 ---
 
-### 7. Actualizar Estado de Orden (RF19, RF20)
+### 7. Actualizar Estado de Orden (RF15, RF16, RF18)
 
 ```
 PATCH /ordenes/{id}/estado

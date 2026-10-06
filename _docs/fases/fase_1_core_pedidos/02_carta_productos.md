@@ -31,7 +31,7 @@ PARRILLA, GUARNICION, BEBIDA, POSTRE, PROMOCION
 
 ## Endpoints
 
-### 1. Listar Productos — Carta Pública (RF09, RF12)
+### 1. Listar Productos — Carta Pública (RF07, RF10)
 
 ```
 GET /productos
@@ -110,7 +110,7 @@ GET /productos/{id}
 
 ---
 
-### 3. Crear Producto (RF08)
+### 3. Crear Producto (RF06)
 
 ```
 POST /productos
@@ -143,7 +143,7 @@ POST /productos
 
 ---
 
-### 4. Actualizar Producto (RF08)
+### 4. Actualizar Producto (RF06)
 
 ```
 PUT /productos/{id}
@@ -157,7 +157,7 @@ PUT /productos/{id}
 
 ---
 
-### 5. Marcar como Agotado / Disponible (RF10)
+### 5. Marcar como Agotado / Disponible (RF08)
 
 ```
 PATCH /productos/{id}/disponibilidad
@@ -184,7 +184,7 @@ PATCH /productos/{id}/disponibilidad
 
 ---
 
-### 6. Eliminar Producto (RF08)
+### 6. Eliminar Producto (RF06)
 
 ```
 DELETE /productos/{id}
@@ -201,7 +201,7 @@ DELETE /productos/{id}
 
 ---
 
-## Promociones y Combos (RF11)
+## Promociones y Combos (RF09)
 
 Los combos y promociones se manejan como productos regulares con las categorías `COMBO` y `PROMOCION`:
 
@@ -212,7 +212,7 @@ No hay entidad separada de "promoción con reglas"; el combo/promo es un product
 
 ---
 
-## QR Físico Simulado (RF12)
+## QR Físico de Carta Digital en Mesas (RF10)
 
 La carta es **pública** (`permitAll()` en `SecurityConfig`). Un código QR en la mesa del restaurante simplemente enlaza a:
 

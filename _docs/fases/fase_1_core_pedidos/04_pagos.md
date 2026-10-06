@@ -2,7 +2,11 @@
 
 **Base URL:** `http://localhost:8083`
 
-**Rol:** Validar la transacción para avanzar el estado del pedido. En Fase 1 se usa un **mock** que aprueba automáticamente.
+**Rol:** Gestionar el ciclo de vida transaccional de pagos y habilitar el avance del pedido en la Fase 1. En esta fase se implementa el flujo transaccional base y el modo contraentrega:
+1. **Cobro Operativo:** Modo `CONTRAENTREGA` (pago en efectivo al mozo o repartidor) con confirmación administrativa.
+2. **Gateways de Simulación / Mock:** Pruebas locales controladas (`TARJETA`, `YAPE_PLIN`) para el desarrollo inicial.
+
+> 💡 **Nota de Arquitectura:** La integración completa y oficial de la pasarela **Mercado Pago** (Checkout Pro, SDK y Webhooks IPN) ha sido separada en su propia fase independiente: [Fase 5 — Pasarela de Pagos Mercado Pago](../fase_5_pagos_mercadopago/README.md).
 
 ---
 
@@ -17,7 +21,7 @@
 | `monto` | `BigDecimal(10,2)` | Not null |
 | `metodoPago` | `MetodoPago` (enum) | Not null |
 | `estado` | `EstadoPago` (enum) | Not null |
-| `referenciaExterna` | `String` | Código de la pasarela (ej: `TXN-A1B2C3D4E5F6`) |
+| `referenciaExterna` | `String` | Código de la pasarela (ej: `TXN-A1B2C3D4E5F6`, `MP-PREF-xxx`, `MP-PAY-xxx`) |
 | `detalle` | `String` | Descripción del resultado |
 | `creadoEn` | `LocalDateTime` | Auto-generado |
 | `actualizadoEn` | `LocalDateTime` | Auto-actualizado |
@@ -34,23 +38,21 @@ PENDIENTE, APROBADO, RECHAZADO, CANCELADO
 
 ---
 
-## Gateways (Pasarelas de Pago)
+## Gateways y Métodos Soportados (Fase 1)
 
-Los pagos se procesan a través de gateways mock que simulan la respuesta real:
+| Gateway | Tipo | Método de Pago | Comportamiento Técnico |
+| :--- | :---: | :--- | :--- |
+| `ContraentregaGateway` | Operativo | `CONTRAENTREGA` | Registra el pago en estado `PENDIENTE` hasta que el repartidor o personal de caja confirme el cobro. |
+| `TarjetaGateway` | Mock / Test | `TARJETA` | Requiere `tokenPasarela`. Aprueba automáticamente y genera correlativo `TXN-XXXXXXXXXXXX`. |
+| `YapePlinGateway` | Mock / Test | `YAPE_PLIN` | Requiere `telefonoYape`. Aprueba automáticamente y genera correlativo `YP-XXXXXXXXXXXX`. |
 
-| Gateway | Método de Pago | Comportamiento Mock |
-| :--- | :--- | :--- |
-| `TarjetaGateway` | `TARJETA` | Requiere `tokenPasarela`. Aprueba automáticamente. Genera `TXN-XXXXXXXXXXXX`. |
-| `YapePlinGateway` | `YAPE_PLIN` | Requiere `telefonoYape`. Aprueba automáticamente. Genera `YP-XXXXXXXXXXXX`. |
-| `ContraentregaGateway` | `CONTRAENTREGA` | Estado queda `PENDIENTE` hasta confirmación manual. |
-
-> **Nota Fase 1:** Estos gateways simulan respuestas. Para producción se integrarán con Culqi/Niubiz/Izipay.
+*(La pasarela oficial con SDK de Mercado Pago se implementa en la [Fase 5](../fase_5_pagos_mercadopago/README.md))*
 
 ---
 
 ## Endpoints
 
-### 1. Iniciar Pago — Intención de Pago (RF21, RF22)
+### 1. Iniciar Pago Directo / Simulado (RF19, RF20)
 
 ```
 POST /pagos
@@ -64,7 +66,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-**Request Body — Pago con Tarjeta:**
+**Request Body — Pago con Tarjeta (Mock):**
 ```json
 {
   "ordenId": 42,
@@ -75,7 +77,7 @@ Content-Type: application/json
 }
 ```
 
-**Request Body — Pago con Yape/Plin:**
+**Request Body — Pago con Yape/Plin (Mock):**
 ```json
 {
   "ordenId": 42,
@@ -86,7 +88,7 @@ Content-Type: application/json
 }
 ```
 
-**Request Body — Pago Contraentrega (efectivo):**
+**Request Body — Pago Contraentrega (Efectivo):**
 ```json
 {
   "ordenId": 42,
@@ -99,13 +101,13 @@ Content-Type: application/json
 
 | Campo | Tipo | Obligatorio | Validación |
 | :--- | :--- | :---: | :--- |
-| `ordenId` | `number` | ✅ | Debe existir, no debe tener pago previo |
-| `monto` | `number` | ✅ | > 0.01 |
+| `ordenId` | `number` | ✅ | Debe existir en BD y no tener pago previo aprobado |
+| `monto` | `number` | ✅ | Mayor a 0.01 |
 | `metodoPago` | `string` | ✅ | Enum: `CONTRAENTREGA`, `TARJETA`, `YAPE_PLIN` |
-| `tokenPasarela` | `string` | Solo TARJETA | Token generado por el SDK de la pasarela |
-| `telefonoYape` | `string` | Solo YAPE_PLIN | Teléfono registrado en Yape/Plin |
+| `tokenPasarela` | `string` | Solo TARJETA | Token del SDK emisor |
+| `telefonoYape` | `string` | Solo YAPE_PLIN | Celular asociado |
 
-**Response `201 Created` — Tarjeta (aprobado inmediato):**
+**Response `201 Created` — Aprobado inmediato (Tarjeta/Yape mock):**
 ```json
 {
   "id": 10,
@@ -115,34 +117,11 @@ Content-Type: application/json
   "metodoPago": "TARJETA",
   "estado": "APROBADO",
   "referenciaExterna": "TXN-A1B2C3D4E5F6",
-  "detalle": "Cargo aprobado por pasarela de tarjeta",
+  "detalle": "Cargo aprobado por pasarela",
   "creadoEn": "2026-08-23T15:35:00",
   "actualizadoEn": null
 }
 ```
-
-**Response `201 Created` — Contraentrega (pendiente):**
-```json
-{
-  "id": 11,
-  "ordenId": 43,
-  "clienteId": 7,
-  "monto": 65.00,
-  "metodoPago": "CONTRAENTREGA",
-  "estado": "PENDIENTE",
-  "referenciaExterna": "CE-A1B2C3D4E5F6",
-  "detalle": "Pago contraentrega registrado — se cobra al entregar",
-  "creadoEn": "2026-08-23T15:40:00",
-  "actualizadoEn": null
-}
-```
-
-**Errores:**
-| Código | Causa |
-| :--- | :--- |
-| `400` | `"Ya existe un pago registrado para la orden X"` |
-| `400` | `"Token de pasarela requerido para pago con tarjeta"` |
-| `400` | `"Número de teléfono requerido para pago Yape/Plin"` |
 
 ---
 
@@ -152,9 +131,9 @@ Content-Type: application/json
 GET /pagos/{id}
 ```
 
-**Acceso:** 🔒 Requiere token con rol `CLIENTE`, `MOZO`, `ADMIN` o `REPARTIDOR`
+**Acceso:** 🔒 `CLIENTE`, `MOZO`, `ADMIN`, `REPARTIDOR`
 
-**Response `200 OK`:** PagoResponse
+**Response `200 OK`:** `PagoResponse`
 
 ---
 
@@ -164,14 +143,9 @@ GET /pagos/{id}
 GET /pagos/orden/{ordenId}
 ```
 
-**Acceso:** 🔒 Requiere token con rol `CLIENTE`, `MOZO`, `ADMIN` o `REPARTIDOR`
+**Acceso:** 🔒 `CLIENTE`, `MOZO`, `ADMIN`, `REPARTIDOR`
 
-**Response `200 OK`:** PagoResponse del pago asociado a la orden.
-
-**Errores:**
-| Código | Causa |
-| :--- | :--- |
-| `404` | `"No hay pago para la orden X"` |
+**Response `200 OK`:** `PagoResponse`
 
 ---
 
@@ -181,13 +155,13 @@ GET /pagos/orden/{ordenId}
 GET /pagos/mis-pagos
 ```
 
-**Acceso:** 🔒 Requiere token con rol `CLIENTE` o `MOZO`
+**Acceso:** 🔒 `CLIENTE`, `MOZO`
 
-**Response `200 OK`:** `PagoResponse[]` ordenados por fecha descendente.
+**Response `200 OK`:** `PagoResponse[]`
 
 ---
 
-### 5. Listar Todos los Pagos (Admin)
+### 5. Listar Todos los Pagos (RF22)
 
 ```
 GET /pagos
@@ -195,11 +169,11 @@ GET /pagos
 
 **Acceso:** 🔒 Solo `ADMIN`
 
-**Response `200 OK`:** `PagoResponse[]` ordenados por fecha descendente.
+**Response `200 OK`:** `PagoResponse[]` ordenados por fecha descendente. Base para el módulo contable y de finanzas.
 
 ---
 
-### 6. Confirmar Pago Manualmente (RF23)
+### 6. Confirmar Pago Manualmente (RF20, RF21)
 
 ```
 PATCH /pagos/{id}/confirmar
@@ -207,38 +181,19 @@ PATCH /pagos/{id}/confirmar
 
 **Acceso:** 🔒 Solo `ADMIN`, `REPARTIDOR`
 
-**Headers requeridos:**
-```
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
 **Request Body:**
 ```json
 {
-  "referenciaExterna": "EFECTIVO-COBRADO-2026-08-23",
-  "detalle": "Pago en efectivo recibido por repartidor"
+  "referenciaExterna": "EFECTIVO-RECIBIDO-REPARTIDOR-42",
+  "detalle": "Cobro en efectivo verificado contraentrega"
 }
 ```
 
-| Campo | Tipo | Obligatorio | Descripción |
-| :--- | :--- | :---: | :--- |
-| `referenciaExterna` | `string` | ✅ | Referencia del cobro |
-| `detalle` | `string` | ❌ | Detalle adicional |
-
-**Response `200 OK`:** PagoResponse con `estado: "APROBADO"`
-
-**Comportamiento:** Al confirmar, el servicio registra un log indicando que la cocina puede procesar la orden.
-
-**Errores:**
-| Código | Causa |
-| :--- | :--- |
-| `400` | `"No se puede cambiar un pago en estado APROBADO a APROBADO"` (ya confirmado) |
-| `400` | `"No se puede cambiar un pago en estado CANCELADO a APROBADO"` |
+**Response `200 OK`:** `PagoResponse` con estado `APROBADO`.
 
 ---
 
-### 7. Cancelar Pago
+### 7. Cancelar Pago (RF20)
 
 ```
 PATCH /pagos/{id}/cancelar
@@ -246,107 +201,38 @@ PATCH /pagos/{id}/cancelar
 
 **Acceso:** 🔒 Solo `ADMIN`, `CLIENTE`
 
-**Request Body:** Ninguno
-
-**Response `200 OK`:** PagoResponse con `estado: "CANCELADO"`
+**Response `200 OK`:** `PagoResponse` con estado `CANCELADO`.
 
 ---
 
-## Flujo de Pago por Método
+## Flujos de Pago (Fase 1)
 
-### Tarjeta (Visa/Mastercard)
+### Flujo Operativo: Pago Contraentrega (Efectivo)
 ```
-Frontend                     payments-service         TarjetaGateway (mock)
-   │                              │                          │
-   ├── POST /pagos ──────────────►│                          │
-   │   { metodoPago: "TARJETA",   │── procesar() ──────────►│
-   │     tokenPasarela: "tok_x" } │                          │
-   │                              │◄── APROBADO + TXN-xxx ──┤
-   │◄── 201 { estado: APROBADO } ─┤                          │
-```
-
-### Yape / Plin
-```
-Frontend                     payments-service         YapePlinGateway (mock)
-   │                              │                          │
-   ├── POST /pagos ──────────────►│                          │
-   │   { metodoPago: "YAPE_PLIN", │── procesar() ──────────►│
-   │     telefonoYape: "987..." } │                          │
-   │                              │◄── APROBADO + YP-xxx ───┤
-   │◄── 201 { estado: APROBADO } ─┤                          │
-```
-
-### Contraentrega (Efectivo)
-```
-Frontend                     payments-service      ContraentregaGateway    Repartidor/Admin
-   │                              │                       │                     │
-   ├── POST /pagos ──────────────►│                       │                     │
-   │   { metodoPago:              │── procesar() ────────►│                     │
-   │     "CONTRAENTREGA" }        │                       │                     │
-   │                              │◄── PENDIENTE + CE-xxx┤                     │
-   │◄── 201 { estado: PENDIENTE }─┤                       │                     │
-   │                              │                       │                     │
-   │  ... entrega física ...      │                       │                     │
-   │                              │◄── PATCH /pagos/{id}/confirmar ────────────┤
-   │                              │    { referenciaExterna: "EFECTIVO-..." }    │
-   │                              │── estado → APROBADO   │                     │
+Cliente/Frontend              payments-service              Repartidor / Admin
+      │                              │                               │
+      ├── POST /pagos ──────────────►│                               │
+      │   { metodo: CONTRAENTREGA }  │ (Guarda Pago PENDIENTE)       │
+      │◄── 201 { estado: PENDIENTE }─┤                               │
+      │                              │                               │
+      │ (Repartidor entrega pedido y recibe dinero en efectivo)      │
+      │                              │                               │
+      │                              │◄── PATCH /pagos/{id}/confirmar├──
+      │                              │    { referenciaExterna }      │
+      │                              │── Pago estado → APROBADO      │
 ```
 
 ---
 
-## Uso desde el Frontend
+## Variables de Entorno del Servicio de Pagos
 
-```typescript
-const API = 'http://localhost:8083';
-const headers = {
-  'Content-Type': 'application/json',
-  'Authorization': `Bearer ${token}`
-};
+```properties
+# Conexión DB y seguridad
+DB_URL=jdbc:postgresql://localhost:5432/polleria
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+JWT_SECRET=super-secret-key-32-characters-minimum
 
-// Pagar con tarjeta
-const pago = await fetch(`${API}/pagos`, {
-  method: 'POST', headers,
-  body: JSON.stringify({
-    ordenId: 42,
-    monto: 204.90,
-    metodoPago: 'TARJETA',
-    tokenPasarela: 'tok_test_simulado'
-  })
-}).then(r => r.json());
-// pago.estado === 'APROBADO'
-
-// Pagar con Yape/Plin
-const pago = await fetch(`${API}/pagos`, {
-  method: 'POST', headers,
-  body: JSON.stringify({
-    ordenId: 42,
-    monto: 204.90,
-    metodoPago: 'YAPE_PLIN',
-    telefonoYape: '987654321'
-  })
-}).then(r => r.json());
-
-// Pagar contraentrega
-const pago = await fetch(`${API}/pagos`, {
-  method: 'POST', headers,
-  body: JSON.stringify({
-    ordenId: 42,
-    monto: 204.90,
-    metodoPago: 'CONTRAENTREGA'
-  })
-}).then(r => r.json());
-// pago.estado === 'PENDIENTE'
-
-// Consultar pago de una orden
-const pagoOrden = await fetch(`${API}/pagos/orden/42`, { headers })
-  .then(r => r.json());
-
-// Repartidor confirma cobro en efectivo
-await fetch(`${API}/pagos/${pagoId}/confirmar`, {
-  method: 'PATCH', headers,
-  body: JSON.stringify({
-    referenciaExterna: 'EFECTIVO-2026-08-23-42',
-    detalle: 'Cobro realizado al entregar'
-  })
-});
+# Comunicación inter-servicio
+ORDERS_SERVICE_URL=http://localhost:8082
 ```

@@ -140,7 +140,7 @@ POST /auth/login
 
 ---
 
-### 3. Verificación 2FA (RF05 — Bonus Fase 1)
+### 3. Verificación 2FA (RF04)
 
 ```
 POST /auth/verify-2fa
@@ -220,7 +220,7 @@ POST /auth/refresh
 
 ---
 
-### 5. Cierre de Sesión Seguro (Logout)
+### 5. Cierre de Sesión Seguro — Logout (RF03)
 
 ```
 POST /auth/logout
@@ -282,12 +282,12 @@ GET /auth/validate
 - Claims: `sub` (email), `role`, `userId`
 - El mismo `JWT_SECRET` se comparte entre los 3 microservicios
 
-### Bloqueo por IP (RF06)
+### Bloqueo por IP (RF05)
 - Tras **5 intentos fallidos** consecutivos desde la misma IP → bloqueo por **15 minutos**
 - Configurable: `MAX_FAILED_ATTEMPTS`, `BLOCK_DURATION_MINUTES`
 - Se resetean los intentos tras un login exitoso
 
-### 2FA (RF05)
+### 2FA para Personal y Administradores (RF04)
 - Solo para roles: `ADMIN`, `MOZO`, `COCINA`, `REPARTIDOR`
 - `CLIENTE` hace login directo (sin 2FA)
 - Se envía código de 6 dígitos al correo electrónico
