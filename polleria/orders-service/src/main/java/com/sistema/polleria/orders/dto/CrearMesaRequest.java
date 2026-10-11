@@ -19,4 +19,5 @@ public class CrearMesaRequest {
 
     private Integer posicionX;
     private Integer posicionY;
+    private String zona;
 }

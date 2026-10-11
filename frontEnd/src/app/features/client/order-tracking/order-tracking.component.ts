@@ -254,7 +254,7 @@ import { AuthService } from '../../../core/services/auth.service';
               <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                 <div>
                   <h3 class="font-display text-xl text-polleria-gold uppercase tracking-wider flex items-center gap-2">
-                    <span>⭐ Califica tu Experiencia</span>
+                    <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-polleria-gold inline" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> Califica tu Experiencia</span>
                   </h3>
                   <p class="text-xs text-slate-400">¿Cómo estuvo tu pedido de San Pollo? Tu opinión nos ayuda a mejorar.</p>
                 </div>
@@ -269,7 +269,7 @@ import { AuthService } from '../../../core/services/auth.service';
 
               @if (ratingSent()) {
                 <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center">
-                  ✓ ¡Muchas gracias por tu calificación y reseña! Tu opinión ha sido registrada en el sistema.
+                  <svg class="w-5 h-5 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> ¡Muchas gracias por tu calificación y reseña! Tu opinión ha sido registrada en el sistema.
                 </div>
               } @else {
                 <div class="space-y-3">
@@ -431,7 +431,7 @@ import { AuthService } from '../../../core/services/auth.service';
             <div class="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
                 <h3 class="font-display text-2xl uppercase tracking-wider text-rose-400 flex items-center gap-2">
-                  <span>🚨 Libro de Reclamaciones</span>
+                  <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-rose-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> Libro de Reclamaciones</span>
                 </h3>
                 <p class="text-xs text-slate-400 mt-0.5">
                   Registra un reclamo para el Pedido <strong class="text-white">{{ currentOrder()?.codigoSeguimiento }}</strong>

@@ -19,6 +19,8 @@ public class MesaResponse {
     private Integer posicionX;
     private Integer posicionY;
     private String qrUrl;
+    private String zona;
+    private Boolean activo;
     private OrdenActivaResponse ordenActiva;
 
     public static MesaResponse from(Mesa m) {
@@ -32,6 +34,8 @@ public class MesaResponse {
                 .numero(m.getNumero())
                 .capacidad(m.getCapacidad())
                 .estado(m.getEstado())
+                .zona(m.getZona() != null ? m.getZona() : "SALON_PRINCIPAL")
+                .activo(m.getActivo() != null ? m.getActivo() : true)
                 .posicionX(m.getPosicionX() != null ? m.getPosicionX() : 0)
                 .posicionY(m.getPosicionY() != null ? m.getPosicionY() : 0)
                 .qrUrl(m.getQrUrl())

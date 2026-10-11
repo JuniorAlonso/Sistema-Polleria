@@ -1,6 +1,8 @@
 package com.sistema.polleria.orders.service;
 
+import com.sistema.polleria.orders.dto.ActualizarMesaRequest;
 import com.sistema.polleria.orders.dto.MesaResponse;
+import com.sistema.polleria.orders.dto.OrdenActivaResponse;
 import com.sistema.polleria.orders.entity.Mesa;
 import com.sistema.polleria.orders.entity.MesaEstado;
 import com.sistema.polleria.orders.entity.Orden;
@@ -50,6 +52,8 @@ class MesaServiceTest {
                 .estado(MesaEstado.LIBRE)
                 .posicionX(10)
                 .posicionY(20)
+                .zona("SALON_PRINCIPAL")
+                .activo(true)
                 .build();
 
         mesaOcupada = Mesa.builder()
@@ -59,22 +63,26 @@ class MesaServiceTest {
                 .estado(MesaEstado.OCUPADA)
                 .posicionX(50)
                 .posicionY(60)
+                .zona("SALON_PRINCIPAL")
+                .activo(true)
                 .build();
     }
 
     @Test
-    void testCrearMesaConCoordenadas() {
+    void testCrearMesaConCoordenadasYZona() {
         when(mesaRepository.existsByNumero(5)).thenReturn(false);
         when(mesaRepository.save(any(Mesa.class))).thenAnswer(i -> i.getArgument(0));
 
-        MesaResponse response = mesaService.crear(5, 4, 100, 150);
+        MesaResponse response = mesaService.crear(5, 4, 100, 150, "TERRAZA");
 
         assertNotNull(response);
         assertEquals(5, response.getNumero());
         assertEquals(4, response.getCapacidad());
         assertEquals(100, response.getPosicionX());
         assertEquals(150, response.getPosicionY());
+        assertEquals("TERRAZA", response.getZona());
         assertEquals(MesaEstado.LIBRE, response.getEstado());
+        assertTrue(response.getActivo());
         verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
     }
 
@@ -99,13 +107,85 @@ class MesaServiceTest {
     }
 
     @Test
-    void testActualizarEstadoMesa() {
+    void testActualizarEstadoMesaTransicionValida() {
         when(mesaRepository.findById(1L)).thenReturn(Optional.of(mesaLibre));
         when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaLibre);
 
-        MesaResponse response = mesaService.actualizarEstado(1L, MesaEstado.POR_COBRAR);
+        // LIBRE -> OCUPADA es válida
+        MesaResponse response = mesaService.actualizarEstado(1L, MesaEstado.OCUPADA);
+
+        assertEquals(MesaEstado.OCUPADA, response.getEstado());
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testActualizarEstadoMesaTransicionInvalidaRechazada() {
+        when(mesaRepository.findById(1L)).thenReturn(Optional.of(mesaLibre));
+
+        // LIBRE -> POR_COBRAR es inválida en la máquina de estados
+        assertThrows(IllegalStateException.class, () -> mesaService.actualizarEstado(1L, MesaEstado.POR_COBRAR));
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testActualizarEstadoMesaTransicionForzadaPermitida() {
+        when(mesaRepository.findById(1L)).thenReturn(Optional.of(mesaLibre));
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaLibre);
+
+        // LIBRE -> POR_COBRAR con forzar=true
+        MesaResponse response = mesaService.actualizarEstado(1L, MesaEstado.POR_COBRAR, true);
 
         assertEquals(MesaEstado.POR_COBRAR, response.getEstado());
+        verify(mesaRepository).save(any());
+    }
+
+    @Test
+    void testActualizarMesaCrudAdmin() {
+        when(mesaRepository.findById(1L)).thenReturn(Optional.of(mesaLibre));
+        when(mesaRepository.existsByNumeroAndIdNot(10, 1L)).thenReturn(false);
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaLibre);
+
+        ActualizarMesaRequest req = ActualizarMesaRequest.builder()
+                .numero(10)
+                .capacidad(8)
+                .zona("TERRAZA")
+                .posicionX(15)
+                .posicionY(25)
+                .activo(true)
+                .build();
+
+        MesaResponse response = mesaService.actualizarMesa(1L, req);
+
+        assertNotNull(response);
+        assertEquals(10, mesaLibre.getNumero());
+        assertEquals(8, mesaLibre.getCapacidad());
+        assertEquals("TERRAZA", mesaLibre.getZona());
+        assertEquals(15, mesaLibre.getPosicionX());
+        assertEquals(25, mesaLibre.getPosicionY());
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testEliminarMesaConOrdenActivaLanzaExcepcion() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList()))
+                .thenReturn(List.of(Orden.builder().id(99L).build()));
+
+        assertThrows(IllegalStateException.class, () -> mesaService.eliminar(2L));
+        assertTrue(mesaOcupada.getActivo());
+    }
+
+    @Test
+    void testEliminarMesaSinOrdenActivaAplicaSoftDelete() {
+        when(mesaRepository.findById(1L)).thenReturn(Optional.of(mesaLibre));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(1L), anyList()))
+                .thenReturn(List.of());
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaLibre);
+
+        mesaService.eliminar(1L);
+
+        assertFalse(mesaLibre.getActivo());
+        verify(mesaRepository).save(mesaLibre);
         verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
     }
 
@@ -119,7 +199,7 @@ class MesaServiceTest {
                 .creadoEn(LocalDateTime.now().minusMinutes(15))
                 .build();
 
-        when(mesaRepository.findAll()).thenReturn(List.of(mesaOcupada));
+        when(mesaRepository.findByActivoTrueOrderByNumeroAsc()).thenReturn(List.of(mesaOcupada));
         when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(ordenActiva));
 
         List<MesaResponse> result = mesaService.listarTodas();

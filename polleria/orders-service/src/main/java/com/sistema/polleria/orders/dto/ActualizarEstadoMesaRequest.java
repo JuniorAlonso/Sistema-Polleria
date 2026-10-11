@@ -14,4 +14,9 @@ import lombok.NoArgsConstructor;
 public class ActualizarEstadoMesaRequest {
     @NotNull(message = "El estado de la mesa es obligatorio")
     private MesaEstado estado;
+
+    /**
+     * Permite forzar el salto de estado en contingencias operativas (override).
+     */
+    private Boolean forzar;
 }

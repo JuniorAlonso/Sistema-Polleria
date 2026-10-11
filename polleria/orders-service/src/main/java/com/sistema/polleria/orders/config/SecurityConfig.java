@@ -43,6 +43,7 @@ public class SecurityConfig {
                         .requestMatchers(org.springframework.http.HttpMethod.POST, "/ordenes").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/ordenes/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.PATCH, "/ordenes/**").permitAll()
+                        .requestMatchers("/mesas/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers

@@ -30,14 +30,14 @@ public class DataInitializer {
             if (mesaRepository.count() == 0) {
                 log.info("Inicializando mesas del salón para despliegue...");
                 List<Mesa> mesas = List.of(
-                        Mesa.builder().numero(1).capacidad(4).estado(MesaEstado.LIBRE).build(),
-                        Mesa.builder().numero(2).capacidad(4).estado(MesaEstado.LIBRE).build(),
-                        Mesa.builder().numero(3).capacidad(6).estado(MesaEstado.LIBRE).build(),
-                        Mesa.builder().numero(4).capacidad(2).estado(MesaEstado.LIBRE).build(),
-                        Mesa.builder().numero(5).capacidad(8).estado(MesaEstado.LIBRE).build()
+                        Mesa.builder().numero(1).capacidad(4).estado(MesaEstado.LIBRE).posicionX(1).posicionY(1).zona("SALON_PRINCIPAL").activo(true).build(),
+                        Mesa.builder().numero(2).capacidad(4).estado(MesaEstado.LIBRE).posicionX(2).posicionY(1).zona("SALON_PRINCIPAL").activo(true).build(),
+                        Mesa.builder().numero(3).capacidad(6).estado(MesaEstado.LIBRE).posicionX(3).posicionY(1).zona("SALON_PRINCIPAL").activo(true).build(),
+                        Mesa.builder().numero(4).capacidad(2).estado(MesaEstado.LIBRE).posicionX(1).posicionY(2).zona("SALON_PRINCIPAL").activo(true).build(),
+                        Mesa.builder().numero(5).capacidad(8).estado(MesaEstado.LIBRE).posicionX(2).posicionY(2).zona("TERRAZA").activo(true).build()
                 );
                 mesaRepository.saveAll(mesas);
-                log.info("{} mesas inicializadas exitosamente.", mesas.size());
+                log.info("{} mesas inicializadas exitosamente con coordenadas de plano virtual.", mesas.size());
             }
 
             // 2. Inicializar Carta de Productos

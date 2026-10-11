@@ -28,6 +28,7 @@ export interface RestaurantTable {
   platosListos?: boolean;
   totalConsumo?: number;
   ordenActiva?: OrdenActivaMesa;
+  activo?: boolean;
   ultimaActualizacion?: string;
 }
 

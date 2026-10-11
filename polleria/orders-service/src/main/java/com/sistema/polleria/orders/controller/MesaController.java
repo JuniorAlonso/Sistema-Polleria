@@ -1,9 +1,6 @@
 package com.sistema.polleria.orders.controller;
 
-import com.sistema.polleria.orders.dto.ActualizarEstadoMesaRequest;
-import com.sistema.polleria.orders.dto.ActualizarPosicionMesaRequest;
-import com.sistema.polleria.orders.dto.CrearMesaRequest;
-import com.sistema.polleria.orders.dto.MesaResponse;
+import com.sistema.polleria.orders.dto.*;
 import com.sistema.polleria.orders.service.MesaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,51 +14,66 @@ import java.util.List;
 @RestController
 @RequestMapping("/mesas")
 @RequiredArgsConstructor
+@CrossOrigin(origins = "*")
 public class MesaController {
 
     private final MesaService mesaService;
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO', 'ROLE_ADMIN', 'ROLE_MOZO')")
-    public ResponseEntity<List<MesaResponse>> listar() {
-        return ResponseEntity.ok(mesaService.listarTodas());
+    public ResponseEntity<List<MesaResponse>> listar(
+            @RequestParam(required = false, defaultValue = "false") boolean incluirInactivas
+    ) {
+        return ResponseEntity.ok(mesaService.listarTodas(incluirInactivas));
     }
 
     @GetMapping("/libres")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO', 'ROLE_ADMIN', 'ROLE_MOZO')")
     public ResponseEntity<List<MesaResponse>> listarLibres() {
         return ResponseEntity.ok(mesaService.listarLibres());
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO', 'ROLE_ADMIN', 'ROLE_MOZO')")
     public ResponseEntity<MesaResponse> obtener(@PathVariable Long id) {
         return ResponseEntity.ok(mesaService.obtener(id));
     }
 
+    @GetMapping("/{id}/orden-activa")
+    public ResponseEntity<OrdenActivaResponse> obtenerOrdenActiva(@PathVariable Long id) {
+        OrdenActivaResponse ordenActiva = mesaService.obtenerOrdenActiva(id);
+        if (ordenActiva == null) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(ordenActiva);
+    }
+
     @PostMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<MesaResponse> crear(@Valid @RequestBody CrearMesaRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(mesaService.crear(
                         request.getNumero(),
                         request.getCapacidad(),
                         request.getPosicionX(),
-                        request.getPosicionY()
+                        request.getPosicionY(),
+                        request.getZona()
                 ));
     }
 
-    @PatchMapping("/{id}/estado")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO', 'ROLE_ADMIN', 'ROLE_MOZO')")
+    @PutMapping("/{id}")
+    public ResponseEntity<MesaResponse> actualizar(
+            @PathVariable Long id,
+            @Valid @RequestBody ActualizarMesaRequest request
+    ) {
+        return ResponseEntity.ok(mesaService.actualizarMesa(id, request));
+    }
+
+    @RequestMapping(value = "/{id}/estado", method = {RequestMethod.PATCH, RequestMethod.PUT})
     public ResponseEntity<MesaResponse> actualizarEstado(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarEstadoMesaRequest request
     ) {
-        return ResponseEntity.ok(mesaService.actualizarEstado(id, request.getEstado()));
+        return ResponseEntity.ok(mesaService.actualizarEstado(id, request.getEstado(), request.getForzar()));
     }
 
-    @PatchMapping("/{id}/posicion")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'MOZO', 'ROLE_MOZO')")
+    @RequestMapping(value = "/{id}/posicion", method = {RequestMethod.PATCH, RequestMethod.PUT})
     public ResponseEntity<MesaResponse> actualizarPosicion(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarPosicionMesaRequest request
@@ -70,7 +82,6 @@ public class MesaController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<Void> eliminar(@PathVariable Long id) {
         mesaService.eliminar(id);
         return ResponseEntity.noContent().build();

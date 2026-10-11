@@ -161,9 +161,10 @@ import { Product, ProductCategory } from '../../../core/models/product.model';
             </h3>
             <button 
               (click)="selectedProductForModal.set(null)"
-              class="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              class="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+              aria-label="Cerrar"
             >
-              ✕
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
 

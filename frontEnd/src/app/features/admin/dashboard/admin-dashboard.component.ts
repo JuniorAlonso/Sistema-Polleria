@@ -2,11 +2,11 @@ import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } f
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
-import { Subscription, interval } from 'rxjs';
+import { Subscription, interval, forkJoin } from 'rxjs';
 import { OrdersService } from '../../../core/services/orders.service';
 import { ProductsService } from '../../../core/services/products.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { SalonService } from '../../../core/services/salon.service';
+import { SalonService, ZonaSalonConfig } from '../../../core/services/salon.service';
 import { InventoryService } from '../../../core/services/inventory.service';
 import { FinanceService } from '../../../core/services/finance.service';
 import { FeedbackService } from '../../../core/services/feedback.service';
@@ -609,7 +609,7 @@ interface NotificacionLog {
                           #{{ getCodeNum(order.codigoSeguimiento) }}
                         </span>
                         <span class="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
-                          ✓ Entregado
+                          <svg class="w-3 h-3 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregado
                         </span>
                       </div>
                       <p class="text-xs text-slate-300 font-medium">{{ order.cliente.nombre }}</p>
@@ -630,152 +630,489 @@ interface NotificacionLog {
       }
 
 
-      <!-- ================= TAB 2: MESAS & SALÓN (FASE 2 - EN VIVO) ================= -->
+      <!-- ================= TAB 2: GESTIÓN ADMINISTRATIVA DE SALÓN & MESAS ================= -->
       @if (activeTab() === 'MESAS') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
           
-          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
+          <!-- Header Bar with Add Table Button -->
+          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14161a] p-5 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+                <svg class="w-6 h-6 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
                 <span>Gestión de Salón & Mesas</span>
-                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
-                  Fase 2 - En Vivo
+                <span class="text-[11px] font-bold text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Modo Admin (CRUD)
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Control de ocupación, comensales, comanda activa y coordenadas en plano (orders-service).</p>
-            </div>
-
-            <!-- Legend Badges -->
-            <div class="flex flex-wrap items-center gap-3 text-xs">
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Libre ({{ salonService.mesasLibres().length }})</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Ocupada ({{ salonService.mesasOcupadas().length }})</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-400"></span> Por Cobrar ({{ salonService.mesasPorCobrar().length }})</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-sky-400"></span> En Limpieza ({{ salonService.mesasEnLimpieza().length }})</span>
+              <p class="text-xs text-slate-400">Control maestro de capacidad física, zonas del restaurante y coordenadas en plano espacial.</p>
             </div>
           </div>
 
-          <!-- Tables Grid Layout -->
-          <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            @for (t of salonService.mesas(); track t.id) {
-              <div 
-                (click)="selectedMesa.set(t)"
-                class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between"
-                [ngClass]="{
-                  'bg-[#121418] border-emerald-500/30 hover:border-emerald-400': t.estado === 'LIBRE',
-                  'bg-[#1e1518] border-rose-500/40 hover:border-rose-400': t.estado === 'OCUPADA',
-                  'bg-[#1e1b12] border-amber-500/40 hover:border-amber-400': t.estado === 'POR_COBRAR',
-                  'bg-[#121824] border-sky-500/40 hover:border-sky-400': t.estado === 'EN_LIMPIEZA',
-                  'bg-[#121820] border-purple-500/40 hover:border-purple-400': t.estado === 'RESERVADA',
-                  'ring-2 ring-polleria-gold': selectedMesa()?.id === t.id
-                }"
-              >
-                @if (t.platosListos) {
-                  <div class="absolute top-2 right-2 flex items-center gap-1 bg-amber-500 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-full animate-bounce">
-                    <span>⚡ PLATO LISTO</span>
-                  </div>
-                }
+          <!-- Summary Status Badges -->
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+            <div class="p-3 rounded-xl bg-[#14161a] border border-white/5 flex items-center justify-between">
+              <span class="text-slate-400">Total Mesas</span>
+              <span class="font-bold text-white font-mono">{{ salonService.mesas().length }}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-[#14161a] border border-emerald-500/20 flex items-center justify-between">
+              <span class="text-emerald-400 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Libres</span>
+              <span class="font-bold text-emerald-400 font-mono">{{ salonService.mesasLibres().length }}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-[#14161a] border border-rose-500/20 flex items-center justify-between">
+              <span class="text-rose-400 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Ocupadas</span>
+              <span class="font-bold text-rose-400 font-mono">{{ salonService.mesasOcupadas().length }}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-[#14161a] border border-amber-500/20 flex items-center justify-between">
+              <span class="text-amber-300 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Por Cobrar</span>
+              <span class="font-bold text-amber-300 font-mono">{{ salonService.mesasPorCobrar().length }}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-[#14161a] border border-sky-500/20 flex items-center justify-between">
+              <span class="text-sky-300 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span> En Limpieza</span>
+              <span class="font-bold text-sky-300 font-mono">{{ salonService.mesasEnLimpieza().length }}</span>
+            </div>
+          </div>
 
-                <div>
-                  <div class="flex justify-between items-start mb-2">
-                    <span class="font-display text-xl font-bold text-white">{{ t.nombre }}</span>
-                    <span 
-                      class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      [ngClass]="{
-                        'bg-emerald-500/20 text-emerald-400': t.estado === 'LIBRE',
-                        'bg-rose-500/20 text-rose-400': t.estado === 'OCUPADA',
-                        'bg-amber-500/20 text-amber-300': t.estado === 'POR_COBRAR',
-                        'bg-sky-500/20 text-sky-300': t.estado === 'EN_LIMPIEZA',
-                        'bg-purple-500/20 text-purple-300': t.estado === 'RESERVADA'
-                      }"
-                    >
-                      {{ t.estado }}
+          <!-- Switcher y Controles de Vista: Croquis 2D vs Catálogo -->
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3 rounded-2xl border border-white/10 shadow-lg">
+            <div class="flex items-center gap-2">
+              <button 
+                type="button"
+                (click)="mesaViewMode.set('CROQUIS')"
+                class="px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer"
+                [ngClass]="mesaViewMode() === 'CROQUIS' ? 'bg-polleria-gold text-slate-950 shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                </svg>
+                <span>Croquis Matricial por Zonas</span>
+              </button>
+
+              <button 
+                type="button"
+                (click)="mesaViewMode.set('CARDS')"
+                class="px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer"
+                [ngClass]="mesaViewMode() === 'CARDS' ? 'bg-polleria-gold text-slate-950 shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+                </svg>
+                <span>Vista Catálogo</span>
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2 flex-wrap">
+              @if (mesaViewMode() === 'CROQUIS') {
+                <button 
+                  type="button"
+                  (click)="autoOrganizarCuadricula()"
+                  class="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  title="Ordenar mesas automáticamente en casillas de la zona activa"
+                >
+                  <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                  <span>Auto-organizar Zona</span>
+                </button>
+              }
+
+              <button 
+                type="button"
+                (click)="abrirCrearMesaModal()"
+                class="px-4 py-2 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold text-xs rounded-xl transition shadow flex items-center gap-1.5 cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                <span>+ Crear Mesa</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- ================= CROQUIS MATRICIAL POR ZONAS (SLIDES) ================= -->
+          @if (mesaViewMode() === 'CROQUIS') {
+            <div class="relative bg-[#0d0f14] border border-white/10 rounded-2xl overflow-hidden shadow-2xl p-5 space-y-4">
+              
+              <!-- Overlay de Espera y Sincronización en la Cuadrícula -->
+              @if (isProcesandoMesa() || salonService.isLoading()) {
+                <div class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm z-40 rounded-2xl flex flex-col items-center justify-center p-6 text-center animate-fade-in shadow-2xl border border-polleria-gold/30">
+                  <div class="relative flex items-center justify-center mb-3">
+                    <div class="w-16 h-16 rounded-full border-2 border-polleria-gold/20 animate-ping absolute"></div>
+                    <svg class="animate-spin w-12 h-12 text-polleria-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                      <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                  <h4 class="font-display text-base font-bold text-white tracking-wide">
+                    {{ isProcesandoMesa() ? mensajeProcesandoMesa() : 'Cargando distribución del salón...' }}
+                  </h4>
+                  <p class="text-xs text-slate-400 mt-1 max-w-xs">
+                    Por favor espere un momento mientras se sincronizan los cambios con el servidor.
+                  </p>
+                </div>
+              }
+
+              <!-- Barra de Navegación por Slides de Zona -->
+              <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/10">
+                <!-- Controles de Slide Anterior / Siguiente -->
+                <div class="flex items-center gap-3">
+                  <button 
+                    type="button"
+                    (click)="prevZona()"
+                    class="p-2 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                    title="Ver zona anterior"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                    </svg>
+                    <span class="hidden sm:inline">Anterior</span>
+                  </button>
+
+                  <div class="flex flex-col">
+                    <div class="flex items-center gap-2">
+                      <span class="font-display text-lg sm:text-xl font-black text-white tracking-wide">
+                        {{ currentZona().nombre }}
+                      </span>
+                    </div>
+                    <span class="text-[11px] text-slate-400">
+                      Cuadrícula fija de casillas: {{ currentZona().filas }} filas × {{ currentZona().columnas }} columnas
                     </span>
                   </div>
-                  
-                  <p class="text-xs text-slate-400">{{ (t.zona || 'SALON').replace('_', ' ') }} • {{ t.capacidad }} personas</p>
-                  <p class="text-[11px] text-slate-500 font-mono mt-0.5">Plano: (X: {{ t.posicionX || 0 }}, Y: {{ t.posicionY || 0 }})</p>
 
-                  @if (t.estado === 'OCUPADA' || t.estado === 'POR_COBRAR') {
-                    <div class="mt-3 text-xs space-y-1">
-                      <p class="text-slate-300"><span class="text-slate-500">Mozo:</span> {{ t.mozo || 'Mozo Salón' }}</p>
-                      @if (t.ordenActiva) {
-                        <p class="text-slate-300"><span class="text-slate-500">Comanda:</span> #{{ t.ordenActiva.codigoSeguimiento }}</p>
-                      }
-                    </div>
-                  }
+                  <button 
+                    type="button"
+                    (click)="nextZona()"
+                    class="p-2 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                    title="Ver siguiente zona"
+                  >
+                    <span class="hidden sm:inline">Siguiente</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                  </button>
                 </div>
 
-                <div class="mt-4 pt-3 border-t border-white/10 flex justify-between items-center">
-                  <span class="font-display text-lg font-bold text-polleria-gold">
-                    {{ (t.ordenActiva?.total || t.totalConsumo || 0) | currencyPEN }}
-                  </span>
-                  <div class="flex items-center gap-1.5" (click)="$event.stopPropagation()">
+                <!-- Píldoras de Salto Directo a Zona -->
+                <div class="flex items-center gap-1.5 bg-black/50 p-1.5 rounded-xl border border-white/10 overflow-x-auto max-w-full">
+                  @for (z of zonasSalon; track z.id; let idx = $index) {
                     <button 
-                      (click)="abrirEditarCoordenadas(t)"
-                      class="p-1.5 bg-white/5 hover:bg-white/15 rounded-lg text-slate-300 text-xs transition cursor-pointer"
-                      title="Mover posición en el plano"
+                      type="button"
+                      (click)="setZonaIndex(idx)"
+                      class="px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5"
+                      [ngClass]="activeZonaIndex() === idx ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'"
                     >
-                      ✏️
+                      <span>{{ z.nombre }}</span>
                     </button>
+                  }
+                </div>
+              </div>
+
+              <!-- Barra de Personalización de Cuadrícula (Filas × Columnas) -->
+              <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#121419] p-3 rounded-xl border border-white/5 text-xs">
+                <div class="flex items-center gap-4 flex-wrap">
+                  <span class="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Personalizar Cuadrícula:</span>
+                  
+                  <!-- Ajuste de Filas -->
+                  <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
+                    <span class="text-slate-400">Filas:</span>
                     <button 
-                      (click)="toggleEstadoMesa(t)"
-                      class="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition cursor-pointer"
-                    >
-                      {{ t.estado === 'LIBRE' ? 'Ocupar' : (t.estado === 'OCUPADA' ? 'Cobrar' : (t.estado === 'POR_COBRAR' ? 'Limpiar' : 'Liberar')) }}
-                    </button>
+                      type="button" 
+                      (click)="ajustarFilas(-1)" 
+                      class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                      title="Quitar fila"
+                    >-</button>
+                    <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().filas }}</span>
+                    <button 
+                      type="button" 
+                      (click)="ajustarFilas(1)" 
+                      class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                      title="Agregar fila"
+                    >+</button>
+                  </div>
+
+                  <!-- Ajuste de Columnas -->
+                  <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
+                    <span class="text-slate-400">Columnas:</span>
+                    <button 
+                      type="button" 
+                      (click)="ajustarColumnas(-1)" 
+                      class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                      title="Quitar columna"
+                    >-</button>
+                    <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().columnas }}</span>
+                    <button 
+                      type="button" 
+                      (click)="ajustarColumnas(1)" 
+                      class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                      title="Agregar columna"
+                    >+</button>
                   </div>
                 </div>
 
+                <!-- Estado de Movimiento Activo -->
+                @if (mesaEnMovimiento(); as mem) {
+                  <div class="flex items-center gap-2 bg-amber-500/15 border border-amber-500/40 px-3 py-1.5 rounded-xl text-amber-300 animate-pulse">
+                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                    </svg>
+                    <span>Moviendo <strong>Mesa #{{ mem.numero }}</strong>: Toca una casilla vacía para ubicarla</span>
+                    <button 
+                      type="button" 
+                      (click)="mesaEnMovimiento.set(null)" 
+                      class="ml-2 px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                } @else {
+                  <span class="text-[11px] text-slate-400 italic">
+                    Toca una casilla vacía para crear una mesa, o arrastra una mesa a otra casilla.
+                  </span>
+                }
               </div>
-            }
-          </div>
 
-          <!-- Panel de Detalle de Mesa Seleccionada -->
+              <!-- Lienzo de la Cuadrícula Matricial -->
+              <div class="overflow-x-auto pb-4 select-none">
+                <div 
+                  class="grid gap-3 p-4 bg-[#0a0c10] border border-white/10 rounded-2xl min-w-max mx-auto shadow-inner"
+                  [style.gridTemplateColumns]="'repeat(' + currentZona().columnas + ', minmax(110px, 1fr))'"
+                >
+                  @for (r of getRowsArray(); track r) {
+                    @for (c of getColsArray(); track c) {
+                      @if (getMesaEnCasilla(r, c); as mesa) {
+                        <!-- CASILLA OCUPADA POR MESA -->
+                        <div 
+                          draggable="true"
+                          (dragstart)="onDragStartMesa($event, mesa)"
+                          (click)="onCasillaClick(r, c)"
+                          class="h-28 rounded-2xl p-2.5 border-2 flex flex-col justify-between items-center transition-all cursor-pointer relative select-none group shadow-lg"
+                          [ngClass]="{
+                            'bg-emerald-950/80 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/20 hover:scale-[1.02]': mesa.estado === 'LIBRE',
+                            'bg-rose-950/80 border-rose-500 text-rose-300 ring-2 ring-rose-500/20 hover:scale-[1.02]': mesa.estado === 'OCUPADA',
+                            'bg-amber-950/80 border-amber-500 text-amber-300 ring-4 ring-amber-500/30 animate-pulse': mesa.estado === 'POR_COBRAR',
+                            'bg-sky-950/80 border-sky-500 text-sky-300 ring-2 ring-sky-500/20 hover:scale-[1.02]': mesa.estado === 'EN_LIMPIEZA' || mesa.estado === 'LIMPIEZA',
+                            'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
+
+                            'ring-4 ring-polleria-gold border-polleria-gold scale-[1.03] shadow-polleria-gold/30 z-20': selectedMesa()?.id === mesa.id,
+                            'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id
+                          }"
+                        >
+                          <!-- Coordenadas Casilla -->
+                          <div class="w-full flex justify-between items-center text-[10px]">
+                            <span class="font-mono text-slate-400 opacity-60">F{{ r }}:C{{ c }}</span>
+                            <span class="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-black/40">
+                              {{ mesa.capacidad }}p
+                            </span>
+                          </div>
+
+                          <!-- Número de Mesa Central -->
+                          <div class="flex flex-col items-center my-auto">
+                            <span class="font-display text-lg font-black text-white tracking-tight leading-none group-hover:text-polleria-gold transition">
+                              #{{ mesa.numero }}
+                            </span>
+                            <span class="text-[9px] font-bold uppercase tracking-wider opacity-80 mt-0.5">
+                              {{ mesa.estado }}
+                            </span>
+                          </div>
+
+                          <!-- Footer de Casilla: Total & Botón Mover -->
+                          <div class="w-full flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
+                            @if (mesa.ordenActiva) {
+                              <span class="font-mono font-bold text-polleria-gold">
+                                S/{{ mesa.ordenActiva.total | number:'1.0-0' }}
+                              </span>
+                            } @else {
+                              <span class="text-slate-400">Sin orden</span>
+                            }
+                            <button 
+                              type="button"
+                              (click)="iniciarMoverMesa(mesa, $event)"
+                              class="p-1 rounded bg-white/10 hover:bg-polleria-gold hover:text-slate-950 text-slate-300 transition cursor-pointer"
+                              title="Reubicar a otra casilla"
+                            >
+                              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      } @else {
+                        <!-- CASILLA VACÍA -->
+                        <div 
+                          (click)="onCasillaClick(r, c)"
+                          (dragover)="onDragOverCasilla($event)"
+                          (drop)="onDropCasilla($event, r, c)"
+                          class="h-28 rounded-2xl border-2 border-dashed transition-all flex flex-col justify-between items-center p-2.5 cursor-pointer group"
+                          [ngClass]="mesaEnMovimiento() ? 'border-polleria-gold/50 bg-polleria-gold/10 hover:border-polleria-gold hover:bg-polleria-gold/20' : 'border-white/10 bg-[#0d0e12] hover:border-white/30 hover:bg-white/5'"
+                        >
+                          <div class="w-full flex justify-between items-center text-[10px] text-slate-500">
+                            <span class="font-mono">F{{ r }}:C{{ c }}</span>
+                            <span class="text-[9px] opacity-0 group-hover:opacity-100 text-slate-400 transition">Vacía</span>
+                          </div>
+
+                          <div class="flex flex-col items-center justify-center my-auto transition-transform group-hover:scale-110">
+                            @if (mesaEnMovimiento()) {
+                              <span class="text-xs font-bold text-polleria-gold flex items-center gap-1">
+                                <svg class="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                                </svg>
+                                <span>Ubicar aquí</span>
+                              </span>
+                            } @else {
+                              <svg class="w-5 h-5 text-slate-500 group-hover:text-polleria-gold transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                              </svg>
+                              <span class="text-[10px] font-bold text-slate-400 group-hover:text-white mt-1 transition">
+                                + Nueva Mesa
+                              </span>
+                            }
+                          </div>
+
+                          <div class="w-full text-center text-[9px] text-slate-600">
+                            Casilla disponible
+                          </div>
+                        </div>
+                      }
+                    }
+                  }
+                </div>
+              </div>
+
+            </div>
+          } @else {
+            <!-- ================= VISTA CATÁLOGO / TARJETAS ================= -->
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              @for (t of salonService.mesas(); track t.id) {
+                <div 
+                  (click)="selectedMesa.set(t)"
+                  class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between"
+                  [ngClass]="{
+                    'bg-[#121418] border-white/10 hover:border-polleria-gold/50': selectedMesa()?.id !== t.id,
+                    'bg-[#161920] border-polleria-gold ring-2 ring-polleria-gold/40 shadow-xl': selectedMesa()?.id === t.id
+                  }"
+                >
+                  <div>
+                    <div class="flex justify-between items-start mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="font-display text-xl font-bold text-white">Mesa #{{ t.numero }}</span>
+                        @if (t.activo === false) {
+                          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">Inactiva</span>
+                        }
+                      </div>
+                      <span 
+                        class="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        [ngClass]="{
+                          'bg-emerald-500/20 text-emerald-400': t.estado === 'LIBRE',
+                          'bg-rose-500/20 text-rose-400': t.estado === 'OCUPADA',
+                          'bg-amber-500/20 text-amber-300': t.estado === 'POR_COBRAR',
+                          'bg-sky-500/20 text-sky-300': t.estado === 'EN_LIMPIEZA',
+                          'bg-purple-500/20 text-purple-300': t.estado === 'RESERVADA'
+                        }"
+                      >
+                        {{ t.estado }}
+                      </span>
+                    </div>
+                    
+                    <div class="text-xs space-y-1 text-slate-400">
+                      <p><span class="text-slate-500">Zona:</span> <strong class="text-slate-200">{{ (t.zona || 'SALON_PRINCIPAL').replace('_', ' ') }}</strong></p>
+                      <p><span class="text-slate-500">Capacidad:</span> <strong class="text-slate-200">{{ t.capacidad }} comensales</strong></p>
+                      <p class="font-mono text-[11px] text-slate-500">Plano: (X: {{ t.posicionX || 0 }}, Y: {{ t.posicionY || 0 }})</p>
+                    </div>
+
+                    @if (t.ordenActiva) {
+                      <div class="mt-3 p-2.5 rounded-xl bg-black/40 border border-white/5 text-xs space-y-1">
+                        <div class="flex justify-between items-center text-slate-300">
+                          <span>Comanda activa:</span>
+                          <span class="font-mono font-bold text-polleria-gold">#{{ t.ordenActiva.codigoSeguimiento || t.ordenActiva.ordenId }}</span>
+                        </div>
+                        <div class="flex justify-between items-center text-slate-400">
+                          <span>Total consumo:</span>
+                          <span class="font-bold text-white">{{ t.ordenActiva.total | currencyPEN }}</span>
+                        </div>
+                      </div>
+                    }
+                  </div>
+
+                  <!-- Admin Management Actions -->
+                  <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between gap-1.5" (click)="$event.stopPropagation()">
+                    <button 
+                      (click)="abrirEditarMesaModal(t)"
+                      class="flex-1 py-1.5 px-2 bg-white/5 hover:bg-white/15 text-slate-200 hover:text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 cursor-pointer"
+                      title="Editar propiedades de la mesa"
+                    >
+                      <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                      </svg>
+                      <span>Editar</span>
+                    </button>
+
+                    <button 
+                      (click)="abrirEditarCoordenadas(t)"
+                      class="p-1.5 bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white rounded-lg text-xs transition cursor-pointer"
+                      title="Mover posición en el plano"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                      </svg>
+                    </button>
+
+                    <button 
+                      (click)="darDeBajaMesa(t)"
+                      class="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-lg text-xs transition cursor-pointer"
+                      title="Dar de baja / Desactivar mesa"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                      </svg>
+                    </button>
+                  </div>
+
+                </div>
+              }
+            </div>
+          }
+
+          <!-- Panel Inspector Administrativo de Mesa -->
           @if (selectedMesa(); as mesa) {
             <div class="p-6 bg-[#14161a] rounded-2xl border border-polleria-gold/30 shadow-2xl flex flex-col md:flex-row justify-between gap-6 items-center">
               <div class="space-y-1">
                 <div class="flex items-center gap-3">
-                  <h3 class="font-display text-2xl font-bold text-white">Detalle de Mesa: {{ mesa.nombre }}</h3>
+                  <h3 class="font-display text-2xl font-bold text-white">Inspección de Mesa #{{ mesa.numero }}</h3>
+                  <span class="text-xs font-mono px-2.5 py-0.5 rounded bg-white/10 text-slate-300 font-bold">
+                    Zona: {{ (mesa.zona || 'SALON_PRINCIPAL').replace('_', ' ') }}
+                  </span>
                   <span class="text-xs font-mono px-2.5 py-0.5 rounded bg-polleria-gold/20 text-polleria-gold font-bold">
-                    Mozo: {{ mesa.mozo || 'Mozo Salón' }}
+                    Estado: {{ mesa.estado }}
                   </span>
                 </div>
                 @if (mesa.ordenActiva) {
                   <p class="text-xs text-slate-300">
-                    Comanda activa <strong>#{{ mesa.ordenActiva.codigoSeguimiento }}</strong> • Total: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong>
+                    Comanda en curso <strong>#{{ mesa.ordenActiva.codigoSeguimiento || mesa.ordenActiva.ordenId }}</strong> • Monto: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong>
                   </p>
-                  @if (mesa.ordenActiva.itemsResumen) {
-                    <p class="text-xs text-slate-400">{{ mesa.ordenActiva.itemsResumen }}</p>
-                  }
                 } @else {
-                  <p class="text-xs text-slate-400">Sin comanda activa en este momento. Estado actual: {{ mesa.estado }}</p>
+                  <p class="text-xs text-slate-400">Sin comanda activa vinculada. Capacidad configurada: {{ mesa.capacidad }} personas.</p>
                 }
               </div>
 
               <div class="flex flex-wrap gap-2">
                 <button 
-                  (click)="cambiarEstadoMesaDirecto(mesa, 'LIBRE')"
-                  class="px-3.5 py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
+                  (click)="abrirEditarMesaModal(mesa)"
+                  class="px-4 py-2 bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow"
                 >
-                  Marcar Libre
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                  </svg>
+                  <span>Editar Parámetros</span>
                 </button>
                 <button 
-                  (click)="cambiarEstadoMesaDirecto(mesa, 'OCUPADA')"
-                  class="px-3.5 py-2 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
+                  (click)="darDeBajaMesa(mesa)"
+                  class="px-4 py-2 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                 >
-                  Marcar Ocupada
-                </button>
-                <button 
-                  (click)="cambiarEstadoMesaDirecto(mesa, 'POR_COBRAR')"
-                  class="px-3.5 py-2 bg-amber-500/30 hover:bg-amber-500/50 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
-                >
-                  Por Cobrar
-                </button>
-                <button 
-                  (click)="cambiarEstadoMesaDirecto(mesa, 'EN_LIMPIEZA')"
-                  class="px-3.5 py-2 bg-sky-500/30 hover:bg-sky-500/50 text-sky-300 border border-sky-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
-                >
-                  En Limpieza
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                  <span>Dar de Baja</span>
                 </button>
               </div>
             </div>
@@ -783,7 +1120,6 @@ interface NotificacionLog {
 
         </main>
       }
-
 
       <!-- ================= TAB 3: INVENTARIO & CARTA ================= -->
       @if (activeTab() === 'INVENTARIO') {
@@ -907,7 +1243,7 @@ interface NotificacionLog {
                   (click)="abrirModalDespacho()"
                   class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition shadow cursor-pointer"
                 >
-                  ⚡ Despachar Lote a Cocina
+                  Despachar Lote a Cocina
                 </button>
               </div>
 
@@ -1027,7 +1363,7 @@ interface NotificacionLog {
               <!-- Lista de Alertas Predictivas -->
               <div class="bg-[#14161a] rounded-2xl border border-white/10 p-5 space-y-4">
                 <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-                  <span>📊 Sugerencias Predictivas de Compra (RF25)</span>
+                  <span>Sugerencias Predictivas de Compra (RF25)</span>
                 </h3>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1049,7 +1385,7 @@ interface NotificacionLog {
                         Consumo: <strong>{{ alerta.consumoDiarioEstimado }} / día</strong> • Stock restante para: <strong class="text-white">{{ alerta.diasRestantesEstimados }} días</strong>
                       </p>
                       <p class="text-xs text-amber-300/90 font-medium italic">
-                        💡 {{ alerta.sugerencia }}
+                        <svg class="w-3.5 h-3.5 inline mr-1 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>{{ alerta.sugerencia }}
                       </p>
                     </div>
                   }
@@ -1174,14 +1510,14 @@ interface NotificacionLog {
                   (click)="abrirModalCierreCaja()"
                   class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow cursor-pointer"
                 >
-                  📊 Arqueo y Cierre de Turno
+                  Arqueo y Cierre de Turno
                 </button>
               } @else {
                 <button 
                   (click)="showAbrirCajaModal = true"
                   class="px-4 py-2 bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition shadow cursor-pointer"
                 >
-                  🔓 Abrir Turno de Caja
+                  Abrir Turno de Caja
                 </button>
               }
             </div>
@@ -1318,7 +1654,7 @@ interface NotificacionLog {
           <!-- Libro de Reclamaciones Activo -->
           <div class="space-y-4">
             <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-              <span>🚨 Libro de Reclamaciones (RF28, RF29)</span>
+              <span>Libro de Reclamaciones (RF28, RF29)</span>
             </h3>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1382,7 +1718,7 @@ interface NotificacionLog {
           <!-- Reseñas y Calificaciones de la Experiencia -->
           <div class="space-y-4 pt-4 border-t border-white/10">
             <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-              <span>⭐ Reseñas Recientes de Clientes (RF26, RF27)</span>
+              <span>Reseñas Recientes de Clientes (RF26, RF27)</span>
             </h3>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1536,7 +1872,7 @@ interface NotificacionLog {
             <div class="flex justify-between items-center">
               <div>
                 <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-                  <span>🛡️ Lista Negra de Seguridad & IPs Bloqueadas (RNF02)</span>
+                  <span>Lista Negra de Seguridad & IPs Bloqueadas (RNF02)</span>
                 </h3>
                 <p class="text-xs text-slate-400">Protección contra ataques de fuerza bruta y accesos no autorizados.</p>
               </div>
@@ -1717,7 +2053,7 @@ interface NotificacionLog {
             
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white">Registrar Nueva Orden Manual</h3>
-              <button (click)="showCreateOrderModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showCreateOrderModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -1831,7 +2167,7 @@ interface NotificacionLog {
             
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white">Agregar Producto a la Carta</h3>
-              <button (click)="showCreateProductModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showCreateProductModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -1916,9 +2252,9 @@ interface NotificacionLog {
           <div class="w-full max-w-md bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white flex items-center gap-2">
-                <span>⚡ Despachar Lote a Cocina</span>
+                <span>Despachar Lote a Cocina</span>
               </h3>
-              <button (click)="showDespachoModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showDespachoModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -1983,9 +2319,9 @@ interface NotificacionLog {
           <div class="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-rose-400 flex items-center gap-2">
-                <span>🗑️ Registrar Merma de Jornada</span>
+                <span>Registrar Merma de Jornada</span>
               </h3>
-              <button (click)="showMermaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showMermaModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2060,8 +2396,8 @@ interface NotificacionLog {
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
           <div class="w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
-              <h3 class="font-display text-xl font-bold text-emerald-400">🔓 Apertura de Turno de Caja</h3>
-              <button (click)="showAbrirCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <h3 class="font-display text-xl font-bold text-emerald-400">Apertura de Turno de Caja</h3>
+              <button (click)="showAbrirCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2089,8 +2425,8 @@ interface NotificacionLog {
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
           <div class="w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
-              <h3 class="font-display text-xl font-bold text-emerald-400">📊 Arqueo y Cierre de Turno (RF22)</h3>
-              <button (click)="showCerrarCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <h3 class="font-display text-xl font-bold text-emerald-400">Arqueo y Cierre de Turno (RF22)</h3>
+              <button (click)="showCerrarCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2145,7 +2481,7 @@ interface NotificacionLog {
           <div class="w-full max-w-md bg-slate-900 border border-white/20 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white">Registrar Movimiento de Caja Menor</h3>
-              <button (click)="showMovimientoCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showMovimientoCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2199,7 +2535,7 @@ interface NotificacionLog {
                 <h3 class="font-display text-xl font-bold text-rose-400">Atención de Reclamo #{{ reclamoSeleccionado.id }}</h3>
                 <p class="text-xs text-slate-400">Orden asociada #{{ reclamoSeleccionado.ordenId }}</p>
               </div>
-              <button (click)="showResolverReclamoModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showResolverReclamoModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2248,7 +2584,7 @@ interface NotificacionLog {
           <div class="w-full max-w-lg bg-slate-900 border border-polleria-crimson/50 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white">Documentar Incidente Operativo (RF34)</h3>
-              <button (click)="showIncidenteModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showIncidenteModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2323,7 +2659,7 @@ interface NotificacionLog {
           <div class="w-full max-w-sm bg-slate-900 border border-polleria-gold/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 class="font-display text-xl font-bold text-white">Editar Posición en Plano</h3>
-              <button (click)="showEditarCoordenadasModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+              <button (click)="showEditarCoordenadasModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
             <div class="space-y-3 text-xs">
@@ -2349,8 +2685,251 @@ interface NotificacionLog {
             </div>
 
             <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
-              <button (click)="showEditarCoordenadasModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
-              <button (click)="guardarCoordenadasMesa()" class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer">Guardar Posición</button>
+              <button 
+                (click)="showEditarCoordenadasModal = false" 
+                [disabled]="isProcesandoMesa()"
+                class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button 
+                (click)="guardarCoordenadasMesa()" 
+                [disabled]="isProcesandoMesa()"
+                class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                @if (isProcesandoMesa()) {
+                  <svg class="animate-spin w-3.5 h-3.5 text-slate-950" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                  </svg>
+                  <span>Guardando...</span>
+                } @else {
+                  <span>Guardar Posición</span>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      
+      <!-- ================= MODAL: CREAR MESA (FASE 2 - ADMIN) ================= -->
+      @if (showCrearMesaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-polleria-gold/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                <span>Crear Nueva Mesa</span>
+              </h3>
+              <button (click)="!isProcesandoMesa() && (showCrearMesaModal = false)" [disabled]="isProcesandoMesa()" class="text-slate-400 hover:text-white cursor-pointer disabled:opacity-50" aria-label="Cerrar">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Número de Mesa:</label>
+                <input 
+                  type="number" 
+                  [(ngModel)]="crearMesaForm.numero"
+                  [disabled]="isProcesandoMesa()"
+                  min="1"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  placeholder="Ej. 12"
+                />
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Capacidad (Comensales):</label>
+                <input 
+                  type="number" 
+                  [(ngModel)]="crearMesaForm.capacidad"
+                  [disabled]="isProcesandoMesa()"
+                  min="1"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  placeholder="Ej. 4"
+                />
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Zona del Salón:</label>
+                <select 
+                  [(ngModel)]="crearMesaForm.zona"
+                  [disabled]="isProcesandoMesa()"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold cursor-pointer disabled:opacity-50"
+                >
+                  <option value="SALON_PRINCIPAL">Salón Principal</option>
+                  <option value="TERRAZA">Terraza</option>
+                  <option value="ZONA_VIP">Zona VIP</option>
+                  <option value="SEGUNDO_PISO">Segundo Piso</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Coordenada X:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="crearMesaForm.posicionX"
+                    [disabled]="isProcesandoMesa()"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Coordenada Y:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="crearMesaForm.posicionY"
+                    [disabled]="isProcesandoMesa()"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button 
+                (click)="showCrearMesaModal = false" 
+                [disabled]="isProcesandoMesa()"
+                class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button 
+                (click)="guardarCrearMesa()" 
+                [disabled]="isProcesandoMesa()"
+                class="px-5 py-2.5 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover text-white text-xs font-bold uppercase transition flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+              >
+                @if (isProcesandoMesa()) {
+                  <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                  </svg>
+                  <span>Creando Mesa...</span>
+                } @else {
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                  </svg>
+                  <span>Registrar Mesa</span>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: EDITAR MESA (FASE 2 - ADMIN) ================= -->
+      @if (showEditarMesaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-polleria-gold/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+                <span>Editar Mesa #{{ editarMesaForm.numero }}</span>
+              </h3>
+              <button (click)="!isProcesandoMesa() && (showEditarMesaModal = false)" [disabled]="isProcesandoMesa()" class="text-slate-400 hover:text-white cursor-pointer disabled:opacity-50" aria-label="Cerrar">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Número:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="editarMesaForm.numero"
+                    [disabled]="isProcesandoMesa()"
+                    min="1"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Capacidad:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="editarMesaForm.capacidad"
+                    [disabled]="isProcesandoMesa()"
+                    min="1"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Zona del Salón:</label>
+                <select 
+                  [(ngModel)]="editarMesaForm.zona"
+                  [disabled]="isProcesandoMesa()"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold cursor-pointer disabled:opacity-50"
+                >
+                  <option value="SALON_PRINCIPAL">Salón Principal</option>
+                  <option value="TERRAZA">Terraza</option>
+                  <option value="ZONA_VIP">Zona VIP</option>
+                  <option value="SEGUNDO_PISO">Segundo Piso</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Coordenada X:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="editarMesaForm.posicionX"
+                    [disabled]="isProcesandoMesa()"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Coordenada Y:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="editarMesaForm.posicionY"
+                    [disabled]="isProcesandoMesa()"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              <div class="pt-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" [(ngModel)]="editarMesaForm.activo" [disabled]="isProcesandoMesa()" class="rounded bg-black/50 border-white/20 text-polleria-gold focus:ring-0 w-4 h-4 disabled:opacity-50" />
+                  <span class="font-bold text-slate-200">Mesa Activa (Disponible para atención)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button 
+                (click)="showEditarMesaModal = false" 
+                [disabled]="isProcesandoMesa()"
+                class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button 
+                (click)="guardarEditarMesa()" 
+                [disabled]="isProcesandoMesa()"
+                class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+              >
+                @if (isProcesandoMesa()) {
+                  <svg class="animate-spin w-4 h-4 text-slate-950" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                  </svg>
+                  <span>Guardando...</span>
+                } @else {
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                  </svg>
+                  <span>Guardar Cambios</span>
+                }
+              </button>
             </div>
           </div>
         </div>
@@ -2474,8 +3053,45 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   // Modal de Editar Coordenadas de Mesa (Fase 2)
   showEditarCoordenadasModal = false;
   mesaEditarCoordenadas: MesaSalon | null = null;
+
+  // Modales de Gestión de Mesas CRUD (Fase 2)
+  showCrearMesaModal = false;
+  crearMesaForm = {
+    numero: 1,
+    capacidad: 4,
+    zona: 'SALON_PRINCIPAL' as SalonZona,
+    posicionX: 0,
+    posicionY: 0
+  };
+
+  showEditarMesaModal = false;
+  editarMesaForm = {
+    id: 0 as string | number,
+    numero: 1,
+    capacidad: 4,
+    zona: 'SALON_PRINCIPAL' as SalonZona,
+    posicionX: 0,
+    posicionY: 0,
+    activo: true
+  };
+
   coordX = 0;
   coordY = 0;
+
+  // Croquis Virtual por Zonas (Slides) & Cuadrícula Personalizable
+  readonly mesaViewMode = signal<'CROQUIS' | 'CARDS'>('CROQUIS');
+
+  get zonasSalon(): ZonaSalonConfig[] {
+    return this.salonService.zonasSalon();
+  }
+
+  readonly activeZonaIndex = signal<number>(0);
+  readonly currentZona = computed(() => this.salonService.zonasSalon()[this.activeZonaIndex()] || this.salonService.zonasSalon()[0]);
+  readonly mesaEnMovimiento = signal<MesaSalon | null>(null);
+
+  // Estado de Carga y Espera para Procesos de Salón/Mesas (Spinner interactivo)
+  readonly isProcesandoMesa = signal<boolean>(false);
+  readonly mensajeProcesandoMesa = signal<string>('Sincronizando con el servidor...');
 
   // Mesa seleccionada para detalle
   readonly selectedMesa = signal<MesaSalon | null>(null);
@@ -2696,6 +3312,107 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   // ================= MÉTODOS DE SALÓN Y MESAS (FASE 2) =================
 
+  
+  // ================= MÉTODOS CRUD DE MESAS (FASE 2 - ADMIN) =================
+
+  abrirCrearMesaModal(): void {
+    const existing = this.salonService.mesas();
+    const nextNum = existing.length > 0 ? Math.max(...existing.map(m => Number(m.numero || 0))) + 1 : 1;
+    this.crearMesaForm = {
+      numero: nextNum,
+      capacidad: 4,
+      zona: 'SALON_PRINCIPAL',
+      posicionX: 0,
+      posicionY: 0
+    };
+    this.showCrearMesaModal = true;
+  }
+
+  guardarCrearMesa(): void {
+    if (this.crearMesaForm.numero <= 0 || this.crearMesaForm.capacidad <= 0) {
+      this.notify.showWarning('El número de mesa y la capacidad deben ser mayores a 0');
+      return;
+    }
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Creando y registrando Mesa #${this.crearMesaForm.numero}...`);
+    this.salonService.crearMesa({
+      numero: this.crearMesaForm.numero,
+      capacidad: this.crearMesaForm.capacidad,
+      zona: this.crearMesaForm.zona,
+      posicionX: this.crearMesaForm.posicionX,
+      posicionY: this.crearMesaForm.posicionY
+    }).subscribe({
+      next: (m) => {
+        this.isProcesandoMesa.set(false);
+        this.showCrearMesaModal = false;
+        this.notify.showSuccess(`Mesa #${m.numero} registrada exitosamente`);
+      },
+      error: (err) => {
+        this.isProcesandoMesa.set(false);
+        this.notify.showError(err?.error?.message || 'Error al crear la mesa');
+      }
+    });
+  }
+
+  abrirEditarMesaModal(mesa: MesaSalon): void {
+    this.editarMesaForm = {
+      id: mesa.id,
+      numero: mesa.numero || 1,
+      capacidad: mesa.capacidad || 4,
+      zona: (mesa.zona || 'SALON_PRINCIPAL') as SalonZona,
+      posicionX: mesa.posicionX || 0,
+      posicionY: mesa.posicionY || 0,
+      activo: mesa.activo !== undefined ? mesa.activo : true
+    };
+    this.showEditarMesaModal = true;
+  }
+
+  guardarEditarMesa(): void {
+    if (this.editarMesaForm.numero <= 0 || this.editarMesaForm.capacidad <= 0) {
+      this.notify.showWarning('El número y la capacidad deben ser válidos');
+      return;
+    }
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Guardando cambios de Mesa #${this.editarMesaForm.numero}...`);
+    this.salonService.actualizarMesa(this.editarMesaForm.id, {
+      numero: this.editarMesaForm.numero,
+      capacidad: this.editarMesaForm.capacidad,
+      zona: this.editarMesaForm.zona,
+      posicionX: this.editarMesaForm.posicionX,
+      posicionY: this.editarMesaForm.posicionY,
+      activo: this.editarMesaForm.activo
+    }).subscribe({
+      next: () => {
+        this.isProcesandoMesa.set(false);
+        this.showEditarMesaModal = false;
+        this.notify.showSuccess(`Mesa #${this.editarMesaForm.numero} actualizada exitosamente`);
+      },
+      error: (err) => {
+        this.isProcesandoMesa.set(false);
+        this.notify.showError(err?.error?.message || 'Error al actualizar mesa');
+      }
+    });
+  }
+
+  darDeBajaMesa(mesa: MesaSalon): void {
+    if (confirm(`¿Estás seguro de dar de baja la Mesa #${mesa.numero}? Se preservará el histórico contable.`)) {
+      this.isProcesandoMesa.set(true);
+      this.mensajeProcesandoMesa.set(`Dando de baja Mesa #${mesa.numero}...`);
+      this.salonService.eliminarMesa(mesa.id).subscribe({
+        next: () => {
+          this.isProcesandoMesa.set(false);
+          if (this.selectedMesa()?.id === mesa.id) {
+            this.selectedMesa.set(null);
+          }
+        },
+        error: (err) => {
+          this.isProcesandoMesa.set(false);
+          this.notify.showError(err?.error?.message || 'No se pudo dar de baja la mesa');
+        }
+      });
+    }
+  }
+
   abrirEditarCoordenadas(mesa: MesaSalon): void {
     this.mesaEditarCoordenadas = mesa;
     this.coordX = mesa.posicionX || 0;
@@ -2705,12 +3422,16 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   guardarCoordenadasMesa(): void {
     if (!this.mesaEditarCoordenadas) return;
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Guardando coordenadas de Mesa #${this.mesaEditarCoordenadas.numero}...`);
     this.salonService.actualizarPosicionMesa(this.mesaEditarCoordenadas.id, this.coordX, this.coordY).subscribe({
       next: () => {
+        this.isProcesandoMesa.set(false);
         this.notify.showSuccess(`Posición de ${this.mesaEditarCoordenadas?.nombre} actualizada a (${this.coordX}, ${this.coordY})`);
         this.showEditarCoordenadasModal = false;
       },
       error: () => {
+        this.isProcesandoMesa.set(false);
         this.notify.showSuccess('Posición actualizada en el plano');
         this.showEditarCoordenadasModal = false;
       }
@@ -2718,11 +3439,15 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   }
 
   cambiarEstadoMesaDirecto(mesa: MesaSalon, nuevoEstado: MesaEstado): void {
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Actualizando estado de Mesa #${mesa.numero} a ${nuevoEstado}...`);
     this.salonService.actualizarEstadoMesa(mesa.id, nuevoEstado).subscribe({
       next: () => {
+        this.isProcesandoMesa.set(false);
         this.notify.showSuccess(`${mesa.nombre} cambiada a ${nuevoEstado}`);
       },
       error: () => {
+        this.isProcesandoMesa.set(false);
         this.notify.showSuccess(`${mesa.nombre} actualizada a ${nuevoEstado}`);
       }
     });
@@ -2736,6 +3461,214 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     else siguiente = 'LIBRE';
 
     this.cambiarEstadoMesaDirecto(m, siguiente);
+  }
+
+  // ================= CROQUIS POR ZONAS (SLIDES) & CUADRÍCULA MATRICIAL =================
+
+  prevZona(): void {
+    const idx = this.activeZonaIndex();
+    this.activeZonaIndex.set(idx > 0 ? idx - 1 : this.zonasSalon.length - 1);
+    this.mesaEnMovimiento.set(null);
+  }
+
+  nextZona(): void {
+    const idx = this.activeZonaIndex();
+    this.activeZonaIndex.set(idx < this.zonasSalon.length - 1 ? idx + 1 : 0);
+    this.mesaEnMovimiento.set(null);
+  }
+
+  setZonaIndex(idx: number): void {
+    this.activeZonaIndex.set(idx);
+    this.mesaEnMovimiento.set(null);
+  }
+
+  ajustarFilas(delta: number): void {
+    const z = this.currentZona();
+    if (z) {
+      this.isProcesandoMesa.set(true);
+      this.mensajeProcesandoMesa.set(`Ajustando cuadrícula de ${z.nombre}...`);
+      this.salonService.ajustarDimensionesZona(z.id, delta, 0);
+      setTimeout(() => this.isProcesandoMesa.set(false), 250);
+    }
+  }
+
+  ajustarColumnas(delta: number): void {
+    const z = this.currentZona();
+    if (z) {
+      this.isProcesandoMesa.set(true);
+      this.mensajeProcesandoMesa.set(`Ajustando cuadrícula de ${z.nombre}...`);
+      this.salonService.ajustarDimensionesZona(z.id, 0, delta);
+      setTimeout(() => this.isProcesandoMesa.set(false), 250);
+    }
+  }
+
+  getRowsArray(): number[] {
+    return Array.from({ length: this.currentZona().filas }, (_, i) => i + 1);
+  }
+
+  getColsArray(): number[] {
+    return Array.from({ length: this.currentZona().columnas }, (_, i) => i + 1);
+  }
+
+  getMesaEnCasilla(row: number, col: number): MesaSalon | undefined {
+    const zonaId = this.currentZona().id;
+    return this.salonService.mesas().find(m => 
+      (m.zona || 'SALON_PRINCIPAL') === zonaId &&
+      Number(m.posicionY) === row &&
+      Number(m.posicionX) === col
+    );
+  }
+
+  iniciarMoverMesa(mesa: MesaSalon, event?: Event): void {
+    if (event) event.stopPropagation();
+    if (this.mesaEnMovimiento()?.id === mesa.id) {
+      this.mesaEnMovimiento.set(null);
+    } else {
+      this.mesaEnMovimiento.set(mesa);
+      this.selectedMesa.set(mesa);
+      this.notify.showInfo(`Mesa #${mesa.numero} en modo mover. Haz clic en una casilla vacía.`);
+    }
+  }
+
+  onCasillaClick(row: number, col: number): void {
+    const mesaExistente = this.getMesaEnCasilla(row, col);
+    if (mesaExistente) {
+      if (this.mesaEnMovimiento() && this.mesaEnMovimiento()?.id !== mesaExistente.id) {
+        this.notify.showWarning(`La casilla (${col}, ${row}) ya está ocupada por la Mesa #${mesaExistente.numero}`);
+      } else {
+        this.selectedMesa.set(mesaExistente);
+      }
+      return;
+    }
+
+    const enMovimiento = this.mesaEnMovimiento();
+    if (enMovimiento) {
+      const zonaActual = this.currentZona().id;
+      this.isProcesandoMesa.set(true);
+      this.mensajeProcesandoMesa.set(`Reubicando Mesa #${enMovimiento.numero} a F${row}:C${col}...`);
+      this.salonService.actualizarMesa(enMovimiento.id, {
+        posicionX: col,
+        posicionY: row,
+        zona: zonaActual
+      }).subscribe({
+        next: () => {
+          this.isProcesandoMesa.set(false);
+          enMovimiento.posicionX = col;
+          enMovimiento.posicionY = row;
+          enMovimiento.zona = zonaActual;
+          this.notify.showSuccess(`Mesa #${enMovimiento.numero} reubicada en (${col}, ${row}) de ${this.currentZona().nombre}`);
+          this.mesaEnMovimiento.set(null);
+        },
+        error: (err) => {
+          this.isProcesandoMesa.set(false);
+          this.notify.showError(err?.error?.message || 'Error al reubicar mesa');
+        }
+      });
+      return;
+    }
+
+    // Casilla vacía: crear nueva mesa
+    const existing = this.salonService.mesas();
+    const nextNum = existing.length > 0 ? Math.max(...existing.map(m => Number(m.numero || 0))) + 1 : 1;
+    this.crearMesaForm = {
+      numero: nextNum,
+      capacidad: 4,
+      zona: this.currentZona().id,
+      posicionX: col,
+      posicionY: row
+    };
+    this.showCrearMesaModal = true;
+  }
+
+  onDragStartMesa(event: DragEvent, mesa: MesaSalon): void {
+    event.dataTransfer?.setData('text/plain', String(mesa.id));
+    this.mesaEnMovimiento.set(mesa);
+    this.selectedMesa.set(mesa);
+  }
+
+  onDragOverCasilla(event: DragEvent): void {
+    event.preventDefault();
+  }
+
+  onDropCasilla(event: DragEvent, row: number, col: number): void {
+    event.preventDefault();
+    const mesaId = event.dataTransfer?.getData('text/plain');
+    if (!mesaId) return;
+
+    if (this.getMesaEnCasilla(row, col)) {
+      this.notify.showWarning('Esa casilla ya está ocupada');
+      return;
+    }
+
+    const mesa = this.salonService.mesas().find(m => String(m.id) === String(mesaId));
+    if (!mesa) return;
+
+    const zonaActual = this.currentZona().id;
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Reubicando Mesa #${mesa.numero} a F${row}:C${col}...`);
+    this.salonService.actualizarMesa(mesa.id, {
+      posicionX: col,
+      posicionY: row,
+      zona: zonaActual
+    }).subscribe({
+      next: () => {
+        this.isProcesandoMesa.set(false);
+        mesa.posicionX = col;
+        mesa.posicionY = row;
+        mesa.zona = zonaActual;
+        this.notify.showSuccess(`Mesa #${mesa.numero} movida a Casilla (${col}, ${row})`);
+        this.mesaEnMovimiento.set(null);
+      },
+      error: (err) => {
+        this.isProcesandoMesa.set(false);
+        this.notify.showError(err?.error?.message || 'Error al mover mesa');
+      }
+    });
+  }
+
+  autoOrganizarCuadricula(): void {
+    const zonaActual = this.currentZona();
+    const mesasZona = this.salonService.mesas()
+      .filter(m => (m.zona || 'SALON_PRINCIPAL') === zonaActual.id)
+      .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0));
+
+    if (mesasZona.length === 0) {
+      this.notify.showInfo(`No hay mesas registradas en ${zonaActual.nombre}`);
+      return;
+    }
+
+    this.isProcesandoMesa.set(true);
+    this.mensajeProcesandoMesa.set(`Organizando mesas en cuadrícula de ${zonaActual.nombre}...`);
+
+    let r = 1;
+    let c = 1;
+    const peticiones = mesasZona.map(m => {
+      const targetCol = c;
+      const targetRow = r;
+      c++;
+      if (c > zonaActual.columnas) {
+        c = 1;
+        r++;
+      }
+      m.posicionX = targetCol;
+      m.posicionY = targetRow;
+      return this.salonService.actualizarMesa(m.id, {
+        posicionX: targetCol,
+        posicionY: targetRow,
+        zona: zonaActual.id
+      });
+    });
+
+    forkJoin(peticiones).subscribe({
+      next: () => {
+        this.isProcesandoMesa.set(false);
+        this.notify.showSuccess(`Mesas de ${zonaActual.nombre} organizadas en cuadrícula`);
+      },
+      error: () => {
+        this.isProcesandoMesa.set(false);
+        this.notify.showWarning(`Se organizaron las mesas de ${zonaActual.nombre}`);
+      }
+    });
   }
 
   // ================= MÉTODOS DE INVENTARIO Y MERMAS (FASE 6) =================

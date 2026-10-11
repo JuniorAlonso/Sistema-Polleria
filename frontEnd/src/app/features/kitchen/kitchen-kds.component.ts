@@ -153,10 +153,10 @@ export interface MermaCierre {
           <div class="flex items-center gap-3">
             <div class="hidden sm:flex items-center gap-3 text-xs">
               <span class="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                🍳 En Preparación: {{ preparingCount() }}
+                <svg class="w-3.5 h-3.5 inline mr-1 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>En Preparación: {{ preparingCount() }}
               </span>
               <span class="px-3 py-1 rounded-xl bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                🔔 Listos para Reparto: {{ readyCount() }}
+                <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>Listos para Reparto: {{ readyCount() }}
               </span>
             </div>
 
@@ -260,7 +260,7 @@ export interface MermaCierre {
                         {{ order.cliente.nombre || 'Cliente San Pollo' }}
                       </h3>
                       @if (order.cliente.direccion) {
-                        <p class="text-[11px] text-slate-400 line-clamp-1">📍 {{ order.cliente.direccion }}</p>
+                        <p class="text-[11px] text-slate-400 line-clamp-1"><svg class="w-3 h-3 inline mr-1 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>{{ order.cliente.direccion }}</p>
                       }
                     </div>
 
@@ -278,7 +278,7 @@ export interface MermaCierre {
                           <p class="font-bold text-slate-100 text-sm">{{ item.product.nombre }}</p>
                           @if (item.notas) {
                             <p class="text-amber-300 font-medium italic mt-0.5 bg-amber-950/40 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                              <span>⚠️ {{ item.notas }}</span>
+                              <span class="flex items-center gap-1"><svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>{{ item.notas }}</span>
                             </p>
                           }
                         </div>
@@ -298,20 +298,20 @@ export interface MermaCierre {
                         (click)="cambiarEstadoOrden(order, 'EN_PREPARACION')"
                         class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer"
                       >
-                        <span>🔥 Empezar a Preparar</span>
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/></svg>Empezar a Preparar</span>
                       </button>
                     } @else if (order.estado === 'EN_PREPARACION') {
                       <button 
                         (click)="cambiarEstadoOrden(order, 'LISTO_COCINA')"
                         class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer animate-pulse"
                       >
-                        <span>🔔 Listo para Reparto / Empacado</span>
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Listo para Reparto / Empacado</span>
                       </button>
                     } @else if (order.estado === 'LISTO_COCINA') {
                       <div class="flex items-center justify-center p-3 rounded-xl bg-purple-500/10 border border-purple-500/30">
                         <span class="text-xs text-purple-300 font-bold flex items-center gap-2">
                           <span class="w-2.5 h-2.5 rounded-full bg-purple-400 animate-ping"></span>
-                          <span>📦 Empacado y Listo — Esperando que el motorizado retire el pedido</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Empacado y Listo — Esperando que el motorizado retire el pedido</span>
                         </span>
                       </div>
                     }

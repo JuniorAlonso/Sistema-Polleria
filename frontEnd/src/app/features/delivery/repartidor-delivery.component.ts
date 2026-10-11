@@ -260,14 +260,14 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                             [href]="'tel:' + order.cliente.celular"
                             class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 flex items-center gap-1 transition font-mono font-bold"
                           >
-                            📞 {{ order.cliente.celular }}
+                            <svg class="w-3.5 h-3.5 inline mr-1 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>{{ order.cliente.celular }}
                           </a>
                           <button 
                             (click)="enviarWhatsAppCliente(order)"
                             class="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white flex items-center gap-1 transition cursor-pointer font-bold"
                             title="Enviar WhatsApp directo al cliente"
                           >
-                            💬 WhatsApp
+                            <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>WhatsApp
                           </button>
                         }
                       </div>
@@ -285,7 +285,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                           target="_blank"
                           class="inline-flex items-center gap-1 text-sky-400 hover:underline pt-1 font-bold"
                         >
-                          📍 Ver en Google Maps / Waze
+                          <svg class="w-3.5 h-3.5 inline mr-1 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Ver en Google Maps / Waze
                         </a>
                       }
                     </div>
@@ -312,18 +312,18 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                           (click)="avanzarAReparto(order)"
                           class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
                         >
-                          <span>🛵 Tomar y Empezar Reparto</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Tomar y Empezar Reparto</span>
                         </button>
                       } @else if (order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO') {
                         <span class="text-xs text-amber-400/90 font-medium px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
-                          <span>⏳ En cocina / horno — Aún no listo</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>En cocina / horno — Aún no listo</span>
                         </span>
                       } @else if (order.estado === 'EN_REPARTO') {
                         <button 
                           (click)="abrirModalCobroEntrega(order)"
                           class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider transition cursor-pointer shadow-lg animate-pulse flex items-center gap-1.5"
                         >
-                          <span>✓ Entregar y Cobrar Pedido</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregar y Cobrar Pedido</span>
                         </button>
                       }
                     </div>
@@ -356,7 +356,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
 
               <div class="relative z-10 flex items-center justify-between">
                 <div class="p-3 rounded-xl bg-polleria-crimson text-white font-bold text-xs flex items-center gap-2 shadow-lg">
-                  <span>🍗 Local San Pollo (Av. San Martín 450, Ica)</span>
+                  <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>Local San Pollo (Av. San Martín 450, Ica)</span>
                 </div>
                 <div class="text-xs font-mono text-sky-400 bg-black/60 px-3 py-1.5 rounded-xl border border-white/10">
                   En ruta: {{ inRouteOrders().length }} pedidos
@@ -430,7 +430,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                 (click)="rendirCajaModal()"
                 class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
               >
-                💵 Rendir Efectivo y Cerrar Liquidación
+                <svg class="w-4 h-4 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Rendir Efectivo y Cerrar Liquidación
               </button>
             </div>
 
@@ -469,7 +469,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                         <td class="p-3 font-display font-bold text-polleria-gold">{{ order.total | currencyPEN }}</td>
                         <td class="p-3">
                           <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                            ✓ Entregado
+                            <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregado
                           </span>
                         </td>
                       </tr>
@@ -498,7 +498,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                   <h3 class="font-display text-2xl font-bold text-white">Confirmar Entrega y Cobro</h3>
                   <span class="text-xs text-slate-400">Orden #{{ getCodeNum(selectedOrderModal()?.codigoSeguimiento || '') }} • {{ selectedOrderModal()?.cliente?.nombre }}</span>
                 </div>
-                <button (click)="selectedOrderModal.set(null)" class="p-1 rounded-lg text-slate-400 hover:text-white">✕</button>
+                <button (click)="selectedOrderModal.set(null)" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>
 
               <!-- Detalle de Cobro -->
@@ -534,7 +534,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                   (click)="confirmarCobroYEntrega()"
                   class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
                 >
-                  ✓ Confirmar Cobrado y Entregado
+                  <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Confirmar Cobrado y Entregado
                 </button>
               </div>
 

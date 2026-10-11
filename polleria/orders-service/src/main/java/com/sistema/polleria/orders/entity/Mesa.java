@@ -26,6 +26,14 @@ public class Mesa {
     @Builder.Default
     private MesaEstado estado = MesaEstado.LIBRE;
 
+    @Column(length = 50)
+    @Builder.Default
+    private String zona = "SALON_PRINCIPAL";
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean activo = true;
+
     // URL del QR generado para esta mesa
     @Column(length = 500)
     private String qrUrl;
