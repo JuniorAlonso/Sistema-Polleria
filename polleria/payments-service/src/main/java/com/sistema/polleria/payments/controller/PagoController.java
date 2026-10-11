@@ -99,6 +99,28 @@ public class PagoController {
         return pagoService.cancelar(id);
     }
 
+    /** Reembolsar pago — solo ADMIN o microservicios autorizados */
+    @PostMapping("/{id}/reembolso")
+    @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
+    public PagoResponse reembolsar(
+            @PathVariable Long id,
+            @RequestBody(required = false) com.sistema.polleria.payments.dto.ReembolsoRequest request) {
+        java.math.BigDecimal monto = request != null ? request.monto() : null;
+        String motivo = request != null ? request.motivo() : null;
+        return pagoService.reembolsar(id, monto, motivo);
+    }
+
+    /** Reembolsar pago por orden ID */
+    @PostMapping("/orden/{ordenId}/reembolso")
+    @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
+    public PagoResponse reembolsarPorOrden(
+            @PathVariable Long ordenId,
+            @RequestBody(required = false) com.sistema.polleria.payments.dto.ReembolsoRequest request) {
+        java.math.BigDecimal monto = request != null ? request.monto() : null;
+        String motivo = request != null ? request.motivo() : null;
+        return pagoService.reembolsarPorOrden(ordenId, monto, motivo);
+    }
+
     // ─── util ────────────────────────────────────────────────────────
 
     private Long extractUserId(Principal principal) {

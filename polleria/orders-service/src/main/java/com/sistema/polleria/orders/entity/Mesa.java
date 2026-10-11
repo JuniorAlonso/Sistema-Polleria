@@ -29,4 +29,12 @@ public class Mesa {
     // URL del QR generado para esta mesa
     @Column(length = 500)
     private String qrUrl;
+
+    @Column(name = "posicion_x")
+    @Builder.Default
+    private Integer posicionX = 0;
+
+    @Column(name = "posicion_y")
+    @Builder.Default
+    private Integer posicionY = 0;
 }

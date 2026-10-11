@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,6 +25,7 @@ public class AuthController {
     private final AuthService authService;
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final com.sistema.polleria.auth.service.IpBlacklistService ipBlacklistService;
 
     // POST /auth/register
     @PostMapping("/register")
@@ -92,5 +94,20 @@ public class AuthController {
 
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(Map.of("valid", false, "message", "Token inválido o expirado"));
+    }
+
+    // GET /auth/admin/ips-bloqueadas — Listado de IPs
+    @GetMapping("/admin/ips-bloqueadas")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
+    public ResponseEntity<java.util.List<com.sistema.polleria.auth.dto.IpBlacklistResponse>> listarIpsBloqueadas() {
+        return ResponseEntity.ok(ipBlacklistService.listarIpsBloqueadas());
+    }
+
+    // DELETE /auth/admin/ips-bloqueadas/{ip} — Desbloqueo manual
+    @DeleteMapping("/admin/ips-bloqueadas/{ip}")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
+    public ResponseEntity<Map<String, String>> desbloquearIp(@PathVariable String ip) {
+        ipBlacklistService.desbloquearIp(ip);
+        return ResponseEntity.ok(Map.of("message", "IP " + ip + " desbloqueada con éxito"));
     }
 }

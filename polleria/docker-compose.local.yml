@@ -121,6 +121,106 @@ services:
     networks:
       - polleria-network
 
+  # ============================================================
+  # 1.5 Microservicio de Feedback y Reclamos (:8085)
+  # ============================================================
+  feedback-service:
+    build:
+      context: .
+      dockerfile: feedback-service/Dockerfile
+    container_name: polleria-feedback-service
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    environment:
+      PORT: 8085
+      DB_URL: jdbc:postgresql://postgres:5432/polleria
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres123
+      JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+      ORDERS_SERVICE_URL: http://orders-service:8082
+      PAYMENTS_SERVICE_URL: http://payments-service:8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payments-service:
+        condition: service_started
+    networks:
+      - polleria-network
+
+  # ============================================================
+  # 1.6 Microservicio de Inventario y Almacén (:8086)
+  # ============================================================
+  inventory-service:
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+    container_name: polleria-inventory-service
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      PORT: 8086
+      DB_URL: jdbc:postgresql://postgres:5432/polleria
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres123
+      JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - polleria-network
+
+  # ============================================================
+  # 1.7 Microservicio de Finanzas y Caja (:8087)
+  # ============================================================
+  finance-service:
+    build:
+      context: .
+      dockerfile: finance-service/Dockerfile
+    container_name: polleria-finance-service
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      PORT: 8087
+      DB_URL: jdbc:postgresql://postgres:5432/polleria
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres123
+      JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - polleria-network
+
+  # ============================================================
+  # 1.8 Microservicio de Incidentes y Resiliencia (:8088)
+  # ============================================================
+  incident-service:
+    build:
+      context: .
+      dockerfile: incident-service/Dockerfile
+    container_name: polleria-incident-service
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      PORT: 8088
+      DB_URL: jdbc:postgresql://postgres:5432/polleria
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres123
+      JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - polleria-network
+
 volumes:
   polleria_postgres_data:
     name: polleria_local_postgres_data

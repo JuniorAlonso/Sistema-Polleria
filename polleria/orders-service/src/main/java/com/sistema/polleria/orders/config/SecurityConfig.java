@@ -39,6 +39,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // La carta, el tracking de órdenes y actualización de estado son públicos en dev
                         .requestMatchers("/productos/**").permitAll()
+                        .requestMatchers("/ws-polleria/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.POST, "/ordenes").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/ordenes/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.PATCH, "/ordenes/**").permitAll()

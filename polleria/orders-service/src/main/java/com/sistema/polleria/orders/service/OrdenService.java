@@ -22,6 +22,7 @@ public class OrdenService {
     private final ProductoService productoService;
     private final MesaService mesaService;
     private final NotificationService notificationService;
+    private final SalonEventPublisher salonEventPublisher;
 
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
@@ -64,6 +65,10 @@ public class OrdenService {
 
         ordenRepository.save(orden);
         log.info("Orden #{} creada — tipo: {}, total: S/.{}", orden.getId(), orden.getTipo(), orden.getTotal());
+        salonEventPublisher.notificarNuevaComanda(orden);
+        if (orden.getMesa() != null) {
+            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
+        }
         return OrdenResponse.from(orden);
     }
 
@@ -117,6 +122,14 @@ public class OrdenService {
         ordenRepository.save(orden);
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
         notificationService.notificarCambioEstado(orden, request.getEstado());
+
+        if (request.getEstado() == OrdenEstado.LISTO) {
+            salonEventPublisher.notificarPedidoListo(orden);
+        }
+        if (orden.getMesa() != null) {
+            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
+        }
+
         return OrdenResponse.from(orden);
     }
 

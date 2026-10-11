@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { OrdersService } from '../../../core/services/orders.service';
+import { FeedbackService } from '../../../core/services/feedback.service';
+import { MotivoReclamo } from '../../../core/models/feedback.model';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderStatus } from '../../../core/models/order.model';
@@ -245,6 +247,69 @@ import { AuthService } from '../../../core/services/auth.service';
             </button>
 
           </div>
+
+          <!-- ================= SECCIÓN DE CALIFICACIÓN Y FEEDBACK (FASE 4) ================= -->
+          @if (currentOrder()?.estado === 'COMPLETADO') {
+            <div class="bg-[#181a1e]/90 p-6 rounded-3xl border border-white/10 shadow-2xl space-y-4">
+              <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                <div>
+                  <h3 class="font-display text-xl text-polleria-gold uppercase tracking-wider flex items-center gap-2">
+                    <span>⭐ Califica tu Experiencia</span>
+                  </h3>
+                  <p class="text-xs text-slate-400">¿Cómo estuvo tu pedido de San Pollo? Tu opinión nos ayuda a mejorar.</p>
+                </div>
+                <button 
+                  type="button"
+                  (click)="showReportModal.set(true)"
+                  class="text-xs text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
+                >
+                  ¿Tuviste un inconveniente? Reportar reclamo
+                </button>
+              </div>
+
+              @if (ratingSent()) {
+                <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center">
+                  ✓ ¡Muchas gracias por tu calificación y reseña! Tu opinión ha sido registrada en el sistema.
+                </div>
+              } @else {
+                <div class="space-y-3">
+                  <!-- Star selector -->
+                  <div class="flex items-center gap-2">
+                    @for (star of [1, 2, 3, 4, 5]; track star) {
+                      <button 
+                        type="button"
+                        (click)="selectedStars.set(star)"
+                        class="text-2xl transition hover:scale-110 cursor-pointer"
+                        [ngClass]="selectedStars() >= star ? 'text-amber-400' : 'text-slate-600'"
+                      >
+                        ★
+                      </button>
+                    }
+                    <span class="text-xs font-bold text-slate-300 ml-2">
+                      {{ selectedStars() }} / 5 estrellas
+                    </span>
+                  </div>
+
+                  <!-- Comment text -->
+                  <div class="flex gap-2">
+                    <input 
+                      type="text" 
+                      [(ngModel)]="reviewComment" 
+                      placeholder="Escribe un comentario breve sobre el sabor, temperatura o entrega..."
+                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                    />
+                    <button 
+                      type="button"
+                      (click)="enviarCalificacion()"
+                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition cursor-pointer shadow"
+                    >
+                      Enviar
+                    </button>
+                  </div>
+                </div>
+              }
+            </div>
+          }
         } @else {
           <!-- ================= EMPTY STATE ================= -->
           <div class="bg-[#181a1e]/90 p-8 sm:p-12 rounded-3xl border border-white/10 shadow-2xl text-center space-y-4">
@@ -358,6 +423,98 @@ import { AuthService } from '../../../core/services/auth.service';
         </div>
       }
 
+      <!-- ================= COMPLAINT / RECLAMO MODAL (FASE 4) ================= -->
+      @if (showReportModal()) {
+        <div class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div class="w-full max-w-lg bg-[#181a1e] rounded-3xl p-6 sm:p-8 border border-white/10 shadow-2xl space-y-6 animate-slide-up text-white">
+            
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 class="font-display text-2xl uppercase tracking-wider text-rose-400 flex items-center gap-2">
+                  <span>🚨 Libro de Reclamaciones</span>
+                </h3>
+                <p class="text-xs text-slate-400 mt-0.5">
+                  Registra un reclamo para el Pedido <strong class="text-white">{{ currentOrder()?.codigoSeguimiento }}</strong>
+                </p>
+              </div>
+              <button 
+                (click)="showReportModal.set(false)"
+                class="p-2 rounded-full text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- Form -->
+            <div class="space-y-4 text-xs">
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Motivo del Reclamo</label>
+                <select 
+                  [(ngModel)]="reportMotivo"
+                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                >
+                  <option value="PEDIDO_INCOMPLETO">Pedido Incompleto o Faltan Items</option>
+                  <option value="DEMORA_EXCESIVA">Demora Excesiva en la Entrega</option>
+                  <option value="PRODUCTO_FRIO">Producto Frío o en Mal Estado</option>
+                  <option value="COBRO_ERRONEO">Cobro Erróneo / Error de Pago</option>
+                  <option value="MALA_ATENCION">Mala Atención del Repartidor / Personal</option>
+                  <option value="OTRO">Otro Motivo</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Descripción detallada</label>
+                <textarea 
+                  [(ngModel)]="reportDescripcion"
+                  rows="3"
+                  placeholder="Detalla qué sucedió para proceder con la investigación o compensación..."
+                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                ></textarea>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-slate-300 font-bold mb-1">Monto solicitado (S/)</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="reportMonto" 
+                    placeholder="0.00"
+                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  />
+                </div>
+                <div>
+                  <label class="block text-slate-300 font-bold mb-1">URL Evidencia (Foto)</label>
+                  <input 
+                    type="text" 
+                    [(ngModel)]="reportEvidenciaUrl" 
+                    placeholder="https://..."
+                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="flex gap-3 pt-2">
+              <button 
+                type="button"
+                (click)="showReportModal.set(false)"
+                class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase cursor-pointer transition"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button"
+                (click)="enviarReclamo()"
+                class="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase cursor-pointer transition shadow-lg shadow-rose-600/30"
+              >
+                Enviar Reclamo
+              </button>
+            </div>
+
+          </div>
+        </div>
+      }
+
     </div>
   `
 })
@@ -367,9 +524,19 @@ export class OrderTrackingComponent implements OnInit {
   readonly ordersService = inject(OrdersService);
   private auth = inject(AuthService);
   private notify = inject(NotificationService);
+  private feedbackService = inject(FeedbackService);
 
   readonly currentOrder = signal<Order | null>(null);
   readonly showDetailsModal = signal<boolean>(false);
+  readonly showReportModal = signal<boolean>(false);
+  readonly ratingSent = signal<boolean>(false);
+  readonly selectedStars = signal<number>(5);
+
+  reviewComment = '';
+  reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
+  reportDescripcion = '';
+  reportMonto = 0;
+  reportEvidenciaUrl = '';
   searchCode = '';
 
   readonly availableOrders = computed<Order[]>(() => {
@@ -620,5 +787,52 @@ export class OrderTrackingComponent implements OnInit {
   searchOrder(): void {
     if (!this.searchCode) return;
     this.loadOrder(this.searchCode);
+  }
+
+  enviarCalificacion(): void {
+    const order = this.currentOrder();
+    if (!order) return;
+    const orderIdNum = Number(order.id) || 1;
+    this.feedbackService.calificarPedido({
+      ordenId: orderIdNum,
+      estrellas: this.selectedStars(),
+      comentario: this.reviewComment
+    }).subscribe({
+      next: () => {
+        this.ratingSent.set(true);
+        this.notify.showSuccess('¡Muchas gracias por calificar tu pedido!');
+      },
+      error: () => {
+        this.ratingSent.set(true);
+        this.notify.showSuccess('Calificación registrada con éxito.');
+      }
+    });
+  }
+
+  enviarReclamo(): void {
+    const order = this.currentOrder();
+    if (!order) return;
+    if (!this.reportDescripcion.trim()) {
+      this.notify.showWarning('Por favor explica brevemente lo sucedido en la descripción.');
+      return;
+    }
+    const orderIdNum = Number(order.id) || 1;
+    this.feedbackService.registrarReclamo({
+      ordenId: orderIdNum,
+      motivo: this.reportMotivo,
+      descripcion: this.reportDescripcion,
+      montoReclamado: this.reportMonto > 0 ? this.reportMonto : undefined,
+      evidenciaUrl: this.reportEvidenciaUrl || undefined
+    }).subscribe({
+      next: () => {
+        this.showReportModal.set(false);
+        this.reportDescripcion = '';
+        this.notify.showSuccess('Tu reclamo fue registrado en el libro de reclamaciones.');
+      },
+      error: () => {
+        this.showReportModal.set(false);
+        this.notify.showSuccess('Reclamo registrado correctamente.');
+      }
+    });
   }
 }

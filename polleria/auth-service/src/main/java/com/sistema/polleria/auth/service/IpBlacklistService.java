@@ -53,4 +53,21 @@ public class IpBlacklistService {
             ipBlacklistRepository.save(record);
         });
     }
+
+    public java.util.List<com.sistema.polleria.auth.dto.IpBlacklistResponse> listarIpsBloqueadas() {
+        return ipBlacklistRepository.findAllByOrderByLastAttemptDesc()
+                .stream()
+                .map(com.sistema.polleria.auth.dto.IpBlacklistResponse::from)
+                .toList();
+    }
+
+    @Transactional
+    public void desbloquearIp(String ip) {
+        ipBlacklistRepository.findByIp(ip).ifPresent(record -> {
+            record.setFailedAttempts(0);
+            record.setBlockedUntil(null);
+            ipBlacklistRepository.save(record);
+            log.info("IP desbloqueada manualmente por el administrador: {}", ip);
+        });
+    }
 }

@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -106,6 +107,26 @@ public class PagoService {
         pago = pagoRepository.save(pago);
         log.info("Pago cancelado — id={} orden={}", pago.getId(), pago.getOrdenId());
         return PagoResponse.from(pago);
+    }
+
+    @Transactional
+    public PagoResponse reembolsar(Long id, BigDecimal monto, String motivo) {
+        Pago pago = buscar(id);
+        if (pago.getEstado() != EstadoPago.APROBADO) {
+            throw new IllegalStateException("Solo se pueden reembolsar pagos que hayan sido APROBADOS. Estado actual: " + pago.getEstado());
+        }
+        pago.setEstado(EstadoPago.REEMBOLSADO);
+        pago.setDetalle("Reembolso procesado por S/ " + (monto != null ? monto : pago.getMonto()) + ". Motivo: " + (motivo != null ? motivo : "Reclamo procedente"));
+        pago = pagoRepository.save(pago);
+        log.info("Pago reembolsado — id={} orden={} monto={}", pago.getId(), pago.getOrdenId(), monto);
+        return PagoResponse.from(pago);
+    }
+
+    @Transactional
+    public PagoResponse reembolsarPorOrden(Long ordenId, BigDecimal monto, String motivo) {
+        Pago pago = pagoRepository.findByOrdenId(ordenId)
+                .orElseThrow(() -> new NoSuchElementException("No existe pago asociado a la orden: " + ordenId));
+        return reembolsar(pago.getId(), monto, motivo);
     }
 
     // ─── helpers ────────────────────────────────────────────────────

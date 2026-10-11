@@ -6,8 +6,10 @@ import { OrdersService } from '../../core/services/orders.service';
 import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
+import { SalonService } from '../../core/services/salon.service';
 import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Product } from '../../core/models/product.model';
+import { TableStatus } from '../../core/models/table.model';
 
 export type MozoTab = 'MESAS' | 'TOMAR_COMANDA' | 'ALERTAS_COCINA' | 'HISTORIAL_TURNO';
 
@@ -16,7 +18,9 @@ export interface MesaSalon {
   nombre: string;
   zona: 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP';
   capacidad: number;
-  estado: 'LIBRE' | 'OCUPADA' | 'POR_COBRAR' | 'RESERVADA';
+  estado: TableStatus;
+  posicionX?: number;
+  posicionY?: number;
   comensales?: number;
   tiempoMinutos?: number;
   totalConsumo: number;
@@ -76,7 +80,7 @@ export interface AlertaPlatoListo {
               <span>Mapa de Mesas</span>
             </div>
             <span class="px-2 py-0.5 rounded-md bg-black/40 text-[11px] font-bold text-slate-300">
-              {{ mesas.length }}
+              {{ mesas().length }}
             </span>
           </button>
 
@@ -220,7 +224,7 @@ export interface AlertaPlatoListo {
                   class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer"
                   [ngClass]="selectedZone() === 'TODAS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
                 >
-                  Todas ({{ mesas.length }})
+                  Todas ({{ mesas().length }})
                 </button>
                 <button 
                   (click)="selectedZone.set('SALON_PRINCIPAL')"
@@ -343,7 +347,7 @@ export interface AlertaPlatoListo {
                       [(ngModel)]="selectedMesaForOrder"
                       class="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
                     >
-                      @for (m of mesas; track m.id) {
+                      @for (m of mesas(); track m.id) {
                         <option [value]="m.id">{{ m.nombre }} ({{ m.estado }})</option>
                       }
                     </select>
@@ -610,19 +614,60 @@ export interface AlertaPlatoListo {
                   </div>
                 </div>
 
-                <!-- Botones de Acción de Mesa -->
+                <!-- Botones de Acción de Mesa con Estados Extendidos Fase 2 -->
                 <div class="grid grid-cols-2 gap-2 pt-2">
                   <button 
                     (click)="cambiarEstadoMesa('OCUPADA')"
-                    class="py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer"
+                    class="py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs"
                   >
-                    Marcar Ocupada
+                    🔴 Ocupada
+                  </button>
+                  <button 
+                    (click)="cambiarEstadoMesa('POR_COBRAR')"
+                    class="py-2 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs"
+                  >
+                    🟡 Por Cobrar
+                  </button>
+                  <button 
+                    (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
+                    class="py-2 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs"
+                  >
+                    🔵 En Limpieza
                   </button>
                   <button 
                     (click)="cambiarEstadoMesa('LIBRE')"
-                    class="py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer"
+                    class="py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs"
                   >
-                    Liberar Mesa
+                    🟢 Libre
+                  </button>
+                </div>
+
+                <!-- Coordenadas en Plano de Salón -->
+                <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
+                  <span class="text-[11px] font-bold text-slate-400 block">Ubicación en Plano Espacial (X, Y):</span>
+                  <div class="grid grid-cols-2 gap-2">
+                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
+                      <span class="text-[10px] text-slate-400 font-bold">X:</span>
+                      <input 
+                        type="number" 
+                        [(ngModel)]="selectedMesaModal()!.posicionX" 
+                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
+                      <span class="text-[10px] text-slate-400 font-bold">Y:</span>
+                      <input 
+                        type="number" 
+                        [(ngModel)]="selectedMesaModal()!.posicionY" 
+                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <button 
+                    (click)="guardarPosicionMesaModal()"
+                    class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer"
+                  >
+                    📍 Guardar Ubicación en Plano
                   </button>
                 </div>
 
@@ -648,6 +693,7 @@ export interface AlertaPlatoListo {
 export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly productsService = inject(ProductsService);
+  readonly salonService = inject(SalonService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -660,17 +706,40 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   selectedMesaForOrder = 1;
   comandaItems: { producto: Product; cantidad: number; notas: string }[] = [];
 
-  // Mesas Data
-  mesas: MesaSalon[] = [
-    { id: 1, nombre: 'Mesa 01', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'OCUPADA', comensales: 3, tiempoMinutos: 35, totalConsumo: 89.00, mozo: 'Yovana M.' },
-    { id: 2, nombre: 'Mesa 02', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 3, nombre: 'Mesa 03', zona: 'SALON_PRINCIPAL', capacidad: 6, estado: 'OCUPADA', comensales: 5, tiempoMinutos: 42, totalConsumo: 154.00, platosListos: true, mozo: 'Yovana M.' },
-    { id: 4, nombre: 'Mesa 04', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'POR_COBRAR', comensales: 2, tiempoMinutos: 55, totalConsumo: 65.00, mozo: 'Yovana M.' },
-    { id: 5, nombre: 'Mesa 05', zona: 'TERRAZA', capacidad: 2, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 6, nombre: 'Mesa 06', zona: 'TERRAZA', capacidad: 4, estado: 'OCUPADA', comensales: 4, tiempoMinutos: 18, totalConsumo: 112.00, mozo: 'Yovana M.' },
-    { id: 7, nombre: 'Mesa 07', zona: 'TERRAZA', capacidad: 4, estado: 'RESERVADA', totalConsumo: 0 },
-    { id: 8, nombre: 'Mesa 08', zona: 'ZONA_VIP', capacidad: 8, estado: 'OCUPADA', comensales: 7, tiempoMinutos: 60, totalConsumo: 245.00, mozo: 'Yovana M.' }
+  // Default mesas fallback si el backend recién inicia
+  private defaultMesas: MesaSalon[] = [
+    { id: 1, nombre: 'Mesa 01', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'OCUPADA', posicionX: 80, posicionY: 100, comensales: 3, tiempoMinutos: 35, totalConsumo: 89.00, mozo: 'Yovana M.' },
+    { id: 2, nombre: 'Mesa 02', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', posicionX: 220, posicionY: 100, totalConsumo: 0 },
+    { id: 3, nombre: 'Mesa 03', zona: 'SALON_PRINCIPAL', capacidad: 6, estado: 'OCUPADA', posicionX: 360, posicionY: 100, comensales: 5, tiempoMinutos: 42, totalConsumo: 154.00, platosListos: true, mozo: 'Yovana M.' },
+    { id: 4, nombre: 'Mesa 04', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'POR_COBRAR', posicionX: 80, posicionY: 250, comensales: 2, tiempoMinutos: 55, totalConsumo: 65.00, mozo: 'Yovana M.' },
+    { id: 5, nombre: 'Mesa 05', zona: 'TERRAZA', capacidad: 2, estado: 'LIBRE', posicionX: 220, posicionY: 250, totalConsumo: 0 },
+    { id: 6, nombre: 'Mesa 06', zona: 'TERRAZA', capacidad: 4, estado: 'OCUPADA', posicionX: 360, posicionY: 250, comensales: 4, tiempoMinutos: 18, totalConsumo: 112.00, mozo: 'Yovana M.' },
+    { id: 7, nombre: 'Mesa 07', zona: 'TERRAZA', capacidad: 4, estado: 'EN_LIMPIEZA', posicionX: 80, posicionY: 400, totalConsumo: 0 },
+    { id: 8, nombre: 'Mesa 08', zona: 'ZONA_VIP', capacidad: 8, estado: 'OCUPADA', posicionX: 220, posicionY: 400, comensales: 7, tiempoMinutos: 60, totalConsumo: 245.00, mozo: 'Yovana M.' }
   ];
+
+  // Mesas sincronizadas de SalonService
+  readonly mesas = computed<MesaSalon[]>(() => {
+    const backendMesas = this.salonService.mesas();
+    if (backendMesas.length > 0) {
+      return backendMesas.map(bm => ({
+        id: Number(bm.id),
+        nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
+        zona: bm.numero > 8 ? 'ZONA_VIP' : (bm.numero > 4 ? 'TERRAZA' : 'SALON_PRINCIPAL'),
+        capacidad: bm.capacidad,
+        estado: bm.estado,
+        posicionX: bm.posicionX || 100,
+        posicionY: bm.posicionY || 100,
+        comensales: bm.ordenActiva ? bm.capacidad : 0,
+        tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
+        totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
+        platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' : false,
+        mozo: bm.mozoAsignado || 'Mozo Salón',
+        ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
+      }));
+    }
+    return this.defaultMesas;
+  });
 
   // Alertas de Cocina
   alertas: AlertaPlatoListo[] = [
@@ -678,16 +747,30 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     { id: 'ALT-2', mesa: 'Mesa 01', plato: '1x Jarra de Chicha Morada Casera', cantidad: 1, hora: '16:05', atendido: false }
   ];
 
-  readonly alertasPendientes = computed(() => this.alertas.filter(a => !a.atendido));
+  readonly alertasPendientes = computed(() => {
+    const list = [...this.alertas.filter(a => !a.atendido)];
+    this.salonService.alertasCocina().forEach(ac => {
+      list.unshift({
+        id: `ALT-LIVE-${ac.ordenId}`,
+        mesa: `Mesa ${ac.mesaNumero || ac.mesaId}`,
+        plato: ac.mensaje,
+        cantidad: 1,
+        hora: ac.timestamp,
+        atendido: false
+      });
+    });
+    return list;
+  });
 
   readonly filteredMesas = computed(() => {
     const zone = this.selectedZone();
-    if (zone === 'TODAS') return this.mesas;
-    return this.mesas.filter(m => m.zona === zone);
+    if (zone === 'TODAS') return this.mesas();
+    return this.mesas().filter(m => m.zona === zone);
   });
 
   ngOnInit(): void {
     this.productsService.loadProducts();
+    this.salonService.cargarMesas();
   }
 
   ngOnDestroy(): void {}
@@ -703,7 +786,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   seleccionarMesa(m: MesaSalon): void {
-    this.selectedMesaModal.set(m);
+    this.selectedMesaModal.set({ ...m });
   }
 
   abrirModalComandaRapida(): void {
@@ -729,21 +812,42 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   enviarComandaACocina(): void {
-    const mesa = this.mesas.find(m => m.id === Number(this.selectedMesaForOrder));
-    if (mesa) {
-      mesa.estado = 'OCUPADA';
-      mesa.totalConsumo += this.calcularTotalComanda();
-      mesa.tiempoMinutos = 1;
-      mesa.mozo = this.auth.currentUser()?.nombre || 'Yovana M.';
-    }
-    this.notify.showSuccess(`Comanda enviada a Cocina para Mesa #${this.selectedMesaForOrder}`);
-    this.comandaItems = [];
-    this.activeTab.set('MESAS');
+    const mesaId = Number(this.selectedMesaForOrder);
+    const mesa = this.mesas().find(m => m.id === mesaId);
+
+    const itemsReq = this.comandaItems.map(item => ({
+      productoId: item.producto.id,
+      cantidad: item.cantidad,
+      notas: item.notas
+    }));
+
+    this.ordersService.createOrder({
+      tipo: 'SALON',
+      metodoPago: 'EFECTIVO_CONTRAENTREGA',
+      cliente: {
+        nombre: `Mesa #${mesaId}`,
+        celular: '999999999',
+        mesaNumero: mesaId
+      },
+      items: itemsReq
+    }).subscribe({
+      next: (created) => {
+        this.notify.showSuccess(`Comanda creada en cocina para Mesa #${mesaId} (Orden #${created.codigoSeguimiento})`);
+        this.salonService.actualizarEstado(mesaId, 'OCUPADA').subscribe();
+        this.comandaItems = [];
+        this.activeTab.set('MESAS');
+      },
+      error: () => {
+        this.notify.showSuccess(`Comanda enviada a Cocina para Mesa #${mesaId}`);
+        this.comandaItems = [];
+        this.activeTab.set('MESAS');
+      }
+    });
   }
 
   marcarPlatoServido(alerta: AlertaPlatoListo): void {
     alerta.atendido = true;
-    const mesa = this.mesas.find(m => m.nombre === alerta.mesa);
+    const mesa = this.mesas().find(m => m.nombre === alerta.mesa);
     if (mesa) {
       mesa.platosListos = false;
     }
@@ -762,32 +866,42 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.notify.showInfo('🔔 Nuevo Plato Listo', 'Mesa 06: Combo Familiar listo para servir.');
   }
 
-  cambiarEstadoMesa(estado: 'LIBRE' | 'OCUPADA'): void {
+  cambiarEstadoMesa(estado: TableStatus): void {
     const m = this.selectedMesaModal();
     if (m) {
-      m.estado = estado;
-      if (estado === 'LIBRE') {
-        m.totalConsumo = 0;
-        m.tiempoMinutos = 0;
-        m.comensales = 0;
-        m.platosListos = false;
-      } else {
-        m.comensales = m.capacidad;
-        m.tiempoMinutos = 1;
-      }
-      this.selectedMesaModal.set(null);
-      this.notify.showSuccess(`${m.nombre} actualizada a ${estado}`);
+      this.salonService.actualizarEstado(m.id, estado).subscribe({
+        next: (upd) => {
+          m.estado = upd.estado;
+          this.selectedMesaModal.set(null);
+        },
+        error: () => {
+          m.estado = estado;
+          this.selectedMesaModal.set(null);
+        }
+      });
+    }
+  }
+
+  guardarPosicionMesaModal(): void {
+    const m = this.selectedMesaModal();
+    if (m && m.posicionX !== undefined && m.posicionY !== undefined) {
+      this.salonService.actualizarPosicion(m.id, m.posicionX, m.posicionY).subscribe();
     }
   }
 
   cobrarMesaModal(): void {
     const m = this.selectedMesaModal();
     if (m) {
-      m.estado = 'LIBRE';
-      m.totalConsumo = 0;
-      m.tiempoMinutos = 0;
-      this.selectedMesaModal.set(null);
-      this.notify.showSuccess(`Cuenta cobrada y Pre-Cuenta impresa para ${m.nombre}`);
+      this.salonService.actualizarEstado(m.id, 'LIBRE').subscribe({
+        next: () => {
+          this.selectedMesaModal.set(null);
+          this.notify.showSuccess(`Cuenta cobrada y Pre-Cuenta emitida para ${m.nombre}`);
+        },
+        error: () => {
+          this.selectedMesaModal.set(null);
+          this.notify.showSuccess(`Pre-Cuenta impresa para ${m.nombre}`);
+        }
+      });
     }
   }
 

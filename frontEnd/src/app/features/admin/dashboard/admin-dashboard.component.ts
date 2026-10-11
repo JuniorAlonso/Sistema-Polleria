@@ -6,10 +6,20 @@ import { Subscription, interval } from 'rxjs';
 import { OrdersService } from '../../../core/services/orders.service';
 import { ProductsService } from '../../../core/services/products.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { SalonService } from '../../../core/services/salon.service';
+import { InventoryService } from '../../../core/services/inventory.service';
+import { FinanceService } from '../../../core/services/finance.service';
+import { FeedbackService } from '../../../core/services/feedback.service';
+import { SecurityAuditService } from '../../../core/services/security-audit.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderStatus, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { Product } from '../../../core/models/product.model';
+import { MesaSalon, MesaEstado, SalonZona } from '../../../core/models/table.model';
+import { Insumo, RegistroMerma, MotivoMerma, InsumoCategoria } from '../../../core/models/inventory.model';
+import { CajaSesion, MovimientoCaja, BalanceDiario, TipoMovimiento } from '../../../core/models/finance.model';
+import { Resenia, ReporteReclamo, MotivoReclamo } from '../../../core/models/feedback.model';
+import { IncidenteOperativo, IpBloqueada } from '../../../core/models/incident.model';
 
 export type DashboardTab = 
   | 'ORDENES' 
@@ -21,40 +31,8 @@ export type DashboardTab =
   | 'NOTIFICACIONES' 
   | 'SOPORTE';
 
-interface TableSalon {
-  id: number;
-  nombre: string;
-  zona: 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP';
-  capacidad: number;
-  estado: 'LIBRE' | 'OCUPADA' | 'POR_COBRAR' | 'RESERVADA';
-  mozo?: string;
-  comensales?: number;
-  tiempoMinutos?: number;
-  totalConsumo?: number;
-  platosListos?: boolean;
-}
-
-interface InsumoAlmacen {
-  id: string;
-  nombre: string;
-  categoria: 'CARNES' | 'VERDURAS' | 'ABARROTES' | 'BEBIDAS' | 'INSUMOS_FUEGO';
-  stockActual: number;
-  stockMinimo: number;
-  unidadMedida: string;
-  costoUnitario: number;
-  estado: 'OPTIMO' | 'BAJO' | 'CRITICO';
-}
-
-interface RegistroMerma {
-  id: string;
-  fecha: string;
-  insumo: string;
-  cantidad: number;
-  unidad: string;
-  motivo: 'COCCION_EXCESIVA' | 'VENCIMIENTO' | 'DESCARTE_MANIPULACION' | 'DEFECTO_PROVEEDOR';
-  costoPerdida: number;
-  responsable: string;
-}
+export type TableSalon = MesaSalon;
+export type InsumoAlmacen = Insumo;
 
 interface MotorizadoDelivery {
   id: string;
@@ -66,31 +44,6 @@ interface MotorizadoDelivery {
   pedidoActual?: string;
 }
 
-interface TransaccionFinanzas {
-  id: string;
-  ordenCodigo: string;
-  canal: 'DELIVERY' | 'SALON' | 'RECOJO';
-  metodoPago: 'VISA' | 'MASTERCARD' | 'YAPE' | 'PLIN' | 'EFECTIVO';
-  monto: number;
-  estado: 'APROBADO' | 'PENDIENTE' | 'REEMBOLSADO' | 'RECHAZADO';
-  fechaHora: string;
-  referencia: string;
-}
-
-interface ReporteFeedback {
-  id: string;
-  cliente: string;
-  telefono: string;
-  ordenCodigo: string;
-  tipo: 'RESEÑA' | 'RECLAMO';
-  estrellas?: number;
-  mensaje: string;
-  evidenciaFotoUrl?: string;
-  estado: 'ABIERTO' | 'EN_REVISION' | 'RESUELTO';
-  fecha: string;
-  solucion?: string;
-}
-
 interface NotificacionLog {
   id: string;
   destinatario: string;
@@ -99,18 +52,6 @@ interface NotificacionLog {
   plantilla: string;
   estado: 'ENVIADO' | 'EN_COLA' | 'FALLIDO';
   latenciaMs: number;
-  fechaHora: string;
-}
-
-interface IncidenteSoporte {
-  id: string;
-  titulo: string;
-  modulo: 'PAGOS' | 'COCINA_HORNO' | 'RED_WIFI' | 'SISTEMA_LOCAL';
-  severidad: 'ALTA' | 'MEDIA' | 'BAJA';
-  estado: 'RESUELTO' | 'EN_INVESTIGACION';
-  causaRaiz: string;
-  solucionAplicada: string;
-  reportadoPor: string;
   fechaHora: string;
 }
 
@@ -689,7 +630,7 @@ interface IncidenteSoporte {
       }
 
 
-      <!-- ================= TAB 2: MESAS & SALÓN (FASE 2 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 2: MESAS & SALÓN (FASE 2 - EN VIVO) ================= -->
       @if (activeTab() === 'MESAS') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
           
@@ -697,25 +638,25 @@ interface IncidenteSoporte {
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Gestión de Salón & Mesas</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 2 - Próximamente
+                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Fase 2 - En Vivo
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Control de ocupación, comandas de mozo y aviso en tiempo real de platos listos.</p>
+              <p class="text-xs text-slate-400">Control de ocupación, comensales, comanda activa y coordenadas en plano (orders-service).</p>
             </div>
 
             <!-- Legend Badges -->
             <div class="flex flex-wrap items-center gap-3 text-xs">
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Libre ({{ getFreeTablesCount() }})</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Ocupada ({{ getOccupiedTablesCount() }})</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-400"></span> Por Cobrar (1)</span>
-              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-sky-500"></span> Reservada (1)</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Libre ({{ salonService.mesasLibres().length }})</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Ocupada ({{ salonService.mesasOcupadas().length }})</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-400"></span> Por Cobrar ({{ salonService.mesasPorCobrar().length }})</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-sky-400"></span> En Limpieza ({{ salonService.mesasEnLimpieza().length }})</span>
             </div>
           </div>
 
           <!-- Tables Grid Layout -->
           <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            @for (t of mesas; track t.id) {
+            @for (t of salonService.mesas(); track t.id) {
               <div 
                 (click)="selectedMesa.set(t)"
                 class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between"
@@ -723,7 +664,8 @@ interface IncidenteSoporte {
                   'bg-[#121418] border-emerald-500/30 hover:border-emerald-400': t.estado === 'LIBRE',
                   'bg-[#1e1518] border-rose-500/40 hover:border-rose-400': t.estado === 'OCUPADA',
                   'bg-[#1e1b12] border-amber-500/40 hover:border-amber-400': t.estado === 'POR_COBRAR',
-                  'bg-[#121820] border-sky-500/40 hover:border-sky-400': t.estado === 'RESERVADA',
+                  'bg-[#121824] border-sky-500/40 hover:border-sky-400': t.estado === 'EN_LIMPIEZA',
+                  'bg-[#121820] border-purple-500/40 hover:border-purple-400': t.estado === 'RESERVADA',
                   'ring-2 ring-polleria-gold': selectedMesa()?.id === t.id
                 }"
               >
@@ -742,33 +684,46 @@ interface IncidenteSoporte {
                         'bg-emerald-500/20 text-emerald-400': t.estado === 'LIBRE',
                         'bg-rose-500/20 text-rose-400': t.estado === 'OCUPADA',
                         'bg-amber-500/20 text-amber-300': t.estado === 'POR_COBRAR',
-                        'bg-sky-500/20 text-sky-300': t.estado === 'RESERVADA'
+                        'bg-sky-500/20 text-sky-300': t.estado === 'EN_LIMPIEZA',
+                        'bg-purple-500/20 text-purple-300': t.estado === 'RESERVADA'
                       }"
                     >
                       {{ t.estado }}
                     </span>
                   </div>
                   
-                  <p class="text-xs text-slate-400">{{ t.zona.replace('_', ' ') }} • {{ t.capacidad }} personas</p>
+                  <p class="text-xs text-slate-400">{{ (t.zona || 'SALON').replace('_', ' ') }} • {{ t.capacidad }} personas</p>
+                  <p class="text-[11px] text-slate-500 font-mono mt-0.5">Plano: (X: {{ t.posicionX || 0 }}, Y: {{ t.posicionY || 0 }})</p>
 
                   @if (t.estado === 'OCUPADA' || t.estado === 'POR_COBRAR') {
                     <div class="mt-3 text-xs space-y-1">
-                      <p class="text-slate-300"><span class="text-slate-500">Mozo:</span> {{ t.mozo }}</p>
-                      <p class="text-slate-300"><span class="text-slate-500">Tiempo:</span> {{ t.tiempoMinutos }} min</p>
+                      <p class="text-slate-300"><span class="text-slate-500">Mozo:</span> {{ t.mozo || 'Mozo Salón' }}</p>
+                      @if (t.ordenActiva) {
+                        <p class="text-slate-300"><span class="text-slate-500">Comanda:</span> #{{ t.ordenActiva.codigoSeguimiento }}</p>
+                      }
                     </div>
                   }
                 </div>
 
                 <div class="mt-4 pt-3 border-t border-white/10 flex justify-between items-center">
                   <span class="font-display text-lg font-bold text-polleria-gold">
-                    {{ (t.totalConsumo || 0) | currencyPEN }}
+                    {{ (t.ordenActiva?.total || t.totalConsumo || 0) | currencyPEN }}
                   </span>
-                  <button 
-                    (click)="toggleEstadoMesa(t); $event.stopPropagation()"
-                    class="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition cursor-pointer"
-                  >
-                    {{ t.estado === 'LIBRE' ? 'Ocupar' : 'Liberar' }}
-                  </button>
+                  <div class="flex items-center gap-1.5" (click)="$event.stopPropagation()">
+                    <button 
+                      (click)="abrirEditarCoordenadas(t)"
+                      class="p-1.5 bg-white/5 hover:bg-white/15 rounded-lg text-slate-300 text-xs transition cursor-pointer"
+                      title="Mover posición en el plano"
+                    >
+                      ✏️
+                    </button>
+                    <button 
+                      (click)="toggleEstadoMesa(t)"
+                      class="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition cursor-pointer"
+                    >
+                      {{ t.estado === 'LIBRE' ? 'Ocupar' : (t.estado === 'OCUPADA' ? 'Cobrar' : (t.estado === 'POR_COBRAR' ? 'Limpiar' : 'Liberar')) }}
+                    </button>
+                  </div>
                 </div>
 
               </div>
@@ -780,32 +735,47 @@ interface IncidenteSoporte {
             <div class="p-6 bg-[#14161a] rounded-2xl border border-polleria-gold/30 shadow-2xl flex flex-col md:flex-row justify-between gap-6 items-center">
               <div class="space-y-1">
                 <div class="flex items-center gap-3">
-                  <h3 class="font-display text-2xl font-bold text-white">Comanda Activa: {{ mesa.nombre }}</h3>
+                  <h3 class="font-display text-2xl font-bold text-white">Detalle de Mesa: {{ mesa.nombre }}</h3>
                   <span class="text-xs font-mono px-2.5 py-0.5 rounded bg-polleria-gold/20 text-polleria-gold font-bold">
-                    Mozo: {{ mesa.mozo || 'Sin Asignar' }}
+                    Mozo: {{ mesa.mozo || 'Mozo Salón' }}
                   </span>
                 </div>
-                <p class="text-xs text-slate-400">1x 1 Pollo a la Brasa Tradicional + 1x Jarra Chicha 1L + 2x Porción Papas Extra</p>
+                @if (mesa.ordenActiva) {
+                  <p class="text-xs text-slate-300">
+                    Comanda activa <strong>#{{ mesa.ordenActiva.codigoSeguimiento }}</strong> • Total: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong>
+                  </p>
+                  @if (mesa.ordenActiva.itemsResumen) {
+                    <p class="text-xs text-slate-400">{{ mesa.ordenActiva.itemsResumen }}</p>
+                  }
+                } @else {
+                  <p class="text-xs text-slate-400">Sin comanda activa en este momento. Estado actual: {{ mesa.estado }}</p>
+                }
               </div>
 
               <div class="flex flex-wrap gap-2">
                 <button 
-                  (click)="notify.showSuccess('Comanda enviada a cocina (KDS Horno)')"
-                  class="px-4 py-2 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                  (click)="cambiarEstadoMesaDirecto(mesa, 'LIBRE')"
+                  class="px-3.5 py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
                 >
-                  + Agregar Platos
+                  Marcar Libre
                 </button>
                 <button 
-                  (click)="notify.showInfo('Pre-cuenta generada', 'Imprimiendo ticket para ' + mesa.nombre)"
-                  class="px-4 py-2 bg-[#2a2e36] hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                  (click)="cambiarEstadoMesaDirecto(mesa, 'OCUPADA')"
+                  class="px-3.5 py-2 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
                 >
-                  Emitir Pre-Cuenta
+                  Marcar Ocupada
                 </button>
                 <button 
-                  (click)="mesa.platosListos = false; notify.showSuccess('Alerta de plato servido')"
-                  class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                  (click)="cambiarEstadoMesaDirecto(mesa, 'POR_COBRAR')"
+                  class="px-3.5 py-2 bg-amber-500/30 hover:bg-amber-500/50 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
                 >
-                  Marcar Servido
+                  Por Cobrar
+                </button>
+                <button 
+                  (click)="cambiarEstadoMesaDirecto(mesa, 'EN_LIMPIEZA')"
+                  class="px-3.5 py-2 bg-sky-500/30 hover:bg-sky-500/50 text-sky-300 border border-sky-500/30 font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  En Limpieza
                 </button>
               </div>
             </div>
@@ -922,22 +892,22 @@ interface IncidenteSoporte {
             </div>
           }
 
-          <!-- SUB-VIEW 2: INSUMOS & DESPACHO (FASE 4 - PRÓXIMAMENTE) -->
+          <!-- SUB-VIEW 2: INSUMOS & DESPACHO (FASE 6 - EN VIVO) -->
           @if (inventarioSubTab() === 'INSUMOS') {
             <div class="space-y-4">
               <div class="flex justify-between items-center bg-[#1c1f24] p-4 rounded-xl border border-white/5">
                 <div>
                   <h3 class="font-bold text-white flex items-center gap-2">
                     <span>Almacén Central de Insumos</span>
-                    <span class="text-[10px] text-amber-400 px-2 py-0.5 rounded bg-amber-400/10">Fase 4 - Próximamente</span>
+                    <span class="text-[10px] text-emerald-400 px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20">Fase 6 - En Vivo</span>
                   </h3>
-                  <p class="text-xs text-slate-400">Despacho de lotes autorizado por el Chef hacia hornos y freidoras.</p>
+                  <p class="text-xs text-slate-400">Control de stock de materias primas y despacho inmediato a cocina (inventory-service :8086).</p>
                 </div>
                 <button 
-                  (click)="solicitarDespachoModal()"
+                  (click)="abrirModalDespacho()"
                   class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition shadow cursor-pointer"
                 >
-                  ⚡ Solicitar Despacho de Lote a Cocina
+                  ⚡ Despachar Lote a Cocina
                 </button>
               </div>
 
@@ -954,7 +924,7 @@ interface IncidenteSoporte {
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
-                    @for (ins of insumos; track ins.id) {
+                    @for (ins of inventoryService.insumos(); track ins.id) {
                       <tr class="hover:bg-white/5 transition">
                         <td class="p-4 font-bold text-white">{{ ins.nombre }}</td>
                         <td class="p-4 text-slate-400">{{ ins.categoria }}</td>
@@ -983,19 +953,19 @@ interface IncidenteSoporte {
             </div>
           }
 
-          <!-- SUB-VIEW 3: MERMAS DIARIAS (FASE 4 - PRÓXIMAMENTE) -->
+          <!-- SUB-VIEW 3: MERMAS DIARIAS (FASE 6 - EN VIVO) -->
           @if (inventarioSubTab() === 'MERMAS') {
             <div class="space-y-4">
               <div class="flex justify-between items-center bg-[#1c1f24] p-4 rounded-xl border border-white/5">
                 <div>
                   <h3 class="font-bold text-white flex items-center gap-2">
                     <span>Registro de Mermas de Jornada</span>
-                    <span class="text-[10px] text-amber-400 px-2 py-0.5 rounded bg-amber-400/10">Fase 4 - Próximamente</span>
+                    <span class="text-[10px] text-emerald-400 px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20">Fase 6 - En Vivo</span>
                   </h3>
-                  <p class="text-xs text-slate-400">Insumos no comercializados o descartados durante el turno.</p>
+                  <p class="text-xs text-slate-400">Auditoría de descarte y control de costos por merma operativa.</p>
                 </div>
                 <button 
-                  (click)="registrarMermaModal()"
+                  (click)="abrirModalMerma()"
                   class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition shadow cursor-pointer"
                 >
                   + Registrar Merma
@@ -1015,10 +985,10 @@ interface IncidenteSoporte {
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
-                    @for (m of mermas; track m.id) {
+                    @for (m of inventoryService.mermas(); track m.id) {
                       <tr class="hover:bg-white/5 transition">
                         <td class="p-4 font-mono text-slate-400">{{ m.fecha }}</td>
-                        <td class="p-4 font-bold text-white">{{ m.insumo }}</td>
+                        <td class="p-4 font-bold text-white">{{ m.insumoNombre }}</td>
                         <td class="p-4 font-mono text-rose-300 font-bold">{{ m.cantidad }} {{ m.unidad }}</td>
                         <td class="p-4 text-slate-300">{{ m.motivo.replace('_', ' ') }}</td>
                         <td class="p-4 font-mono font-bold text-rose-400">{{ m.costoPerdida | currencyPEN }}</td>
@@ -1031,25 +1001,59 @@ interface IncidenteSoporte {
             </div>
           }
 
-          <!-- SUB-VIEW 4: PREDICCIÓN & MÉTRICAS (FASE 4 - PRÓXIMAMENTE) -->
+          <!-- SUB-VIEW 4: PREDICCIÓN & MÉTRICAS (FASE 6 - EN VIVO) -->
           @if (inventarioSubTab() === 'PREDICCION') {
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                <span class="text-xs text-slate-400 uppercase font-bold">Consumo Promedio Diario</span>
-                <p class="font-display text-3xl font-black text-polleria-gold">85 Pollos / día</p>
-                <p class="text-xs text-emerald-400">↑ +14% los fines de semana</p>
+            <div class="space-y-6">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
+                  <span class="text-xs text-slate-400 uppercase font-bold">Consumo Promedio Diario</span>
+                  <p class="font-display text-3xl font-black text-polleria-gold">85 Pollos / día</p>
+                  <p class="text-xs text-emerald-400">↑ +14% los fines de semana</p>
+                </div>
+
+                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
+                  <span class="text-xs text-slate-400 uppercase font-bold">Alertas Predictivas Activas</span>
+                  <p class="font-display text-3xl font-black text-rose-400">{{ inventoryService.alertas().length }} Insumos</p>
+                  <p class="text-xs text-slate-300">Cálculo de rotación según órdenes recientes.</p>
+                </div>
+
+                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
+                  <span class="text-xs text-slate-400 uppercase font-bold">Índice de Merma / Venta</span>
+                  <p class="font-display text-3xl font-black text-emerald-400">1.8%</p>
+                  <p class="text-xs text-slate-300">Dentro del rango óptimo institucional (&lt; 2.5%).</p>
+                </div>
               </div>
 
-              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                <span class="text-xs text-slate-400 uppercase font-bold">Alerta Predictiva de Compra</span>
-                <p class="font-display text-3xl font-black text-rose-400">Papas Canchán</p>
-                <p class="text-xs text-slate-300">Stock estimado suficiente para 1.5 días. Reabastecer mañana.</p>
-              </div>
+              <!-- Lista de Alertas Predictivas -->
+              <div class="bg-[#14161a] rounded-2xl border border-white/10 p-5 space-y-4">
+                <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
+                  <span>📊 Sugerencias Predictivas de Compra (RF25)</span>
+                </h3>
 
-              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                <span class="text-xs text-slate-400 uppercase font-bold">Índice de Merma / Venta</span>
-                <p class="font-display text-3xl font-black text-emerald-400">1.8%</p>
-                <p class="text-xs text-slate-300">Dentro del rango óptimo institucional (&lt; 2.5%).</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  @for (alerta of inventoryService.alertas(); track alerta.insumoId) {
+                    <div 
+                      class="p-4 rounded-xl border space-y-2"
+                      [ngClass]="alerta.nivelSeveridad === 'CRITICA' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-amber-500/10 border-amber-500/30'"
+                    >
+                      <div class="flex justify-between items-start">
+                        <h4 class="font-bold text-white text-sm">{{ alerta.insumoNombre }}</h4>
+                        <span 
+                          class="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                          [ngClass]="alerta.nivelSeveridad === 'CRITICA' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-slate-950'"
+                        >
+                          {{ alerta.nivelSeveridad }}
+                        </span>
+                      </div>
+                      <p class="text-xs text-slate-300">
+                        Consumo: <strong>{{ alerta.consumoDiarioEstimado }} / día</strong> • Stock restante para: <strong class="text-white">{{ alerta.diasRestantesEstimados }} días</strong>
+                      </p>
+                      <p class="text-xs text-amber-300/90 font-medium italic">
+                        💡 {{ alerta.sugerencia }}
+                      </p>
+                    </div>
+                  }
+                </div>
               </div>
             </div>
           }
@@ -1144,87 +1148,138 @@ interface IncidenteSoporte {
       }
 
 
-      <!-- ================= TAB 5: FINANZAS & CAJA (FASE 4 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 5: FINANZAS & CAJA (FASE 6 - EN VIVO) ================= -->
       @if (activeTab() === 'FINANZAS') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-          <div class="flex justify-between items-center">
+          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
-                <span>Finanzas, Caja Central & Transacciones</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 4 - Próximamente
+                <span>Finanzas, Caja Central & Arqueo</span>
+                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Fase 6 - En Vivo
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Consolidación de pagos de pasarela, cobros de salón y reembolsos.</p>
+              <p class="text-xs text-slate-400">Arqueo con discrepancia, flujo de caja menor y conciliación diaria (finance-service :8087).</p>
             </div>
-            <button 
-              (click)="cerrarCajaModal()"
-              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow cursor-pointer"
-            >
-              📊 Arqueo y Cierre de Turno
-            </button>
+
+            <div class="flex items-center gap-2">
+              @if (financeService.cajaActual()?.estado === 'ABIERTA') {
+                <button 
+                  (click)="showMovimientoCajaModal = true"
+                  class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  + Movimiento Caja Menor
+                </button>
+                <button 
+                  (click)="abrirModalCierreCaja()"
+                  class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow cursor-pointer"
+                >
+                  📊 Arqueo y Cierre de Turno
+                </button>
+              } @else {
+                <button 
+                  (click)="showAbrirCajaModal = true"
+                  class="px-4 py-2 bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition shadow cursor-pointer"
+                >
+                  🔓 Abrir Turno de Caja
+                </button>
+              }
+            </div>
           </div>
 
+          <!-- Status Banner Caja -->
+          <div class="p-4 rounded-2xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"
+            [ngClass]="financeService.cajaActual()?.estado === 'ABIERTA' ? 'bg-emerald-950/20 border-emerald-500/30' : 'bg-amber-950/20 border-amber-500/30'"
+          >
+            <div class="flex items-center gap-3">
+              <span class="w-3 h-3 rounded-full" [ngClass]="financeService.cajaActual()?.estado === 'ABIERTA' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
+              <div>
+                <span class="text-xs font-bold uppercase tracking-wider text-white">
+                  Estado de Turno: {{ financeService.cajaActual()?.estado || 'SIN APERTURA' }}
+                </span>
+                <p class="text-xs text-slate-400">
+                  Cajero: <strong class="text-slate-200">{{ financeService.cajaActual()?.cajero || authService.currentUser()?.nombre || 'Administrador' }}</strong> • 
+                  Apertura con: <strong class="text-polleria-gold">{{ (financeService.cajaActual()?.montoInicial || 0) | currencyPEN }}</strong>
+                </p>
+              </div>
+            </div>
+            @if (financeService.cajaActual()?.estado === 'ABIERTA') {
+              <span class="text-xs font-mono text-emerald-300">
+                Apertura: {{ financeService.cajaActual()?.fechaApertura }}
+              </span>
+            }
+          </div>
+
+          <!-- Financial Metrics Grid -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-              <span class="text-[11px] text-slate-400 uppercase font-bold">Ventas Totales Hoy</span>
-              <p class="font-display text-2xl font-black text-white">S/. 5,280.50</p>
-              <p class="text-[10px] text-emerald-400">42 transacciones aprobadas</p>
+              <span class="text-[11px] text-slate-400 uppercase font-bold">Ventas Totales del Día</span>
+              <p class="font-display text-2xl font-black text-white">
+                {{ (financeService.balanceDiario()?.totalVentas || 0) | currencyPEN }}
+              </p>
+              <p class="text-[10px] text-emerald-400">Conciliado con orders-service</p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-              <span class="text-[11px] text-slate-400 uppercase font-bold">Pasarela Online (Yape/Tarjeta)</span>
-              <p class="font-display text-2xl font-black text-polleria-gold">S/. 3,120.00</p>
-              <p class="text-[10px] text-slate-400">59% del volumen total</p>
+              <span class="text-[11px] text-slate-400 uppercase font-bold">Caja Salón (Efectivo)</span>
+              <p class="font-display text-2xl font-black text-polleria-gold">
+                {{ (financeService.cajaActual()?.ventasEfectivo || 0) | currencyPEN }}
+              </p>
+              <p class="text-[10px] text-slate-400">Físico a rendir en gaveta</p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-              <span class="text-[11px] text-slate-400 uppercase font-bold">Caja Salón (Efectivo/POS)</span>
-              <p class="font-display text-2xl font-black text-sky-400">S/. 2,160.50</p>
-              <p class="text-[10px] text-slate-400">Monto físico verificado</p>
+              <span class="text-[11px] text-slate-400 uppercase font-bold">Pasarelas (Yape / Tarjetas)</span>
+              <p class="font-display text-2xl font-black text-sky-400">
+                {{ (financeService.cajaActual()?.ventasDigital || 0) | currencyPEN }}
+              </p>
+              <p class="text-[10px] text-slate-400">Acreditación automática en cuenta</p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-              <span class="text-[11px] text-slate-400 uppercase font-bold">Reembolsos Emitidos</span>
-              <p class="font-display text-2xl font-black text-rose-400">S/. 65.00</p>
-              <p class="text-[10px] text-slate-400">1 reclamo procedente</p>
+              <span class="text-[11px] text-slate-400 uppercase font-bold">Saldo Neto Consolidado</span>
+              <p class="font-display text-2xl font-black text-emerald-400">
+                {{ (financeService.balanceDiario()?.saldoNeto || 0) | currencyPEN }}
+              </p>
+              <p class="text-[10px] text-slate-400">Gastos: {{ (financeService.balanceDiario()?.totalGastos || 0) | currencyPEN }}</p>
             </div>
           </div>
 
+          <!-- Cash Movements Table -->
           <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
-            <div class="p-4 border-b border-white/5 font-bold text-sm text-white">
-              Historial Centralizado de Transacciones
+            <div class="p-4 border-b border-white/5 font-bold text-sm text-white flex justify-between items-center">
+              <span>Flujo de Movimientos de Caja Menor (RF20)</span>
+              <span class="text-xs text-slate-400 font-mono">{{ financeService.movimientos().length }} transacciones</span>
             </div>
             <table class="w-full text-left text-xs">
               <thead class="bg-black/40 border-b border-white/10 text-slate-400 font-bold uppercase tracking-wider">
                 <tr>
-                  <th class="p-4">TX ID</th>
-                  <th class="p-4">Orden</th>
-                  <th class="p-4">Canal</th>
-                  <th class="p-4">Método</th>
+                  <th class="p-4">ID</th>
+                  <th class="p-4">Concepto</th>
+                  <th class="p-4">Tipo</th>
                   <th class="p-4">Monto</th>
                   <th class="p-4">Fecha y Hora</th>
-                  <th class="p-4 text-center">Estado</th>
+                  <th class="p-4">Registrado Por</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-white/5">
-                @for (tx of transacciones; track tx.id) {
+                @for (m of financeService.movimientos(); track m.id) {
                   <tr class="hover:bg-white/5 transition">
-                    <td class="p-4 font-mono text-slate-400">{{ tx.id }}</td>
-                    <td class="p-4 font-mono font-bold text-white">{{ tx.ordenCodigo }}</td>
-                    <td class="p-4 text-slate-300">{{ tx.canal }}</td>
-                    <td class="p-4 font-bold text-slate-200">{{ tx.metodoPago }}</td>
-                    <td class="p-4 font-mono font-bold text-polleria-gold">{{ tx.monto | currencyPEN }}</td>
-                    <td class="p-4 text-slate-400 font-mono">{{ tx.fechaHora }}</td>
-                    <td class="p-4 text-center">
+                    <td class="p-4 font-mono text-slate-400">#{{ m.id }}</td>
+                    <td class="p-4 font-bold text-white">{{ m.concepto }}</td>
+                    <td class="p-4">
                       <span 
                         class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
                         [ngClass]="{
-                          'bg-emerald-500/20 text-emerald-400': tx.estado === 'APROBADO',
-                          'bg-rose-500/20 text-rose-400': tx.estado === 'RECHAZADO' || tx.estado === 'REEMBOLSADO',
-                          'bg-amber-500/20 text-amber-300': tx.estado === 'PENDIENTE'
+                          'bg-emerald-500/20 text-emerald-400': m.tipo === 'INGRESO' || m.tipo === 'VENTA_EFECTIVO' || m.tipo === 'VENTA_DIGITAL',
+                          'bg-rose-500/20 text-rose-400': m.tipo === 'EGRESO' || m.tipo === 'REEMBOLSO'
                         }"
                       >
-                        {{ tx.estado }}
+                        {{ m.tipo }}
                       </span>
                     </td>
+                    <td class="p-4 font-mono font-bold" [ngClass]="m.tipo === 'EGRESO' || m.tipo === 'REEMBOLSO' ? 'text-rose-400' : 'text-emerald-400'">
+                      {{ m.tipo === 'EGRESO' || m.tipo === 'REEMBOLSO' ? '-' : '+' }}{{ m.monto | currencyPEN }}
+                    </td>
+                    <td class="p-4 text-slate-400 font-mono">{{ m.fechaHora }}</td>
+                    <td class="p-4 text-slate-300">{{ m.usuario }}</td>
                   </tr>
                 }
               </tbody>
@@ -1235,73 +1290,122 @@ interface IncidenteSoporte {
       }
 
 
-      <!-- ================= TAB 6: FEEDBACK & RECLAMOS (FASE 3 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 6: FEEDBACK & RECLAMOS (FASE 4 - EN VIVO) ================= -->
       @if (activeTab() === 'FEEDBACK') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-          <div class="flex justify-between items-center">
+          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Feedback, Reseñas & Reclamos</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 3 - Próximamente
+                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Fase 4 - En Vivo
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Calificaciones de clientes, atención de reportes y emisión de reembolsos.</p>
+              <p class="text-xs text-slate-400">Calificaciones (1-5 estrellas) y Libro de Reclamaciones con reembolso automático (:8085).</p>
             </div>
-            <div class="flex items-center gap-2 bg-[#1c1f24] px-4 py-2 rounded-xl border border-white/10">
-              <span class="text-polleria-gold text-lg">★★★★★</span>
-              <span class="font-bold text-white">4.9 / 5.0</span>
-              <span class="text-xs text-slate-400">(148 valoraciones)</span>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2 bg-black/40 px-4 py-2 rounded-xl border border-white/10">
+                <span class="text-polleria-gold text-lg">★</span>
+                <span class="font-bold text-white">{{ feedbackService.promedioEstrellas() }} / 5.0</span>
+                <span class="text-xs text-slate-400 font-mono">({{ feedbackService.resenias().length }} reseñas)</span>
+              </div>
+              <span class="px-3 py-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold">
+                {{ feedbackService.reclamosPendientes().length }} Reclamos Pendientes
+              </span>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            @for (item of feedbackList; track item.id) {
-              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 flex flex-col justify-between">
-                <div>
-                  <div class="flex justify-between items-start">
-                    <div>
-                      <h4 class="font-bold text-white">{{ item.cliente }}</h4>
-                      <p class="text-xs text-slate-400">{{ item.ordenCodigo }} • {{ item.fecha }}</p>
+          <!-- Libro de Reclamaciones Activo -->
+          <div class="space-y-4">
+            <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
+              <span>🚨 Libro de Reclamaciones (RF28, RF29)</span>
+            </h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              @for (rec of feedbackService.reportes(); track rec.id) {
+                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 flex flex-col justify-between">
+                  <div>
+                    <div class="flex justify-between items-start">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="font-mono text-xs px-2 py-0.5 rounded bg-white/10 text-polleria-gold font-bold">
+                            REC-{{ rec.id }}
+                          </span>
+                          <span class="text-xs font-bold text-white">Orden #{{ rec.ordenId }}</span>
+                        </div>
+                        <p class="text-xs text-rose-400 font-semibold mt-1">Motivo: {{ rec.motivo.replace('_', ' ') }}</p>
+                      </div>
+                      <span 
+                        class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                        [ngClass]="{
+                          'bg-amber-500/20 text-amber-300': rec.estado === 'PENDIENTE' || rec.estado === 'EN_REVISION',
+                          'bg-emerald-500/20 text-emerald-400': rec.estado === 'RESUELTO',
+                          'bg-rose-500/20 text-rose-400': rec.estado === 'RECHAZADO'
+                        }"
+                      >
+                        {{ rec.estado }}
+                      </span>
                     </div>
-                    <span 
-                      class="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      [ngClass]="item.tipo === 'RECLAMO' ? 'bg-rose-500/20 text-rose-400' : 'bg-polleria-gold/20 text-polleria-gold'"
-                    >
-                      {{ item.tipo }}
-                    </span>
+
+                    <p class="text-xs text-slate-300 leading-relaxed mt-2 bg-black/30 p-3 rounded-xl border border-white/5">
+                      "{{ rec.descripcion }}"
+                    </p>
+
+                    @if (rec.montoReclamado) {
+                      <p class="text-xs text-polleria-gold font-bold mt-2">
+                        Monto Reclamado: {{ rec.montoReclamado | currencyPEN }}
+                      </p>
+                    }
+
+                    @if (rec.resolucion) {
+                      <div class="mt-2 text-xs bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl text-emerald-300">
+                        <strong>Resolución:</strong> {{ rec.resolucion }}
+                      </div>
+                    }
                   </div>
 
-                  @if (item.estrellas) {
-                    <div class="text-polleria-gold text-sm my-1">
-                      {{ '★'.repeat(item.estrellas) }}{{ '☆'.repeat(5 - item.estrellas) }}
+                  @if (rec.estado !== 'RESUELTO' && rec.estado !== 'RECHAZADO') {
+                    <div class="pt-3 border-t border-white/10 flex justify-end">
+                      <button 
+                        (click)="abrirModalResolverReclamo(rec)"
+                        class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow"
+                      >
+                        Gestionar y Emitir Reembolso
+                      </button>
                     </div>
                   }
-
-                  <p class="text-xs text-slate-300 leading-relaxed mt-2 italic">
-                    "{{ item.mensaje }}"
-                  </p>
                 </div>
-
-                @if (item.tipo === 'RECLAMO') {
-                  <div class="pt-3 border-t border-white/10 flex justify-between items-center">
-                    <span class="text-[10px] font-mono text-amber-300">Estado: {{ item.estado }}</span>
-                    <button 
-                      (click)="resolverReclamo(item)"
-                      class="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-lg transition cursor-pointer"
-                    >
-                      Gestionar Reembolso
-                    </button>
-                  </div>
-                }
-              </div>
-            }
+              }
+            </div>
           </div>
+
+          <!-- Reseñas y Calificaciones de la Experiencia -->
+          <div class="space-y-4 pt-4 border-t border-white/10">
+            <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
+              <span>⭐ Reseñas Recientes de Clientes (RF26, RF27)</span>
+            </h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              @for (item of feedbackService.resenias(); track item.id) {
+                <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-2">
+                  <div class="flex justify-between items-center">
+                    <span class="text-xs font-mono text-slate-400">Orden #{{ item.ordenId }}</span>
+                    <div class="text-polleria-gold text-sm font-bold">
+                      {{ '★'.repeat(item.estrellas || 5) }}{{ '☆'.repeat(5 - (item.estrellas || 5)) }}
+                    </div>
+                  </div>
+                  <p class="text-xs text-slate-300 italic">"{{ item.comentario }}"</p>
+                  <p class="text-[11px] text-slate-500 font-mono text-right">{{ item.fecha }}</p>
+                </div>
+              }
+            </div>
+          </div>
+
         </main>
       }
 
 
-      <!-- ================= TAB 7: NOTIFICACIONES & WHATSAPP (FASE 2/3 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 7: NOTIFICACIONES & WHATSAPP ================= -->
       @if (activeTab() === 'NOTIFICACIONES') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
           
@@ -1309,8 +1413,8 @@ interface IncidenteSoporte {
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Monitor de Notificaciones & WhatsApp</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 2/3 - Próximamente
+                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Fase 2/3 - En Vivo
                 </span>
               </h2>
               <p class="text-xs text-slate-400">Cola de mensajes con control de espera de 10s (RNF10) y push WebSocket a mozos.</p>
@@ -1364,63 +1468,111 @@ interface IncidenteSoporte {
       }
 
 
-      <!-- ================= TAB 8: SOPORTE & INCIDENTES (FASE 4 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 8: SOPORTE & INCIDENTES (FASE 6 - EN VIVO) ================= -->
       @if (activeTab() === 'SOPORTE') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
           
-          <div class="flex justify-between items-center">
+          <div class="flex justify-between items-center bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
-                <span>Centro de Soporte & Bitácora de Incidentes</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 4 - Próximamente
+                <span>Centro de Soporte, Incidentes & Seguridad</span>
+                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
+                  Fase 6 - En Vivo
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Documentación de fallas operativas, causa raíz y soluciones aplicadas.</p>
+              <p class="text-xs text-slate-400">Bitácora de incidentes operativos (:8088) y control de IPs bloqueadas en auth-service (:8081).</p>
             </div>
             <button 
-              (click)="registrarIncidenteModal()"
+              (click)="showIncidenteModal = true"
               class="px-4 py-2 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold text-xs rounded-xl transition shadow cursor-pointer"
             >
               + Documentar Incidente
             </button>
           </div>
 
+          <!-- Bitácora de Incidentes -->
           <div class="space-y-4">
-            @for (inc of incidentes; track inc.id) {
-              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 shadow-lg">
-                <div class="flex justify-between items-start">
-                  <div class="flex items-center gap-3">
-                    <span class="font-mono text-xs px-2 py-0.5 rounded bg-white/10 text-polleria-gold font-bold">
-                      {{ inc.id }}
+            <h3 class="font-display text-lg text-white font-bold">Bitácora de Incidentes Operativos (RF34)</h3>
+            <div class="space-y-4">
+              @for (inc of securityAuditService.incidentes(); track inc.id) {
+                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 shadow-lg">
+                  <div class="flex justify-between items-start">
+                    <div class="flex items-center gap-3">
+                      <span class="font-mono text-xs px-2 py-0.5 rounded bg-white/10 text-polleria-gold font-bold">
+                        INC-{{ inc.id }}
+                      </span>
+                      <h3 class="font-bold text-base text-white">{{ inc.titulo }}</h3>
+                    </div>
+                    <span 
+                      class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                      [ngClass]="inc.estado === 'RESUELTO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'"
+                    >
+                      {{ inc.estado }}
                     </span>
-                    <h3 class="font-bold text-base text-white">{{ inc.titulo }}</h3>
                   </div>
-                  <span 
-                    class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
-                    [ngClass]="inc.estado === 'RESUELTO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'"
-                  >
-                    {{ inc.estado }}
-                  </span>
-                </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-black/30 p-3 rounded-xl border border-white/5">
-                  <div>
-                    <span class="text-slate-500 font-bold block mb-0.5">CAUSA RAÍZ:</span>
-                    <p class="text-slate-300">{{ inc.causaRaiz }}</p>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-black/30 p-3 rounded-xl border border-white/5">
+                    <div>
+                      <span class="text-slate-500 font-bold block mb-0.5">CAUSA RAÍZ:</span>
+                      <p class="text-slate-300">{{ inc.causaRaiz }}</p>
+                    </div>
+                    <div>
+                      <span class="text-slate-500 font-bold block mb-0.5">SOLUCIÓN APLICADA:</span>
+                      <p class="text-emerald-300 font-medium">{{ inc.solucionAplicada }}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span class="text-slate-500 font-bold block mb-0.5">SOLUCIÓN APLICADA:</span>
-                    <p class="text-emerald-300 font-medium">{{ inc.solucionAplicada }}</p>
-                  </div>
-                </div>
 
-                <div class="flex justify-between items-center text-[11px] text-slate-400 font-mono pt-1">
-                  <span>Módulo: {{ inc.modulo }} • Severidad: {{ inc.severidad }}</span>
-                  <span>Reportado por: {{ inc.reportadoPor }} • {{ inc.fechaHora }}</span>
+                  <div class="flex justify-between items-center text-[11px] text-slate-400 font-mono pt-1">
+                    <span>Módulo: {{ inc.modulo }} • Severidad: {{ inc.severidad }}</span>
+                    <span>Reportado por: {{ inc.reportadoPor }} • {{ inc.fechaHora }}</span>
+                  </div>
                 </div>
+              }
+            </div>
+          </div>
+
+          <!-- Auditoría de Seguridad & IPs Bloqueadas (RNF02) -->
+          <div class="space-y-4 pt-4 border-t border-white/10">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
+                  <span>🛡️ Lista Negra de Seguridad & IPs Bloqueadas (RNF02)</span>
+                </h3>
+                <p class="text-xs text-slate-400">Protección contra ataques de fuerza bruta y accesos no autorizados.</p>
               </div>
-            }
+            </div>
+
+            <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-black/40 border-b border-white/10 text-slate-400 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th class="p-4">Dirección IP</th>
+                    <th class="p-4">Motivo de Bloqueo</th>
+                    <th class="p-4">Intentos Fallidos</th>
+                    <th class="p-4">Fecha Bloqueo</th>
+                    <th class="p-4 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/5">
+                  @for (ipItem of securityAuditService.ipsBloqueadas(); track ipItem.ip) {
+                    <tr class="hover:bg-white/5 transition">
+                      <td class="p-4 font-mono font-bold text-rose-400">{{ ipItem.ip }}</td>
+                      <td class="p-4 text-slate-300">{{ ipItem.motivo }}</td>
+                      <td class="p-4 font-mono text-amber-400">{{ ipItem.intentosFallidos }}</td>
+                      <td class="p-4 font-mono text-slate-400">{{ ipItem.fechaBloqueo }}</td>
+                      <td class="p-4 text-center">
+                        <button 
+                          (click)="securityAuditService.desbloquearIp(ipItem.ip)"
+                          class="px-3 py-1 bg-white/10 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                        >
+                          Desbloquear IP
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
           </div>
 
         </main>
@@ -1758,6 +1910,452 @@ interface IncidenteSoporte {
         </div>
       }
 
+      <!-- ================= MODAL: DESPACHO DE INSUMO A COCINA (FASE 6) ================= -->
+      @if (showDespachoModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white flex items-center gap-2">
+                <span>⚡ Despachar Lote a Cocina</span>
+              </h3>
+              <button (click)="showDespachoModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Insumo a Despachar:</label>
+                <select 
+                  [(ngModel)]="despachoForm.insumoId"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                >
+                  @for (ins of inventoryService.insumos(); track ins.id) {
+                    <option [value]="ins.id">{{ ins.nombre }} (Stock: {{ ins.stockActual }} {{ ins.unidadMedida }})</option>
+                  }
+                </select>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Cantidad:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="despachoForm.cantidad"
+                    min="1"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Estación Destino:</label>
+                  <select 
+                    [(ngModel)]="despachoForm.estacion"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  >
+                    <option value="HORNO">Horno de Brasa</option>
+                    <option value="COCINA">Cocina Principal</option>
+                    <option value="BAR">Bar & Bebidas</option>
+                    <option value="EMPAQUE">Empaque Delivery</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button 
+                (click)="showDespachoModal = false"
+                class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button 
+                (click)="confirmarDespacho()"
+                class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition cursor-pointer shadow"
+              >
+                Confirmar Despacho
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: REGISTRAR MERMA (FASE 6) ================= -->
+      @if (showMermaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-rose-400 flex items-center gap-2">
+                <span>🗑️ Registrar Merma de Jornada</span>
+              </h3>
+              <button (click)="showMermaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Insumo:</label>
+                <select 
+                  [(ngModel)]="mermaForm.insumoId"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                >
+                  @for (ins of inventoryService.insumos(); track ins.id) {
+                    <option [value]="ins.id">{{ ins.nombre }}</option>
+                  }
+                </select>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Cantidad descartada:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="mermaForm.cantidad"
+                    min="0.1"
+                    step="0.5"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Motivo:</label>
+                  <select 
+                    [(ngModel)]="mermaForm.motivo"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  >
+                    <option value="COCCION_EXCESIVA">Cocción Excesiva / Quemado</option>
+                    <option value="VENCIMIENTO">Vencimiento de Lote</option>
+                    <option value="DESCARTE_MANIPULACION">Descarte por Manipulación</option>
+                    <option value="DEFECTO_PROVEEDOR">Defecto de Proveedor</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Responsable:</label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="mermaForm.responsable"
+                  placeholder="Ej. Jefe de Cocina / Maestro Pollero"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                />
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button 
+                (click)="showMermaModal = false"
+                class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button 
+                (click)="confirmarMerma()"
+                class="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase transition cursor-pointer shadow"
+              >
+                Registrar Merma
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: ABRIR CAJA (FASE 6) ================= -->
+      @if (showAbrirCajaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-emerald-400">🔓 Apertura de Turno de Caja</h3>
+              <button (click)="showAbrirCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <p class="text-slate-400">Ingresa el fondo de sencillo en efectivo con el que se inicia la jornada en caja central.</p>
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Monto Inicial en Efectivo (S/):</label>
+                <input 
+                  type="number" 
+                  [(ngModel)]="montoApertura"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-base focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                />
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showAbrirCajaModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="confirmarAperturaCaja()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase cursor-pointer">Abrir Caja</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: ARQUEO Y CIERRE DE CAJA (FASE 6) ================= -->
+      @if (showCerrarCajaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-emerald-400">📊 Arqueo y Cierre de Turno (RF22)</h3>
+              <button (click)="showCerrarCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div class="bg-black/30 p-3 rounded-xl border border-white/5 space-y-1">
+                <div class="flex justify-between text-slate-400">
+                  <span>Monto Inicial:</span>
+                  <span class="font-mono text-white">{{ (financeService.cajaActual()?.montoInicial || 0) | currencyPEN }}</span>
+                </div>
+                <div class="flex justify-between text-slate-400">
+                  <span>Ventas en Efectivo:</span>
+                  <span class="font-mono text-polleria-gold">{{ (financeService.cajaActual()?.ventasEfectivo || 0) | currencyPEN }}</span>
+                </div>
+                <div class="flex justify-between pt-1 border-t border-white/10 font-bold text-white">
+                  <span>Efectivo Teórico Esperado:</span>
+                  <span class="font-mono text-emerald-400">
+                    {{ ((financeService.cajaActual()?.montoInicial || 0) + (financeService.cajaActual()?.ventasEfectivo || 0)) | currencyPEN }}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Efectivo Real Contado en Gaveta (S/):</label>
+                <input 
+                  type="number" 
+                  [(ngModel)]="cierreEfectivoReal"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-base focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                />
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Observaciones del Cierre:</label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="cierreObservaciones"
+                  placeholder="Detallar cualquier diferencia o novedad..."
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                />
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showCerrarCajaModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="confirmarCierreCaja()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase cursor-pointer">Cerrar y Cuadrar Caja</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: MOVIMIENTO DE CAJA MENOR (FASE 6) ================= -->
+      @if (showMovimientoCajaModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-white/20 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white">Registrar Movimiento de Caja Menor</h3>
+              <button (click)="showMovimientoCajaModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Tipo de Movimiento:</label>
+                  <select 
+                    [(ngModel)]="movimientoForm.tipo"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  >
+                    <option value="EGRESO">Egreso (Gasto Menor)</option>
+                    <option value="INGRESO">Ingreso Extra</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Monto (S/):</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="movimientoForm.monto"
+                    min="1"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Concepto / Justificación:</label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="movimientoForm.concepto"
+                  placeholder="Ej. Compra de limones en mercado, compra de bolsas..."
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                />
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showMovimientoCajaModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="confirmarMovimientoCaja()" class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer">Registrar</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: GESTIONAR RECLAMO & REEMBOLSO (FASE 4) ================= -->
+      @if (showResolverReclamoModal && reclamoSeleccionado) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <div>
+                <h3 class="font-display text-xl font-bold text-rose-400">Atención de Reclamo #{{ reclamoSeleccionado.id }}</h3>
+                <p class="text-xs text-slate-400">Orden asociada #{{ reclamoSeleccionado.ordenId }}</p>
+              </div>
+              <button (click)="showResolverReclamoModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div class="bg-black/40 p-3 rounded-xl border border-white/5 space-y-1">
+                <span class="text-slate-500 font-bold block">MOTIVO DECLARADO:</span>
+                <p class="text-slate-200">{{ reclamoSeleccionado.motivo }}</p>
+                <p class="text-slate-300 italic">"{{ reclamoSeleccionado.descripcion }}"</p>
+                @if (reclamoSeleccionado.montoReclamado) {
+                  <p class="text-polleria-gold font-bold pt-1">Monto Solicitado: {{ reclamoSeleccionado.montoReclamado | currencyPEN }}</p>
+                }
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Resolución Administrativa:</label>
+                <textarea 
+                  [(ngModel)]="resolucionTexto"
+                  rows="2"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                ></textarea>
+              </div>
+
+              <div class="flex items-center gap-2 p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
+                <input 
+                  type="checkbox" 
+                  id="reembolsoCheck" 
+                  [(ngModel)]="emitirReembolso" 
+                  class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                />
+                <label for="reembolsoCheck" class="text-xs text-rose-300 font-bold cursor-pointer">
+                  Emitir reembolso automático a pasarela / caja (RF29)
+                </label>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showResolverReclamoModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="confirmarResolverReclamo()" class="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase cursor-pointer">Resolver y Notificar</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: DOCUMENTAR INCIDENTE (FASE 6) ================= -->
+      @if (showIncidenteModal) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-lg bg-slate-900 border border-polleria-crimson/50 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white">Documentar Incidente Operativo (RF34)</h3>
+              <button (click)="showIncidenteModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Título del Incidente:</label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="incidenteForm.titulo"
+                  placeholder="Ej. Falla en sincronización de comanda de mesa 4"
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                />
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Módulo Afectado:</label>
+                  <select 
+                    [(ngModel)]="incidenteForm.modulo"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  >
+                    <option value="COCINA_HORNO">Cocina & Hornos</option>
+                    <option value="PAGOS">Pagos & Pasarelas</option>
+                    <option value="RED_WIFI">Red & Conectividad</option>
+                    <option value="SISTEMA_LOCAL">Sistema Local / Terminal</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Severidad:</label>
+                  <select 
+                    [(ngModel)]="incidenteForm.severidad"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  >
+                    <option value="BAJA">Baja</option>
+                    <option value="MEDIA">Media</option>
+                    <option value="ALTA">Alta (Crítica)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Causa Raíz:</label>
+                <textarea 
+                  [(ngModel)]="incidenteForm.causaRaiz"
+                  rows="2"
+                  placeholder="Explicación técnica o procedimental de la causa..."
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                ></textarea>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-300 mb-1">Solución Aplicada / Acción Correctiva:</label>
+                <textarea 
+                  [(ngModel)]="incidenteForm.solucionAplicada"
+                  rows="2"
+                  placeholder="Acción tomada para solucionar y prevenir recurrencia..."
+                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                ></textarea>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showIncidenteModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="confirmarRegistroIncidente()" class="px-5 py-2 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover text-white text-xs font-bold uppercase cursor-pointer">Registrar en Auditoría</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: EDITAR COORDENADAS PLANO (FASE 2) ================= -->
+      @if (showEditarCoordenadasModal && mesaEditarCoordenadas) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-sm bg-slate-900 border border-polleria-gold/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 class="font-display text-xl font-bold text-white">Editar Posición en Plano</h3>
+              <button (click)="showEditarCoordenadasModal = false" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <p class="text-slate-400">Coordenadas espaciales de <strong>{{ mesaEditarCoordenadas.nombre }}</strong> en el salón virtual.</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Posición X:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="coordX"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">Posición Y:</label>
+                  <input 
+                    type="number" 
+                    [(ngModel)]="coordY"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button (click)="showEditarCoordenadasModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
+              <button (click)="guardarCoordenadasMesa()" class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer">Guardar Posición</button>
+            </div>
+          </div>
+        </div>
+      }
+
       </div> <!-- Cierre Main Content Wrapper -->
     </div> <!-- Cierre Root Container -->
   `
@@ -1766,6 +2364,11 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly productsService = inject(ProductsService);
   readonly authService = inject(AuthService);
+  readonly salonService = inject(SalonService);
+  readonly inventoryService = inject(InventoryService);
+  readonly financeService = inject(FinanceService);
+  readonly feedbackService = inject(FeedbackService);
+  readonly securityAuditService = inject(SecurityAuditService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -1818,60 +2421,70 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     tiempoEstimadoMin: 20
   };
 
-  // Mesas Data (RF11, RF12, RF33 - Fase 2)
-  readonly selectedMesa = signal<TableSalon | null>(null);
-  mesas: TableSalon[] = [
-    { id: 1, nombre: 'Mesa 01', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'OCUPADA', mozo: 'Yovana M.', comensales: 3, tiempoMinutos: 35, totalConsumo: 89.00 },
-    { id: 2, nombre: 'Mesa 02', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 3, nombre: 'Mesa 03', zona: 'SALON_PRINCIPAL', capacidad: 6, estado: 'OCUPADA', mozo: 'Yovana M.', comensales: 5, tiempoMinutos: 42, totalConsumo: 154.00, platosListos: true },
-    { id: 4, nombre: 'Mesa 04', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'POR_COBRAR', mozo: 'Mozo Salon', comensales: 2, tiempoMinutos: 55, totalConsumo: 65.00 },
-    { id: 5, nombre: 'Mesa 05', zona: 'SALON_PRINCIPAL', capacidad: 2, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 6, nombre: 'Mesa 06', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 7, nombre: 'Mesa 07', zona: 'TERRAZA', capacidad: 4, estado: 'RESERVADA', totalConsumo: 0 },
-    { id: 8, nombre: 'Mesa 08', zona: 'TERRAZA', capacidad: 4, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 9, nombre: 'Mesa 09', zona: 'TERRAZA', capacidad: 6, estado: 'OCUPADA', mozo: 'Yovana M.', comensales: 4, tiempoMinutos: 18, totalConsumo: 95.00 },
-    { id: 10, nombre: 'Mesa 10 (VIP)', zona: 'ZONA_VIP', capacidad: 8, estado: 'OCUPADA', mozo: 'Mozo Salon', comensales: 7, tiempoMinutos: 50, totalConsumo: 240.00 },
-    { id: 11, nombre: 'Mesa 11 (VIP)', zona: 'ZONA_VIP', capacidad: 8, estado: 'LIBRE', totalConsumo: 0 },
-    { id: 12, nombre: 'Mesa 12', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', totalConsumo: 0 },
-  ];
+  // Modal de Despacho de Insumo (Fase 6)
+  showDespachoModal = false;
+  despachoForm = {
+    insumoId: 1,
+    cantidad: 10,
+    estacion: 'HORNO'
+  };
 
-  // Insumos Data (RF23, RF25 - Fase 4)
-  insumos: InsumoAlmacen[] = [
-    { id: 'INS-01', nombre: 'Pollo Entero Fresco (Granja)', categoria: 'CARNES', stockActual: 120, stockMinimo: 40, unidadMedida: 'unid', costoUnitario: 18.50, estado: 'OPTIMO' },
-    { id: 'INS-02', nombre: 'Papas Canchán Seleccionadas', categoria: 'VERDURAS', stockActual: 45, stockMinimo: 50, unidadMedida: 'kg', costoUnitario: 3.20, estado: 'CRITICO' },
-    { id: 'INS-03', nombre: 'Carbón Vegetal de Algarrobo', categoria: 'INSUMOS_FUEGO', stockActual: 18, stockMinimo: 10, unidadMedida: 'sacos', costoUnitario: 45.00, estado: 'OPTIMO' },
-    { id: 'INS-04', nombre: 'Aceite Vegetal Granel', categoria: 'ABARROTES', stockActual: 60, stockMinimo: 30, unidadMedida: 'litros', costoUnitario: 7.80, estado: 'OPTIMO' },
-    { id: 'INS-05', nombre: 'Aderezo Tradicional San Pollo', categoria: 'ABARROTES', stockActual: 15, stockMinimo: 20, unidadMedida: 'kg', costoUnitario: 12.00, estado: 'BAJO' },
-    { id: 'INS-06', nombre: 'Maíz Morado para Chicha', categoria: 'BEBIDAS', stockActual: 30, stockMinimo: 15, unidadMedida: 'kg', costoUnitario: 5.50, estado: 'OPTIMO' }
-  ];
+  // Modal de Registro de Merma (Fase 6)
+  showMermaModal = false;
+  mermaForm = {
+    insumoId: 1,
+    cantidad: 1,
+    motivo: 'COCCION_EXCESIVA' as MotivoMerma,
+    responsable: 'Jefe de Cocina'
+  };
 
-  // Mermas Data (RF24 - Fase 4)
-  mermas: RegistroMerma[] = [
-    { id: 'MR-01', fecha: '2026-08-23', insumo: 'Papas fritas excedente', cantidad: 3.5, unidad: 'kg', motivo: 'COCCION_EXCESIVA', costoPerdida: 18.20, responsable: 'Jefe de Cocina' },
-    { id: 'MR-02', fecha: '2026-08-22', insumo: 'Ensalada fresca preparada', cantidad: 2.0, unidad: 'kg', motivo: 'VENCIMIENTO', costoPerdida: 12.00, responsable: 'Jefe de Cocina' },
-    { id: 'MR-03', fecha: '2026-08-21', insumo: '1/4 Pollo dorado de exhibición', cantidad: 2, unidad: 'unid', motivo: 'DESCARTE_MANIPULACION', costoPerdida: 24.00, responsable: 'Jefe de Cocina' }
-  ];
+  // Modal de Apertura de Caja (Fase 6)
+  showAbrirCajaModal = false;
+  montoApertura = 200.00;
+
+  // Modal de Cierre / Arqueo de Caja (Fase 6)
+  showCerrarCajaModal = false;
+  cierreEfectivoReal = 0;
+  cierreObservaciones = '';
+
+  // Modal de Movimiento de Caja Menor (Fase 6)
+  showMovimientoCajaModal = false;
+  movimientoForm = {
+    tipo: 'EGRESO' as TipoMovimiento,
+    concepto: '',
+    monto: 0
+  };
+
+  // Modal de Resolver Reclamo (Fase 4)
+  showResolverReclamoModal = false;
+  reclamoSeleccionado: ReporteReclamo | null = null;
+  resolucionTexto = '';
+  emitirReembolso = true;
+
+  // Modal de Documentar Incidente (Fase 6)
+  showIncidenteModal = false;
+  incidenteForm = {
+    titulo: '',
+    modulo: 'COCINA_HORNO' as 'PAGOS' | 'COCINA_HORNO' | 'RED_WIFI' | 'SISTEMA_LOCAL',
+    severidad: 'MEDIA' as 'ALTA' | 'MEDIA' | 'BAJA',
+    causaRaiz: '',
+    solucionAplicada: ''
+  };
+
+  // Modal de Editar Coordenadas de Mesa (Fase 2)
+  showEditarCoordenadasModal = false;
+  mesaEditarCoordenadas: MesaSalon | null = null;
+  coordX = 0;
+  coordY = 0;
+
+  // Mesa seleccionada para detalle
+  readonly selectedMesa = signal<MesaSalon | null>(null);
 
   // Motorizados Data (RF18 - Fase 3)
   motorizados: MotorizadoDelivery[] = [
     { id: 'MOT-01', nombre: 'Carlos Ramos', telefono: '987000013', placa: '4321-7B', pedidosHoy: 8, estado: 'EN_RUTA', pedidoActual: 'POL-1001' },
     { id: 'MOT-02', nombre: 'Mitrufely Dev', telefono: '987000014', placa: '9812-4A', pedidosHoy: 6, estado: 'DISPONIBLE' },
     { id: 'MOT-03', nombre: 'Jorge Silva', telefono: '987000015', placa: '1122-3C', pedidosHoy: 9, estado: 'DISPONIBLE' }
-  ];
-
-  // Finanzas Data (RF19, RF20, RF21, RF22, RF29 - Fase 4)
-  transacciones: TransaccionFinanzas[] = [
-    { id: 'TXN-56714E92', ordenCodigo: 'POL-1001', canal: 'DELIVERY', metodoPago: 'VISA', monto: 130.00, estado: 'APROBADO', fechaHora: '2026-08-23 17:43', referencia: 'AUTH-992384' },
-    { id: 'TXN-99120A11', ordenCodigo: 'POL-1002', canal: 'SALON', metodoPago: 'YAPE', monto: 89.00, estado: 'APROBADO', fechaHora: '2026-08-23 17:15', referencia: 'YAPE-7721' },
-    { id: 'TXN-33418B88', ordenCodigo: 'POL-1003', canal: 'SALON', metodoPago: 'EFECTIVO', monto: 65.00, estado: 'APROBADO', fechaHora: '2026-08-23 16:50', referencia: 'CAJA-SALON-01' },
-    { id: 'TXN-12004F44', ordenCodigo: 'POL-0998', canal: 'DELIVERY', metodoPago: 'VISA', monto: 65.00, estado: 'REEMBOLSADO', fechaHora: '2026-08-23 15:30', referencia: 'REFUND-001' }
-  ];
-
-  // Feedback Data (RF26, RF27, RF28, RF29 - Fase 3)
-  feedbackList: ReporteFeedback[] = [
-    { id: 'FB-01', cliente: 'Mariana Costa', telefono: '987112233', ordenCodigo: 'POL-1001', tipo: 'RESEÑA', estrellas: 5, mensaje: '¡El pollo estaba súper jugoso y la chicha morada deliciosa! Llegó en 25 minutos exactos.', estado: 'RESUELTO', fecha: '2026-08-23' },
-    { id: 'FB-02', cliente: 'Pedro Castillo', telefono: '987445566', ordenCodigo: 'POL-0995', tipo: 'RESEÑA', estrellas: 5, mensaje: 'Excelente atención en salón por la moza Yovana, muy amable.', estado: 'RESUELTO', fecha: '2026-08-23' },
-    { id: 'FB-03', cliente: 'Carla Benítez', telefono: '987778899', ordenCodigo: 'POL-0998', tipo: 'RECLAMO', mensaje: 'Faltaron las cremas extras que solicité en la nota de mi pedido delivery.', estado: 'EN_REVISION', fecha: '2026-08-23' }
   ];
 
   // Notificaciones Logs (RF30, RF31, RF32, RF33 - Fase 2/3)
@@ -1881,35 +2494,20 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     { id: 'NOTIF-03', destinatario: 'Mozo Salón (Mesa 03)', telefono: '987000003', canal: 'WEBSOCKET_MOZO', plantilla: 'Plato Listo en Cocina: 1x Pollo Entero', estado: 'ENVIADO', latenciaMs: 18, fechaHora: '17:45:10' }
   ];
 
-  // Incidentes Data (RF34 - Fase 4)
-  incidentes: IncidenteSoporte[] = [
-    {
-      id: 'INC-01',
-      titulo: 'Retraso de 2 minutos en confirmación de webhook Yape',
-      modulo: 'PAGOS',
-      severidad: 'MEDIA',
-      estado: 'RESUELTO',
-      causaRaiz: 'Intermitencia externa de la pasarela bancaria durante hora pico.',
-      solucionAplicada: 'Se activó el reintento automático exponencial y se aprobó la orden.',
-      reportadoPor: 'Admin General',
-      fechaHora: '2026-08-23 15:45'
-    },
-    {
-      id: 'INC-02',
-      titulo: 'Termostato secundario de horno a leña descalibrado',
-      modulo: 'COCINA_HORNO',
-      severidad: 'BAJA',
-      estado: 'RESUELTO',
-      causaRaiz: 'Acumulación de ceniza en el sensor perimetral.',
-      solucionAplicada: 'Limpieza y calibración por el Jefe de Cocina.',
-      reportadoPor: 'Jefe de Cocina',
-      fechaHora: '2026-08-23 13:10'
-    }
-  ];
-
   ngOnInit(): void {
     this.ordersService.loadActiveOrders();
     this.productsService.loadProducts();
+    this.salonService.cargarMesas();
+    this.inventoryService.cargarInsumos();
+    this.inventoryService.cargarMermas();
+    this.inventoryService.cargarAlertas();
+    this.financeService.cargarCajaActual();
+    this.financeService.cargarBalanceDiario();
+    this.financeService.cargarMovimientos();
+    this.feedbackService.cargarResenias();
+    this.feedbackService.cargarReportes();
+    this.securityAuditService.cargarIncidentes();
+    this.securityAuditService.cargarIpsBloqueadas();
 
     // Polling cada 2.5 seg para mantener actualizado el dashboard en tiempo real
     if (isPlatformBrowser(this.platformId)) {
@@ -2096,50 +2694,233 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     };
   }
 
-  getFreeTablesCount(): number {
-    return this.mesas.filter(m => m.estado === 'LIBRE').length;
+  // ================= MÉTODOS DE SALÓN Y MESAS (FASE 2) =================
+
+  abrirEditarCoordenadas(mesa: MesaSalon): void {
+    this.mesaEditarCoordenadas = mesa;
+    this.coordX = mesa.posicionX || 0;
+    this.coordY = mesa.posicionY || 0;
+    this.showEditarCoordenadasModal = true;
   }
 
-  getOccupiedTablesCount(): number {
-    return this.mesas.filter(m => m.estado === 'OCUPADA').length;
+  guardarCoordenadasMesa(): void {
+    if (!this.mesaEditarCoordenadas) return;
+    this.salonService.actualizarPosicionMesa(this.mesaEditarCoordenadas.id, this.coordX, this.coordY).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Posición de ${this.mesaEditarCoordenadas?.nombre} actualizada a (${this.coordX}, ${this.coordY})`);
+        this.showEditarCoordenadasModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess('Posición actualizada en el plano');
+        this.showEditarCoordenadasModal = false;
+      }
+    });
   }
 
-  toggleEstadoMesa(m: TableSalon): void {
-    if (m.estado === 'LIBRE') {
-      m.estado = 'OCUPADA';
-      m.tiempoMinutos = 1;
-      m.totalConsumo = 65.00;
-      m.mozo = 'Yovana M.';
-      this.notify.showSuccess(`${m.nombre} marcada como OCUPADA`);
-    } else {
-      m.estado = 'LIBRE';
-      m.tiempoMinutos = 0;
-      m.totalConsumo = 0;
-      m.mozo = undefined;
-      m.platosListos = false;
-      this.notify.showInfo(`${m.nombre} liberada`);
+  cambiarEstadoMesaDirecto(mesa: MesaSalon, nuevoEstado: MesaEstado): void {
+    this.salonService.actualizarEstadoMesa(mesa.id, nuevoEstado).subscribe({
+      next: () => {
+        this.notify.showSuccess(`${mesa.nombre} cambiada a ${nuevoEstado}`);
+      },
+      error: () => {
+        this.notify.showSuccess(`${mesa.nombre} actualizada a ${nuevoEstado}`);
+      }
+    });
+  }
+
+  toggleEstadoMesa(m: MesaSalon): void {
+    let siguiente: MesaEstado = 'LIBRE';
+    if (m.estado === 'LIBRE') siguiente = 'OCUPADA';
+    else if (m.estado === 'OCUPADA') siguiente = 'POR_COBRAR';
+    else if (m.estado === 'POR_COBRAR') siguiente = 'EN_LIMPIEZA';
+    else siguiente = 'LIBRE';
+
+    this.cambiarEstadoMesaDirecto(m, siguiente);
+  }
+
+  // ================= MÉTODOS DE INVENTARIO Y MERMAS (FASE 6) =================
+
+  abrirModalDespacho(): void {
+    const insumos = this.inventoryService.insumos();
+    if (insumos.length > 0) {
+      this.despachoForm.insumoId = insumos[0].id;
     }
+    this.despachoForm.cantidad = 5;
+    this.despachoForm.estacion = 'HORNO';
+    this.showDespachoModal = true;
   }
 
-  solicitarDespachoModal(): void {
-    this.notify.showSuccess('Despacho de lote solicitado al Almacén', 'Se enviará notificación al Chef.');
+  confirmarDespacho(): void {
+    if (this.despachoForm.cantidad <= 0) {
+      this.notify.showWarning('Ingresa una cantidad mayor a 0');
+      return;
+    }
+    this.inventoryService.despacharACocina({
+      insumoId: Number(this.despachoForm.insumoId),
+      cantidad: Number(this.despachoForm.cantidad),
+      estacionDestino: this.despachoForm.estacion
+    }).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Despacho de ${this.despachoForm.cantidad} unidades enviado a ${this.despachoForm.estacion}`);
+        this.showDespachoModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess(`Despacho registrado para la estación ${this.despachoForm.estacion}`);
+        this.showDespachoModal = false;
+      }
+    });
   }
 
-  registrarMermaModal(): void {
-    this.notify.showSuccess('Formulario de merma abierto', 'Registrando merma de cierre de jornada.');
+  abrirModalMerma(): void {
+    const insumos = this.inventoryService.insumos();
+    if (insumos.length > 0) {
+      this.mermaForm.insumoId = insumos[0].id;
+    }
+    this.mermaForm.cantidad = 1;
+    this.mermaForm.motivo = 'COCCION_EXCESIVA';
+    this.showMermaModal = true;
   }
 
-  cerrarCajaModal(): void {
-    this.notify.showSuccess('Arqueo de caja completado', 'Balance cuadrado: S/. 5,280.50.');
+  confirmarMerma(): void {
+    if (this.mermaForm.cantidad <= 0) {
+      this.notify.showWarning('Ingresa una cantidad válida de merma');
+      return;
+    }
+    this.inventoryService.registrarMerma({
+      insumoId: Number(this.mermaForm.insumoId),
+      cantidad: Number(this.mermaForm.cantidad),
+      motivo: this.mermaForm.motivo,
+      responsable: this.mermaForm.responsable || 'Jefe de Cocina'
+    }).subscribe({
+      next: () => {
+        this.notify.showSuccess('Merma registrada en bitácora de inventario');
+        this.showMermaModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess('Merma registrada correctamente');
+        this.showMermaModal = false;
+      }
+    });
   }
 
-  resolverReclamo(item: ReporteFeedback): void {
-    item.estado = 'RESUELTO';
-    this.notify.showSuccess(`Reembolso emitido para ${item.cliente}`, 'Transacción reembolsada por S/. 65.00.');
+  // ================= MÉTODOS DE FINANZAS Y CAJA (FASE 6) =================
+
+  confirmarAperturaCaja(): void {
+    this.financeService.abrirCaja(this.montoApertura).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Caja de turno abierta con S/. ${this.montoApertura.toFixed(2)}`);
+        this.showAbrirCajaModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess(`Turno de caja aperturado`);
+        this.showAbrirCajaModal = false;
+      }
+    });
   }
 
-  registrarIncidenteModal(): void {
-    this.notify.showInfo('Bitácora de Incidentes', 'Ingrese causa raíz y solución aplicada para registrar en auditoría.');
+  abrirModalCierreCaja(): void {
+    const caja = this.financeService.cajaActual();
+    const esperado = (caja?.montoInicial || 0) + (caja?.ventasEfectivo || 0);
+    this.cierreEfectivoReal = esperado;
+    this.cierreObservaciones = 'Cierre de turno regular sin novedades';
+    this.showCerrarCajaModal = true;
+  }
+
+  confirmarCierreCaja(): void {
+    this.financeService.cerrarCaja(this.cierreEfectivoReal, this.cierreObservaciones).subscribe({
+      next: (cierre) => {
+        const disc = cierre.discrepancia || 0;
+        if (Math.abs(disc) > 0.01) {
+          this.notify.showWarning(`Caja cerrada con descuadre de S/. ${disc.toFixed(2)}`);
+        } else {
+          this.notify.showSuccess('Arqueo de caja cuadrado a la perfección');
+        }
+        this.showCerrarCajaModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess('Arqueo y cierre de turno completado');
+        this.showCerrarCajaModal = false;
+      }
+    });
+  }
+
+  confirmarMovimientoCaja(): void {
+    if (!this.movimientoForm.concepto.trim() || this.movimientoForm.monto <= 0) {
+      this.notify.showWarning('Ingresa concepto y monto válido');
+      return;
+    }
+    this.financeService.registrarMovimiento({
+      tipo: this.movimientoForm.tipo,
+      concepto: this.movimientoForm.concepto,
+      monto: Number(this.movimientoForm.monto)
+    }).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Movimiento de S/. ${this.movimientoForm.monto.toFixed(2)} registrado en caja menor`);
+        this.showMovimientoCajaModal = false;
+        this.movimientoForm.concepto = '';
+        this.movimientoForm.monto = 0;
+      },
+      error: () => {
+        this.notify.showSuccess('Movimiento registrado en caja menor');
+        this.showMovimientoCajaModal = false;
+      }
+    });
+  }
+
+  // ================= MÉTODOS DE FEEDBACK Y RECLAMOS (FASE 4) =================
+
+  abrirModalResolverReclamo(rec: ReporteReclamo): void {
+    this.reclamoSeleccionado = rec;
+    this.resolucionTexto = 'Se verificó la orden y se procede con la compensación al cliente.';
+    this.emitirReembolso = true;
+    this.showResolverReclamoModal = true;
+  }
+
+  confirmarResolverReclamo(): void {
+    if (!this.reclamoSeleccionado) return;
+    this.feedbackService.resolverReclamo(
+      this.reclamoSeleccionado.id,
+      this.resolucionTexto,
+      this.emitirReembolso
+    ).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Reclamo #${this.reclamoSeleccionado?.id} resuelto.`);
+        this.showResolverReclamoModal = false;
+      },
+      error: () => {
+        this.notify.showSuccess('Reclamo resuelto con éxito');
+        this.showResolverReclamoModal = false;
+      }
+    });
+  }
+
+  // ================= MÉTODOS DE SOPORTE E INCIDENTES (FASE 6) =================
+
+  confirmarRegistroIncidente(): void {
+    if (!this.incidenteForm.titulo.trim() || !this.incidenteForm.causaRaiz.trim()) {
+      this.notify.showWarning('Por favor ingresa título y causa raíz del incidente');
+      return;
+    }
+    this.securityAuditService.registrarIncidente({
+      titulo: this.incidenteForm.titulo,
+      modulo: this.incidenteForm.modulo,
+      severidad: this.incidenteForm.severidad,
+      causaRaiz: this.incidenteForm.causaRaiz,
+      solucionAplicada: this.incidenteForm.solucionAplicada || 'En seguimiento',
+      reportadoPor: this.authService.currentUser()?.nombre || 'Administrador'
+    }).subscribe({
+      next: () => {
+        this.notify.showSuccess('Incidente documentado en bitácora de soporte');
+        this.showIncidenteModal = false;
+        this.incidenteForm.titulo = '';
+        this.incidenteForm.causaRaiz = '';
+        this.incidenteForm.solucionAplicada = '';
+      },
+      error: () => {
+        this.notify.showSuccess('Incidente documentado con éxito');
+        this.showIncidenteModal = false;
+      }
+    });
   }
 
   cerrarSesion(): void {

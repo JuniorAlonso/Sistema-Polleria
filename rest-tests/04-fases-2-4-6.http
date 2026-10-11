@@ -1,0 +1,244 @@
+###############################################################################
+# SISTEMA POLLERÍA - FASES 2, 4 Y 6 (ENDPOINTS & SUITE DE PRUEBAS QA)
+# Extensión: REST Client (humao.rest-client)
+###############################################################################
+
+# Variables de entorno - Servicios locales
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PAYMENTS_URL = http://localhost:8083
+@FEEDBACK_URL = http://localhost:8085
+@INVENTORY_URL = http://localhost:8086
+@FINANCE_URL = http://localhost:8087
+@INCIDENT_URL = http://localhost:8088
+
+# Token de autenticación (generar vía login previo)
+@TOKEN = Bearer eyJhbGciOiJIUzI1NiJ9.test
+
+# ==============================================================================
+# FASE 2: GESTIÓN DE SALÓN, MESAS Y EVENTOS EN VIVO
+# ==============================================================================
+
+### 2.1 Listar plano de mesas (con coordenadas y estados)
+GET {{ORDERS_URL}}/mesas
+Authorization: {{TOKEN}}
+
+### 2.2 Crear nueva mesa en el salón
+# @name crearMesa
+POST {{ORDERS_URL}}/mesas
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "numero": 12,
+  "capacidad": 4,
+  "posicionX": 150,
+  "posicionY": 280
+}
+
+### 2.3 Actualizar posición física de una mesa (Drag & Drop en plano visual)
+PUT {{ORDERS_URL}}/mesas/1/posicion
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "posicionX": 220,
+  "posicionY": 340
+}
+
+### 2.4 Actualizar estado de una mesa (POR_COBRAR, EN_LIMPIEZA, DISPONIBLE)
+PUT {{ORDERS_URL}}/mesas/1/estado
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "estado": "POR_COBRAR"
+}
+
+### 2.5 Consultar comanda u orden activa vinculada a la mesa
+GET {{ORDERS_URL}}/mesas/1/orden-activa
+Authorization: {{TOKEN}}
+
+
+# ==============================================================================
+# FASE 4: FEEDBACK, RESEÑAS Y GESTIÓN DE REEMBOLSOS
+# ==============================================================================
+
+### 4.1 Registrar calificación y reseña de pedido entregado
+POST {{FEEDBACK_URL}}/resenias
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "ordenId": 100,
+  "calificacion": 5,
+  "comentario": "El pollo estuvo jugoso y las papas bien crocantes. Excelente servicio de salón.",
+  "canal": "SALON"
+}
+
+### 4.2 Listar métricas y reseñas públicas
+GET {{FEEDBACK_URL}}/resenias
+Authorization: {{TOKEN}}
+
+### 4.3 Registrar reporte de incidencia o reclamo de cliente
+# @name crearReclamo
+POST {{FEEDBACK_URL}}/reportes-incidencia
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "ordenId": 100,
+  "motivo": "PEDIDO_INCOMPLETO",
+  "descripcion": "Faltaron las cremas especiales y la chicha morada de 1L.",
+  "montoReclamado": 15.00
+}
+
+### 4.4 Resolver incidencia con reembolso automático coordinado a pagos
+PUT {{FEEDBACK_URL}}/reportes-incidencia/1/resolver
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "estado": "RESUELTO",
+  "resolucion": "Se verificó ticket con despacho. Procede reembolso parcial inmediato de S/ 15.00.",
+  "ejecutarReembolso": true
+}
+
+### 4.5 Ejecutar reembolso directo en pasarela de pagos
+POST {{PAYMENTS_URL}}/pagos/orden/100/reembolso
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "monto": 15.00,
+  "motivo": "Reclamo procedente por despacho incompleto"
+}
+
+
+# ==============================================================================
+# FASE 6: INVENTARIO, FINANZAS, SEGURIDAD E INCIDENTES
+# ==============================================================================
+
+### 6.1 SEGURIDAD - Listar IPs bloqueadas o con intentos fallidos
+GET {{AUTH_URL}}/auth/admin/ips-bloqueadas
+Authorization: {{TOKEN}}
+
+### 6.2 SEGURIDAD - Desbloquear IP manualmente desde panel administrativo
+DELETE {{AUTH_URL}}/auth/admin/ips-bloqueadas/190.232.10.15
+Authorization: {{TOKEN}}
+
+### 6.3 INVENTARIO - Registrar nuevo insumo
+POST {{INVENTORY_URL}}/insumos
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "nombre": "Pollo Entero Fresco",
+  "unidadMedida": "UND",
+  "stockActual": 60.00,
+  "stockMinimoAlerta": 15.00,
+  "costoUnitario": 18.50
+}
+
+### 6.4 INVENTARIO - Despacho de insumos hacia cocina
+POST {{INVENTORY_URL}}/despachos
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "solicitanteNombre": "Chef Mario - Maestro Hornero",
+  "items": [
+    {
+      "insumoId": 1,
+      "cantidad": 12.00,
+      "observaciones": "Horneado turno tarde"
+    }
+  ]
+}
+
+### 6.5 INVENTARIO - Registro de merma justificada
+POST {{INVENTORY_URL}}/mermas
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "insumoId": 1,
+  "cantidad": 1.00,
+  "motivo": "ERROR_COCINA",
+  "justificacion": "Pollo sobrecocido por exceso de brasas"
+}
+
+### 6.6 INVENTARIO - Consultar alertas predictivas de quiebre de stock
+GET {{INVENTORY_URL}}/inventario/analisis/alertas
+Authorization: {{TOKEN}}
+
+### 6.7 INVENTARIO - Balance de rentabilidad y valorización de insumos
+GET {{INVENTORY_URL}}/inventario/analisis/rentabilidad
+Authorization: {{TOKEN}}
+
+### 6.8 FINANZAS - Apertura de caja con fondo inicial
+POST {{FINANCE_URL}}/caja/apertura
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "usuarioNombre": "Cajero Turno Tarde",
+  "montoApertura": 150.00,
+  "observaciones": "Monedas y billetes chicos para cambio"
+}
+
+### 6.9 FINANZAS - Registrar movimiento de caja chica (Egreso)
+POST {{FINANCE_URL}}/caja/movimientos
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "tipo": "EGRESO",
+  "monto": 25.00,
+  "motivo": "Compra urgente de limones para aderezo"
+}
+
+### 6.10 FINANZAS - Cierre de caja con balance y detección de discrepancia
+POST {{FINANCE_URL}}/caja/cierre
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "montoCierreEfectivo": 450.00,
+  "montoCierrePos": 620.00,
+  "ventasDigitales": 380.00,
+  "observaciones": "Cierre conforme sin novedades"
+}
+
+### 6.11 FINANZAS - Balance financiero diario consolidado
+GET {{FINANCE_URL}}/finanzas/balance-diario?fecha=2026-10-09
+Authorization: {{TOKEN}}
+
+### 6.12 INCIDENTES - Registrar incidente técnico u operativo
+POST {{INCIDENT_URL}}/incidentes
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "titulo": "Falla de conectividad en impresora térmica de comandas",
+  "severidad": "MEDIA",
+  "tipo": "TECNICO",
+  "descripcion": "La impresora de comanda de cocina no imprime por corte de cable de red.",
+  "responsable": "Soporte de Tienda"
+}
+
+### 6.13 INCIDENTES - Resolver incidente documentando causa raíz y corrección
+PUT {{INCIDENT_URL}}/incidentes/1/resolver
+Content-Type: application/json
+Authorization: {{TOKEN}}
+
+{
+  "estado": "RESUELTO",
+  "causaRaiz": "Conector RJ45 con falso contacto por tirón de cable",
+  "solucionAplicada": "Se crimpó un nuevo conector y se aseguró con abrazadera",
+  "responsable": "Técnico Juan Perez"
+}
+
+### 6.14 INCIDENTES - Listar historial de incidentes
+GET {{INCIDENT_URL}}/incidentes
+Authorization: {{TOKEN}}

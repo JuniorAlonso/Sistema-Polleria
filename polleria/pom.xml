@@ -31,12 +31,10 @@
         <module>auth-service</module>
         <module>orders-service</module>
         <module>payments-service</module>
-        <!-- Próximos módulos:
+        <module>feedback-service</module>
         <module>inventory-service</module>
         <module>finance-service</module>
-        <module>whatsapp-service</module>
-        <module>chatbot-service</module>
-        -->
+        <module>incident-service</module>
     </modules>
 
     <!-- =====================================================
