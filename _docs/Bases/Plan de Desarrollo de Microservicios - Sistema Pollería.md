@@ -47,7 +47,7 @@ El desarrollo se divide en **6 fases evolutivas**. La **Fase 1** constituye el M
 
 * **3.1 Motor WhatsApp (`notification-service`):** Cola FIFO anti-baneo (espera estricta de 10s entre mensajes, RNF10) para confirmación de pago (RF30) y tracking de delivery (RF31) con auditoría de envíos (RF32).
 
-📄 **Documentación detallada:** [fase_3_notificaciones_wasap/README.md](../fases/fase_3_notificaciones_wasap/README.md)
+📄 **Documentación detallada:** [fase_3_notificaciones_whatsapp/README.md](../fases/fase_3_notificaciones_whatsapp/README.md)
 
 ---
 

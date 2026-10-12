@@ -25,7 +25,7 @@
 ┌──────────────────────────────────────────────────────┐
 │              notification-service (:3001)             │
 │  ┌────────────────────────────────────────────────┐   │
-│  │   Cola FIFO Secuencial (p-queue / setTimeout)  │   │
+│  │   Cola FIFO Secuencial (queue.js / setTimeout) │   │
 │  │   Delay estricto: 10.000 ms entre mensajes     │   │
 │  └─────────────────────┬──────────────────────────┘   │
 │                        ▼                               │
@@ -41,7 +41,7 @@
 | :--- | :---: | :--- |
 | `notification-service` | Node.js 18+ / Express | Motor de envío con cola anti-baneo y registro de trazabilidad |
 | `whatsapp-web.js` | Librería NPM | Cliente de WhatsApp Web para envío programático de mensajes |
-| `p-queue` / Buffer | Librería NPM | Cola FIFO con concurrencia 1 y delay de 10s entre envíos |
+| Cola propia | `src/notifications/queue.js` | Cola FIFO con concurrencia 1 y delay de 10 s entre envíos (no se usa `p-queue`, que no existe como dependencia) |
 
 ---
 
@@ -53,7 +53,7 @@ Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases
 | :--- | :---: | :--- | :--- |
 | **RF30** | RF | Notificación WhatsApp al cliente al confirmarse el pago de delivery. | `notification-service` |
 | **RF31** | RF | Notificaciones WhatsApp automáticas en cada cambio de estado de delivery (`EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`). | `orders-service` → `notification-service` |
-| **RF32** | RF | Registro y auditoría del estado de envío de notificaciones (`EN_COLA`, `ENVIADO`, `FALLIDO`). | `notification-service` |
+| **RF32** | RF | Registro y auditoría del estado de envío de notificaciones (`EN_COLA`, `ENVIADO`, `ERROR`). | `notification-service` |
 | **RNF10** | RNF | Rate-limiting de 10 segundos de espera entre mensajes en WhatsApp.js para evitar bloqueos por Meta. | `notification-service` (Queue Worker) |
 
 ---
@@ -68,15 +68,15 @@ WhatsApp Web bloquea números si detecta ráfagas simultáneas automatizadas. Se
 [ Petición C ] ──┘
 ```
 
-### 3.1 Base Funcional Existente en Fase 1
-En la Fase 1 ya existe un servicio base funcional en `polleria/notification-service/main.js` (puerto `:3001`) con:
-- Endpoint básico directo `POST /notificar` (recibe `{ telefono, orderId, estado, nombreCliente }`).
+### 3.1 Base Funcional Existente en Fase 1 (histórico)
+El punto de partida de la Fase 1 fue un servicio base funcional en `polleria/notification-service/main.js` (puerto `:3001`) con:
+- Endpoint básico directo `POST /notificar` (recibía `{ telefono, orderId, estado, nombreCliente }`).
 - Endpoint de verificación `GET /status` (estado de conexión de WhatsApp Web).
 - Cliente `whatsapp-web.js` con inicialización QR en terminal.
 
-**Alcance a Desarrollar en Fase 3:** Reemplazar los envíos síncronos directos por una cola FIFO con delay estricto de 10s (RNF10), endpoints REST desacoplados por tipo de evento (`/pago`, `/estado`) y persistencia de logs para auditoría de envíos (`/historial`, RF32).
+**Alcance desarrollado en Fase 3:** reemplazar los envíos síncronos directos por una cola FIFO con delay estricto de 10 s (RNF10), endpoints REST desacoplados por tipo de evento y persistencia de logs para auditoría de envíos (RF32).
 
-> ✅ **Implementado.** El endpoint `POST /notificar` fue reemplazado por los endpoints de la sección 4. Ver la sección 9 para la estructura del código.
+> ✅ **Implementado.** `POST /notificar` **ya no existe** en el código actual (ni siquiera como ruta): fue reemplazado por los endpoints de la sección 4. `GET /status` sí se conserva, bajo el prefijo `/api/notificaciones`. La versión anterior del arranque se conserva en `main-backup.js`, que no se ejecuta.
 
 ### 3.2 Implementación Técnica de la Cola Anti-Ban
 
@@ -148,13 +148,15 @@ POST /api/notificaciones/whatsapp/pago
 ```json
 {
   "ordenId": 52,
+  "numeroPedido": 3,
   "telefono": "51999888777",
   "nombreCliente": "María García",
   "montoTotal": 68.50,
-  "metodoPago": "YAPE_PLIN",
   "tiempoEstimado": "35-45 min"
 }
 ```
+
+Campos obligatorios según la validación real: `ordenId` (entero positivo), `telefono` y `montoTotal > 0`. `numeroPedido` y `tiempoEstimado` son opcionales. El endpoint **no lee `metodoPago`**: el método de pago no aparece en el mensaje de confirmación.
 
 **Mensaje generado:**
 ```
@@ -171,14 +173,9 @@ San Pollo de Ica
 
 > Los mensajes usan un tono formal y cercano, sin emojis. Solo se usa el primer nombre del cliente, con mayúscula inicial. Las plantillas están en `src/notifications/messages.js`.
 
-**Response `202 Accepted`:**
-```json
-{
-  "status": "EN_COLA",
-  "notificacionId": "notif_98741",
-  "mensaje": "Notificación encolada exitosamente"
-}
-```
+**Response `202 Accepted`:** `{ "status": "EN_COLA", "notificacionId": "notif_98741", "mensaje": "Notificación encolada exitosamente" }`
+
+> Si el teléfono no es normalizable, el registro se crea directamente como `ERROR` y la misma respuesta llega con **`422`** en lugar de `202`.
 
 ### 4.2 Notificación de Cambio de Estado (RF31)
 
@@ -276,18 +273,36 @@ Flujo completo en `orders-service` (rutas públicas):
 | `POST /ordenes/seguimiento/verificar` `{ telefono, codigo }` | 5 intentos, vence a los 5 min. Devuelve un acceso temporal (`token`, 30 min). |
 | `GET /ordenes/seguimiento` header `X-Seguimiento-Token` | Pedidos de ese celular. |
 
-Además, `GET /ordenes/{id}` ahora solo responde al dueño del pedido, al personal o a otro microservicio con `X-Internal-Key` (`INTERNAL_API_KEY`, por defecto `polleria-dev-internal-key` en desarrollo). A cualquier otro le responde 404.
+Además, `GET /ordenes/{id}` ahora solo responde al dueño del pedido, al personal o a otro microservicio con `X-Internal-Key` (variable `INTERNAL_API_KEY`, **sin valor por defecto**: si no está definida, la cabecera no autentica y la respuesta es `403`). A cualquier otro le responde 404.
 
-### 4.4 Respuestas de error
+El mismo criterio se aplica a `PATCH /ordenes/{id}/estado`: un `CLIENTE` solo puede cambiar el estado de un pedido **propio**; si intenta tocar el de otro, recibe `404` (no `403`, para no revelar qué pedidos existen). Y el **flujo es obligatorio**: del pedido propio un cliente solo puede pedir `CANCELADO` — intentar `EN_PREPARACION`, `LISTO` o `ENTREGADO` responde `403`, porque el avance por cocina y reparto lo hace el personal.
+
+### 4.4 Vinculación de WhatsApp por QR
+
+```
+GET /api/notificaciones/qr
+```
+
+**Acceso:** 🔒 Solo `ADMIN`. Devuelve `{ "whatsapp": "waiting_qr", "qr": "data:image/png;base64,..." }`, o `qr: null` si la sesión ya está conectada. Es el endpoint que consume la pestaña **Notificaciones** del panel administrativo (refresco cada 5 s).
+
+Adicionalmente existe una página HTML para escanear el QR desde el navegador:
+
+```
+GET /qr
+```
+
+Solo responde si la petición viene de `127.0.0.1`/`::1` o si se incluye `?clave=<NOTIFICATION_API_KEY>`; en cualquier otro caso devuelve `403`. Se recarga sola cada 25 s.
+
+### 4.5 Respuestas de error
 
 | Código | Cuándo |
 | :--- | :--- |
-| `400` | Faltan campos obligatorios o `estadoNuevo` no es un estado de delivery. |
-| `401` | Falta o es incorrecta la `X-Internal-Key` (o el token en `/historial`). |
-| `403` | El token de `/historial` no es de un `ADMIN`. |
-| `422` | El teléfono no tiene formato válido. Igual se registra en el historial con estado `ERROR`. |
+| `400` | Faltan campos obligatorios, `ordenId` no es entero positivo, `montoTotal` no es mayor que cero, `estadoNuevo` no es un estado de delivery, o los filtros de `/historial` son inválidos. |
+| `401` | Falta o es incorrecta la `X-Internal-Key` (o el token en `/historial` y `/qr`). |
+| `403` | El token de `/historial` o `/qr` no es de un `ADMIN`; la página `GET /qr` se abrió desde fuera del servidor sin `?clave=`. |
+| `422` | El teléfono no es normalizable: el envío no entra a la cola, se registra en el historial con estado `ERROR` y la cola no se bloquea. |
 
-### 4.5 Estado del servicio
+### 4.6 Estado del servicio
 
 ```
 GET /api/notificaciones/status
@@ -297,7 +312,7 @@ GET /api/notificaciones/status
 { "status": "ok", "whatsapp": "connected", "colaPendiente": 0 }
 ```
 
-Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`.
+Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token).
 
 ---
 
@@ -313,7 +328,7 @@ Tabla `notification_log` en PostgreSQL (se crea sola al arrancar si se define `D
 | `id` | `String` | PK, generado (`notif_XXXXX`) |
 | `ordenId` | `Number` | Referencia a la orden en `orders-service` |
 | `destinatario` | `String` | Número de teléfono con prefijo país (`51XXXXXXXXX`) |
-| `tipo` | `String` (Enum) | `PAGO_CONFIRMADO`, `ESTADO_EN_PREPARACION`, `ESTADO_EN_CAMINO`, `ESTADO_ENTREGADO` |
+| `tipo` | `String` (Enum) | `PAGO_CONFIRMADO`, `ESTADO_EN_PREPARACION`, `ESTADO_EN_CAMINO`, `ESTADO_ENTREGADO`, `CODIGO_SEGUIMIENTO` |
 | `mensaje` | `String` | Texto completo enviado al cliente |
 | `estado` | `String` (Enum) | `EN_COLA`, `ENVIADO`, `ERROR` |
 | `intentos` | `Number` | Contador de intentos de envío |
@@ -359,19 +374,24 @@ Ver `polleria/notification-service/.env.example`.
 ```env
 # notification-service (:3001)
 PORT=3001
-NODE_ENV=production
+NODE_ENV=production                      # Declarado en el Dockerfile; el código no lo lee
 
 # Sesión de WhatsApp
 WHATSAPP_SESSION_PATH=./.wwebjs_auth      # Directorio de persistencia de sesión QR (NO subir a git)
 WHATSAPP_RATE_LIMIT_MS=10000              # Delay entre mensajes (default: 10000)
 WHATSAPP_MAX_INTENTOS=3                   # Reintentos ante fallos temporales
+PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Historial (RF32)
 DATABASE_URL=postgres://postgres:postgres123@localhost:5432/polleria
 
 # Seguridad
-JWT_SECRET=<mismo que auth-service>       # Protege GET /historial
-NOTIFICATION_API_KEY=<clave compartida>   # Header X-Internal-Key de orders/payments
+JWT_SECRET=<mismo que auth-service>       # Protege GET /historial y GET /qr
+NOTIFICATION_API_KEY=<clave compartida>   # Header X-Internal-Key de orders/payments + ?clave= de la página QR
+CORS_ALLOWED_ORIGINS=http://localhost:4200
+
+# Datos de contacto incluidos al pie de los mensajes
+POLLERIA_TELEFONO=(056) 123-456
 ```
 
 En `orders-service` y `payments-service`:
@@ -395,11 +415,11 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 ### 8.2 Pruebas Funcionales
 | Caso | Entrada | Resultado Esperado |
 | :--- | :--- | :--- |
-| Pago confirmado | `POST /whatsapp/pago` con datos válidos | Mensaje recibido en WhatsApp del destinatario |
-| Cambio de estado | `POST /whatsapp/estado` con `EN_CAMINO` | Mensaje con datos del repartidor |
+| Pago confirmado | `POST /api/notificaciones/whatsapp/pago` con datos válidos | Mensaje recibido en WhatsApp del destinatario |
+| Cambio de estado | `POST /api/notificaciones/whatsapp/estado` con `EN_CAMINO` | Mensaje con datos del repartidor |
 | Rate limit | 3 notificaciones simultáneas | Se procesan con 10s de separación |
-| Historial | `GET /historial?ordenId=52` | Registros con estado `ENVIADO` |
-| Número inválido | Teléfono sin formato correcto | Registro con estado `ERROR` y detalle |
+| Historial | `GET /api/notificaciones/historial?ordenId=52` | Registros con estado `ENVIADO` |
+| Número inválido | Teléfono sin formato correcto | Registro con estado `ERROR` (respuesta `422`) y detalle |
 
 ### 8.3 Criterios de Aceptación
 - [ ] Mensaje de confirmación de pago llega al WhatsApp del cliente.
@@ -414,16 +434,18 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 
 ```
 main.js                         # Arranque: store → servicio → API → WhatsApp
+main-backup.js                  # Versión previa de arranque, conservada como respaldo (no se ejecuta)
 src/config.js                   # Variables de entorno
 src/notifications/queue.js      # Cola FIFO con delay (RNF10)
 src/notifications/service.js    # Registra EN_COLA → envía → ENVIADO / ERROR, reintentos
 src/notifications/store.js      # NotificationLog en PostgreSQL o en memoria (RF32)
 src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
 src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
-src/http/app.js                 # Endpoints /api/notificaciones/*
+src/http/app.js                 # Endpoints /api/notificaciones/* y página GET /qr
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
-src/whatsapp/handler.js         # Chatbot de respuestas (fuera del alcance de RF30-32)
+src/whatsapp/handler.js         # Enrutador de mensajes entrantes hacia el chatbot
+src/chatbot/                    # Chatbot de respuestas (menú, conversación, fuera del alcance de RF30-32)
 test/                           # Tests con node:test (`npm test`)
 Dockerfile                      # Imagen con Chromium para puppeteer
 ```

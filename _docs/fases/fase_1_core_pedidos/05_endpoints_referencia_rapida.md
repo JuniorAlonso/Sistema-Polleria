@@ -49,9 +49,14 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | `GET` | `/mesas` | 🔒 | ADMIN, MOZO | Listar todas las mesas |
 | `GET` | `/mesas/libres` | 🔒 | ADMIN, MOZO | Listar mesas con estado LIBRE |
 | `GET` | `/mesas/{id}` | 🔒 | ADMIN, MOZO | Detalle de una mesa |
+| `GET` | `/mesas/{id}/orden-activa` | 🔒 | ADMIN, MOZO | Comanda abierta de la mesa |
 | `POST` | `/mesas` | 🔒 | ADMIN | Crear mesa |
-| `PATCH` | `/mesas/{id}/estado` | 🔒 | ADMIN, MOZO | Cambiar estado de una mesa |
+| `PUT` | `/mesas/{id}` | 🔒 | ADMIN | Actualizar mesa |
+| `PATCH` o `PUT` | `/mesas/{id}/estado` | 🔒 | ADMIN, MOZO | Cambiar estado de una mesa |
+| `PATCH` o `PUT` | `/mesas/{id}/posicion` | 🔒 | ADMIN, MOZO | Mover la mesa en el croquis |
 | `DELETE` | `/mesas/{id}` | 🔒 | ADMIN | Eliminar mesa |
+| `GET` | `/zonas` | 🔓 | — | Zonas del salón (`ZonaSalon`) |
+| `PUT` | `/zonas/{id}/dimensiones` | 🔒 | ADMIN, MOZO | Persistir filas y columnas de la zona |
 
 ---
 
@@ -59,15 +64,18 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 
 | Método | Endpoint | Auth | Rol | Descripción |
 | :---: | :--- | :---: | :--- | :--- |
-| `POST` | `/ordenes` | 🔒 | Cualquiera | Crear pedido |
-| `GET` | `/ordenes/{id}` | 🔒 | Cualquiera | Consultar orden (tracking) |
-| `GET` | `/ordenes/mis-ordenes` | 🔒 | Cualquiera | Historial del cliente |
-| `GET` | `/ordenes/cocina` | 🔒 | ADMIN, COCINA | Órdenes para la cocina |
+| `POST` | `/ordenes` | 🔓 | — | Crear pedido (permite invitados sin sesión; el dueño se toma del token si existe) |
+| `GET` | `/ordenes/{id}` | 🔒 | Dueño, personal o `X-Internal-Key` | Consultar orden (tracking). A cualquier otro le responde `404` |
+| `GET` | `/ordenes/mis-ordenes` | 🔒 | Autenticado | Historial del cliente |
+| `GET` | `/ordenes/cocina` | 🔒 | ADMIN, COCINA | Órdenes para la cocina (estados `RECIBIDO`/`EN_PREPARACION`) |
 | `GET` | `/ordenes/activos` | 🔒 | ADMIN, MOZO | Órdenes activas (no finalizadas) |
-| `GET` | `/ordenes` | 🔒 | Cualquiera | Listar (activos + completados hoy) |
-| `GET` | `/ordenes?estado=X` | 🔒 | Cualquiera | Filtrar por estado |
-| `GET` | `/ordenes?soloActivos=true` | 🔒 | Cualquiera | Solo órdenes activas |
-| `PATCH` | `/ordenes/{id}/estado` | 🔒 | Cualquiera | Cambiar estado del pedido |
+| `GET` | `/ordenes` | 🔒 | ADMIN, MOZO, COCINA, REPARTIDOR, CAJERO | Listar |
+| `GET` | `/ordenes?estado=X` | 🔒 | ADMIN, MOZO, COCINA, REPARTIDOR, CAJERO | Filtrar por estado |
+| `GET` | `/ordenes?soloActivos=true` | 🔒 | ADMIN, MOZO, COCINA, REPARTIDOR, CAJERO | Solo órdenes activas |
+| `GET` | `/ordenes/seguimiento` | 🔓 + `X-Seguimiento-Token` | — | Pedidos de un celular verificado (ver Fase 3) |
+| `POST` | `/ordenes/seguimiento/codigo` | 🔓 | — | Envía código de 4 dígitos por WhatsApp (ver Fase 3) |
+| `POST` | `/ordenes/seguimiento/verificar` | 🔓 | — | Verifica el código y devuelve acceso temporal (ver Fase 3) |
+| `PATCH` | `/ordenes/{id}/estado` | 🔒 | Personal: cualquier pedido · `CLIENTE`: solo el suyo y solo a `CANCELADO` | Cambiar estado del pedido (valida transiciones → `400` si es inválida; `403` si un cliente intenta avanzar el flujo; `404` si el pedido no es suyo) |
 
 ---
 
@@ -83,8 +91,9 @@ Tabla consolidada de todos los endpoints que el **frontend** debe consumir.
 | `PATCH` | `/pagos/{id}/confirmar` | 🔒 | ADMIN, REPARTIDOR | Confirmar pago (contraentrega) |
 | `PATCH` | `/pagos/{id}/cancelar` | 🔒 | ADMIN, CLIENTE | Cancelar pago |
 
-> 💳 *La pasarela oficial de Mercado Pago (Checkout Pro y Webhooks IPN) se encuentra documentada en la [Fase 5](../fase_5_pagos_mercadopago/README.md).*  
-> 📲 *El microservicio de notificaciones por WhatsApp (`notification-service`) se encuentra documentado en la [Fase 3](../fase_3_notificaciones_wasap/README.md).*
+> 💳 *La pasarela oficial de Mercado Pago (Checkout Pro y Webhooks IPN) se encuentra documentada en la [Fase 5](../fase_5_pagos_mercadopago/README.md): `POST /pagos/mercadopago/preferencia`, `POST /pagos/{id}/reembolso` y `POST /pagos/orden/{ordenId}/reembolso`.*  
+> 📲 *El microservicio de notificaciones por WhatsApp (`notification-service`) se encuentra documentado en la [Fase 3](../fase_3_notificaciones_whatsapp/README.md).*
+> 🏢 *Inventario (`/inventario/*`), finanzas (`/finanzas/*`), feedback (`/feedback/*`) e incidentes (`/incidentes`) están documentados en las Fases 4 y 6.*
 
 ---
 

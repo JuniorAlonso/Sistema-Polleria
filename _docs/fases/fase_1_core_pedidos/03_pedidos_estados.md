@@ -89,12 +89,31 @@ RECIBIDO, EN_PREPARACION, LISTO, EN_CAMINO, ENTREGADO, CANCELADO
 | `RECIBIDO` | `EN_PREPARACION`, `CANCELADO` |
 | `EN_PREPARACION` | `LISTO`, `CANCELADO` |
 | `LISTO` (SALON/RECOJO) | `ENTREGADO` |
-| `LISTO` (DELIVERY) | `EN_CAMINO` |
+| `LISTO` (DELIVERY) | `EN_CAMINO`, `ENTREGADO` |
 | `EN_CAMINO` | `ENTREGADO`, `CANCELADO` |
 | `ENTREGADO` | _(estado final)_ |
 | `CANCELADO` | _(estado final)_ |
 
 Cualquier transición inválida retorna `400: "Transición de estado inválida: X → Y"`.
+
+**Quién puede mover el pedido (flujo obligatorio):**
+
+| Quién | Alcance |
+| :--- | :--- |
+| `ADMIN`, `MOZO`, `COCINA`, `REPARTIDOR` | Cualquier pedido, cualquier transición válida |
+| Microservicio con `X-Internal-Key` (`payments-service`) | Cualquier pedido (así propaga el resultado del pago) |
+| `CLIENTE` | **Solo su propio pedido, y solo a `CANCELADO`** |
+
+El cliente no puede enviar `EN_PREPARACION`, `LISTO` ni `ENTREGADO`: el avance por cocina y
+reparto lo gestiona la pollería. Un intento de avanzar su propio pedido responde `403` con el
+cuerpo genérico del manejador de acceso denegado
+(`{"error":"No tienes permisos para esta acción","status":403}` — el mismo que cualquier otro
+rechazo de rol, para no revelar la regla interna); un intento sobre el pedido de otro responde
+`404` (misma convención que `GET /ordenes/{id}`, para no revelar qué pedidos existen).
+
+Comprobado en vivo contra el stack levantado, con un token `CLIENTE` del dueño del pedido:
+`GET /ordenes/{id}` → `200` y `PATCH` a `EN_PREPARACION`, `LISTO` y `ENTREGADO` → `403`, con el
+estado del pedido intacto tras los tres intentos.
 
 ---
 

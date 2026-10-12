@@ -104,12 +104,11 @@ export class FeedbackService {
     );
   }
 
-  calificarPedido(req: { ordenId: number; estrellas: number; comentario?: string; canal?: string }): Observable<Resenia> {
+  calificarPedido(req: { ordenId: number; estrellas: number; comentario?: string }): Observable<Resenia> {
     return this.enviarResenia({
       ordenId: req.ordenId,
       calificacion: req.estrellas,
-      comentario: req.comentario,
-      canal: req.canal
+      comentario: req.comentario
     });
   }
 

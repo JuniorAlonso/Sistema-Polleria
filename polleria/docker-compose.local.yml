@@ -6,6 +6,10 @@ services:
     image: postgres:16-alpine
     container_name: polleria-postgres
     restart: unless-stopped
+    # Los 8 microservicios más los contextos de Spring de las pruebas (cada uno con su pool de
+    # Hikari) agotan las 100 conexiones por defecto. Cuando eso pasa, las pruebas de integración
+    # se saltan en silencio (`too many clients already`) y una suite roja parece verde.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_DB: polleria
       POSTGRES_USER: postgres
@@ -94,6 +98,8 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
       NOTIFICATION_URL: http://notification-service:3001
       NOTIFICATION_API_KEY: sanpollo-dev-notification-key
+      # Clave interna entre microservicios. Sin ella el servicio falla cerrada (no hay default).
+      INTERNAL_API_KEY: sanpollo-dev-internal-key
     depends_on:
       postgres:
         condition: service_healthy
@@ -121,6 +127,8 @@ services:
       ORDERS_SERVICE_URL: http://orders-service:8082
       NOTIFICATION_URL: http://notification-service:3001
       NOTIFICATION_API_KEY: sanpollo-dev-notification-key
+      # Debe coincidir con el INTERNAL_API_KEY de orders-service.
+      INTERNAL_API_KEY: sanpollo-dev-internal-key
     depends_on:
       postgres:
         condition: service_healthy

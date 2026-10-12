@@ -94,6 +94,10 @@ public class OrdenService {
         return OrdenResponse.from(orden);
     }
 
+    // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre. Fuera de una
+    // transacción esto revienta con LazyInitializationException en cuanto el despliegue apaga
+    // spring.jpa.open-in-view (el perfil de pruebas ya lo hace).
+    @Transactional(readOnly = true)
     public OrdenResponse obtener(Long id) {
         return OrdenResponse.from(buscarOFallar(id));
     }

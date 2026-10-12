@@ -1219,14 +1219,13 @@ interface MotorizadoDelivery {
             </div>
           }
 
-          <!-- SUB-VIEW 2: INSUMOS & DESPACHO (FASE 6 - EN VIVO) -->
+          <!-- SUB-VIEW 2: INSUMOS & DESPACHO -->
           @if (inventarioSubTab() === 'INSUMOS') {
             <div class="space-y-4">
               <div class="flex justify-between items-center bg-[#1c1f24] p-4 rounded-xl border border-white/5">
                 <div>
                   <h3 class="font-bold text-white flex items-center gap-2">
                     <span>Almacén Central de Insumos</span>
-                    <span class="text-[10px] text-emerald-400 px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20">Fase 6 - En Vivo</span>
                   </h3>
                   <p class="text-xs text-slate-400">Control de stock de materias primas y despacho inmediato a cocina (inventory-service :8086).</p>
                 </div>
@@ -1287,7 +1286,6 @@ interface MotorizadoDelivery {
                 <div>
                   <h3 class="font-bold text-white flex items-center gap-2">
                     <span>Registro de Mermas de Jornada</span>
-                    <span class="text-[10px] text-emerald-400 px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20">Fase 6 - En Vivo</span>
                   </h3>
                   <p class="text-xs text-slate-400">Auditoría de descarte y control de costos por merma operativa.</p>
                 </div>
@@ -1482,9 +1480,6 @@ interface MotorizadoDelivery {
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Finanzas, Caja Central & Arqueo</span>
-                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
-                  Fase 6 - En Vivo
-                </span>
               </h2>
               <p class="text-xs text-slate-400">Arqueo con discrepancia, flujo de caja menor y conciliación diaria (finance-service :8087).</p>
             </div>
@@ -1909,9 +1904,6 @@ interface MotorizadoDelivery {
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Centro de Soporte, Incidentes & Seguridad</span>
-                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
-                  Fase 6 - En Vivo
-                </span>
               </h2>
               <p class="text-xs text-slate-400">Bitácora de incidentes operativos (:8088) y control de IPs bloqueadas en auth-service (:8081).</p>
             </div>
@@ -1925,7 +1917,7 @@ interface MotorizadoDelivery {
 
           <!-- Bitácora de Incidentes -->
           <div class="space-y-4">
-            <h3 class="font-display text-lg text-white font-bold">Bitácora de Incidentes Operativos (RF34)</h3>
+            <h3 class="font-display text-lg text-white font-bold">Bitácora de Incidentes Operativos</h3>
             <div class="space-y-4">
               @for (inc of securityAuditService.incidentes(); track inc.id) {
                 <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 shadow-lg">
@@ -1969,7 +1961,7 @@ interface MotorizadoDelivery {
             <div class="flex justify-between items-center">
               <div>
                 <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-                  <span>Lista Negra de Seguridad & IPs Bloqueadas (RNF02)</span>
+                  <span>Lista Negra de Seguridad & IPs Bloqueadas</span>
                 </h3>
                 <p class="text-xs text-slate-400">Protección contra ataques de fuerza bruta y accesos no autorizados.</p>
               </div>

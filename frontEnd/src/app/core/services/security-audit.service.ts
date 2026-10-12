@@ -79,7 +79,7 @@ export class SecurityAuditService {
   }
 
   resolverIncidente(id: number, req: ResolverIncidenteRequest): Observable<Incidente> {
-    return this.http.put<Incidente>(`${this.INCIDENT_URL}/incidentes/${id}/resolver`, req).pipe(
+    return this.http.patch<Incidente>(`${this.INCIDENT_URL}/incidentes/${id}/resolver`, req).pipe(
       tap(resuelto => {
         this.incidentes.update(prev => prev.map(i => i.id === id ? resuelto : i));
         this.notify.showSuccess(`Incidente #${id} resuelto y documentado`);

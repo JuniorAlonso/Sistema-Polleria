@@ -3,6 +3,9 @@
 **Estrategia Económica:** Arquitectura Serverless con **Scale-to-Zero** (costo $0 mientras no haya peticiones).  
 **Seguridad:** Aislamiento total de credenciales mediante Google Secret Manager y Vercel Environment Variables.
 
+> ⚠️ **Estado real:** esta ruta es una **preparación lista para ejecutar**, no el despliegue activo. El entorno en producción del equipo corre sobre **AWS EC2 + Amazon RDS** (frontend en `http://3.237.70.97`), tal como queda referenciado por las *back-urls* por defecto de `payments-service/application.properties`. Los artefactos de GCP del repositorio (`polleria/cloudbuild.yaml`, `polleria/deploy-gcp-cloudrun.ps1`) están completos y en modo `DryRun` por defecto, pero cubren solo 3 de los 8 microservicios.
+> Adicionalmente, el host de desarrollo apunta a **Neon** (`polleria/.env`, región `us-east-2`) y el stack Docker local usa su propio PostgreSQL en el contenedor `postgres`.
+
 ---
 
 ## 1. Arquitectura de Despliegue y Abaratamiento de Costos
@@ -47,16 +50,22 @@ El sistema ya está programado para sembrar automáticamente los datos esenciale
 
 ### 2.1. Usuarios Oficiales con Buzón Yopmail (`auth-service`)
 Implementado en [`DataInitializer.java`](../polleria/auth-service/src/main/java/com/sistema/polleria/auth/config/DataInitializer.java):
-- `admin.polleria@yopmail.com` (`ADMIN`, 2FA activo, clave: `Password123!`)
-- `mozo.polleria@yopmail.com` (`MOZO`, 2FA activo, clave: `Password123!`)
-- `cocina.polleria@yopmail.com` (`COCINA`, 2FA activo, clave: `Password123!`)
-- `repartidor.polleria@yopmail.com` (`REPARTIDOR`, 2FA activo, clave: `Password123!`)
-- `cliente.polleria@yopmail.com` (`CLIENTE`, clave: `Password123!`)
 
-### 2.2. Mesas del Salón y Carta Oficial de Productos (`orders-service`)
+| Correo | Rol | Celular | Clave | 2FA |
+| :--- | :--- | :--- | :--- | :--- |
+| `admin.polleria@yopmail.com` | `ADMIN` | 990000001 | `Password123!` | Obligatorio |
+| `mozo.polleria@yopmail.com` | `MOZO` | 990000002 | `Password123!` | Obligatorio |
+| `cocina.polleria@yopmail.com` | `COCINA` | 990000003 | `Password123!` | Obligatorio |
+| `repartidor.polleria@yopmail.com` | `REPARTIDOR` | 990000004 | `Password123!` | Obligatorio |
+| `cliente.polleria@yopmail.com` | `CLIENTE` | 990000005 | `Password123!` | No |
+
+El 2FA no es una bandera almacenada por usuario: `AuthService` lo exige por rol (`ROLES_WITH_2FA = ADMIN, MOZO, COCINA, REPARTIDOR`) y devuelve `requiresTwoFactor: true` en el login parcial.
+
+### 2.2. Mesas, Zonas y Carta Oficial (`orders-service`)
 Implementado en [`DataInitializer.java`](../polleria/orders-service/src/main/java/com/sistema/polleria/orders/config/DataInitializer.java):
-- **Mesas:** 5 mesas iniciales (Mesas 1 a 5 con estado `LIBRE`).
-- **10 Productos Oficiales:** Pollo Clásico, 1/2 Pollo, 1/4 Pollo, Combo Familiar, Anticuchos, Papas Nativas, Inca Kola 1.5L, Chicha Morada 1L, Torta de Chocolate y Almuerzo Ejecutivo.
+- **4 Zonas de salón** (tabla `zonas_salon`): `SALON_PRINCIPAL` (Salón Central, 4×5), `TERRAZA` (Terraza al Aire Libre, 8×9), `ZONA_VIP` (Zona VIP, 3×4) y `SEGUNDO_PISO` (Segundo Piso, 4×6).
+- **5 Mesas iniciales** (Mesas 1 a 5, estado `LIBRE`, repartidas entre `SALON_PRINCIPAL` y `TERRAZA`).
+- **10 Productos Oficiales:** 1 Pollo a la Brasa Clásico, 1/2 Pollo a la Brasa, 1/4 Pollo a la Brasa, Combo Familiar San Pollo, Anticuchos Clásicos (2 Palos), Porción de Papas Nativas Fritas, Inca Kola 1.5L, Chicha Morada Natural 1L, Torta de Chocolate de la Casa y Promoción Almuerzo Ejecutivo.
 
 ---
 
@@ -68,6 +77,8 @@ Implementado en [`DataInitializer.java`](../polleria/orders-service/src/main/jav
 - **Script Automatizado:** [`polleria/deploy-gcp-cloudrun.ps1`](../polleria/deploy-gcp-cloudrun.ps1)
 
 ### 3.2. Paso a Paso para Desplegar (Cuando Decidas Ejecutarlo)
+
+> Alcance del pipeline: `cloudbuild.yaml` y `deploy-gcp-cloudrun.ps1` construyen y despliegan **solo `auth-service`, `orders-service` y `payments-service`**. `feedback-service`, `inventory-service`, `finance-service`, `incident-service` y `notification-service` no están cubiertos todavía por estos artefactos.
 
 #### 1. Iniciar sesión y fijar proyecto:
 ```bash
@@ -123,9 +134,10 @@ gcloud run deploy auth-service \
 
 ### 4.1. Archivos Preparados
 - **Configuración Vercel:** [`frontEnd/vercel.json`](../frontEnd/vercel.json)
-  - Configurado con salida `dist/frontend-app/browser`.
-  - Reglas de reescritura para enrutamiento SPA (`/(.*)` ➔ `/index.html`).
-  - Cabeceras HTTP de seguridad (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`).
+  - Salida `dist/frontend-app/browser` (coincide con `outputPath: dist/frontend-app` de `angular.json`) y `buildCommand: npm run build`.
+  - **Reescrituras hacia Cloud Run ya incluidas** para `auth`, `ordenes`, `productos`, `mesas` y `pagos` (bajo `/api/...` y también en la raíz), más el fallback SPA `/(.*)` ➔ `/index.html`.
+  - ⚠️ **Faltan las reescrituras de feedback, inventario, finanzas e incidentes.** El frontend ya usa la misma convención que los tres servicios que sí funcionan (`/api` + ruta del módulo), así que las rutas reales a reescribir son `/api/feedback/:path*`, `/api/inventario/:path*`, `/api/finanzas/:path*` y `/api/incidentes/:path*`. No se añadieron porque **se desconoce su destino**: ni `cloudbuild.yaml` ni `deploy-gcp-cloudrun.ps1` despliegan esos 4 servicios (cubren solo `auth-service`, `orders-service` y `payments-service`), así que no hay URL de Cloud Run que declarar. Hasta tenerlas, esas pestañas del panel no resuelven en el dominio de Vercel.
+  - Cabeceras HTTP de seguridad (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `X-XSS-Protection`, `Referrer-Policy`) y caché inmutable para `/assets/**`.
 - **Plantilla de Variables:** [`frontEnd/.env.example`](../frontEnd/.env.example)
 
 ### 4.2. Paso a Paso para Desplegar en Vercel
@@ -134,14 +146,11 @@ gcloud run deploy auth-service \
    - Importa tu repositorio en el panel de [Vercel](https://vercel.com/new).
    - En **Root Directory**, selecciona `frontEnd`.
    - Vercel detectará automáticamente **Angular**.
-2. **Configurar Variables de Entorno en Vercel:**
-   - En **Project Settings > Environment Variables**, agrega:
-     - `NG_APP_AUTH_API_URL`: URL asignada a tu Cloud Run de `auth-service`.
-     - `NG_APP_ORDERS_API_URL`: URL asignada a tu Cloud Run de `orders-service`.
-     - `NG_APP_PAYMENTS_API_URL`: URL asignada a tu Cloud Run de `payments-service`.
-     - `NG_APP_MERCADOPAGO_PUBLIC_KEY`: Tu clave pública de Mercado Pago.
+2. **Sobre las variables de entorno (`NG_APP_*`):**
+   - El código Angular **no lee variables `NG_APP_*`**: `environment.ts` y `environment.development.ts` son archivos estáticos, y la compilación de producción define URLs relativas (`authApiUrl: '/api'`, `ordersApiUrl: '/api'`, `wsUrl: '/ws-polleria'`).
+   - Por lo tanto, la configuración real de las URLs de backend en Vercel son las **reescrituras de `vercel.json`**, no las variables de entorno. `frontEnd/.env.example` documenta una convención que quedó sin cablear y sirve solo como referencia histórica.
 3. **CORS en Backend:**
-   - Una vez que Vercel te dé tu dominio (ej: `https://sistema-polleria.vercel.app`), actualiza la variable `CORS_ALLOWED_ORIGINS` en Cloud Run para permitir que tu frontend consuma los servicios.
+   - Una vez que Vercel te dé tu dominio (ej: `https://sistema-polleria.vercel.app`), actualiza la variable `CORS_ALLOWED_ORIGINS` en Cloud Run para permitir que tu frontend consuma los servicios. El valor por defecto del repositorio es `http://localhost:4200` (y `http://localhost:4200,http://localhost:80,http://localhost` en `feedback`, `finance` e `inventory`).
 
 ---
 
@@ -149,8 +158,15 @@ gcloud run deploy auth-service \
 
 | Archivo | Estado de Seguridad | Propósito |
 | :--- | :---: | :--- |
-| `polleria/.env` | 🔒 **Ignorado en `.gitignore`** | Contiene credenciales solo para desarrollo local en tu máquina. |
+| `polleria/.env` | 🔒 **Ignorado en `.gitignore`** | Credenciales de desarrollo local (host `Neon`, `us-east-2`). |
 | `polleria/.env.production.example` | ✅ **Sanitizado / Plantilla** | Documenta las variables requeridas sin exponer valores reales. |
-| `frontEnd/.env.example` | ✅ **Sanitizado / Plantilla** | Guía de configuración para Vercel. |
-| `frontEnd/vercel.json` | ✅ **Limpio de Secretos** | Solo reglas de routing y headers defensivos. |
+| `frontEnd/.env.example` | ✅ **Sanitizado / Plantilla** | Guía histórica de configuración para Vercel (convención `NG_APP_*`, sin cablear en el código). |
+| `frontEnd/vercel.json` | ✅ **Limpio de Secretos** | Reescrituras a Cloud Run, routing SPA y headers defensivos. |
 | `polleria/deploy-gcp-cloudrun.ps1` | ✅ **Modo DryRun por Defecto** | Previene ejecuciones accidentales y usa Secret Manager. |
+
+### Deuda de seguridad conocida
+
+- ✅ **Cerrado:** el *access token* de Mercado Pago ya no está en el bundle. Se eliminó el TIER 2 de `PaymentService`, la entrada `mercadoPago.accessToken` de `environment.ts` y `environment.development.ts`, y la regla `/mp-api` de `proxy.conf.json`. El checkout conserva el modo resiliente simulado cuando la pasarela no responde. **Pendiente del humano:** rotar en el panel de Mercado Pago el token que sí estuvo publicado (`APP_USR-2733300582350003-...` y `APP_USR-8230025375459217-...`), porque sigue siendo válido hasta que se revoque.
+- `mercadopago.public-key` en `payments-service/application.properties` tiene un valor real como *default*, mientras que `mercadopago.access-token` sí usa default vacío. La clave pública es segura en el cliente, pero conviene dejarla sin valor por defecto por coherencia.
+- ✅ **Cerrado:** `jwt.secret` ya no tiene valor por defecto en ninguno de los 7 servicios (`jwt.secret=${JWT_SECRET}`). Si `JWT_SECRET` falta en el despliegue, el servicio **no arranca**: es preferible un arranque fallido a firmar tokens con una clave que está en el repositorio. **Consecuencia operativa:** hay que definir `JWT_SECRET` y `INTERNAL_API_KEY` en cada unidad de despliegue (systemd/EC2, Cloud Run o Docker) antes de actualizar, o los servicios no levantarán.
+- `mercadopago.public-key` en `payments-service/application.properties` tiene un valor real como *default*, mientras que `mercadopago.access-token` sí usa default vacío. La clave pública es segura en el cliente, pero conviene dejarla sin valor por defecto por coherencia.

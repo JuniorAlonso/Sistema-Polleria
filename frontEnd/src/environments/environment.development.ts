@@ -22,7 +22,7 @@ export const environment = {
   },
   mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
   mercadoPago: {
-    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
-    accessToken: 'APP_USR-2733300582350003-082916-7d60b458fb460f2ef2eb803852c0935e-3645988283'
+    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
+    // Sin accessToken: el cobro real se crea en el backend. El navegador nunca lo maneja.
   }
 };

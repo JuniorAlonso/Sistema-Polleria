@@ -66,7 +66,7 @@ Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases
 <dependency>
     <groupId>com.mercadopago</groupId>
     <artifactId>sdk-java</artifactId>
-    <version>2.1.24</version>
+    <version>2.1.28</version>
 </dependency>
 ```
 
@@ -75,84 +75,83 @@ Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases
 ## 4. Implementación del Gateway Mercado Pago
 
 ### 4.1 Clase `MercadoPagoGateway` (`payments-service`)
-Implementado en `com.sistema.polleria.payments.gateway.MercadoPagoGateway`:
+Implementado en `com.sistema.polleria.payments.gateway.MercadoPagoGateway` (implementa la interfaz `PaymentGateway`):
 
 ```java
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class MercadoPagoGateway {
+public class MercadoPagoGateway implements PaymentGateway {
 
     private final PagoRepository pagoRepository;
 
-    @Value("${mercadopago.webhook.url}")
-    private String webhookUrl;
+    @Value("${mercadopago.webhook.url:}")       private String webhookUrl;
+    @Value("${mercadopago.back-urls.success:}") private String successUrl;
+    @Value("${mercadopago.back-urls.failure:}") private String failureUrl;
+    @Value("${mercadopago.back-urls.pending:}") private String pendingUrl;
+    @Value("${mercadopago.sandbox:true}")       private boolean sandbox;
 
-    @Value("${mercadopago.back-urls.success}")
-    private String successUrl;
+    @Override
+    public boolean supports(MetodoPago metodoPago) {
+        return metodoPago == MetodoPago.TARJETA || metodoPago == MetodoPago.YAPE_PLIN;
+    }
 
-    @Value("${mercadopago.back-urls.failure}")
-    private String failureUrl;
-
-    @Value("${mercadopago.back-urls.pending}")
-    private String pendingUrl;
+    @Override
+    @Transactional
+    public GatewayResult procesar(IniciarPagoRequest request, Long clienteId) {
+        PreferenceResponse pref = crearPreferencia(request, clienteId);
+        String redirectUrl = sandbox
+                ? (pref.sandboxInitPoint() != null ? pref.sandboxInitPoint() : pref.initPoint())
+                : pref.initPoint();
+        return new GatewayResult(EstadoPago.PENDIENTE, pref.preferenceId(),
+                "Checkout Pro generado. Redirigir a pasarela Mercado Pago", redirectUrl);
+    }
 
     @Transactional
     public PreferenceResponse crearPreferencia(IniciarPagoRequest request, Long clienteId) {
-        // 1. Obtener o registrar entidad Pago en estado PENDIENTE
+        // 1. Reutiliza el Pago de la orden; si ya esta APROBADO, lanza IllegalStateException (409)
         Optional<Pago> pagoExistente = pagoRepository.findByOrdenId(request.ordenId());
-        Pago pago = pagoExistente.orElseGet(() -> {
-            Pago p = new Pago();
-            p.setOrdenId(request.ordenId());
-            p.setClienteId(clienteId);
-            p.setMonto(request.monto());
-            p.setMetodoPago(MetodoPago.TARJETA);
-            p.setEstado(EstadoPago.PENDIENTE);
-            return p;
-        });
+        Pago pago = pagoExistente.orElseGet(Pago::new);
+        pago.setOrdenId(request.ordenId());
+        pago.setClienteId(clienteId);
+        pago.setMonto(request.monto());
+        pago.setMetodoPago(request.metodoPago() != null ? request.metodoPago() : MetodoPago.TARJETA);
+        pago.setEstado(EstadoPago.PENDIENTE);
         pago = pagoRepository.save(pago);
 
-        // 2. Construir ítem y Back URLs
-        PreferenceItemRequest itemRequest = PreferenceItemRequest.builder()
-                .id(String.valueOf(request.ordenId()))
-                .title("Pedido #" + request.ordenId() + " - El San Pollo")
-                .quantity(1)
-                .currencyId("PEN")
-                .unitPrice(request.monto())
-                .build();
+        // 2. Item del pedido (PEN) + back URLs con respaldo a localhost:4200/checkout/*
+        PreferenceRequest.PreferenceRequestBuilder preferenceBuilder = PreferenceRequest.builder()
+                .items(List.of(PreferenceItemRequest.builder()
+                        .id(String.valueOf(request.ordenId()))
+                        .title("Pedido #" + request.ordenId() + " - El San Pollo")
+                        .description("Consumo en restaurante / polleria")
+                        .quantity(1).currencyId("PEN").unitPrice(request.monto()).build()))
+                .backUrls(PreferenceBackUrlsRequest.builder()
+                        .success(safeSuccessUrl).failure(safeFailureUrl).pending(safePendingUrl).build())
+                .autoReturn("approved")
+                .externalReference(String.valueOf(pago.getId()));  // vincula la preferencia con el pago local
+        if (webhookUrl != null && !webhookUrl.isBlank()) {
+            preferenceBuilder.notificationUrl(webhookUrl);
+        }
 
-        PreferenceBackUrlsRequest backUrls = PreferenceBackUrlsRequest.builder()
-                .success(successUrl)
-                .failure(failureUrl)
-                .pending(pendingUrl)
-                .build();
-
-        // 3. Vincular externalReference con el ID del pago local
-        PreferenceRequest preferenceRequest = PreferenceRequest.builder()
-                .items(List.of(itemRequest))
-                .backUrls(backUrls)
-                .notificationUrl(webhookUrl)
-                .externalReference(String.valueOf(pago.getId()))
-                .build();
-
-        PreferenceClient client = new PreferenceClient();
-        Preference preference = client.create(preferenceRequest);
+        // 3. El Access Token viene de la configuracion global (MercadoPagoConfiguration)
+        Preference preference = new PreferenceClient().create(preferenceBuilder.build());
 
         pago.setReferenciaExterna(preference.getId());
+        pago.setDetalle("Preferencia Mercado Pago generada: " + preference.getId());
+        pago.setCheckoutUrl(redirectUrl);
         pagoRepository.save(pago);
 
-        return new PreferenceResponse(
-                preference.getId(),
-                preference.getInitPoint(),
-                preference.getSandboxInitPoint(),
-                pago.getId(),
-                pago.getOrdenId()
-        );
+        return new PreferenceResponse(preference.getId(), preference.getInitPoint(),
+                preference.getSandboxInitPoint(), pago.getId(), request.ordenId());
     }
 }
 ```
 
+Detalles del contrato real: el titulo del item es `Pedido #<ordenId> - El San Pollo`, la moneda es `PEN`, se envia `autoReturn("approved")` y el `notificationUrl` solo se agrega si `mercadopago.webhook.url` tiene valor. La preferencia **reutiliza** el `Pago` de la orden y responde `409` si esa orden ya tiene un pago `APROBADO`.
+
 ### 4.2 Controlador de Webhooks IPN (`MercadoPagoWebhookController`)
+
 Implementado en `com.sistema.polleria.payments.controller.MercadoPagoWebhookController`:
 
 ```java
@@ -162,48 +161,51 @@ Implementado en `com.sistema.polleria.payments.controller.MercadoPagoWebhookCont
 @RequiredArgsConstructor
 public class MercadoPagoWebhookController {
 
-    private final PagoRepository pagoRepository;
-    private final PagoService pagoService;
-
     @RequestMapping(value = "/mercadopago", method = {RequestMethod.POST, RequestMethod.GET})
     public ResponseEntity<Void> handleWebhook(
             @RequestParam(value = "type", required = false) String type,
             @RequestParam(value = "topic", required = false) String topic,
             @RequestParam(value = "id", required = false) String paramId,
             @RequestParam(value = "data.id", required = false) String dataId,
+            @RequestHeader(value = "x-signature", required = false) String xSignature,
             @RequestBody(required = false) Map<String, Object> body) {
 
-        String paymentId = resolvePaymentId(type, topic, paramId, dataId, body);
-        if (paymentId != null) {
-            PaymentClient client = new PaymentClient();
-            Payment payment = client.get(Long.parseLong(paymentId));
-
-            if (payment.getExternalReference() != null) {
-                Long pagoId = Long.parseLong(payment.getExternalReference());
-                var optPago = pagoRepository.findById(pagoId);
-
-                if (optPago.isPresent()) {
-                    Pago pago = optPago.get();
-                    if ("approved".equalsIgnoreCase(payment.getStatus())) {
-                        if (pago.getEstado() != EstadoPago.APROBADO) {
-                            ConfirmarPagoRequest req = new ConfirmarPagoRequest(
-                                    "MP-" + paymentId,
-                                    "Pago aprobado por Mercado Pago (Medio: " + payment.getPaymentMethodId() + ")"
-                            );
-                            pagoService.confirmar(pagoId, req, "");
-                        }
-                    } else if ("rejected".equalsIgnoreCase(payment.getStatus())) {
-                        pago.setEstado(EstadoPago.RECHAZADO);
-                        pago.setDetalle("Pago rechazado por Mercado Pago: " + payment.getStatusDetail());
-                        pagoRepository.save(pago);
-                    }
+        // 1. Valida la firma HMAC (x-signature + x-request-id) contra mercadopago.webhook.secret
+        // 2. Resuelve el paymentId (data.id, id o cuerpo) y consulta la API de Mercado Pago
+        // 3. Traduce el externalReference al pagoId local y aplica la transicion:
+        switch (payment.getStatus()) {
+            case "approved" -> {
+                if (pago.getEstado() != EstadoPago.APROBADO) {   // idempotente: no reconfirma
+                    pagoService.confirmar(pagoId, req, "");
                 }
+            }
+            case "rejected" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO, detalle);
+                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+            }
+            case "cancelled" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.CANCELADO, detalle);
+                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+            }
+            case "refunded" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.REEMBOLSADO, detalle);
+                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+            }
+            case "in_process", "pending" -> {
+                // actualizarEstadoDesdePasarela ignora degradar un pago ya APROBADO a PENDIENTE
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.PENDIENTE, detalle);
             }
         }
         return ResponseEntity.ok().build();
     }
 }
 ```
+
+Notas sobre el contrato real:
+
+- Los cambios de estado pasan por `PagoService.actualizarEstadoDesdePasarela`, que toma el pago con bloqueo pesimista (`buscarConBloqueo`) y **preserva** `APROBADO` frente a un `in_process` tardio.
+- `rejected`, `cancelled` y `refunded` **si propagan** a `orders-service` (avisan `CANCELADO` con `X-Internal-Key`), cubriendo RNF09.
+- La validacion de firma usa `x-signature` + `x-request-id` con `MERCADOPAGO_WEBHOOK_SECRET` (HMAC SHA-256). Si falta la cabecera se registra una advertencia; con el secreto vacio no hay firma que verificar.
 
 ---
 
@@ -246,8 +248,9 @@ Recibe parámetros `data.id` / `id` o payload JSON, consulta a la API de Mercado
 ### 5.3 Reembolsos (RF29)
 ```
 POST /pagos/{id}/reembolso
+POST /pagos/orden/{ordenId}/reembolso
 ```
-**Acceso:** 🔒 Solo `ADMIN`
+**Acceso:** 🔒 Solo `ADMIN` (`hasAnyAuthority('ADMIN','ROLE_ADMIN')`)
 
 **Request Body:**
 ```json
@@ -257,28 +260,28 @@ POST /pagos/{id}/reembolso
 }
 ```
 
-**Acción:** Ejecuta `PaymentClient.refund()` en Mercado Pago y registra la reversión.
+**Acción:** ejecuta `PaymentClient.refund()` en Mercado Pago y registra la reversión. Solo se permite sobre un pago `APROBADO` o `REEMBOLSADO_PARCIAL`; el resultado marca `REEMBOLSADO_PARCIAL` si el monto es menor al total y `REEMBOLSADO` si es total. Un fallo de la pasarela **no** se silencia: el estado no se marca como reembolsado si Mercado Pago rechaza la operación.
 
 ---
 
 ## 6. Integración en Frontend (Angular)
 
 ### 6.1 Botón de Checkout Pro
-```typescript
-// checkout.component.ts
-async iniciarPagoMercadoPago() {
-  const response = await this.pagoService.crearPago({
-    ordenId: this.orden.id,
-    monto: this.orden.total,
-    metodoPago: 'TARJETA'
-  });
 
-  if (response.checkoutUrl) {
-    // Redirigir al Checkout Pro de Mercado Pago
-    window.location.href = response.checkoutUrl;
-  }
-}
+El checkout **crea primero la orden real** en `orders-service` (estado `PENDIENTE_PAGO`), guarda `{ id, code, total }` en `localStorage('sanpollo_last_order')` y recién entonces pide la preferencia; la redirección usa el punto de entrada de sandbox cuando existe:
+
+```typescript
+// checkout.component.ts → payWithMercadoPago()
+const pref = await firstValueFrom(
+  this.paymentService.crearPreferenciaMercadoPago(ordenReal.id, ordenReal.total)
+);
+const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
+window.location.href = redirectUrl;
 ```
+
+`PaymentService.crearPreferenciaMercadoPago(ordenId, monto)` llama a `POST /pagos/mercadopago/preferencia` y devuelve `{ preferenceId, initPoint, sandboxInitPoint, pagoId, ordenId }`. `confirmOrder()` deriva a `payWithMercadoPago()` cuando el método es `TARJETA`, de modo que no se crean dos pagos para la misma orden.
+
+> ⚠️ **Failover de 3 tiers (deuda conocida):** el método está envuelto en un `catchError` con dos respaldos. **TIER 2** llama directo a `https://api.mercadopago.com/checkout/preferences` desde el navegador usando un *access token* embebido en `environment.ts`, proxeado por `/mp-api` (`frontEnd/proxy.conf.json`); **TIER 3** simula una preferencia local (`mock=true`) para contingencia offline. El TIER 2 expone credenciales en el bundle del cliente y debe eliminarse.
 
 ### 6.2 Página de Retorno (Back URLs)
 | URL | Estado MP | Acción en Frontend |
@@ -292,11 +295,19 @@ async iniciarPagoMercadoPago() {
 ## 7. Variables de Entorno
 
 ```properties
-# payments-service (:8083) — Variables adicionales para Mercado Pago
-MERCADOPAGO_ACCESS_TOKEN=APP_USR-XXXX-XXXX-XXXX  # Token de producción o sandbox
-MERCADOPAGO_PUBLIC_KEY=APP_USR-XXXX               # Para el SDK frontend
-MERCADOPAGO_NOTIFICATION_URL=https://api.sanpollo.pe  # URL base para webhooks IPN
-MERCADOPAGO_SANDBOX=true                            # true = sandbox, false = producción
+# payments-service (:8083) — Variables de Mercado Pago
+MERCADOPAGO_ACCESS_TOKEN=                       # Vacío por defecto. Si está vacío (o contiene "TU_ACCESS_TOKEN") se usan los mocks
+MERCADOPAGO_PUBLIC_KEY=APP_USR-XXXX             # Clave pública (hay un valor real por defecto en application.properties)
+MERCADOPAGO_WEBHOOK_URL=                        # URL completa del webhook IPN
+MERCADOPAGO_NOTIFICATION_URL=                   # Alternativa; se usa si la anterior falta
+MERCADOPAGO_WEBHOOK_SECRET=                     # Secreto para validar la firma HMAC (x-signature)
+MERCADOPAGO_SANDBOX=true                        # true = usa sandboxInitPoint, false = initPoint
+MERCADOPAGO_SUCCESS_URL=http://3.237.70.97/checkout/success  # valor por defecto del repo
+MERCADOPAGO_FAILURE_URL=http://3.237.70.97/checkout/failure
+MERCADOPAGO_PENDING_URL=http://3.237.70.97/checkout/pending
+NOTIFICATION_URL=http://localhost:3001          # notifications WhatsApp (RF30)
+NOTIFICATION_API_KEY=                           # X-Internal-Key hacia notification-service
+INTERNAL_API_KEY=                              # X-Internal-Key hacia orders-service. Sin default: si falta, la llamada se rechaza. Debe coincidir con orders-service.
 
 # Variables existentes de Fase 1 (se mantienen)
 DB_URL=jdbc:postgresql://localhost:5432/polleria
@@ -327,7 +338,7 @@ ORDERS_SERVICE_URL=http://localhost:8082
 └───────────────────────┘ └───────────────────┘ └────────────────────┘
 ```
 
-**Selección automática:** Si `MERCADOPAGO_SANDBOX != null`, los métodos `TARJETA` y `YAPE_PLIN` se enrutan al gateway real. Si no hay configuración de Mercado Pago, se usa el mock gateway (retrocompatible con Fase 1).
+**Selección automática (`PaymentGatewayService.seleccionar`):** `CONTRAENTREGA` va siempre a `ContraentregaGateway`. Para `TARJETA` y `YAPE_PLIN` el servicio lee `mercadopago.access-token`: si está presente, no está en blanco y no contiene el texto `TU_ACCESS_TOKEN`, se enruta a `MercadoPagoGateway` (real); en caso contrario se usan los mocks `TarjetaGateway` / `YapePlinGateway`. El flag `MERCADOPAGO_SANDBOX` no decide el enrutamiento: solo elige `sandboxInitPoint` o `initPoint` dentro del gateway real.
 
 ---
 
@@ -342,13 +353,17 @@ ORDERS_SERVICE_URL=http://localhost:8082
 ### 9.2 Pruebas Funcionales
 | Caso | Entrada | Resultado Esperado |
 | :--- | :--- | :--- |
-| Crear preferencia | `POST /pagos` con `TARJETA` | 201 con `checkoutUrl` de Mercado Pago |
-| Pago aprobado | Webhook con `status: approved` | Pago → `APROBADO`, Orden avanza en estado |
-| Pago rechazado | Webhook con `status: rejected` | Pago → `RECHAZADO`, Orden mantiene estado |
-| Pago cancelado | Webhook con `status: cancelled` | Pago → `CANCELADO` |
-| Reembolso | `POST /pagos/{id}/reembolso` | Reversa en MP + registro en BD |
+| Crear preferencia | `POST /pagos/mercadopago/preferencia` con `TARJETA` | `201` con `{ preferenceId, initPoint, sandboxInitPoint, pagoId, ordenId }` |
+| Orden con pago ya aprobado | Misma orden, segunda preferencia | `409` (`IllegalStateException`) |
+| Pago aprobado | Webhook `approved` | Pago → `APROBADO` (idempotente) y notificación WhatsApp si es delivery |
+| Pago rechazado | Webhook `rejected` | Pago → `RECHAZADO` **y** orden → `CANCELADO` vía `X-Internal-Key` |
+| Pago cancelado | Webhook `cancelled` | Pago → `CANCELADO` y orden → `CANCELADO` |
+| Pago reembolsado por MP | Webhook `refunded` | Pago → `REEMBOLSADO` y orden → `CANCELADO` |
+| Webhook `in_process` tardío | Webhook `in_process` sobre un pago `APROBADO` | No degrada a `PENDIENTE` |
+| Firma inválida | `x-signature` que no coincide | Se registra advertencia y no se aplica el cambio |
+| Reembolso | `POST /pagos/{id}/reembolso` como `ADMIN` | Reversa en MP + `REEMBOLSADO` o `REEMBOLSADO_PARCIAL` |
 | Contraentrega (F1) | `POST /pagos` con `CONTRAENTREGA` | Funciona igual que en Fase 1 (sin cambios) |
-| Mock fallback | Sin variables MP configuradas | Funciona igual que en Fase 1 (mocks) |
+| Mock fallback | `MERCADOPAGO_ACCESS_TOKEN` vacío | `TARJETA`/`YAPE_PLIN` usan los mocks de Fase 1 |
 
 ### 9.3 Criterios de Aceptación
 - [ ] El botón de Checkout Pro redirige correctamente a Mercado Pago.

@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -103,9 +104,30 @@ public class OrdenController {
     public ResponseEntity<OrdenResponse> actualizarEstado(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarEstadoRequest request,
-            Principal principal
+            Authentication authentication,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
     ) {
-        return ResponseEntity.ok(ordenService.actualizarEstado(id, request, extraerUserId(principal)));
+        // Un cliente solo puede mover SU pedido (p. ej. cancelarlo). El personal, el dueño del
+        // pedido o un microservicio con la clave interna sí pueden. Sin esta guarda, cualquier
+        // CLIENTE autenticado podía cancelar o entregar el pedido de otro cliente.
+        // Se responde 404, igual que obtener(): distinguir "existe pero no es tuyo" de "no existe"
+        // permitiría enumerar los pedidos de la pollería.
+        if (!esLlamadaInterna(claveInterna) && !esPersonal(authentication)
+                && !esDueno(authentication, ordenService.obtener(id))) {
+            throw new NoSuchElementException("Orden no encontrada: " + id);
+        }
+
+        // El flujo del pedido es obligatorio: quien mueve un pedido por cocina y reparto es el
+        // personal de la pollería. Un CLIENTE solo puede cancelar el suyo; si pudiera enviar
+        // EN_PREPARACION, LISTO o ENTREGADO se saltaría la operación completa. El orden importa:
+        // un pedido ajeno ya respondió 404 arriba, así que aquí no se filtra su existencia.
+        if (!esLlamadaInterna(claveInterna) && !esPersonal(authentication)
+                && request.getEstado() != OrdenEstado.CANCELADO) {
+            throw new AccessDeniedException(
+                    "El flujo del pedido lo gestiona la pollería. Del tuyo solo puedes cancelarlo.");
+        }
+
+        return ResponseEntity.ok(ordenService.actualizarEstado(id, request, extraerUserId(authentication)));
     }
 
     private boolean esLlamadaInterna(String claveInterna) {

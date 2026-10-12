@@ -20,7 +20,6 @@ export interface Resenia {
   calificacion: number; // 1 a 5
   estrellas?: number;
   comentario?: string;
-  canal?: string;
   creadoEn: string;
   fecha?: string;
 }
@@ -29,7 +28,6 @@ export interface CrearReseniaRequest {
   ordenId: number;
   calificacion: number;
   comentario?: string;
-  canal?: string;
 }
 
 export interface ReporteIncidencia {

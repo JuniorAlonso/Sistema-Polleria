@@ -3,10 +3,13 @@ export const environment = {
   authApiUrl: '/api',
   ordersApiUrl: '/api',
   paymentsApiUrl: '/api',
-  feedbackApiUrl: '/api/feedback',
-  inventoryApiUrl: '/api/inventory',
-  financeApiUrl: '/api/finance',
-  incidentApiUrl: '/api/incident',
+  // Todas las bases son '/api': los servicios concatenan despues la ruta del modulo del
+  // backend (/feedback, /inventario, /finanzas, /incidentes). Con '/api/inventory' el
+  // resultado era '/api/inventory/inventario/...' y ninguna peticion resolvia.
+  feedbackApiUrl: '/api',
+  inventoryApiUrl: '/api',
+  financeApiUrl: '/api',
+  incidentApiUrl: '/api',
   notificationApiUrl: '/api/notificaciones',
   wsUrl: '/ws-polleria',
   appBaseUrl: 'https://polleria.app',
@@ -16,13 +19,13 @@ export const environment = {
     orders: '/api/ordenes',
     payments: '/api/pagos',
     feedback: '/api/feedback',
-    inventory: '/api/inventory',
-    finance: '/api/finance',
-    incidents: '/api/incident'
+    inventory: '/api/inventario',
+    finance: '/api/finanzas',
+    incidents: '/api/incidentes'
   },
   mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
   mercadoPago: {
-    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
-    accessToken: 'APP_USR-2733300582350003-082916-7d60b458fb460f2ef2eb803852c0935e-3645988283'
+    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
+    // Sin accessToken: el cobro real se crea en el backend. El navegador nunca lo maneja.
   }
 };

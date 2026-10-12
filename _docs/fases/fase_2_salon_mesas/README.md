@@ -27,7 +27,7 @@ graph TD
     end
 
     subgraph DB ["Persistencia Relacional"]
-        Postgres[("PostgreSQL 16 (:5432)\n• Tabla 'mesas'\n• Tabla 'ordenes' / 'orden_detalles'")]
+        Postgres[("PostgreSQL 16 (:5432)\n• Tabla 'mesas'\n• Tablas 'ordenes' / 'orden_items'")]
     end
 
     AdminUI --> SalonSvc
@@ -218,15 +218,17 @@ CREATE INDEX idx_zonas_orden ON zonas_salon(orden);
 | Método | Endpoint | Roles Permitidos | Descripción Técnica |
 | :---: | :--- | :---: | :--- |
 | `GET` | `/mesas` | `ADMIN`, `MOZO` | Listado de todas las mesas activas con su orden en curso embebida (`ordenActiva`). |
+| `GET` | `/mesas/libres` | `ADMIN`, `MOZO` | Solo las mesas disponibles. |
+| `GET` | `/mesas/{id}` | `ADMIN`, `MOZO` | Detalle de una mesa. |
 | `POST` | `/mesas` | `ADMIN` | Registro de nueva mesa en salón con validación de número único. |
 | `PUT` | `/mesas/{id}` | `ADMIN` | Modificación completa de mesa (número, capacidad, zona, coordenadas, estado activo). |
-| `PUT` | `/mesas/{id}/posicion` | `ADMIN`, `MOZO` | Actualización atómica de coordenadas `posicionX` y `posicionY` (bloqueo optimista `@Version`). |
-| `PUT` | `/mesas/{id}/estado` | `ADMIN`, `MOZO` | Transición en la máquina de estados (`LIBRE`, `OCUPADA`, etc.) con bandera `forzar`. |
+| `PATCH` o `PUT` | `/mesas/{id}/posicion` | `ADMIN`, `MOZO` | Actualización atómica de coordenadas `posicionX` y `posicionY` (bloqueo optimista `@Version`). |
+| `PATCH` o `PUT` | `/mesas/{id}/estado` | `ADMIN`, `MOZO` | Transición en la máquina de estados (`LIBRE`, `OCUPADA`, etc.) con bandera `forzar`. |
 | `DELETE` | `/mesas/{id}` | `ADMIN` | Baja de mesa (desactivación lógica para preservar el histórico de comandas). |
 | `GET` | `/mesas/{id}/orden-activa` | `ADMIN`, `MOZO` | Obtiene el detalle de la comanda abierta para facturación o precuenta. |
-| `GET` | `/zonas` | Público / Dev | Listado de zonas del salón persistidas en PostgreSQL (`ZonaSalon`). |
-| `GET` | `/zonas/{id}` | Público / Dev | Detalle y coordenadas de una zona específica. |
-| `PUT` | `/zonas/{id}/dimensiones` | `ADMIN`, `MOZO` | Ajuste dinámico de cuadrícula matricial (filas y columnas) persistido en base de datos. |
+| `GET` | `/zonas` | Público (sin `@PreAuthorize`) | Listado de zonas del salón persistidas en PostgreSQL (`ZonaSalon`). |
+| `GET` | `/zonas/{id}` | Público (sin `@PreAuthorize`) | Detalle de una zona específica. |
+| `PUT` | `/zonas/{id}/dimensiones` | `ADMIN`, `MOZO` (`hasAnyRole`) | Ajuste dinámico de cuadrícula matricial (filas y columnas) persistido en base de datos. |
 
 #### Ejemplo Payload `PUT /mesas/{id}/estado`
 ```json
@@ -259,7 +261,7 @@ CREATE INDEX idx_zonas_orden ON zonas_salon(orden);
 ### 9.2 Disparador Automático desde Cocina
 Cuando el personal de cocina actualiza el estado de una orden a `LISTO`:
 ```java
-// OrdenService.java (líneas 129-134)
+// OrdenService.java (líneas 148-152)
 if (request.getEstado() == OrdenEstado.LISTO) {
     salonEventPublisher.notificarPedidoListo(orden);
 }
@@ -283,8 +285,6 @@ if (orden.getMesa() != null) {
 ---
 
 ## 11. Auditoría y Robustecimiento de Arquitectura (Implementado)
-
-> **Documento Completo de Auditoría:** Consultar [AUDITORIA_Y_RESOLUCION_TECNICA.md](file:///c:/Users/lordm/Desktop/Proyectos%20y%20clases/UTP%20CICLO%207/WebIntegrador/Sistema-Polleria/_docs/fases/fase_2_salon_mesas/AUDITORIA_Y_RESOLUCION_TECNICA.md) para el detalle línea por línea.
 
 Se resolvieron y validaron en código los siguientes puntos críticos de arquitectura y resiliencia:
 

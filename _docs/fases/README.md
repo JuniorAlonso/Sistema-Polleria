@@ -12,11 +12,11 @@ Este directorio consolida la documentación técnica y funcional de cada una de 
 | Fase | Título de la Fase | Microservicio(s) Principal(es) | Frontend Responsable | Estado | Documento |
 | :---: | :--- | :--- | :--- | :---: | :---: |
 | **1** | **Core de Pedidos, Carta y Tracking** | `orders-service` (:8082)<br>`auth-service` (:8081) | Home, Menú Carta, Carrito, Checkout, Tracking | ✅ Completada | [Fase 1](./fase_1_core_pedidos/README.md) |
-| **2** | **Operatividad en Salón, Mesas y Tiempo Real** | `orders-service` (:8082) | Admin Dashboard (CRUD Mesas, Croquis), Mozo Salón, WebSocket | ✅ **100% Implementada** | [Fase 2](./fase_2_salon_mesas/README.md) |
-| **3** | **Notificaciones Multicanal y WhatsApp** | `orders-service` (:8082)<br>`notification-service` | Panel Admin (Log de Notificaciones), Avisos WhatsApp | ✅ Completada | [Fase 3](./fase_3_notificaciones_whatsapp/README.md) |
+| **2** | **Operatividad en Salón, Mesas y Tiempo Real** | `orders-service` (:8082) | Admin Dashboard (CRUD Mesas, Croquis), Mozo Salón, WebSocket | ✅ Completada | [Fase 2](./fase_2_salon_mesas/README.md) |
+| **3** | **Notificaciones Multicanal y WhatsApp** | `notification-service` (:3001)<br>`orders-service` (:8082) | Panel Admin (Log de Notificaciones), Avisos WhatsApp | ✅ Completada | [Fase 3](./fase_3_notificaciones_whatsapp/README.md) |
 | **4** | **Feedback, Reseñas y Reclamaciones** | `feedback-service` (:8085)<br>`payments-service` (:8083) | Tracking (Calificación 5 estrellas, Libro de Reclamaciones), Admin | ✅ Completada | [Fase 4](./fase_4_feedback_resenas/README.md) |
-| **5** | **Pasarela de Pagos Digitales y Facturación** | `payments-service` (:8083) | Checkout (MercadoPago, Tarjetas, Yape/Plin), Facturación | 🔄 En Integración | [Fase 5](./fase_5_pagos_mercadopago/README.md) |
-| **6** | **Backoffice, Inventario, Finanzas y Seguridad** | `inventory-service` (:8086)<br>`finance-service` (:8087)<br>`incident-service` (:8088) | Admin Dashboard (Despachos, Mermas, Arqueo de Caja, Bitácora) | ✅ Completada | [Fase 6](./fase_6_backoffice_inventario/README.md) |
+| **5** | **Pasarela de Pagos Digitales** | `payments-service` (:8083) | Checkout (MercadoPago Checkout Pro, Tarjetas, Yape/Plin) | ✅ Integrada (sandbox) | [Fase 5](./fase_5_pagos_mercadopago/README.md) |
+| **6** | **Backoffice, Inventario, Finanzas y Seguridad** | `inventory-service` (:8086)<br>`finance-service` (:8087)<br>`incident-service` (:8088)<br>`auth-service` (:8081) | Admin Dashboard (Despachos, Mermas, Arqueo de Caja, Bitácora, IPs bloqueadas) | ✅ Completada | [Fase 6](./fase_6_backoffice_inventario/README.md) |
 
 ---
 
