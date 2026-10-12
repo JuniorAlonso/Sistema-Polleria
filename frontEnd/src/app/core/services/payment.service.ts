@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, catchError, map, of, tap } from 'rxjs';
+import { Observable, catchError, of, tap } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
 import { PaymentTransaction } from '../models/payment.model';
 import { BackendPagoResponse } from '../models/api-contracts.model';
@@ -89,7 +89,7 @@ export class PaymentService {
   }
 
   /**
-   * Mercado Pago Checkout Pro: Crear Preferencia en payments-service (:8083)
+   * Mercado Pago Checkout Pro: Crear Preferencia via payments-service (:8083)
    */
   crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<{
     preferenceId: string;

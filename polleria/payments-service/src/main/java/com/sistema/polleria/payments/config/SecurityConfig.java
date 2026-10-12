@@ -39,8 +39,8 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Webhook de pasarela: endpoint público para Mercado Pago
+                // /pagos/mercadopago/** requiere JWT (CLIENTE/MOZO/ADMIN)
                 .requestMatchers("/pagos/webhook/**").permitAll()
-                // Todo lo demás requiere autenticación (incluido /pagos/mercadopago/**)
                 .anyRequest().authenticated()
             )
             .headers(headers -> headers

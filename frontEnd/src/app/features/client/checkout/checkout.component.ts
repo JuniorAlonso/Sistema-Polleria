@@ -403,13 +403,11 @@ export class CheckoutComponent implements OnInit {
       this.notify.showError('Por favor ingresa la dirección de entrega');
       return;
     }
-
     const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
     if (!/^9\d{8}$/.test(celularLimpio)) {
       this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
       return;
     }
-
     if (this.cart.isEmpty()) {
       this.notify.showError('Tu carrito está vacío');
       return;
@@ -418,23 +416,20 @@ export class CheckoutComponent implements OnInit {
     this.isProcessing.set(true);
 
     const currentUser = this.auth.currentUser();
-    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
-    const clienteCelular = celularLimpio;
-
-    // RF21: Se crea primero la orden real en estado RECIBIDO (pendiente de pago)
+    // RF21: Se crea primero la orden real; el webhook de MP la confirmará y actualizará el estado
     const orderData: Order = {
       id: '0',
       codigoSeguimiento: '',
       cliente: {
-        nombre: clienteNombre,
-        celular: clienteCelular,
+        nombre: currentUser?.nombre || 'Cliente San Pollo',
+        celular: celularLimpio,
         correo: currentUser?.correo,
         direccion: this.direccion,
         referencia: this.instrucciones
       },
       items: [...this.cart.items()],
       tipo: 'DELIVERY',
-      estado: 'PENDIENTE_PAGO',
+      estado: 'RECIBIDO',
       metodoPago: 'TARJETA',
       subtotal: this.cart.subtotal(),
       costoEnvio: this.cart.costoEnvio(),
@@ -447,38 +442,33 @@ export class CheckoutComponent implements OnInit {
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        // Almacenar el pedido creado para las pantallas de retorno de Mercado Pago
-        if (typeof window !== 'undefined' && window.localStorage) {
+        // Guardar en localStorage para que CheckoutStatusComponent muestre el código
+        try {
           localStorage.setItem('sanpollo_last_order', JSON.stringify({
             id: createdOrder.id,
             code: createdOrder.codigoSeguimiento,
             total: createdOrder.total
           }));
-        }
+        } catch (e) { /* storage bloqueado en modo privado */ }
 
         const realOrderId = typeof createdOrder.id === 'number'
           ? createdOrder.id
           : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
 
-        // Crear la preferencia con el ordenId real generado en orders-service
         this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
           next: (pref) => {
-            this.cart.clearCart();
             this.isProcessing.set(false);
             const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
             if (redirectUrl) {
               this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
-              setTimeout(() => {
-                window.location.href = redirectUrl;
-              }, 800);
+              setTimeout(() => { window.location.href = redirectUrl; }, 800);
             } else {
               this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
             }
           },
-          error: (err) => {
+          error: () => {
             this.isProcessing.set(false);
-            console.error('Error Mercado Pago:', err);
-            this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos (:8083) esté encendido.');
+            this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos esté activo.');
           }
         });
       },

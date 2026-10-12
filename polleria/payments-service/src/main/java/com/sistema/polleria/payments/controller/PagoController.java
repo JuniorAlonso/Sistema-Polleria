@@ -37,7 +37,7 @@ public class PagoController {
         return pagoService.iniciar(request, clienteId, authorization != null ? authorization : "");
     }
 
-    /** Crear Preferencia de Mercado Pago (Checkout Pro) */
+    /** Crear Preferencia de Mercado Pago (Checkout Pro) — requiere usuario autenticado */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
