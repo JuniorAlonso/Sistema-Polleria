@@ -148,9 +148,9 @@ export class OrderAdapter {
       notasGenerales: dto.observaciones || undefined,
       createdAt: dto.creadoEn || new Date().toISOString(),
       updatedAt: dto.actualizadoEn || dto.creadoEn || new Date().toISOString(),
+      repartidorId: dto.repartidorId,
       repartidorAsignado: dto.repartidorId ? {
-        nombre: `Repartidor #${dto.repartidorId}`,
-        celular: '987 112 233'
+        nombre: `Repartidor #${dto.repartidorId}`
       } : undefined
     };
   }

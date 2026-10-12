@@ -117,10 +117,10 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
               </div>
               <div class="flex flex-col text-left leading-tight min-w-0">
                 <span class="text-xs font-bold text-white truncate">
-                  {{ auth.currentUser()?.nombre || 'Mitrufely Repartidor' }}
+                  {{ auth.currentUser()?.nombre || 'Repartidor' }}
                 </span>
                 <span class="text-[10px] font-mono text-sky-400 font-bold">
-                  MOTORIZADO #04
+                  MOTORIZADO
                 </span>
               </div>
             </div>
@@ -608,7 +608,8 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   }
 
   getCodeNum(code: string): string {
-    return code ? code.replace('POL-', '') : '1001';
+    // Sin código no se muestra un número de pedido plausible: se muestra un guion.
+    return code ? code.replace('POL-', '') : '—';
   }
 
   getActiveTabLabel(): string {

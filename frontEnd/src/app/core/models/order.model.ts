@@ -42,9 +42,10 @@ export interface Order {
   notasGenerales?: string;
   createdAt: string;
   updatedAt: string;
+  repartidorId?: number;
+  /** Derivado de repartidorId: el backend no expone nombre ni teléfono del repartidor. */
   repartidorAsignado?: {
     nombre: string;
-    celular: string;
   };
 }
 

@@ -36,16 +36,6 @@ export type DashboardTab =
 export type TableSalon = MesaSalon;
 export type InsumoAlmacen = Insumo;
 
-interface MotorizadoDelivery {
-  id: string;
-  nombre: string;
-  telefono: string;
-  placa: string;
-  pedidosHoy: number;
-  estado: 'DISPONIBLE' | 'EN_RUTA' | 'DESCANSO';
-  pedidoActual?: string;
-}
-
 @Component({
   selector: 'app-admin-dashboard',
   standalone: true,
@@ -1389,87 +1379,98 @@ interface MotorizadoDelivery {
       }
 
 
-      <!-- ================= TAB 4: REPARTO & DELIVERY (FASE 3 - PRÓXIMAMENTE) ================= -->
+      <!-- ================= TAB 4: REPARTO & DELIVERY (RF18, datos reales) ================= -->
       @if (activeTab() === 'REPARTO') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-          <div class="flex justify-between items-center">
+          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Flota de Delivery & Asignación</span>
-                <span class="text-[11px] font-normal text-amber-400 px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
-                  Fase 3 - Próximamente
-                </span>
               </h2>
-              <p class="text-xs text-slate-400">Asignación de motorizados y seguimiento de despachos en curso.</p>
+              <p class="text-xs text-slate-400">Pedidos DELIVERY en curso, tomados de orders-service (:8082).</p>
             </div>
             <div class="flex gap-2">
               <span class="px-3 py-1.5 rounded-xl bg-[#1c1f24] border border-white/10 text-xs font-mono">
-                Motorizados activos: <strong class="text-polleria-gold">3</strong>
+                Delivery en curso: <strong class="text-polleria-gold">{{ pedidosDeliveryEnCurso().length }}</strong>
               </span>
+              <button
+                (click)="ordersService.loadActiveOrders()"
+                class="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition cursor-pointer"
+              >
+                Actualizar
+              </button>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="space-y-3 lg:col-span-1">
-              <h3 class="font-bold text-sm text-slate-300 uppercase tracking-wider">Motorizados</h3>
-              @for (mot of motorizados; track mot.id) {
-                <div class="p-4 rounded-xl bg-[#14161a] border border-white/10 space-y-2">
-                  <div class="flex justify-between items-center">
-                    <span class="font-bold text-white">{{ mot.nombre }}</span>
-                    <span 
-                      class="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      [ngClass]="mot.estado === 'DISPONIBLE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'"
-                    >
-                      {{ mot.estado }}
-                    </span>
-                  </div>
-                  <p class="text-xs text-slate-400">Moto: {{ mot.placa }} • Tel: {{ mot.telefono }}</p>
-                  <p class="text-xs text-slate-300">Entregas hoy: <strong>{{ mot.pedidosHoy }} pedidos</strong></p>
-                </div>
-              }
-            </div>
+          <p class="text-[11px] text-slate-500">
+            El backend guarda el <strong>id</strong> del repartidor en la orden; no existe todavía un endpoint que liste
+            motorizados con nombre, placa o teléfono, así que esta tabla muestra el id y no un roster inventado.
+          </p>
 
-            <div class="space-y-3 lg:col-span-2">
-              <h3 class="font-bold text-sm text-slate-300 uppercase tracking-wider">Envíos en Curso</h3>
-              <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
-                <table class="w-full text-left text-xs">
-                  <thead class="bg-black/40 border-b border-white/10 text-slate-400 font-bold uppercase tracking-wider">
-                    <tr>
-                      <th class="p-4">Orden</th>
-                      <th class="p-4">Cliente / Teléfono</th>
-                      <th class="p-4">Dirección</th>
-                      <th class="p-4">Motorizado</th>
-                      <th class="p-4 text-center">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-white/5">
-                    <tr class="hover:bg-white/5 transition">
-                      <td class="p-4 font-mono font-bold text-polleria-gold">#POL-1001</td>
-                      <td class="p-4 text-white">Juan Pérez (987654321)</td>
-                      <td class="p-4 text-slate-300">Av. Larco 1234, Dpto 402</td>
-                      <td class="p-4 text-emerald-400 font-bold">Carlos Ramos</td>
-                      <td class="p-4 text-center">
-                        <button (click)="notify.showSuccess('Ubicación GPS consultada')" class="px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-[11px] cursor-pointer">
-                          Ver Ruta
-                        </button>
-                      </td>
-                    </tr>
-                    <tr class="hover:bg-white/5 transition">
-                      <td class="p-4 font-mono font-bold text-polleria-gold">#POL-1004</td>
-                      <td class="p-4 text-white">Rosa Flores (988112233)</td>
-                      <td class="p-4 text-slate-300">Calle Los Pinos 230, San Isidro</td>
-                      <td class="p-4 text-amber-300 font-bold">Por Asignar</td>
-                      <td class="p-4 text-center">
-                        <button (click)="notify.showSuccess('Motorizado asignado')" class="px-3 py-1 bg-polleria-crimson text-white font-bold rounded text-[11px] cursor-pointer">
-                          Asignar
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
+          <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-black/40 border-b border-white/10 text-slate-400 font-bold uppercase tracking-wider">
+                <tr>
+                  <th class="p-4">Pedido</th>
+                  <th class="p-4">Cliente / Teléfono</th>
+                  <th class="p-4">Dirección</th>
+                  <th class="p-4">Estado</th>
+                  <th class="p-4">Repartidor</th>
+                  <th class="p-4 text-center">Asignar</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/5">
+                @for (order of pedidosDeliveryEnCurso(); track order.id) {
+                  <tr class="hover:bg-white/5 transition">
+                    <td class="p-4 font-mono font-bold text-polleria-gold">#{{ getCodeNum(order.codigoSeguimiento) }}</td>
+                    <td class="p-4 text-white">
+                      {{ order.cliente.nombre }}
+                      <span class="block text-slate-500">{{ order.cliente.celular }}</span>
+                    </td>
+                    <td class="p-4 text-slate-300">{{ order.cliente.direccion || '—' }}</td>
+                    <td class="p-4 text-slate-300">{{ order.estado }}</td>
+                    <td class="p-4">
+                      @if (order.repartidorAsignado) {
+                        <span class="text-emerald-400 font-bold">{{ order.repartidorAsignado.nombre }}</span>
+                      } @else {
+                        <span class="text-amber-300 font-bold">Por asignar</span>
+                      }
+                    </td>
+                    <td class="p-4">
+                      @if (puedeAsignarRepartidor(order)) {
+                        <div class="flex items-center justify-center gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            [ngModel]="repartidorPorOrden()[order.id] ?? ''"
+                            (ngModelChange)="setRepartidorInput(order.id, $event)"
+                            [ngModelOptions]="{ standalone: true }"
+                            placeholder="ID"
+                            class="w-20 px-2 py-1 rounded bg-black/50 border border-white/10 text-white text-xs focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                          />
+                          <button
+                            (click)="asignarRepartidor(order)"
+                            class="px-3 py-1 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold rounded text-[11px] transition cursor-pointer"
+                          >
+                            Asignar
+                          </button>
+                        </div>
+                      } @else {
+                        <span class="block text-center text-[11px] text-slate-500">
+                          Se asigna al pasar el pedido a «En camino»
+                        </span>
+                      }
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="6" class="p-8 text-center text-slate-500">
+                      No hay pedidos de delivery en curso.
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
           </div>
         </main>
       }
@@ -3191,12 +3192,14 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   // Mesa seleccionada para detalle
   readonly selectedMesa = signal<MesaSalon | null>(null);
 
-  // Motorizados Data (RF18 - Fase 3)
-  motorizados: MotorizadoDelivery[] = [
-    { id: 'MOT-01', nombre: 'Carlos Ramos', telefono: '987000013', placa: '4321-7B', pedidosHoy: 8, estado: 'EN_RUTA', pedidoActual: 'POL-1001' },
-    { id: 'MOT-02', nombre: 'Mitrufely Dev', telefono: '987000014', placa: '9812-4A', pedidosHoy: 6, estado: 'DISPONIBLE' },
-    { id: 'MOT-03', nombre: 'Jorge Silva', telefono: '987000015', placa: '1122-3C', pedidosHoy: 9, estado: 'DISPONIBLE' }
-  ];
+  // Reparto (RF18): los pedidos y el repartidor salen del backend, sin roster local.
+  readonly pedidosDeliveryEnCurso = computed(() =>
+    this.ordersService.orders().filter(o =>
+      o.tipo === 'DELIVERY' && o.estado !== 'COMPLETADO' && o.estado !== 'CANCELADO')
+  );
+
+  /** Borrador del id de repartidor por pedido, antes de asignarlo. */
+  readonly repartidorPorOrden = signal<Record<string, string>>({});
 
   // Notificaciones WhatsApp (RF30, RF31, RF32 - Fase 3)
   filtroNotifOrdenId: number | null = null;
@@ -3858,6 +3861,39 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   /** Unidad de medida real del insumo (MermaResponse no la incluye). */
   unidadDeInsumo(insumoId: number): string {
     return this.inventoryService.insumos().find(i => i.id === insumoId)?.unidadMedida ?? '';
+  }
+
+  // ================= MÉTODOS DE REPARTO (RF18) =================
+
+  setRepartidorInput(orderId: string, valor: string): void {
+    this.repartidorPorOrden.update(mapa => ({ ...mapa, [orderId]: valor }));
+  }
+
+  /**
+   * El backend persiste el repartidor reenviando el estado actual de la orden, y
+   * notifica por WhatsApp los estados EN_PREPARACION, EN_CAMINO y ENTREGADO. Asignar
+   * en esos estados reenviaría el mensaje al cliente, así que ahí la asignación
+   * ocurre al avanzar el pedido.
+   */
+  puedeAsignarRepartidor(order: Order): boolean {
+    return !['EN_PREPARACION', 'EN_REPARTO', 'COMPLETADO'].includes(order.estado);
+  }
+
+  asignarRepartidor(order: Order): void {
+    const valor = Number(this.repartidorPorOrden()[order.id]);
+    if (!Number.isInteger(valor) || valor <= 0) {
+      this.notify.showWarning('Ingresa el ID numérico del repartidor');
+      return;
+    }
+
+    this.ordersService.updateOrderStatus(order.id, order.estado, valor).subscribe(updated => {
+      // updateOrderStatus devuelve null cuando el backend rechaza la operación.
+      if (!updated) {
+        this.notify.showError(`No se pudo asignar el repartidor al pedido #${this.getCodeNum(order.codigoSeguimiento)}`);
+        return;
+      }
+      this.notify.showSuccess(`Repartidor #${valor} asignado al pedido #${this.getCodeNum(order.codigoSeguimiento)}`);
+    });
   }
 
   abrirModalMerma(): void {

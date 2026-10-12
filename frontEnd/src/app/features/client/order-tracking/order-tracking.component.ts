@@ -896,12 +896,20 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   contactRider(): void {
     const repartidor = this.currentOrder()?.repartidorAsignado;
-    const nombre = repartidor?.nombre || 'Carlos M.';
-    const cel = repartidor?.celular || '+51 987 112 233';
 
+    if (!repartidor) {
+      this.notify.showInfo(
+        'Motorizado aún sin asignar',
+        'Todavía no se asignó un motorizado a tu pedido. Aparecerá aquí cuando salga a reparto.'
+      );
+      return;
+    }
+
+    // El backend solo guarda el id del repartidor: no hay nombre ni teléfono reales
+    // que mostrar, así que no se inventa una llamada a un número inexistente.
     this.notify.showInfo(
-      'Contacto con Motorizado',
-      `Llamando al Rider: ${nombre} (${cel}) asignado a tu entrega.`
+      'Motorizado asignado',
+      `${repartidor.nombre} está a cargo de tu entrega.`
     );
   }
 
