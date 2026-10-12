@@ -163,6 +163,20 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null }) {
         }
     });
 
+    // QR para vincular WhatsApp desde el panel admin (solo ADMIN). El QR se genera aquí, sin servicios externos.
+    router.get('/qr', requiereRol('ADMIN'), async (req, res, next) => {
+        try {
+            const estado = estadoWhatsapp();
+            const qr = estado === 'CONECTADO' ? null : ultimoQr();
+            res.json({
+                whatsapp: ESTADO_WHATSAPP[estado] || estado,
+                qr: qr ? await QRCode.toDataURL(qr, { width: 280, margin: 1 }) : null
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
     router.get('/status', (req, res) => {
         const estado = estadoWhatsapp();
         res.json({

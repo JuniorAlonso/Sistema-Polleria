@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
+import { Component, inject, signal, computed, effect, untracked, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
@@ -1779,6 +1779,35 @@ interface MotorizadoDelivery {
             </div>
           </div>
 
+          <!-- Vincular WhatsApp: QR visible solo para ADMIN cuando no hay sesión -->
+          @if (whatsappService.status() && whatsappService.status()?.whatsapp !== 'connected') {
+            @if (whatsappService.qr() ?? { whatsapp: 'starting', qr: null }; as estadoQr) {
+              <div class="bg-[#14161a] p-6 rounded-2xl border border-amber-400/30 flex flex-col md:flex-row items-center gap-6">
+                <div class="w-[220px] h-[220px] shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden">
+                  @if (estadoQr.qr) {
+                    <img [src]="estadoQr.qr" alt="Código QR para vincular WhatsApp" class="w-full h-full" />
+                  } @else if (whatsappService.qrError()) {
+                    <span class="text-xs text-red-500 px-4 text-center">{{ whatsappService.qrError() }}</span>
+                  } @else {
+                    <span class="text-xs text-slate-500 px-4 text-center">Generando el código QR...</span>
+                  }
+                </div>
+                <div class="space-y-3 text-sm">
+                  <h3 class="text-lg font-bold text-white">Vincula el WhatsApp de la pollería</h3>
+                  <p class="text-slate-400 text-xs">
+                    Los avisos a clientes no se enviarán hasta que se vincule un número. Escanea el código con el celular del negocio:
+                  </p>
+                  <ol class="list-decimal list-inside text-xs text-slate-300 space-y-1">
+                    <li>Abre WhatsApp en el celular.</li>
+                    <li>Toca Más opciones (⋮) o Configuración y entra a <strong>Dispositivos vinculados</strong>.</li>
+                    <li>Toca <strong>Vincular un dispositivo</strong> y apunta la cámara a este código.</li>
+                  </ol>
+                  <p class="text-[11px] text-slate-500">El código cambia cada pocos segundos; esta vista se actualiza sola.</p>
+                </div>
+              </div>
+            }
+          }
+
           <!-- Filtros -->
           <div class="flex flex-wrap items-end gap-3 bg-[#14161a] p-4 rounded-2xl border border-white/10">
             <label class="flex flex-col gap-1 text-[11px] text-slate-400 font-bold uppercase">
@@ -3177,6 +3206,18 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   filtroNotifEstado: EstadoNotificacion | '' = '';
   filtroNotifDesde = '';
 
+  // El QR solo se consulta mientras la pestaña de WhatsApp está abierta
+  private readonly sondeoQrPorPestana = effect(() => {
+    const enWhatsapp = this.activeTab() === 'NOTIFICACIONES';
+    untracked(() => {
+      if (enWhatsapp && isPlatformBrowser(this.platformId)) {
+        this.whatsappService.iniciarSondeoQr();
+      } else {
+        this.whatsappService.detenerSondeoQr();
+      }
+    });
+  });
+
   cargarNotificaciones(): void {
     this.whatsappService.cargar({
       ordenId: this.filtroNotifOrdenId,
@@ -3248,6 +3289,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     if (this.pollingSub) {
       this.pollingSub.unsubscribe();
     }
+    this.whatsappService.detenerSondeoQr();
   }
 
   getCodeNum(code: string): string {

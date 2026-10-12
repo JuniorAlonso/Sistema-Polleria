@@ -118,3 +118,25 @@ test('GET /qr desde la misma máquina muestra el estado sin enviar el QR a terce
     assert.match(html, /WhatsApp ya está conectado/);
     assert.doesNotMatch(html, /qrserver/);
 });
+
+test('GET /api/notificaciones/qr solo para ADMIN y devuelve la imagen cuando hay QR', async () => {
+    const sinToken = await fetch(`${base}/qr`);
+    assert.strictEqual(sinToken.status, 401);
+
+    const cliente = await fetch(`${base}/qr`, { headers: { Authorization: `Bearer ${token('CLIENTE')}` } });
+    assert.strictEqual(cliente.status, 403);
+
+    // Servidor aparte simulando WhatsApp esperando QR
+    const appQr = crearApp({ service, store, estadoWhatsapp: () => 'ESPERANDO_QR', ultimoQr: () => '2@abc,def,ghi' });
+    const srv = appQr.listen(0);
+    try {
+        const url = `http://localhost:${srv.address().port}/api/notificaciones/qr`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token('ADMIN')}` } });
+        const body = await res.json();
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(body.whatsapp, 'waiting_qr');
+        assert.match(body.qr, /^data:image\/png;base64,/);
+    } finally {
+        srv.close();
+    }
+});

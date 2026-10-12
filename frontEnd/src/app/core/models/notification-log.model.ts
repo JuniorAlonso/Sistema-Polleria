@@ -30,6 +30,11 @@ export interface WhatsappStatus {
   colaPendiente: number;
 }
 
+export interface WhatsappQr {
+  whatsapp: EstadoSesionWhatsapp;
+  qr: string | null; // imagen PNG en data URL; null si ya está conectado o aún no se genera
+}
+
 export interface FiltroHistorial {
   ordenId?: number | null;
   estado?: EstadoNotificacion | '';

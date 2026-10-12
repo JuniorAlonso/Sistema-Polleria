@@ -1,8 +1,8 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { catchError, of, tap } from 'rxjs';
+import { Subscription, catchError, interval, of, tap } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { FiltroHistorial, NotificationLog, WhatsappStatus } from '../models/notification-log.model';
+import { FiltroHistorial, NotificationLog, WhatsappQr, WhatsappStatus } from '../models/notification-log.model';
 
 /**
  * Historial (RF32) y estado de la sesión de WhatsApp del notification-service.
@@ -20,6 +20,11 @@ export class WhatsappNotificationsService {
   readonly status = signal<WhatsappStatus | null>(null);
   readonly isLoading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
+
+  // QR para vincular WhatsApp desde el panel (solo ADMIN)
+  readonly qr = signal<WhatsappQr | null>(null);
+  readonly qrError = signal<string | null>(null);
+  private sondeoQr?: Subscription;
 
   readonly totales = computed(() => {
     const logs = this.historial();
@@ -68,6 +73,44 @@ export class WhatsappNotificationsService {
               : 'No se pudo cargar el historial de notificaciones.'
         );
         return of([]);
+      })
+    ).subscribe();
+  }
+
+  /** Consulta el QR cada 5 s mientras la pestaña de WhatsApp está abierta. */
+  iniciarSondeoQr(): void {
+    this.cargarQr();
+    if (!this.sondeoQr) {
+      this.sondeoQr = interval(5000).subscribe(() => this.cargarQr());
+    }
+  }
+
+  detenerSondeoQr(): void {
+    this.sondeoQr?.unsubscribe();
+    this.sondeoQr = undefined;
+  }
+
+  cargarQr(): void {
+    this.http.get<WhatsappQr>(`${this.NOTIFICATION_URL}/qr`).pipe(
+      tap(qr => {
+        this.qr.set(qr);
+        this.qrError.set(null);
+        // Mantener el estado de la sesión al día sin esperar a "Actualizar"
+        const status = this.status();
+        if (status && status.whatsapp !== qr.whatsapp) {
+          this.status.set({ ...status, whatsapp: qr.whatsapp });
+        }
+      }),
+      catchError(err => {
+        this.qr.set(null);
+        this.qrError.set(
+          err.status === 404
+            ? 'Este notification-service no tiene la opción de QR. Reinícialo para cargar la versión nueva, o usa http://localhost:3001/qr.'
+            : err.status === 403 || err.status === 401
+              ? 'Solo un administrador puede ver el código QR.'
+              : 'No se pudo obtener el código QR del notification-service.'
+        );
+        return of(null);
       })
     ).subscribe();
   }
