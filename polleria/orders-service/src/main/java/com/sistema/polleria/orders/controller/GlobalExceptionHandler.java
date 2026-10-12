@@ -78,6 +78,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(Map.of("error", "Parámetro inválido: " + ex.getName(), "status", 400));
     }
 
+    @ExceptionHandler({
+            org.springframework.dao.OptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class
+    })
+    public ResponseEntity<Map<String, Object>> handleOptimisticLock(Exception ex) {
+        log.warn("Conflicto de concurrencia detectado (OptimisticLock): {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "error", "El recurso fue modificado por otro usuario en simultáneo. Por favor recarga los datos e intenta nuevamente.",
+                "status", 409
+        ));
+    }
+
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrity(org.springframework.dao.DataIntegrityViolationException ex) {
+        log.warn("Violación de integridad referencial o constraint única: {}", ex.getMessage());
+        String mensaje = "Conflicto de datos: ya existe un registro con el mismo identificador o número único.";
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "error", mensaje,
+                "status", 409
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
         log.error("Error inesperado: ", ex);

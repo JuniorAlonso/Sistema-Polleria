@@ -22,10 +22,56 @@ public class DataInitializer {
 
     private final ProductoRepository productoRepository;
     private final MesaRepository mesaRepository;
+    private final com.sistema.polleria.orders.repository.ZonaSalonRepository zonaSalonRepository;
 
     @Bean
     public CommandLineRunner initOrdersData() {
         return args -> {
+            // 0. Inicializar Zonas de Salón
+            if (zonaSalonRepository.count() == 0) {
+                log.info("Inicializando zonas físicas del salón...");
+                List<com.sistema.polleria.orders.entity.ZonaSalon> zonas = List.of(
+                        com.sistema.polleria.orders.entity.ZonaSalon.builder()
+                                .slug("SALON_PRINCIPAL")
+                                .nombre("Salón Central")
+                                .filas(4)
+                                .columnas(5)
+                                .color("border-polleria-gold/40")
+                                .orden(1)
+                                .activo(true)
+                                .build(),
+                        com.sistema.polleria.orders.entity.ZonaSalon.builder()
+                                .slug("TERRAZA")
+                                .nombre("Terraza al Aire Libre")
+                                .filas(8)
+                                .columnas(9)
+                                .color("border-emerald-500/40")
+                                .orden(2)
+                                .activo(true)
+                                .build(),
+                        com.sistema.polleria.orders.entity.ZonaSalon.builder()
+                                .slug("ZONA_VIP")
+                                .nombre("Zona VIP")
+                                .filas(3)
+                                .columnas(4)
+                                .color("border-purple-500/40")
+                                .orden(3)
+                                .activo(true)
+                                .build(),
+                        com.sistema.polleria.orders.entity.ZonaSalon.builder()
+                                .slug("SEGUNDO_PISO")
+                                .nombre("Segundo Piso")
+                                .filas(4)
+                                .columnas(6)
+                                .color("border-sky-500/40")
+                                .orden(4)
+                                .activo(true)
+                                .build()
+                );
+                zonaSalonRepository.saveAll(zonas);
+                log.info("{} zonas de salón inicializadas exitosamente.", zonas.size());
+            }
+
             // 1. Inicializar Mesas
             if (mesaRepository.count() == 0) {
                 log.info("Inicializando mesas del salón para despliegue...");
@@ -38,6 +84,13 @@ public class DataInitializer {
                 );
                 mesaRepository.saveAll(mesas);
                 log.info("{} mesas inicializadas exitosamente con coordenadas de plano virtual.", mesas.size());
+            } else {
+                mesaRepository.findAll().stream()
+                        .filter(m -> m.getZona() == null || m.getZona().isBlank())
+                        .forEach(m -> {
+                            m.setZona("SALON_PRINCIPAL");
+                            mesaRepository.save(m);
+                        });
             }
 
             // 2. Inicializar Carta de Productos

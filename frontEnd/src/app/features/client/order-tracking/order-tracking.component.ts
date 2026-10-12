@@ -25,6 +25,17 @@ import { Subscription, interval } from 'rxjs';
 
       <div class="max-w-4xl mx-auto space-y-8 relative z-10 animate-slide-up">
         
+        <!-- ================= BANNER ADVERTENCIA MODO MOCK MERCADO PAGO ================= -->
+        @if (isMockOrder()) {
+          <div class="p-4 rounded-2xl bg-amber-500/15 border-l-4 border-amber-500 text-amber-200 text-xs sm:text-sm flex items-start gap-3 shadow-xl backdrop-blur-md">
+            <span class="text-xl leading-none">⚠️</span>
+            <div>
+              <p class="font-bold text-white text-sm">⚠️ Entorno de Pruebas: Las credenciales de MercadoPago no están configuradas. Este pago es simulado.</p>
+              <p class="text-amber-300/80 text-xs mt-0.5">El pedido fue procesado bajo el modo de resiliencia / Sandbox Mock de la pasarela de pagos.</p>
+            </div>
+          </div>
+        }
+
         <!-- ================= LISTA DE PEDIDOS DISPONIBLES ================= -->
         @if (availableOrders().length > 0) {
           <div class="bg-[#181a1e]/90 p-4 sm:p-5 rounded-2xl border border-white/10 shadow-xl backdrop-blur-md">
@@ -579,6 +590,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly showReportModal = signal<boolean>(false);
   readonly ratingSent = signal<boolean>(false);
   readonly selectedStars = signal<number>(5);
+  readonly isMockOrder = signal<boolean>(false);
 
   reviewComment = '';
   reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
@@ -625,6 +637,10 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
     // 2. Comprobar parámetros de la URL (soporta códigos internos y retornos de Mercado Pago)
     this.route.queryParams.subscribe(params => {
+      if (params['mock'] === 'true') {
+        this.isMockOrder.set(true);
+      }
+
       // Retorno de Mercado Pago (status / collection_status)
       if (params['collection_status'] || params['status']) {
         const mpStatus = params['collection_status'] || params['status'];

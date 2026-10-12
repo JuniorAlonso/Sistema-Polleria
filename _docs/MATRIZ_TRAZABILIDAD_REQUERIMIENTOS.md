@@ -21,8 +21,8 @@
 | **RF08** | Carta y Productos | Administrador marca productos como "agotados", ocultándolos de la carta disponible. | `orders-service` (:8082) | `PATCH /productos/{id}/disponibilidad`<br>Filtro `soloDisponibles=true` | Fase 1 | ✅ Implementado |
 | **RF09** | Carta y Productos | Crear y gestionar promociones y combos de productos. | `orders-service` (:8082) | `Categoria.COMBO`, `Categoria.PROMOCION`<br>`GET /productos?categoria=COMBO` | Fase 1 | ✅ Implementado |
 | **RF10** | Carta y Productos | Acceso a la carta digital mediante escaneo de código QR en mesa. | `orders-service` (:8082) + `frontEnd` | `GET /productos` (público sin auth)<br>Entidad `Mesa.qrUrl` | Fase 1 | ✅ Implementado |
-| **RF11** | Gestión de Mesas | Mozo visualiza estado de mesas, registra su ocupación y las vincula a una orden. | `orders-service` (:8082) | `GET /mesas`, `GET /mesas/libres`<br>`PATCH /mesas/{id}/estado`<br>Entidad `Mesa`, `MesaEstado` | Fase 2 | 🔄 Fase 2 (Base F1 lista) |
-| **RF12** | Gestión de Mesas | Mozo registra pedidos de salón en dispositivo móvil tras selección presencial. | `frontEnd` (Comandera) + `orders-service` | `POST /ordenes` (`tipo: SALON`, `mesaId: X`) | Fase 2 | 🔄 Fase 2 (Base F1 lista) |
+| **RF11** | Gestión de Mesas | Mozo visualiza estado de mesas, registra su ocupación y las vincula a una orden. | `orders-service` (:8082) | `GET /mesas`, `PUT /mesas/{id}/estado`<br>`PUT /mesas/{id}/posicion`, `DELETE /mesas/{id}`<br>Entidad `Mesa`, `MesaEstado` | Fase 2 | ✅ Implementado |
+| **RF12** | Gestión de Mesas | Mozo registra pedidos de salón en dispositivo móvil tras selección presencial. | `frontEnd` (Comandera) + `orders-service` | `POST /ordenes` (`tipo: SALON`, `mesaId: X`)<br>Modal de Comanda rápida en tablet | Fase 2 | ✅ Implementado |
 | **RF13** | Pedidos y Estados | Registrar pedidos para consumo en salón (mozo), delivery o recojo (cliente). | `orders-service` (:8082) | `POST /ordenes`<br>`OrdenTipo`: `SALON`, `DELIVERY`, `RECOJO` | Fase 1 | ✅ Implementado |
 | **RF14** | Pedidos y Estados | Requerir registro de dirección y referencia de ubicación para pedidos de delivery. | `orders-service` (:8082) | DTO `CrearOrdenRequest`<br>Validación `direccionEntrega` y `referencia` | Fase 1 | ✅ Implementado |
 | **RF15** | Pedidos y Estados | Ciclo de vida de pedidos mediante máquina de estados robusta. | `orders-service` (:8082) | `OrdenEstado`: `RECIBIDO → EN_PREPARACION → LISTO → EN_CAMINO → ENTREGADO / CANCELADO` | Fase 1 | ✅ Implementado |
@@ -43,7 +43,7 @@
 | **RF30** | Notificaciones | Notificación WhatsApp al cliente al confirmar el pago de delivery. | `notification-service` (:3001) | `POST /api/notificaciones/whatsapp/pago`<br>whatsapp-web.js client | **Fase 3** | ✅ Fase 3 |
 | **RF31** | Notificaciones | Notificaciones WhatsApp automáticas en cada cambio de estado de delivery. | `orders-service` → `notification-service` | `POST /api/notificaciones/whatsapp/estado` | **Fase 3** | ✅ Fase 3 |
 | **RF32** | Notificaciones | Registro y auditoría del estado de envíos de notificaciones (enviado, en cola, fallido). | `notification-service` (:3001) | `NotificationLog`<br>`GET /api/notificaciones/historial` | **Fase 3** | ✅ Fase 3 |
-| **RF33** | Notificaciones | Notificación en tiempo real al dispositivo del mozo indicando plato listo en cocina. | `orders-service` (:8082) + WS STOMP | WebSocket Broker `/topic/mozo/mesas`<br>Trigger al pasar orden a `LISTO` | Fase 2 | 🔄 Fase 2 |
+| **RF33** | Notificaciones | Notificación en tiempo real al dispositivo del mozo indicando plato listo en cocina. | `orders-service` (:8082) + WS STOMP | WebSocket Broker `/ws-polleria`<br>Canal `/topic/mesas/alertas`<br>Trigger al pasar orden a `LISTO` | Fase 2 | ✅ Implementado |
 | **RF34** | Incidentes | Registro y documentación de incidentes técnicos u operativos (causa raíz y solución). | `incident-service` (:8088) | `POST /incidentes`<br>Entidad `IncidenteOperativo` | **Fase 6** | 🏢 Fase 6 |
 
 ---
@@ -57,7 +57,7 @@
 | **RNF03** | Seguridad | Comunicación HTTPS y validación JWT en cada petición. | TLS/SSL terminación en Cloud Run / Ingress; `JwtAuthFilter` en cada microservicio validando firma HS256 y expiración. | ✅ Implementado |
 | **RNF04** | Seguridad | Políticas CORS para restringir consumo a frontends autorizados. | Filtros CORS específicos por servicio (`cors.allowed-origins` en `application.properties`). | ✅ Implementado |
 | **RNF05** | Seguridad | Bloqueo automático de IPs sospechosas sin intervención manual. | `IpBlockingService` en `auth-service` (5 intentos fallidos = 15 min bloqueo en memoria/Caffeine). | ✅ Implementado |
-| **RNF06** | Rendimiento | WebSockets de baja latencia (< 500 ms) hacia tablets de mozos. | Spring WebSocket con STOMP broker en memoria sobre SockJS en `orders-service`. | 🔄 Fase 2 |
+| **RNF06** | Rendimiento | WebSockets de baja latencia (< 500 ms) hacia tablets de mozos. | Spring WebSocket con STOMP broker en memoria sobre SockJS en `orders-service`. | ✅ Implementado |
 | **RNF07** | Rendimiento | Actualización de pedidos casi en tiempo real. | Polling reactivo cada 3-5s en Frontend (Fase 1) y eventos WebSockets / Push en Fase 2. | ✅ Implementado |
 | **RNF08** | Escalabilidad | Microservicios desplegados independientemente con escalabilidad individual. | Contenedores Docker independientes por servicio (`auth-service`, `orders-service`, `payments-service`, `notification-service`). | ✅ Implementado |
 | **RNF09** | Fiabilidad | Registro y notificación automática de cancelaciones de pago por pasarela. | `MercadoPagoWebhookController` gestiona eventos `payment.cancelled` o `payment.rejected` actualizando el estado inmediatamente. | ✅ F1 (Mock) · 💳 F5 (Real) |

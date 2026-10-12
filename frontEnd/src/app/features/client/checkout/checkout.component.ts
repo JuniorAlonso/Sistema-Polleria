@@ -287,6 +287,17 @@ declare const MercadoPago: any;
                 </div>
               </div>
 
+              <!-- Banner Advertencia Modo Mock MP -->
+              @if (isMockPayment()) {
+                <div class="p-3.5 rounded-xl bg-amber-500/15 border-l-4 border-amber-500 text-amber-200 text-xs flex items-start gap-2.5 my-2 animate-fade-in">
+                  <span class="text-base leading-none">⚠️</span>
+                  <div>
+                    <p class="font-bold">⚠️ Entorno de Pruebas: Las credenciales de MercadoPago no están configuradas.</p>
+                    <p class="text-amber-300/80 text-[11px] mt-0.5">Este pago es simulado y continuará bajo el modo de resiliencia.</p>
+                  </div>
+                </div>
+              }
+
               <!-- Botón Oficial de Mercado Pago Checkout Pro (Abajito) -->
               <div class="pt-2">
                 <button 
@@ -354,6 +365,7 @@ export class CheckoutComponent implements OnInit {
 
   readonly metodoPago = signal<PaymentMethod>('TARJETA');
   readonly isProcessing = signal<boolean>(false);
+  readonly isMockPayment = signal<boolean>(false);
 
   direccion = 'Av. Larco 1234, Miraflores';
   celular = '';
@@ -460,8 +472,18 @@ export class CheckoutComponent implements OnInit {
             this.isProcessing.set(false);
             const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
             if (redirectUrl) {
-              this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
-              setTimeout(() => { window.location.href = redirectUrl; }, 800);
+              if (pref.isMock) {
+                this.isMockPayment.set(true);
+                this.notify.showInfo('Modo Resiliencia Activado', 'Mercado Pago no está disponible. Continuando en modo demostración...');
+                setTimeout(() => {
+                  window.location.href = redirectUrl;
+                }, 1200);
+              } else {
+                this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+                setTimeout(() => {
+                  window.location.href = redirectUrl;
+                }, 800);
+              }
             } else {
               this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
             }

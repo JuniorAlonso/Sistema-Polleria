@@ -45,19 +45,32 @@ graph TD
   - Tópico de difusión de alertas de cocina: `/topic/mesas/alertas`
   - Disparador automático: Cuando un pedido de mesa cambia al estado `LISTO` en cocina, `SalonEventPublisher` emite una notificación instantánea al personal de salón.
 - **Modelo de Datos y Endpoints REST:**
-  - Coordenadas de plano `posicionX`, `posicionY`, `capacidad` y `estado` (`LIBRE`, `OCUPADA`, `POR_COBRAR`, `EN_LIMPIEZA`, `RESERVADA`).
+  - Columnas: `numero`, `capacidad`, `zona`, `posicion_x`, `posicion_y`, `activo` y `estado` (`LIBRE`, `OCUPADA`, `POR_COBRAR`, `EN_LIMPIEZA`, `RESERVADA`).
   - `GET /mesas`: Listado con orden activa embebida y comanda.
-  - `POST /mesas`: Alta de mesas físicas en el plano.
-  - `PUT /mesas/{id}/posicion`: Posicionamiento Drag & Drop.
-  - `PUT /mesas/{id}/estado`: Transiciones de estado de mesa.
+  - `POST /mesas`: Alta de mesas con validación de número único.
+  - `PUT /mesas/{id}`: Modificación completa (número, capacidad, zona, coordenadas, activo).
+  - `PUT /mesas/{id}/posicion`: Posicionamiento Drag & Drop o Click-to-Move.
+  - `PUT /mesas/{id}/estado`: Transiciones de la máquina de estados.
+  - `DELETE /mesas/{id}`: Baja lógica de mesa conservando histórico contable.
   - `GET /mesas/{id}/orden-activa`: Comanda y consumos en curso.
 
 ### Frontend (Angular 19)
 - **`SalonService`:**
-  - Signals reactivos: `mesas`, `mesasLibres`, `mesasOcupadas`, `mesasPorCobrar`, `alertasCocina`.
-  - Mecanismo de sincronización en vivo con fallback de polling reactivo de alta frecuencia (cada 6s).
-- **`mozo-salon.component.ts`:**
-  - Vista visual interactiva del plano de mesas, filtrado por zonas y modal de edición de coordenadas físicas.
+  - Signals reactivos: `mesas`, `mesasLibres`, `mesasOcupadas`, `mesasPorCobrar`, `mesasEnLimpieza`, `zonasSalon`, `alertasCocina`.
+  - Persistencia de dimensiones de zonas en `localStorage` (`polleria_zonas_config`).
+  - Sincronización en vivo vía polling reactivo (cada 6s) y receptor WebSocket.
+- **Croquis Matricial por Zonas (Slides):**
+  - Slides individuales: Salón Central (4×5), Terraza (8×9), Zona VIP (3×4) y Segundo Piso (4×6).
+  - Ajuste dinámico de dimensiones (+/- filas y columnas) y auto-organización en lote con `forkJoin`.
+  - Doble interacción: Click-to-Move y Drag & Drop nativo HTML5.
+  - Creación en caliente haciendo clic en casillas vacías.
+  - Reemplazo total de emojis por iconos vectoriales SVG.
+- **UX Asíncrona y Spinners de Carga:**
+  - Overlay de bloqueo con spinner circular SVG dorado (`animate-spin`) en el lienzo del croquis.
+  - Botones con estado de espera (`[disabled]="isProcesandoMesa()"`) en modales de creación y edición.
+- **Separación de Roles:**
+  - **Admin:** CRUD de infraestructura de mesas, diseño topológico y dimensiones de cuadrícula.
+  - **Mozo:** Operación de comensales, comanda rápida de salón y ciclo de estados de mesa.
 
 ---
 

@@ -253,27 +253,15 @@ export interface AlertaPlatoListo {
                   >
                     Todas ({{ mesas().length }})
                   </button>
-                  <button 
-                    (click)="selectedZone.set('SALON_PRINCIPAL')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'SALON_PRINCIPAL' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Salón
-                  </button>
-                  <button 
-                    (click)="selectedZone.set('TERRAZA')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'TERRAZA' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Terraza
-                  </button>
-                  <button 
-                    (click)="selectedZone.set('ZONA_VIP')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'ZONA_VIP' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    VIP
-                  </button>
+                  @for (z of zonasSalon; track z.id) {
+                    <button 
+                      (click)="selectedZone.set(z.id)"
+                      class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
+                      [ngClass]="selectedZone() === z.id ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
+                    >
+                      {{ z.nombre }}
+                    </button>
+                  }
                 </div>
               </div>
             </div>
@@ -282,6 +270,17 @@ export interface AlertaPlatoListo {
             @if (vistaMesas() === 'CROQUIS') {
               <div class="relative bg-[#0d0f14] border border-white/10 rounded-2xl overflow-hidden shadow-2xl p-5 space-y-4">
                 
+                <!-- Banner de Error de Conexión con Backend -->
+                @if (salonService.hasError()) {
+                  <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                      <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      <span>Sin conexión con el servidor para sincronizar mesas.</span>
+                    </span>
+                    <button type="button" (click)="salonService.cargarMesas()" class="px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-white font-bold transition text-[11px] cursor-pointer">Reintentar</button>
+                  </div>
+                }
+
                 <!-- Overlay de Espera y Sincronización en la Cuadrícula -->
                 @if (isProcesandoMesa() || salonService.isLoading()) {
                   <div class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm z-40 rounded-2xl flex flex-col items-center justify-center p-6 text-center animate-fade-in shadow-2xl border border-polleria-gold/30">
@@ -1004,7 +1003,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   private platformId = inject(PLATFORM_ID);
 
   readonly activeTab = signal<MozoTab>('MESAS');
-  readonly selectedZone = signal<'TODAS' | 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP'>('TODAS');
+  readonly selectedZone = signal<string>('TODAS');
   readonly selectedMesaModal = signal<MesaSalon | null>(null);
   readonly vistaMesas = signal<'CROQUIS' | 'TARJETAS'>('CROQUIS');
 
@@ -1024,43 +1023,28 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   selectedMesaForOrder = 1;
   comandaItems: { producto: Product; cantidad: number; notas: string }[] = [];
 
-  // Default mesas fallback si el backend recién inicia
-  private defaultMesas: MesaSalon[] = [
-    { id: 1, nombre: 'Mesa 01', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'OCUPADA', posicionX: 1, posicionY: 1, comensales: 3, tiempoMinutos: 35, totalConsumo: 89.00, mozo: 'Yovana M.' },
-    { id: 2, nombre: 'Mesa 02', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', posicionX: 2, posicionY: 1, totalConsumo: 0 },
-    { id: 3, nombre: 'Mesa 03', zona: 'SALON_PRINCIPAL', capacidad: 6, estado: 'OCUPADA', posicionX: 3, posicionY: 1, comensales: 5, tiempoMinutos: 42, totalConsumo: 154.00, platosListos: true, mozo: 'Yovana M.' },
-    { id: 4, nombre: 'Mesa 04', zona: 'SALON_PRINCIPAL', capacidad: 2, estado: 'POR_COBRAR', posicionX: 1, posicionY: 2, comensales: 2, tiempoMinutos: 55, totalConsumo: 65.00, mozo: 'Yovana M.' },
-    { id: 5, nombre: 'Mesa 05', zona: 'TERRAZA', capacidad: 8, estado: 'LIBRE', posicionX: 2, posicionY: 2, totalConsumo: 0 }
-  ];
-
-  // Mesas sincronizadas de SalonService
+  // Mesas sincronizadas de SalonService (sin fallbacks mock)
   readonly mesas = computed<MesaSalon[]>(() => {
     const backendMesas = this.salonService.mesas();
-    if (backendMesas.length > 0) {
-      return backendMesas.map(bm => ({
-        id: Number(bm.id),
-        nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
-        zona: bm.zona || (bm.numero > 8 ? 'ZONA_VIP' : (bm.numero > 4 ? 'TERRAZA' : 'SALON_PRINCIPAL')),
-        capacidad: bm.capacidad,
-        estado: bm.estado,
-        posicionX: bm.posicionX || 1,
-        posicionY: bm.posicionY || 1,
-        comensales: bm.ordenActiva ? bm.capacidad : 0,
-        tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
-        totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
-        platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' : false,
-        mozo: bm.mozoAsignado || 'Mozo Salón',
-        ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
-      }));
-    }
-    return this.defaultMesas;
+    return backendMesas.map(bm => ({
+      id: Number(bm.id),
+      nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
+      zona: bm.zona || 'SALON_PRINCIPAL',
+      capacidad: bm.capacidad,
+      estado: bm.estado,
+      posicionX: bm.posicionX || 1,
+      posicionY: bm.posicionY || 1,
+      comensales: bm.ordenActiva ? bm.capacidad : 0,
+      tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
+      totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
+      platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' : false,
+      mozo: bm.mozoAsignado || 'Mozo Salón',
+      ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
+    }));
   });
 
-  // Alertas de Cocina
-  alertas: AlertaPlatoListo[] = [
-    { id: 'ALT-1', mesa: 'Mesa 03', plato: '1x Pollo Entero a la Brasa con Papas Doradas', cantidad: 1, hora: '16:10', atendido: false },
-    { id: 'ALT-2', mesa: 'Mesa 01', plato: '1x Jarra de Chicha Morada Casera', cantidad: 1, hora: '16:05', atendido: false }
-  ];
+  // Alertas de Cocina recibidas en tiempo real
+  alertas: AlertaPlatoListo[] = [];
 
   readonly alertasPendientes = computed(() => {
     const list = [...this.alertas.filter(a => !a.atendido)];
@@ -1087,8 +1071,6 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
   }
-
-  ngOnDestroy(): void {}
 
   getActiveTabLabel(): string {
     switch (this.activeTab()) {
@@ -1197,7 +1179,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         error: () => {
           this.isProcesandoMesa.set(false);
           this.mesaEnMovimiento.set(null);
-          this.notify.showSuccess(`${enMovimiento.nombre} reubicada en ${this.currentZona().nombre} (F${row}:C${col})`);
+          this.salonService.cargarMesas();
         }
       });
     }
@@ -1226,9 +1208,6 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     if (mesa) {
       this.isProcesandoMesa.set(true);
       this.mensajeProcesandoMesa.set(`Reubicando ${mesa.nombre} a F${row}:C${col}...`);
-      mesa.posicionX = col;
-      mesa.posicionY = row;
-      mesa.zona = this.currentZona().id;
       this.salonService.actualizarPosicion(mesa.id, col, row).subscribe({
         next: () => {
           this.isProcesandoMesa.set(false);
@@ -1238,7 +1217,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         error: () => {
           this.isProcesandoMesa.set(false);
           this.mesaEnMovimiento.set(null);
-          this.notify.showSuccess(`${mesa.nombre} reubicada en ${this.currentZona().nombre} (F${row}:C${col})`);
+          this.salonService.cargarMesas();
         }
       });
     }
@@ -1328,8 +1307,8 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
           this.selectedMesaModal.set(null);
         },
         error: () => {
-          m.estado = estado;
           this.selectedMesaModal.set(null);
+          this.salonService.cargarMesas();
         }
       });
     }
@@ -1352,10 +1331,15 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         },
         error: () => {
           this.selectedMesaModal.set(null);
-          this.notify.showSuccess(`Pre-Cuenta impresa para ${m.nombre}`);
+          this.salonService.cargarMesas();
         }
       });
     }
+  }
+
+  ngOnDestroy(): void {
+    this.mesaEnMovimiento.set(null);
+    this.selectedMesaModal.set(null);
   }
 
   cerrarSesion(): void {

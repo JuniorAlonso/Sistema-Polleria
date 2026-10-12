@@ -1,7 +1,7 @@
-import { Injectable, inject, signal, computed, PLATFORM_ID } from '@angular/core';
+import { Injectable, inject, signal, computed, PLATFORM_ID, OnDestroy } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Observable, tap, catchError, of } from 'rxjs';
+import { Observable, tap, catchError, of, throwError } from 'rxjs';
 import { RestaurantTable, TableStatus, OrdenActivaMesa, SalonZona } from '../models/table.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
@@ -15,8 +15,20 @@ export interface AlertaPlatoListoEvento {
   timestamp: string;
 }
 
+export interface ZonaSalonBackend {
+  id: number;
+  slug: string;
+  nombre: string;
+  filas: number;
+  columnas: number;
+  color?: string;
+  orden?: number;
+  activo?: boolean;
+}
+
 export interface ZonaSalonConfig {
   id: SalonZona;
+  dbId?: number;
   nombre: string;
   filas: number;
   columnas: number;
@@ -33,7 +45,7 @@ export const DEFAULT_ZONAS_SALON: ZonaSalonConfig[] = [
 @Injectable({
   providedIn: 'root'
 })
-export class SalonService {
+export class SalonService implements OnDestroy {
   private http = inject(HttpClient);
   private notify = inject(NotificationService);
   private platformId = inject(PLATFORM_ID);
@@ -42,61 +54,79 @@ export class SalonService {
 
   readonly mesas = signal<RestaurantTable[]>([]);
   readonly isLoading = signal<boolean>(false);
+  readonly hasError = signal<boolean>(false);
   readonly alertasCocina = signal<AlertaPlatoListoEvento[]>([]);
-  readonly zonasSalon = signal<ZonaSalonConfig[]>(this.cargarZonasConfig());
+  readonly zonasSalon = signal<ZonaSalonConfig[]>(DEFAULT_ZONAS_SALON);
 
   readonly mesasLibres = computed(() => this.mesas().filter(m => m.estado === 'LIBRE'));
   readonly mesasOcupadas = computed(() => this.mesas().filter(m => m.estado === 'OCUPADA'));
   readonly mesasPorCobrar = computed(() => this.mesas().filter(m => m.estado === 'POR_COBRAR'));
-  readonly mesasEnLimpieza = computed(() => this.mesas().filter(m => m.estado === 'LIMPIEZA'));
+  readonly mesasEnLimpieza = computed(() => this.mesas().filter(m => m.estado === 'LIMPIEZA' || m.estado === 'EN_LIMPIEZA'));
 
   private pollingInterval: any = null;
 
   constructor() {
+    this.cargarZonas();
     this.cargarMesas();
     this.iniciarSincronizacionEnVivo();
   }
 
-  private cargarZonasConfig(): ZonaSalonConfig[] {
-    if (isPlatformBrowser(this.platformId)) {
-      try {
-        const item = localStorage.getItem('polleria_zonas_config');
-        if (item) {
-          const parsed = JSON.parse(item);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed;
-          }
-        }
-      } catch (e) {
-        console.warn('Error leyendo configuración de zonas de localStorage', e);
-      }
-    }
-    return DEFAULT_ZONAS_SALON;
+  ngOnDestroy(): void {
+    this.detenerSincronizacion();
   }
 
-  guardarZonasConfig(zonas: ZonaSalonConfig[]): void {
-    this.zonasSalon.set([...zonas]);
-    if (isPlatformBrowser(this.platformId)) {
-      try {
-        localStorage.setItem('polleria_zonas_config', JSON.stringify(zonas));
-      } catch (e) {
-        console.warn('Error guardando configuración de zonas en localStorage', e);
-      }
+  detenerSincronizacion(): void {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
     }
+  }
+
+  cargarZonas(): void {
+    this.http.get<ZonaSalonBackend[]>(`${this.API_URL}/zonas`).pipe(
+      catchError(err => {
+        console.warn('[SalonService] No se pudieron cargar zonas del backend, usando configuración default', err);
+        return of([]);
+      })
+    ).subscribe(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        const configs: ZonaSalonConfig[] = data.map(z => ({
+          id: z.slug,
+          dbId: z.id,
+          nombre: z.nombre,
+          filas: z.filas,
+          columnas: z.columnas,
+          color: z.color || 'border-polleria-gold/40'
+        }));
+        this.zonasSalon.set(configs);
+      }
+    });
   }
 
   ajustarDimensionesZona(zonaId: string, filasDelta: number, columnasDelta: number): void {
     const list = this.zonasSalon().map(z => {
       if (z.id === zonaId) {
-        return {
+        const updated = {
           ...z,
           filas: Math.max(2, Math.min(15, z.filas + filasDelta)),
           columnas: Math.max(2, Math.min(20, z.columnas + columnasDelta))
         };
+        if (updated.dbId) {
+          this.http.put(`${this.API_URL}/zonas/${updated.dbId}/dimensiones`, {
+            filas: updated.filas,
+            columnas: updated.columnas
+          }).pipe(
+            catchError(err => {
+              console.warn('[SalonService] Error al persistir dimensiones de zona en servidor', err);
+              return of(null);
+            })
+          ).subscribe();
+        }
+        return updated;
       }
       return z;
     });
-    this.guardarZonasConfig(list);
+    this.zonasSalon.set(list);
   }
 
   cargarMesas(): void {
@@ -105,12 +135,29 @@ export class SalonService {
       tap(data => {
         this.mesas.set(data);
         this.isLoading.set(false);
+        this.hasError.set(false);
       }),
       catchError(err => {
         this.isLoading.set(false);
+        this.hasError.set(true);
+        console.warn('[SalonService] Error al cargar mesas desde el servidor:', err);
         return of([]);
       })
     ).subscribe();
+  }
+
+  private manejarErrorMutacion(err: any): Observable<never> {
+    if (err?.status === 409) {
+      this.notify.showWarning(
+        '⚠️ Conflicto de Concurrencia',
+        '⚠️ Conflicto: Otro usuario modificó esta mesa. Actualizando vista...'
+      );
+      this.cargarMesas();
+    } else {
+      const msg = err?.error?.error || 'No se pudo completar la operación en la mesa';
+      this.notify.showError('Error en Operación', msg);
+    }
+    return throwError(() => err);
   }
 
   actualizarPosicion(id: string | number, posicionX: number, posicionY: number): Observable<RestaurantTable> {
@@ -118,7 +165,8 @@ export class SalonService {
       tap(actualizada => {
         this.mesas.update(prev => prev.map(m => m.id === id ? { ...m, posicionX, posicionY } : m));
         this.notify.showSuccess(`Mesa #${actualizada.numero} reposicionada en (${posicionX}, ${posicionY})`);
-      })
+      }),
+      catchError(err => this.manejarErrorMutacion(err))
     );
   }
 
@@ -131,7 +179,8 @@ export class SalonService {
       tap(actualizada => {
         this.mesas.update(prev => prev.map(m => m.id === id ? { ...m, estado } : m));
         this.notify.showSuccess(`Mesa #${actualizada.numero} actualizada a ${estado}`);
-      })
+      }),
+      catchError(err => this.manejarErrorMutacion(err))
     );
   }
 
@@ -148,7 +197,8 @@ export class SalonService {
       tap(nueva => {
         this.mesas.update(prev => [...prev, nueva]);
         this.notify.showSuccess(`Mesa #${nueva.numero} creada con éxito`);
-      })
+      }),
+      catchError(err => this.manejarErrorMutacion(err))
     );
   }
 
@@ -157,7 +207,8 @@ export class SalonService {
       tap(actualizada => {
         this.mesas.update(prev => prev.map(m => m.id === id ? { ...m, ...actualizada } : m));
         this.notify.showSuccess(`Mesa #${actualizada.numero} modificada con éxito`);
-      })
+      }),
+      catchError(err => this.manejarErrorMutacion(err))
     );
   }
 
@@ -166,7 +217,8 @@ export class SalonService {
       tap(() => {
         this.mesas.update(prev => prev.filter(m => m.id !== id));
         this.notify.showSuccess(`Mesa dada de baja`);
-      })
+      }),
+      catchError(err => this.manejarErrorMutacion(err))
     );
   }
 

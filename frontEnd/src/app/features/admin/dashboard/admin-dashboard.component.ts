@@ -2858,10 +2858,9 @@ interface MotorizadoDelivery {
                   [disabled]="isProcesandoMesa()"
                   class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold cursor-pointer disabled:opacity-50"
                 >
-                  <option value="SALON_PRINCIPAL">Salón Principal</option>
-                  <option value="TERRAZA">Terraza</option>
-                  <option value="ZONA_VIP">Zona VIP</option>
-                  <option value="SEGUNDO_PISO">Segundo Piso</option>
+                  @for (z of zonasSalon; track z.id) {
+                    <option [value]="z.id">{{ z.nombre }}</option>
+                  }
                 </select>
               </div>
 
@@ -2965,10 +2964,9 @@ interface MotorizadoDelivery {
                   [disabled]="isProcesandoMesa()"
                   class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold cursor-pointer disabled:opacity-50"
                 >
-                  <option value="SALON_PRINCIPAL">Salón Principal</option>
-                  <option value="TERRAZA">Terraza</option>
-                  <option value="ZONA_VIP">Zona VIP</option>
-                  <option value="SEGUNDO_PISO">Segundo Piso</option>
+                  @for (z of zonasSalon; track z.id) {
+                    <option [value]="z.id">{{ z.nombre }}</option>
+                  }
                 </select>
               </div>
 
@@ -3803,8 +3801,6 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         c = 1;
         r++;
       }
-      m.posicionX = targetCol;
-      m.posicionY = targetRow;
       return this.salonService.actualizarMesa(m.id, {
         posicionX: targetCol,
         posicionY: targetRow,
@@ -3819,7 +3815,11 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.isProcesandoMesa.set(false);
-        this.notify.showWarning(`Se organizaron las mesas de ${zonaActual.nombre}`);
+        this.notify.showError(
+          '❌ Error al auto-organizar',
+          'Falló la reubicación de mesas. Restaurando cuadrícula original...'
+        );
+        this.salonService.cargarMesas();
       }
     });
   }

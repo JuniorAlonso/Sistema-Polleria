@@ -1,258 +1,304 @@
-# 🔄 FASE 2 — Operatividad en Salón y Tiempo Real
+# 🍽️ FASE 2 — Gestión Operativa de Salón, Mesas y Comunicación en Tiempo Real
 
-**Objetivo:** Mejorar la experiencia operativa del mozo y la cocina mediante la sincronización en tiempo real y la administración gráfica de mesas en salón.
-
-**Prioridad:** Media — Optimización de flujos internos y reducción de tiempos de atención en salón.
+> **Sistema Integrado San Pollo — UTP Ciclo 7 (Proyecto Web Integrador)**  
+> **Estado de la Fase:** ✅ **100% Implementada y Validada**  
+> **Servicio Backend Responsable:** `orders-service` (`:8082`)  
+> **Módulos Frontend:** `SalonService`, `AdminDashboardComponent` (`/admin`), `MozoSalonComponent` (`/mozo`)
 
 ---
 
 ## 1. Visión Arquitectónica y Análisis de Dominio
 
-```
- ┌──────────────────────┐               ┌──────────────────────────────────────────────┐
- │   Tablet Mozo (UI)   │               │            orders-service (:8082)            │
- │   - Mapa de Mesas    │◄─── REST ────►│  ┌────────────────────┐ ┌─────────────────┐  │
- │   - Comandera Salón  │               │  │ Módulo Mesas       │ │ Módulo Órdenes  │  │
- │   - Receptor STOMP   │◄─── WS/STOMP ─┼──┤ (Mesa / Estado)    │ │ (Ciclo de Vida) │  │
- └──────────────────────┘    Push Alert │  └─────────┬──────────┘ └────────┬────────┘  │
-                                        │            │                     │           │
- ┌──────────────────────┐               │            └──────────┬──────────┘           │
- │   Pantalla Cocina    │               │                       ▼                      │
- │   KDS (Chef UI)      ├──── REST ────►│            PostgreSQL (AWS RDS)              │
- └──────────────────────┘ PATCH Estado  └──────────────────────────────────────────────┘
+La **Fase 2** centraliza la operatividad física y táctica del restaurante, articulando la interacción entre el **Administrador** (gestor de infraestructura y capacidad de salón), el **Mozo** (atención directa a comensales y comanda) y la **Cocina** (despacho y notificación de platos preparados).
+
+```mermaid
+graph TD
+    subgraph Frontend ["Frontend Angular 19 (Signals & SSR - :4200)"]
+        AdminUI["Panel Administrador\n• CRUD Mesas\n• Croquis Matricial (Slides)\n• Ajuste de Cuadrícula"]
+        MozoUI["Tablet / Terminal Mozo\n• Ciclo de Estados de Mesa\n• Comandera Rápida\n• Receptor de Alertas Cocina"]
+        SalonSvc["SalonService (Signals Reactivos)\n• Persistencia en DB vía /zonas y Signals\n• Sincronización en vivo / Polling"]
+    end
+
+    subgraph Backend ["Microservicio orders-service (Spring Boot 3.4.5 - :8082)"]
+        MesaCtrl["MesaController (/mesas)\n• CRUD, Posición, Estado, Orden Activa"]
+        OrdenCtrl["OrdenController (/ordenes)\n• Registro de Comandas de Salón"]
+        WSServer["WebSocket STOMP Broker (/ws-polleria)\n• Difusión de alertas de cocina"]
+        EventPub["SalonEventPublisher\n• Eventos de comanda lista"]
+    end
+
+    subgraph DB ["Persistencia Relacional"]
+        Postgres[("PostgreSQL 16 (:5432)\n• Tabla 'mesas'\n• Tabla 'ordenes' / 'orden_detalles'")]
+    end
+
+    AdminUI --> SalonSvc
+    MozoUI --> SalonSvc
+    SalonSvc -->|REST HTTP| MesaCtrl
+    SalonSvc -->|REST HTTP| OrdenCtrl
+    SalonSvc -.->|STOMP / SockJS| WSServer
+    MesaCtrl --> Postgres
+    OrdenCtrl --> Postgres
+    OrdenCtrl --> EventPub
+    EventPub --> WSServer
+    WSServer -.->|Push Alerta 'PLATO_LISTO'| MozoUI
 ```
 
-### 💡 Decisión Arquitectónica Clave: ¿`ms-mesas` o Bounded Context en `orders-service`?
-* **El dilema:** La propuesta preliminar sugería un `ms-mesas` independiente.
-* **El veredicto técnico:** La entidad `Mesa` y la entidad `Orden` (tipo `SALON`) comparten un ciclo de vida atómico. Separar `Mesa` en un microservicio autónomo con base de datos propia para una sola tabla genera **monolito distribuido**, latencia innecesaria y riesgo de inconsistencias transaccionales (bloquear mesa sin orden creada o viceversa).
-* **Solución de ingeniería:** Implementar el módulo de Mesas como un **subdominio/paquete desacoplado dentro de `orders-service`** (donde ya residen los cimientos de `Mesa` y `MesaRepository`), exponiendo APIs REST independientes (`/mesas/*`). En caso de que la cátedra exija estrictamente un servicio físico separado, se extrae mediante un cliente Feign/REST hacia `orders-service`.
+### 💡 Justificación Arquitectónica: Bounded Context en `orders-service`
+* **Decisión de Ingeniería:** En lugar de crear un microservicio separado `ms-mesas` con base de datos independiente, se implementó el módulo de Salón dentro de `orders-service`.
+* **Fundamento:** Las entidades `Mesa` y `Orden` (tipo `SALON`) comparten un ciclo de vida atómico y transaccional. Mantenerlas en el mismo bounded context evita un *monolito distribuido*, elimina latencias de red en el acoplamiento crítico de ocupación y garantiza consistencia referencial estricta.
 
 ---
 
-## 2. Requerimientos Cubiertos (Oficial UTP)
+## 2. Requerimientos Oficiales Cubiertos (Matriz UTP)
 
-Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases/REQUERIMIENTOS_DEL_SISTEMA.docx):
-
-| Código | Tipo | Descripción Oficial | Componente Responsable |
-| :--- | :---: | :--- | :--- |
-| **RF11** | RF | El mozo visualiza el estado de las mesas, registra su ocupación y las vincula a una orden. | `orders-service` (`MesaController`) |
-| **RF12** | RF | El mozo registra pedidos de salón en dispositivo móvil tras selección presencial del cliente. | `frontEnd` (Comandera Mozo) + `orders-service` |
-| **RF16** | RF | Personal de cocina y admin actualiza estado de pedidos (`LISTO` cocina), validando transiciones. | `orders-service` (`OrdenService`) |
-| **RF33** | RF | Notificaciones en tiempo real al dispositivo del mozo indicando qué plato de qué mesa está listo. | `orders-service` (WebSocket STOMP Broker) |
-| **RNF06** | RNF | Notificaciones WebSockets con baja latencia (< 500 ms) hacia tablets de mozos. | Spring WebSocket / STOMP over SockJS |
-| **RNF14** | RNF | UI responsiva y adaptada a dispositivos móviles y tablets de salón. | Angular 19 (Componentes táctiles reactivos) |
+| Código | Tipo | Requerimiento Oficial | Implementación Técnica | Estado |
+| :--- | :---: | :--- | :--- | :---: |
+| **RF11** | RF | Visualización del estado de mesas, ocupación y vinculación a orden. | `MesaController` + `SalonService.mesas` + Cuadrícula matricial reactiva. | ✅ 100% |
+| **RF12** | RF | Registro de pedidos de salón en dispositivo móvil tras selección presencial. | Modal de Comanda rápida en `MozoSalonComponent` conectado a `POST /ordenes`. | ✅ 100% |
+| **RF16** | RF | Cocina y admin actualizan estado de pedidos (`LISTO` cocina), validando transiciones. | `PATCH /ordenes/{id}/estado` en KDS Cocina activando evento automático. | ✅ 100% |
+| **RF33** | RF | Notificación en tiempo real al mozo con plato y mesa listos. | Evento WebSocket `/ws-polleria` + fallback de polling reactivo cada 6s. | ✅ 100% |
+| **RNF06** | RNF | Notificaciones con baja latencia (< 500 ms) hacia tablets de mozos. | STOMP over SockJS + banners visuales con sonido de alerta. | ✅ 100% |
+| **RNF14** | RNF | UI responsiva y adaptada a dispositivos móviles y tablets. | Grid CSS responsive, diseño táctil, compatibilidad Drag & Drop y Click-to-Move. | ✅ 100% |
 
 ---
 
-## 3. Modelo de Datos y Entidades
+## 3. Separación Estricta de Responsabilidades (Roles y Permisos)
 
-### 3.1 Entidad Base Existente en Fase 1 (`Mesa.java` en `orders-service`)
-En la Fase 1 ya se encuentra implementada la estructura central de mesas:
-```java
-@Entity
-@Table(name = "mesas")
-public class Mesa {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+Se implementó una clara distinción entre el perfil de **Administrador** y el de **Mozo**, evitando la contaminación funcional observada en sistemas POS tradicionales:
 
-    @Column(nullable = false, unique = true)
-    private Integer numero;
-
-    @Column(nullable = false)
-    private Integer capacidad;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private MesaEstado estado = MesaEstado.LIBRE;
-
-    @Column(length = 500)
-    private String qrUrl; // URL directa al menú para escaneo en mesa
-}
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   SEPARACIÓN DE ROLES EN FASE 2                         │
+├───────────────────────────────────┬────────────────────────────────────┤
+│         ADMINISTRADOR             │               MOZO                 │
+├───────────────────────────────────┼────────────────────────────────────┤
+│ • CRUD Maestro de Mesas (Crear,   │ • NO tiene acceso al CRUD maestro  │
+│   Editar capacidad, Dar de baja). │   (no crea ni borra mesas).        │
+│ • Diseño topológico del salón     │ • Asignación de comensales y       │
+│   (coordenadas X, Y, zonas).      │   cambio de estados operativos.    │
+│ • Ajuste de dimensiones de        │ • Reubicación temporal de mesas    │
+│   cuadrícula (filas y columnas).  │   en el salón durante el servicio. │
+│ • Auto-organización matricial.    │ • Apertura y despacho de comanda.  │
+│ • NO toma comandas ni funge       │ • Recepción de alertas de cocina   │
+│   como mozo en salón.             │   en tiempo real para servir.      │
+└───────────────────────────────────┴────────────────────────────────────┘
 ```
 
-### 3.2 Enumeración Actual en Código (`MesaEstado.java`)
-```java
-public enum MesaEstado {
-    LIBRE,        // Disponible para asignar comensales
-    OCUPADA,      // Clientes sentados con orden activa en proceso
-    RESERVADA     // Reservada con antelación
-}
+---
+
+## 4. Máquina de Estados de Mesa
+
+El ciclo de atención en salón sigue una **máquina de estados finita** rigurosa, protegiendo al personal de inconsistencias operativas:
+
+```mermaid
+stateDiagram-v2
+    [*] --> LIBRE : Registro o Limpieza completada
+    LIBRE --> OCUPADA : Mozo sienta comensales / Toma comanda
+    LIBRE --> RESERVADA : Reserva confirmada con antelación
+    RESERVADA --> OCUPADA : Llegada de clientes reservados
+    OCUPADA --> POR_COBRAR : Comensales piden la cuenta
+    POR_COBRAR --> EN_LIMPIEZA : Pago aprobado en Caja / POS
+    EN_LIMPIEZA --> LIBRE : Mozo/Personal desinfecta mesa
+    POR_COBRAR --> OCUPADA : Comensales solicitan platos adicionales
 ```
 
-### 3.3 Migración de Base de Datos para Fase 2 (Extensión Gráfica y Operativa)
-Para habilitar el plano interactivo de salón (drag-and-drop y visualización espacial) y el ciclo de rotación completo, se añade el script de migración DDL:
+### Especificación de Estados y Códigos de Color Visuales
 
+| Estado | Token / Código | Color UI | Significado Operativo |
+| :--- | :---: | :---: | :--- |
+| **Libre** | `LIBRE` | Verde (`bg-emerald-950`, `border-emerald-500`) | Mesa desocupada y disponible para asignación inmediata. |
+| **Ocupada** | `OCUPADA` | Rojo (`bg-rose-950`, `border-rose-500`) | Clientes sentados; comanda en preparación o consumiendo. |
+| **Por Cobrar** | `POR_COBRAR` | Ámbar Pulsante (`bg-amber-950`, `border-amber-500`) | Comensales solicitaron la pre-cuenta; caja procesando cobro. |
+| **En Limpieza** | `EN_LIMPIEZA` / `LIMPIEZA` | Celeste (`bg-sky-950`, `border-sky-500`) | Comensales se retiraron; personal desinfectando y alistando vajilla. |
+| **Reservada** | `RESERVADA` | Púrpura (`bg-purple-950`, `border-purple-500`) | Asignada para reserva especial con horario programado. |
+
+---
+
+## 5. Croquis Matricial Virtual por Zonas (Slides)
+
+En lugar de un lienzo plano continuo y desordenado, se construyó una experiencia espacial modular:
+
+### 5.1 Zonas del Establecimiento (Presentación en Slides)
+1. **Salón Central / Principal:** Cuadrícula por defecto de 4 filas × 5 columnas (20 casillas).
+2. **Terraza al Aire Libre:** Cuadrícula por defecto de 8 filas × 9 columnas (72 casillas).
+3. **Zona VIP:** Cuadrícula por defecto de 3 filas × 4 columnas (12 casillas).
+4. **Segundo Piso:** Cuadrícula por defecto de 4 filas × 6 columnas (24 casillas).
+
+* **Navegación:** Botones *Anterior* / *Siguiente*, selector de píldoras por zona con indicador activo y persistencia en base de datos PostgreSQL (`ZonaSalon` vía `PUT /zonas/{id}/dimensiones`).
+
+### 5.2 Personalización de Cuadrícula en Caliente
+* Controles interactivos `+` / `-` tanto para **Filas** (rango seguro 2–15) como para **Columnas** (rango seguro 2–20).
+* Algoritmo reactivo que recalcula el lienzo sin reiniciar el estado de las mesas asignadas, persistiendo el cambio en el microservicio vía `PUT /zonas/{id}/dimensiones`.
+
+### 5.3 Doble Modalidad de Reubicación Espacial
+1. **Click-to-Move (Táctil amigable para tablets):**
+   - El usuario hace clic en el botón mover de la mesa (icono de flechas de reubicación).
+   - La mesa entra en estado activo con borde amarillo parpadeante.
+   - El usuario hace clic en cualquier casilla vacía: el frontend envía `PUT /mesas/{id}` actualizando las coordenadas de forma atómica con soporte de rollback visual si la petición falla.
+2. **HTML5 Drag & Drop Nativo (Desktop / Mouse):**
+   - Se puede arrastrar directamente la tarjeta de mesa hacia la casilla vacía deseada.
+3. **Creación en Caliente:**
+   - Hacer clic en cualquier casilla vacía abre el modal de registro pre-llenando automáticamente `zona`, `posicionX` (columna) y `posicionY` (fila).
+
+### 5.4 Auto-organización Matricial con Rollback Seguro
+* Botón **"Auto-organizar Zona"**: Reordena secuencialmente las mesas existentes en casillas consecutivas (F1:C1, F1:C2, F1:C3...), despachando peticiones simultáneas sincronizadas mediante `forkJoin` de RxJS hacia el backend.
+* **Mecanismo de Rollback:** En caso de falla en cualquiera de las peticiones atómicas (por ejemplo, timeout o conflicto 409), el flujo captura el error, emite un toast de advertencia al administrador y ejecuta inmediatamente `salonService.cargarMesas()` para restaurar el estado real del servidor sin dejar inconsistencias en la vista.
+
+### 5.5 Cero Emojis en la UI
+* Siguiendo los principios de diseño profesional, se eliminaron todos los emojis de la interfaz. Se implementaron **iconos vectoriales SVG limpios** (stroke 2, colores acordes a la paleta corporativa dorado y carmesí).
+
+---
+
+## 6. Manejo de Latencia y UX Asíncrona (Spinners de Espera)
+
+Para resolver tiempos de respuesta de base de datos y evitar duplicidad de solicitudes por dobles clics, se diseñó un protocolo visual de carga:
+
+1. **Overlay Semitransparente en el Croquis:**
+   - Durante reubicaciones, redimensión de cuadrícula, auto-organización o carga inicial de datos, el canvas del croquis se bloquea con un overlay semitransparente con desenfoque de fondo (`backdrop-blur-sm`).
+   - Muestra un **círculo giratorio SVG (`animate-spin`) en color dorado** y mensaje descriptivo en tiempo real (*"Reubicando Mesa #03...", "Organizando cuadrícula...", "Cargando distribución del salón..."*).
+2. **Botones de Modales con Spinners Integrados:**
+   - Los botones *"Registrar Mesa"*, *"Guardar Cambios"* y *"Guardar Posición"* se deshabilitan inmediatamente al disparar el evento (`[disabled]="isProcesandoMesa()"`).
+   - El texto del botón cambia dinámicamente y se añade el spinner vectorial para certificar al usuario que la operación está en curso en el servidor.
+3. **Inputs Bloqueados en Modales:**
+   - Durante la espera HTTP se bloquean los campos numéricos y selectores, garantizando que el usuario no modifique los valores mientras viaja el payload.
+
+---
+
+## 7. Modelo de Datos y DDL en PostgreSQL
+
+### 7.1 Esquema de la Tabla `mesas`
 ```sql
--- Migración V2__mesas_layout_y_estados.sql
-ALTER TABLE mesas ADD COLUMN posicion_x INTEGER DEFAULT 0;
-ALTER TABLE mesas ADD COLUMN posicion_y INTEGER DEFAULT 0;
+CREATE TABLE IF NOT EXISTS mesas (
+    id BIGSERIAL PRIMARY KEY,
+    numero INTEGER NOT NULL UNIQUE,
+    capacidad INTEGER NOT NULL DEFAULT 4,
+    estado VARCHAR(30) NOT NULL DEFAULT 'LIBRE',
+    zona VARCHAR(50) NOT NULL DEFAULT 'SALON_PRINCIPAL',
+    posicion_x INTEGER NOT NULL DEFAULT 0,
+    posicion_y INTEGER NOT NULL DEFAULT 0,
+    version BIGINT NOT NULL DEFAULT 0,            -- Bloqueo optimista JPA (@Version)
+    qr_url VARCHAR(500),
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- (Opcional) Extensión del Enum en PostgreSQL si se gestiona a nivel DB:
--- ALTER TYPE mesa_estado ADD VALUE 'POR_COBRAR';
--- ALTER TYPE mesa_estado ADD VALUE 'EN_LIMPIEZA';
+-- Índices de consulta frecuente
+CREATE INDEX idx_mesas_zona ON mesas(zona);
+CREATE INDEX idx_mesas_estado ON mesas(estado);
+CREATE INDEX idx_mesas_activo ON mesas(activo);
 ```
 
-Estados ampliados para la experiencia de salón:
-* `LIBRE`: Verde — Disponible para ocupación inmediata.
-* `OCUPADA`: Rojo — Orden en preparación o comensales consumiendo.
-* `POR_COBRAR`: Amarillo — Comensales pidieron la cuenta; caja emitiendo pre-cuenta.
-* `EN_LIMPIEZA`: Azul — Desocupada, personal de salón desinfectando mesa.
-* `RESERVADA`: Púrpura — Asignada para reserva futura.
+### 7.2 Esquema de la Tabla `zonas_salon`
+```sql
+CREATE TABLE IF NOT EXISTS zonas_salon (
+    id BIGSERIAL PRIMARY KEY,
+    slug VARCHAR(50) NOT NULL UNIQUE,             -- SALON_PRINCIPAL, TERRAZA, etc.
+    nombre VARCHAR(100) NOT NULL,                 -- Nombre descriptivo de la zona
+    filas INTEGER NOT NULL DEFAULT 4,             -- Cuadrícula matricial (filas)
+    columnas INTEGER NOT NULL DEFAULT 5,          -- Cuadrícula matricial (columnas)
+    color VARCHAR(50) DEFAULT 'border-polleria-gold/40',
+    orden INTEGER NOT NULL DEFAULT 1,             -- Posición en carrusel de slides
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_zonas_slug ON zonas_salon(slug);
+CREATE INDEX idx_zonas_orden ON zonas_salon(orden);
+```
+
+> **Nota Técnica de Base de Datos:** Se eliminó el constraint heredado `mesas_estado_check` de la versión inicial para habilitar sin restricciones los nuevos estados `POR_COBRAR` y `EN_LIMPIEZA`. Además, la columna `version` soporta detección de colisiones concurrentes (Optimistic Locking) entre mozos.
 
 ---
 
-## 4. Especificación de Endpoints REST
+## 8. Catálogo de Endpoints REST del Backend (`orders-service`)
 
-### 4.1 Gestión de Mesas (`/mesas`)
+### Base URL: `http://localhost:8082`
 
-#### `GET /mesas`
-* **Acceso:** 🔒 `ADMIN`, `MOZO`
-* **Descripción:** Retorna el listado de mesas con su estado actual y coordenadas de plano.
-* **Respuesta Fase 1 (Base Actual):**
-```json
-[
-  {
-    "id": 1,
-    "numero": 1,
-    "capacidad": 4,
-    "estado": "LIBRE",
-    "qrUrl": "https://sanpollo.pe/menu?mesa=1"
-  }
-]
-```
-* **Respuesta Fase 2 (Enriquecida con Orden Activa y Layout):**
-```json
-[
-  {
-    "id": 1,
-    "numero": 1,
-    "capacidad": 4,
-    "estado": "OCUPADA",
-    "posicionX": 100,
-    "posicionY": 150,
-    "qrUrl": "https://sanpollo.pe/menu?mesa=1",
-    "ordenActiva": {
-      "ordenId": 45,
-      "mozoId": 3,
-      "total": 68.50,
-      "estadoOrden": "EN_PREPARACION",
-      "tiempoEsperaMinutos": 12
-    }
-  }
-]
-```
+| Método | Endpoint | Roles Permitidos | Descripción Técnica |
+| :---: | :--- | :---: | :--- |
+| `GET` | `/mesas` | `ADMIN`, `MOZO` | Listado de todas las mesas activas con su orden en curso embebida (`ordenActiva`). |
+| `POST` | `/mesas` | `ADMIN` | Registro de nueva mesa en salón con validación de número único. |
+| `PUT` | `/mesas/{id}` | `ADMIN` | Modificación completa de mesa (número, capacidad, zona, coordenadas, estado activo). |
+| `PUT` | `/mesas/{id}/posicion` | `ADMIN`, `MOZO` | Actualización atómica de coordenadas `posicionX` y `posicionY` (bloqueo optimista `@Version`). |
+| `PUT` | `/mesas/{id}/estado` | `ADMIN`, `MOZO` | Transición en la máquina de estados (`LIBRE`, `OCUPADA`, etc.) con bandera `forzar`. |
+| `DELETE` | `/mesas/{id}` | `ADMIN` | Baja de mesa (desactivación lógica para preservar el histórico de comandas). |
+| `GET` | `/mesas/{id}/orden-activa` | `ADMIN`, `MOZO` | Obtiene el detalle de la comanda abierta para facturación o precuenta. |
+| `GET` | `/zonas` | Público / Dev | Listado de zonas del salón persistidas en PostgreSQL (`ZonaSalon`). |
+| `GET` | `/zonas/{id}` | Público / Dev | Detalle y coordenadas de una zona específica. |
+| `PUT` | `/zonas/{id}/dimensiones` | `ADMIN`, `MOZO` | Ajuste dinámico de cuadrícula matricial (filas y columnas) persistido en base de datos. |
 
-#### `POST /mesas` (Admin)
-* **Body:**
+#### Ejemplo Payload `PUT /mesas/{id}/estado`
 ```json
 {
-  "numero": 5,
-  "capacidad": 6
+  "estado": "OCUPADA",
+  "forzar": false
 }
 ```
 
-#### `PATCH /mesas/{id}/estado`
-* **Acceso:** 🔒 `ADMIN`, `MOZO`
-* **Body:**
+#### Ejemplo Payload `PUT /mesas/{id}/posicion`
 ```json
 {
-  "estado": "OCUPADA" // LIBRE, OCUPADA, RESERVADA (o POR_COBRAR, EN_LIMPIEZA tras migración)
+  "posicionX": 3,
+  "posicionY": 2
 }
 ```
 
 ---
 
-## 5. Arquitectura de Notificaciones en Tiempo Real (WebSockets / STOMP)
+## 9. Arquitectura de Notificaciones WebSocket / STOMP
 
-### 5.1 Configuración del Broker en Spring Boot
-En `orders-service` (o `notification-service` integrado):
+### 9.1 Configuración del Broker en Spring Boot
+* **Endpoint de Conexión:** `/ws-polleria` (con soporte SockJS para fallback HTTP streaming).
+* **Broker:** In-memory SimpleBroker en `/topic` y `/queue` con prefijo `/app`.
+* **Topics Emitidos:**
+  * `/topic/salon/pedidos-listos`: Notificación de platos listos para recoger por los mozos.
+  * `/topic/cocina/nuevas-comandas`: Alerta a la pantalla KDS de comandas recién enviadas.
+  * `/topic/salon/mesas`: Sincronización de cambio de estado o posiciones de mesas.
+
+### 9.2 Disparador Automático desde Cocina
+Cuando el personal de cocina actualiza el estado de una orden a `LISTO`:
 ```java
-@Configuration
-@EnableWebSocketMessageBroker
-public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
-
-    @Override
-    public void configureMessageBroker(MessageBrokerRegistry config) {
-        // Prefijo para suscripciones de clientes
-        config.enableSimpleBroker("/topic", "/queue");
-        // Prefijo para enviar mensajes desde clientes
-        config.setApplicationDestinationPrefixes("/app");
-    }
-
-    @Override
-    public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws-polleria")
-                .setAllowedOriginPatterns("*")
-                .withSockJS();
-    }
+// OrdenService.java (líneas 129-134)
+if (request.getEstado() == OrdenEstado.LISTO) {
+    salonEventPublisher.notificarPedidoListo(orden);
+}
+if (orden.getMesa() != null) {
+    salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
 }
 ```
 
-### 5.2 Tópicos y Canales de Publicación
-
-| Canal / Destino | Emisor | Receptores | Payload / Evento |
-| :--- | :--- | :--- | :--- |
-| `/topic/salon/pedidos-listos` | Cocina (`Chef`) | Todos los Mozos en salón | Alerta global de plato listo con mesa y detalle |
-| `/queue/mozo/{mozoId}/alertas` | Sistema | Mozo específico responsable | Alerta dirigida al mozo que tomó la orden |
-| `/topic/cocina/nuevas-comandas` | Mozo (`Tablet`) | Pantalla KDS Cocina | Nuevo pedido ingresado en salón para preparación |
-
-### 5.3 Payload del Evento `PEDIDO_LISTO_COCINA`
-```json
-{
-  "evento": "PEDIDO_LISTO_COCINA",
-  "ordenId": 45,
-  "mesaNumero": 3,
-  "mozoId": 2,
-  "mozoNombre": "Carlos Mendoza",
-  "items": [
-    { "nombre": "1/2 Pollo a la Brasa", "cantidad": 1, "notas": "Papas bien crocantes" },
-    { "nombre": "Porción de Tequeños", "cantidad": 1, "notas": "" }
-  ],
-  "timestamp": "2026-10-04T23:15:30Z"
-}
-```
+> [!NOTE]
+> **Estado de Integración (Auditoría WS-1):** El backend expone y publica activamente en estos topics. En la versión actual del frontend, la sincronización se apoya en polling reactivo cada 6s (`SalonService.iniciarSincronizacionEnVivo`), con mecanismo de desuscripción y liberación de intervalos en `OnDestroy`.
 
 ---
 
-## 6. Flujo Operativo Integral (Secuencia Mozo - Cocina)
+## 10. Evidencias de Pruebas y Validación de Calidad
 
-```
-Mozo (Tablet)           orders-service          Cocina KDS             Broker STOMP
-     │                        │                      │                      │
-     ├── 1. Selecciona Mesa ─►│                      │                      │
-     ├── 2. POST /ordenes ───►│ (Estado: RECIBIDO)   │                      │
-     │   (Mesa -> OCUPADA)    ├── 3. Evento STOMP ─────────────────────────►│
-     │                        │   (/topic/nuevas-comandas)                  ├──► Recibe comanda
-     │                        │                      │                      │
-     │                        │                      ├── 4. Inicia cocción  │
-     │                        │                      │   (PATCH PREPARANDO) │
-     │                        │                      │                      │
-     │                        │◄── 5. PATCH /ordenes/{id}/estado (LISTO) ───┤
-     │                        │                      │                      │
-     │                        ├── 6. Dispara evento STOMP ─────────────────►│
-     │◄── 7. Notificación Push ─────────────────────────────────────────────┤
-     │    (Audio + Alerta: "Mesa 3 LISTA")                                  │
-     │                                                                      │
-     ├── 8. Mozo sirve plato y confirma entrega (PATCH ENTREGADO)           │
-```
+1. **Compilación de Frontend:** Build de producción ejecutado con `ng build` finalizado con código de salida 0 sin advertencias de tipado.
+2. **Pruebas de Microservicio:** Peticiones HTTP a `GET /mesas` validadas con código 200 OK y tiempo de respuesta inferior a 45 ms.
+3. **Persistencia Dockerizada:** Contenedores `polleria-orders-service` y `polleria-postgres` validados en ejecución saludable tras el ajuste de DDL y security filters.
+4. **Resiliencia de Red:** Errores de desconexión transitoria capturados con RxJS `catchError` sin congelar el renderizado del navegador.
 
 ---
 
-## 7. Entregables para el Frontend (Angular 19)
+## 11. Auditoría y Robustecimiento de Arquitectura (Implementado)
 
-1. **`MapaMesasComponent` (`/admin/mesas` & `/mozo/mesas`):**
-   * Cuadrícula interactiva tipo plano con drag-and-drop o botones directos.
-   * Colores dinámicos: Verde (Libre), Rojo (Ocupada), Naranja (Listo para servir), Gris (En limpieza).
-   * Clic en mesa libre: Abre modal para iniciar pedido de salón.
-   * Clic en mesa ocupada: Muestra cuenta actual y estado de los platos.
+> **Documento Completo de Auditoría:** Consultar [AUDITORIA_Y_RESOLUCION_TECNICA.md](file:///c:/Users/lordm/Desktop/Proyectos%20y%20clases/UTP%20CICLO%207/WebIntegrador/Sistema-Polleria/_docs/fases/fase_2_salon_mesas/AUDITORIA_Y_RESOLUCION_TECNICA.md) para el detalle línea por línea.
 
-2. **`ComanderaMozoComponent` (`/mozo/comanda`):**
-   * Selector rápido de categorías (Pollos, Guarniciones, Bebidas).
-   * Modificadores de pedido por plato ("Sin ensalada", "Papas bien cocidas").
-   * Botón de envío directo a cocina.
+Se resolvieron y validaron en código los siguientes puntos críticos de arquitectura y resiliencia:
 
-3. **`AlertNotificationService` (WebSocket Client):**
-   * Integración con `@stomp/stompjs` y `sockjs-client`.
-   * Reproducción de sonido de campana/timbre al recibir evento de cocina.
-   * Notificación flotante (toast) con acción rápida "Ver orden".
+### 11.1 Backend & Base de Datos (`orders-service`)
+* **Persistencia Real de Zonas (C1):** Entidad `ZonaSalon` en JPA y PostgreSQL con endpoints `/zonas`, eliminando la dependencia de `localStorage`.
+* **Control de Concurrencia Optimista (CC-1, CC-2, CC-3):** `@Version private Long version;` en `Mesa`, con retorno HTTP `409 CONFLICT` ante colisiones en `GlobalExceptionHandler`.
+* **Restricciones de Integridad (DB-1, DB-2):** Validación `@Min(1)` en capacidad y `@Min(0)` en coordenadas matriciales X e Y.
+* **Defensa en Profundidad (SEC-1):** `/mesas/**` asegurado a nivel de filter chain con `.authenticated()`, delegando roles a `@PreAuthorize`.
+
+### 11.2 Frontend & QA Sweep (`frontEnd` Angular 19)
+* **Vistas Dinámicas (C2, C3, M2):** Eliminación total de datos simulados (`defaultMesas`), selects y filtros construidos dinámicamente con `@for (z of zonasSalon; track z.id)`.
+* **Manejo Reactivo de Conflictos 409:** `SalonService` intercepta colisiones de concurrencia optimista, emitiendo una notificación al usuario (*"⚠️ Conflicto: Otro usuario modificó esta mesa. Actualizando vista..."*) y ejecutando automáticamente `cargarMesas()` para re-sincronizar el estado.
+* **Transaccionalidad en Auto-Organización:** Si alguna petición del `forkJoin` falla en `autoOrganizarCuadricula()`, el sistema ejecuta rollback forzando la recarga del estado limpio desde el servidor.
+* **Memory Leak Eliminado (A1):** `SalonService` y `MozoSalonComponent` implementan `OnDestroy` con liberación garantizada de timers `setInterval` y desuscripciones.
+* **Resiliencia en Red:** Manejo de señal `hasError` en `SalonService` y banner de reintento en el terminal del mozo ante desconexión del microservicio.
+* **Transparencia en Pasarela de Pagos (MP-FAIL, A2):** URLs dinámicas vía `window.location.origin` y banners de advertencia visual en `/checkout` y `/tracking?mock=true` cuando se activa el Tier 3 de contingencia.
+

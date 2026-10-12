@@ -1,7 +1,7 @@
 export type TableStatus = 'LIBRE' | 'OCUPADA' | 'POR_COBRAR' | 'EN_LIMPIEZA' | 'LIMPIEZA' | 'RESERVADA';
 
 export type MesaEstado = TableStatus;
-export type SalonZona = 'TERRAZA' | 'ZONA_VIP' | 'SALON_PRINCIPAL' | 'SEGUNDO_PISO';
+export type SalonZona = string;
 
 export interface OrdenActivaMesa {
   ordenId: number;

@@ -45,6 +45,17 @@ export class AuthService {
     return this.refreshToken();
   }
 
+  private isTokenExpired(token: string): boolean {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return true;
+      const payload = JSON.parse(atob(parts[1]));
+      return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now();
+    } catch {
+      return true;
+    }
+  }
+
   private restoreSession(): void {
     if (isPlatformBrowser(this.platformId)) {
       const savedUser = localStorage.getItem('polleria_user');
@@ -52,6 +63,17 @@ export class AuthService {
       const savedRefreshToken = localStorage.getItem('polleria_refresh_token');
 
       if (savedUser && savedToken) {
+        if (this.isTokenExpired(savedToken)) {
+          if (savedRefreshToken) {
+            this.refreshTokens(savedRefreshToken).subscribe({
+              error: () => this.forceLogout()
+            });
+          } else {
+            this.forceLogout();
+          }
+          return;
+        }
+
         try {
           this.currentUser.set(JSON.parse(savedUser));
           this.token.set(savedToken);
@@ -179,7 +201,6 @@ export class AuthService {
       localStorage.removeItem('polleria_user');
       localStorage.removeItem('polleria_token');
       localStorage.removeItem('polleria_refresh_token');
-      localStorage.removeItem('polleria_my_order_ids');
     }
   }
 
@@ -196,7 +217,6 @@ export class AuthService {
       if (auth.refreshToken) {
         localStorage.setItem('polleria_refresh_token', auth.refreshToken);
       }
-      localStorage.removeItem('polleria_my_order_ids');
     }
   }
 }

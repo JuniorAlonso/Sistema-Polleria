@@ -9,6 +9,7 @@ export const environment = {
   incidentApiUrl: 'http://localhost:8088',
   notificationApiUrl: 'http://localhost:3001/api/notificaciones',
   wsUrl: 'http://localhost:8082/ws-polleria',
+  appBaseUrl: 'http://localhost:4200',
   services: {
     auth: 'http://localhost:8081/auth',
     products: 'http://localhost:8082/productos',
@@ -19,5 +20,9 @@ export const environment = {
     finance: 'http://localhost:8087',
     incidents: 'http://localhost:8088'
   },
-  mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
+  mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
+  mercadoPago: {
+    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
+    accessToken: 'APP_USR-2733300582350003-082916-7d60b458fb460f2ef2eb803852c0935e-3645988283'
+  }
 };

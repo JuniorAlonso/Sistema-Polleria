@@ -1,4 +1,6 @@
+const path = require('path');
 require('dotenv').config({ quiet: true });
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 const fs = require('fs');
 
 // Chrome instalado en el servidor Linux de despliegue; en Windows/macOS puppeteer usa el suyo
@@ -19,7 +21,7 @@ const config = {
     databaseUrl: process.env.DATABASE_URL || null,
 
     // Mismo secreto que auth-service: protege GET /historial (solo ADMIN)
-    jwtSecret: process.env.JWT_SECRET || null,
+    jwtSecret: process.env.JWT_SECRET || 'sanpollo-dev-secret-key-2026-super-segura-256bits-minimo',
 
     // Clave compartida con orders/payments. Si está vacía, /pago y /estado quedan abiertos.
     internalApiKey: process.env.NOTIFICATION_API_KEY || null,
