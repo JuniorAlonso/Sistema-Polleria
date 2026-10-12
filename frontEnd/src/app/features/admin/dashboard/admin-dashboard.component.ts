@@ -3583,8 +3583,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.isProcesandoMesa.set(false);
-        this.notify.showSuccess('Posición actualizada en el plano');
-        this.showEditarCoordenadasModal = false;
+        this.notify.showError('No se pudo guardar la posición de la mesa');
       }
     });
   }
@@ -3599,7 +3598,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.isProcesandoMesa.set(false);
-        this.notify.showSuccess(`${mesa.nombre} actualizada a ${nuevoEstado}`);
+        this.notify.showError(`No se pudo cambiar ${mesa.nombre} a ${nuevoEstado}`);
       }
     });
   }
@@ -3851,8 +3850,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.showDespachoModal = false;
       },
       error: () => {
-        this.notify.showSuccess(`Despacho registrado para la estación ${this.despachoForm.estacion}`);
-        this.showDespachoModal = false;
+        this.notify.showError(`No se pudo registrar el despacho a ${this.despachoForm.estacion}`);
       }
     });
   }
@@ -3889,8 +3887,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.showMermaModal = false;
       },
       error: () => {
-        this.notify.showSuccess('Merma registrada correctamente');
-        this.showMermaModal = false;
+        this.notify.showError('No se pudo registrar la merma');
       }
     });
   }
@@ -3904,8 +3901,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.showAbrirCajaModal = false;
       },
       error: () => {
-        this.notify.showSuccess(`Turno de caja aperturado`);
-        this.showAbrirCajaModal = false;
+        this.notify.showError('No se pudo abrir la caja del turno');
       }
     });
   }
@@ -3930,8 +3926,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.showCerrarCajaModal = false;
       },
       error: () => {
-        this.notify.showSuccess('Arqueo y cierre de turno completado');
-        this.showCerrarCajaModal = false;
+        this.notify.showError('No se pudo cerrar la caja del turno');
       }
     });
   }
@@ -3953,8 +3948,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.movimientoForm.monto = 0;
       },
       error: () => {
-        this.notify.showSuccess('Movimiento registrado en caja menor');
-        this.showMovimientoCajaModal = false;
+        this.notify.showError('No se pudo registrar el movimiento de caja chica');
       }
     });
   }
@@ -3980,8 +3974,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.showResolverReclamoModal = false;
       },
       error: () => {
-        this.notify.showSuccess('Reclamo resuelto con éxito');
-        this.showResolverReclamoModal = false;
+        this.notify.showError(`No se pudo resolver el reclamo #${this.reclamoSeleccionado?.id}`);
       }
     });
   }
@@ -4009,8 +4002,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.incidenteForm.solucionAplicada = '';
       },
       error: () => {
-        this.notify.showSuccess('Incidente documentado con éxito');
-        this.showIncidenteModal = false;
+        this.notify.showError('No se pudo documentar el incidente');
       }
     });
   }
