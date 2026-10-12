@@ -237,67 +237,6 @@ declare const MercadoPago: any;
             </div>
 
             @if (metodoPago() === 'TARJETA') {
-              <!-- Input Número de Tarjeta -->
-              <div class="space-y-1 pt-0.5">
-                <label class="block text-[10px] font-bold uppercase text-white/70 tracking-wider">
-                  NÚMERO DE TARJETA
-                </label>
-                <div class="relative flex items-center">
-                  <input 
-                    type="text" 
-                    [(ngModel)]="numeroTarjeta" 
-                    placeholder="•••• •••• •••• ••••"
-                    maxlength="19"
-                    class="w-full px-3.5 py-2 pr-10 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/40 text-xs sm:text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-                  />
-                  <span class="absolute right-3 text-white/60">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
-                    </svg>
-                  </span>
-                </div>
-              </div>
-
-              <!-- Grid Vencimiento y CVV -->
-              <div class="grid grid-cols-2 gap-2.5 pt-0.5">
-                <div class="space-y-1">
-                  <label class="block text-[10px] font-bold uppercase text-white/70 tracking-wider">
-                    VENCIMIENTO
-                  </label>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="vencimiento" 
-                    placeholder="MM/YY"
-                    maxlength="5"
-                    class="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/40 text-xs sm:text-sm font-mono focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-                  />
-                </div>
-
-                <div class="space-y-1">
-                  <label class="block text-[10px] font-bold uppercase text-white/70 tracking-wider">
-                    CVV
-                  </label>
-                  <input 
-                    type="password" 
-                    [(ngModel)]="cvv" 
-                    placeholder="123"
-                    maxlength="4"
-                    class="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/40 text-xs sm:text-sm font-mono focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-                  />
-                </div>
-              </div>
-
-              <!-- Banner Advertencia Modo Mock MP -->
-              @if (isMockPayment()) {
-                <div class="p-3.5 rounded-xl bg-amber-500/15 border-l-4 border-amber-500 text-amber-200 text-xs flex items-start gap-2.5 my-2 animate-fade-in">
-                  <span class="text-base leading-none">⚠️</span>
-                  <div>
-                    <p class="font-bold">⚠️ Entorno de Pruebas: Las credenciales de MercadoPago no están configuradas.</p>
-                    <p class="text-amber-300/80 text-[11px] mt-0.5">Este pago es simulado y continuará bajo el modo de resiliencia.</p>
-                  </div>
-                </div>
-              }
-
               <!-- Botón Oficial de Mercado Pago Checkout Pro (Abajito) -->
               <div class="pt-2">
                 <button 
@@ -365,14 +304,10 @@ export class CheckoutComponent implements OnInit {
 
   readonly metodoPago = signal<PaymentMethod>('TARJETA');
   readonly isProcessing = signal<boolean>(false);
-  readonly isMockPayment = signal<boolean>(false);
 
-  direccion = 'Av. Larco 1234, Miraflores';
+  direccion = '';
   celular = '';
-  instrucciones = 'Instrucciones especiales (ej. Timbre 301)';
-  numeroTarjeta = '4557 8890 1234 5678';
-  vencimiento = '12/28';
-  cvv = '882';
+  instrucciones = '';
 
   ngOnInit(): void {
     this.celular = this.auth.currentUser()?.celular || '';
