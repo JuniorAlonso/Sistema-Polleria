@@ -12,6 +12,7 @@ import com.sistema.polleria.payments.gateway.PaymentGatewayService;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,10 @@ public class PagoService {
     private final MercadoPagoGateway mercadoPagoGateway;
     private final RestClient ordersRestClient;
     private final WhatsappNotificationClient whatsappNotificationClient;
+
+    // Clave compartida con orders-service; permite avisar del pago sin JWT (p. ej. desde el webhook)
+    @Value("${orders.service.internal-key:}")
+    private String ordersInternalKey;
 
     @Transactional
     public PagoResponse iniciar(IniciarPagoRequest request, Long clienteId, String bearerToken) {
@@ -165,7 +170,10 @@ public class PagoService {
                 var spec = ordersRestClient.patch()
                         .uri("/ordenes/{id}/estado", ordenId)
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .body(java.util.Map.of("nuevoEstado", "EN_PREPARACION"));
+                        .body(java.util.Map.of("estado", "EN_PREPARACION"));
+                if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
+                    spec.header("X-Internal-Key", ordersInternalKey);
+                }
                 if (bearerToken != null && !bearerToken.isBlank()) {
                     spec.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
                 }

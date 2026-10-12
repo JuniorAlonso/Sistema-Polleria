@@ -18,6 +18,15 @@ import { isPlatformBrowser } from '@angular/common';
 
 declare const MercadoPago: any;
 
+const PEDIDO_PENDIENTE_MP_KEY = 'sanpollo.mpPedidoPendiente';
+
+/** Pedido ya registrado que espera el pago en Mercado Pago (para reintentos y la página de retorno). */
+interface PedidoPendienteMp {
+  id: string;
+  codigo: string;
+  firma: string;
+}
+
 @Component({
   selector: 'app-checkout',
   standalone: true,
@@ -383,23 +392,37 @@ export class CheckoutComponent implements OnInit {
   }
 
   payWithMercadoPago(): void {
-    if (!this.direccion) {
-      this.notify.showError('Por favor ingresa la dirección de entrega');
-      return;
-    }
-    if (this.cart.isEmpty()) {
-      this.notify.showError('Tu carrito está vacío');
-      return;
-    }
+    const celularLimpio = this.validarDatosPedido();
+    if (!celularLimpio) return;
 
     this.isProcessing.set(true);
-
-    // Usamos un ID temporal para la preferencia de Mercado Pago
-    // El pedido real se registrará después del pago exitoso vía webhook
-    const tempOrderId = Date.now() % 1000000; // número manejable para MP
     const totalAPagar = this.cart.total();
+    const firma = this.firmaCarrito();
 
-    this.paymentService.crearPreferenciaMercadoPago(tempOrderId, totalAPagar).subscribe({
+    // Si el cliente vuelve de Mercado Pago sin pagar y reintenta con el mismo carrito,
+    // se reutiliza el pedido ya creado en vez de registrar uno nuevo.
+    const pendiente = this.leerPedidoPendienteMp();
+    if (pendiente && pendiente.firma === firma) {
+      this.redirigirAMercadoPago(pendiente.id, totalAPagar);
+      return;
+    }
+
+    // El pedido real se registra primero; la preferencia de Mercado Pago apunta a su ID
+    // para que el webhook pueda aprobar el pago y avanzar ese pedido (RF21).
+    this.ordersService.createOrder(this.construirOrden(celularLimpio, 'TARJETA')).subscribe({
+      next: (createdOrder) => {
+        this.guardarPedidoPendienteMp({ id: createdOrder.id, codigo: createdOrder.codigoSeguimiento, firma });
+        this.redirigirAMercadoPago(createdOrder.id, totalAPagar);
+      },
+      error: (err) => {
+        this.isProcessing.set(false);
+        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
+      }
+    });
+  }
+
+  private redirigirAMercadoPago(ordenId: string, totalAPagar: number): void {
+    this.paymentService.crearPreferenciaMercadoPago(ordenId, totalAPagar).subscribe({
       next: (pref) => {
         this.isProcessing.set(false);
         const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
@@ -421,35 +444,55 @@ export class CheckoutComponent implements OnInit {
     });
   }
 
-  confirmOrder(): void {
+  private firmaCarrito(): string {
+    return this.cart.items().map(it => `${it.product.id}x${it.cantidad}`).join('|') + `@${this.cart.total()}`;
+  }
+
+  private leerPedidoPendienteMp(): PedidoPendienteMp | null {
+    try {
+      const raw = sessionStorage.getItem(PEDIDO_PENDIENTE_MP_KEY);
+      return raw ? JSON.parse(raw) as PedidoPendienteMp : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private guardarPedidoPendienteMp(pedido: PedidoPendienteMp): void {
+    try {
+      sessionStorage.setItem(PEDIDO_PENDIENTE_MP_KEY, JSON.stringify(pedido));
+    } catch {
+      // sin sessionStorage solo se pierde la reutilización del pedido al reintentar
+    }
+  }
+
+  /** Valida dirección, celular y carrito. Devuelve el celular normalizado o null si algo falla. */
+  private validarDatosPedido(): string | null {
     if (!this.direccion) {
       this.notify.showError('Por favor ingresa la dirección de entrega');
-      return;
+      return null;
     }
 
     const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
     if (!/^9\d{8}$/.test(celularLimpio)) {
       this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
-      return;
+      return null;
     }
 
     if (this.cart.isEmpty()) {
       this.notify.showError('Tu carrito está vacío');
-      return;
+      return null;
     }
+    return celularLimpio;
+  }
 
-    this.isProcessing.set(true);
-
+  private construirOrden(celular: string, metodoPago: PaymentMethod): Order {
     const currentUser = this.auth.currentUser();
-    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
-    const clienteCelular = celularLimpio;
-
-    const orderData: Order = {
+    return {
       id: '0',
       codigoSeguimiento: '',
       cliente: {
-        nombre: clienteNombre,
-        celular: clienteCelular,
+        nombre: currentUser?.nombre || 'Cliente San Pollo',
+        celular,
         correo: currentUser?.correo,
         direccion: this.direccion,
         referencia: this.instrucciones
@@ -457,7 +500,7 @@ export class CheckoutComponent implements OnInit {
       items: [...this.cart.items()],
       tipo: 'DELIVERY',
       estado: 'EN_PREPARACION',
-      metodoPago: this.metodoPago(),
+      metodoPago,
       subtotal: this.cart.subtotal(),
       costoEnvio: this.cart.costoEnvio(),
       descuento: this.cart.descuento(),
@@ -466,6 +509,14 @@ export class CheckoutComponent implements OnInit {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+  }
+
+  confirmOrder(): void {
+    const celularLimpio = this.validarDatosPedido();
+    if (!celularLimpio) return;
+
+    this.isProcessing.set(true);
+    const orderData = this.construirOrden(celularLimpio, this.metodoPago());
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {

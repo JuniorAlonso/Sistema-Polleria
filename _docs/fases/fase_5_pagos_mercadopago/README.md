@@ -357,3 +357,38 @@ ORDERS_SERVICE_URL=http://localhost:8082
 - [ ] Los pagos contraentrega de Fase 1 siguen funcionando sin cambios.
 - [ ] Sin variables de Mercado Pago, el sistema funciona con mocks (retrocompatibilidad).
 - [ ] Los reembolsos se procesan correctamente vía la API de Mercado Pago.
+
+---
+
+## 10. Estado actual de la implementación (actualizado 2026-10-11)
+
+> Sección para quien continúe la fase. Lo de arriba es el diseño; aquí está lo que realmente existe en el código.
+
+### ✅ Hecho
+- `MercadoPagoGateway`: crea la preferencia (Checkout Pro) y **verifica que la orden exista** en `orders-service` (GET con `X-Internal-Key`) antes de generarla.
+- `PaymentGatewayService`: si hay `MERCADOPAGO_ACCESS_TOKEN`, TARJETA/YAPE_PLIN van a Mercado Pago; si no, a los mocks.
+- `MercadoPagoWebhookController`: maneja `approved`, `rejected`, `cancelled`, `refunded`, `pending/in_process` y valida la firma HMAC (`x-signature`) si `MERCADOPAGO_WEBHOOK_SECRET` está configurado.
+- Reembolso total/parcial con `PaymentClient.refund()` (`POST /pagos/{id}/reembolso` y `/pagos/orden/{ordenId}/reembolso`).
+- **Checkout (frontend)**: el pedido real se crea **antes** de ir a Mercado Pago y la preferencia usa su ID real. Si el cliente vuelve sin pagar y reintenta con el mismo carrito, se reutiliza el pedido (guardado en `sessionStorage` con la clave `sanpollo.mpPedidoPendiente`).
+- **Aviso a orders-service (RF21) corregido**: payments-service enviaba `{"nuevoEstado": ...}` (el DTO espera `estado`) y el webhook no tenía JWT. Ahora envía `estado` + `X-Internal-Key`, y `PATCH /ordenes/{id}/estado` acepta la clave interna.
+- **Seguridad**: se eliminó el Access Token que estaba en el frontend (fallback que llamaba directo a la API de MP) y el proxy `/mp-api`. Las credenciales ya no tienen valor por defecto en `application*.properties` ni en `.env.example`.
+
+### ⚙️ Configuración local
+Crear `polleria/payments-service/.env` (ignorado por git; Spring lo carga con `spring.config.import`):
+```
+MERCADOPAGO_ACCESS_TOKEN=<access token de prueba>
+MERCADOPAGO_PUBLIC_KEY=<public key de prueba>
+```
+⚠️ **El Access Token anterior estuvo publicado en el repo: hay que renovarlo** en el panel de Mercado Pago de su dueño.
+
+### ❌ Falta
+1. **Páginas de retorno** (§6.2): no existen `/checkout/success|failure|pending`. Hoy `success` va a `/tracking` sin `code` y nadie lee `?status=failure|pending`. Usar el pedido guardado en `sessionStorage` (`sanpollo.mpPedidoPendiente`) para mostrar el seguimiento, vaciar el carrito al aprobarse y borrar esa clave.
+2. **Rechazo/cancelación hacia orders-service (RNF09)**: el webhook solo actualiza el `Pago`; decidir si `cancelled` cancela la orden y notificarlo.
+3. **Proteger `POST /pagos/mercadopago/preferencia`**: en `SecurityConfig` está en `permitAll` (el README pide JWT) y por eso `clienteId` queda en 0.
+4. **Diferencia de montos**: orders-service calcula el total solo con productos (sin envío S/ 6 ni precios con descuento) y el frontend cobra `cart.total()`. Unificar el cálculo en backend y que la preferencia use el total del servidor.
+5. **Pago duplicado**: `PagoService.iniciar()` con TARJETA y MP configurado llama a `crearPreferencia()` (que ya guarda un `Pago`) y luego guarda otro para la misma orden.
+6. **Reembolso**: si MP falla igual marca `REEMBOLSADO`, y un reembolso parcial deja el pago como reembolsado total.
+7. **Webhook en local**: MP no puede llamar a `localhost`; usar ngrok o el despliegue para `MERCADOPAGO_WEBHOOK_URL`.
+8. `application.properties` termina con `spring.profiles.active=local` (activaría el perfil local en producción).
+9. **Tests**: no corren con Java 25 (Mockito); usar Java 21. Faltan pruebas end-to-end con tarjetas de prueba (criterios §9.3 sin marcar).
+10. Ajustar nombres de variables en §7 (`MERCADOPAGO_WEBHOOK_URL`, `MERCADOPAGO_WEBHOOK_SECRET`; no `MERCADOPAGO_NOTIFICATION_URL`).
