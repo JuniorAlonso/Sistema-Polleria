@@ -20,6 +20,7 @@ public class MesaController {
     private final MesaService mesaService;
 
     @GetMapping
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<List<MesaResponse>> listar(
             @RequestParam(required = false, defaultValue = "false") boolean incluirInactivas
     ) {
@@ -27,16 +28,19 @@ public class MesaController {
     }
 
     @GetMapping("/libres")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<List<MesaResponse>> listarLibres() {
         return ResponseEntity.ok(mesaService.listarLibres());
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<MesaResponse> obtener(@PathVariable Long id) {
         return ResponseEntity.ok(mesaService.obtener(id));
     }
 
     @GetMapping("/{id}/orden-activa")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<OrdenActivaResponse> obtenerOrdenActiva(@PathVariable Long id) {
         OrdenActivaResponse ordenActiva = mesaService.obtenerOrdenActiva(id);
         if (ordenActiva == null) {
@@ -46,6 +50,7 @@ public class MesaController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<MesaResponse> crear(@Valid @RequestBody CrearMesaRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(mesaService.crear(
@@ -58,6 +63,7 @@ public class MesaController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<MesaResponse> actualizar(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarMesaRequest request
@@ -66,6 +72,7 @@ public class MesaController {
     }
 
     @RequestMapping(value = "/{id}/estado", method = {RequestMethod.PATCH, RequestMethod.PUT})
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<MesaResponse> actualizarEstado(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarEstadoMesaRequest request
@@ -74,6 +81,7 @@ public class MesaController {
     }
 
     @RequestMapping(value = "/{id}/posicion", method = {RequestMethod.PATCH, RequestMethod.PUT})
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<MesaResponse> actualizarPosicion(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarPosicionMesaRequest request
@@ -82,6 +90,7 @@ public class MesaController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<Void> eliminar(@PathVariable Long id) {
         mesaService.eliminar(id);
         return ResponseEntity.noContent().build();
