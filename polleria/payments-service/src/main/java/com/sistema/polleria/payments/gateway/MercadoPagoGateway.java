@@ -34,13 +34,13 @@ public class MercadoPagoGateway implements PaymentGateway {
     @Value("${mercadopago.webhook.url:}")
     private String webhookUrl;
 
-    @Value("${mercadopago.back-urls.success:http://localhost:4200/tracking}")
+    @Value("${mercadopago.back-urls.success:http://localhost:4200/checkout/success}")
     private String successUrl;
 
-    @Value("${mercadopago.back-urls.failure:http://localhost:4200/checkout?status=failure}")
+    @Value("${mercadopago.back-urls.failure:http://localhost:4200/checkout/failure}")
     private String failureUrl;
 
-    @Value("${mercadopago.back-urls.pending:http://localhost:4200/checkout?status=pending}")
+    @Value("${mercadopago.back-urls.pending:http://localhost:4200/checkout/pending}")
     private String pendingUrl;
 
     @Value("${mercadopago.sandbox:true}")
@@ -104,9 +104,9 @@ public class MercadoPagoGateway implements PaymentGateway {
                 .build();
 
         // 3. URLs de retorno para redirección del cliente
-        String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/tracking";
-        String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout?status=failure";
-        String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout?status=pending";
+        String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/checkout/success";
+        String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout/failure";
+        String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout/pending";
 
         log.debug("Back URLs → success={}, failure={}, pending={}", safeSuccessUrl, safeFailureUrl, safePendingUrl);
 
@@ -120,6 +120,7 @@ public class MercadoPagoGateway implements PaymentGateway {
         PreferenceRequest.PreferenceRequestBuilder preferenceBuilder = PreferenceRequest.builder()
                 .items(List.of(itemRequest))
                 .backUrls(backUrls)
+                .autoReturn("approved")
                 .externalReference(String.valueOf(pago.getId()));
 
         if (webhookUrl != null && !webhookUrl.isBlank()) {

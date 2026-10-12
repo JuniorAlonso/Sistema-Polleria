@@ -40,6 +40,7 @@ public class PagoController {
     /** Crear Preferencia de Mercado Pago (Checkout Pro) */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
     public PreferenceResponse crearPreferenciaMercadoPago(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal) {

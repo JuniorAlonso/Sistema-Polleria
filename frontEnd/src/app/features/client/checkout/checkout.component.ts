@@ -2,7 +2,7 @@ import { etiquetaPedido } from '../../../core/utils/pedido';
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterModule } from '@angular/router';
+import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CartService } from '../../../core/services/cart.service';
 import { OrdersService } from '../../../core/services/orders.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
@@ -349,6 +349,7 @@ export class CheckoutComponent implements OnInit {
   private paymentService = inject(PaymentService);
   private auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
 
   readonly metodoPago = signal<PaymentMethod>('TARJETA');
@@ -363,6 +364,21 @@ export class CheckoutComponent implements OnInit {
 
   ngOnInit(): void {
     this.celular = this.auth.currentUser()?.celular || '';
+
+    // Manejar parámetros de retorno de pasarela si llegan al checkout
+    this.route.queryParams.subscribe(params => {
+      if (params['status'] === 'failure') {
+        this.notify.showError(
+          'El pago en Mercado Pago no fue completado',
+          'Puedes reintentar el pago con tu tarjeta o elegir pago contraentrega.'
+        );
+      } else if (params['status'] === 'pending') {
+        this.notify.showInfo(
+          'Pago en proceso de revisión',
+          'Mercado Pago está procesando tu pago. Te notificaremos en cuanto se acredite.'
+        );
+      }
+    });
 
     if (this.cart.isEmpty()) {
       const p1 = this.productsService.products().find(p => p.id === '1' || p.id === 'prod-1');
@@ -387,6 +403,13 @@ export class CheckoutComponent implements OnInit {
       this.notify.showError('Por favor ingresa la dirección de entrega');
       return;
     }
+
+    const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
+    if (!/^9\d{8}$/.test(celularLimpio)) {
+      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
+      return;
+    }
+
     if (this.cart.isEmpty()) {
       this.notify.showError('Tu carrito está vacío');
       return;
@@ -394,34 +417,84 @@ export class CheckoutComponent implements OnInit {
 
     this.isProcessing.set(true);
 
-    // Usamos un ID temporal para la preferencia de Mercado Pago
-    // El pedido real se registrará después del pago exitoso vía webhook
-    const tempOrderId = Date.now() % 1000000; // número manejable para MP
-    const totalAPagar = this.cart.total();
+    const currentUser = this.auth.currentUser();
+    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
+    const clienteCelular = celularLimpio;
 
-    this.paymentService.crearPreferenciaMercadoPago(tempOrderId, totalAPagar).subscribe({
-      next: (pref) => {
-        this.isProcessing.set(false);
-        const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
-        if (redirectUrl) {
-          this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
-          // Pequeña pausa para mostrar el toast antes de redirigir
-          setTimeout(() => {
-            window.location.href = redirectUrl;
-          }, 800);
-        } else {
-          this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
+    // RF21: Se crea primero la orden real en estado RECIBIDO (pendiente de pago)
+    const orderData: Order = {
+      id: '0',
+      codigoSeguimiento: '',
+      cliente: {
+        nombre: clienteNombre,
+        celular: clienteCelular,
+        correo: currentUser?.correo,
+        direccion: this.direccion,
+        referencia: this.instrucciones
+      },
+      items: [...this.cart.items()],
+      tipo: 'DELIVERY',
+      estado: 'PENDIENTE_PAGO',
+      metodoPago: 'TARJETA',
+      subtotal: this.cart.subtotal(),
+      costoEnvio: this.cart.costoEnvio(),
+      descuento: this.cart.descuento(),
+      total: this.cart.total(),
+      notasGenerales: this.instrucciones,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    this.ordersService.createOrder(orderData).subscribe({
+      next: (createdOrder) => {
+        // Almacenar el pedido creado para las pantallas de retorno de Mercado Pago
+        if (typeof window !== 'undefined' && window.localStorage) {
+          localStorage.setItem('sanpollo_last_order', JSON.stringify({
+            id: createdOrder.id,
+            code: createdOrder.codigoSeguimiento,
+            total: createdOrder.total
+          }));
         }
+
+        const realOrderId = typeof createdOrder.id === 'number'
+          ? createdOrder.id
+          : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
+
+        // Crear la preferencia con el ordenId real generado en orders-service
+        this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
+          next: (pref) => {
+            this.cart.clearCart();
+            this.isProcessing.set(false);
+            const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
+            if (redirectUrl) {
+              this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+              setTimeout(() => {
+                window.location.href = redirectUrl;
+              }, 800);
+            } else {
+              this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
+            }
+          },
+          error: (err) => {
+            this.isProcessing.set(false);
+            console.error('Error Mercado Pago:', err);
+            this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos (:8083) esté encendido.');
+          }
+        });
       },
       error: (err) => {
         this.isProcessing.set(false);
-        console.error('Error Mercado Pago:', err);
-        this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos (:8083) esté encendido.');
+        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
       }
     });
   }
 
   confirmOrder(): void {
+    if (this.metodoPago() === 'TARJETA') {
+      this.payWithMercadoPago();
+      return;
+    }
+
     if (!this.direccion) {
       this.notify.showError('Por favor ingresa la dirección de entrega');
       return;
@@ -456,7 +529,7 @@ export class CheckoutComponent implements OnInit {
       },
       items: [...this.cart.items()],
       tipo: 'DELIVERY',
-      estado: 'EN_PREPARACION',
+      estado: 'PENDIENTE_PAGO',
       metodoPago: this.metodoPago(),
       subtotal: this.cart.subtotal(),
       costoEnvio: this.cart.costoEnvio(),
@@ -473,7 +546,7 @@ export class CheckoutComponent implements OnInit {
           next: () => {
             this.cart.clearCart();
             this.isProcessing.set(false);
-            this.notify.showSuccess(`¡${etiquetaPedido(createdOrder)} confirmado!`, 'Te avisaremos por WhatsApp cada cambio de estado.');
+            this.notify.showSuccess(`¡${etiquetaPedido(createdOrder)} confirmado!`, 'Pagas al repartidor en efectivo al recibir tu pedido.');
             this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
           },
           error: () => {

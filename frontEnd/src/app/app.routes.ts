@@ -26,6 +26,21 @@ export const routes: Routes = [
     canActivate: [clientGuard],
     title: 'Finalizar Pedido y Pago - San Pollo de Ica'
   },
+  {
+    path: 'checkout/success',
+    loadComponent: () => import('./features/client/checkout/checkout-status.component').then(m => m.CheckoutStatusComponent),
+    title: 'Pago Aprobado - San Pollo de Ica'
+  },
+  {
+    path: 'checkout/failure',
+    loadComponent: () => import('./features/client/checkout/checkout-status.component').then(m => m.CheckoutStatusComponent),
+    title: 'Pago No Completado - San Pollo de Ica'
+  },
+  {
+    path: 'checkout/pending',
+    loadComponent: () => import('./features/client/checkout/checkout-status.component').then(m => m.CheckoutStatusComponent),
+    title: 'Pago en Proceso - San Pollo de Ica'
+  },
 
   // 3. Admin Backoffice (Solo ADMIN)
   {

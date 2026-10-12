@@ -32,12 +32,25 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Value("${jwt.secret}")
     private String secret;
 
+    @Value("${internal.api-key:}")
+    private String internalApiKey;
+
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
+
+        // Si la llamada proviene de un microservicio autorizado con X-Internal-Key, autenticar como ADMIN
+        String internalKeyHeader = request.getHeader("X-Internal-Key");
+        if (internalKeyHeader != null && !internalKeyHeader.isBlank() && esClaveInternaValida(internalKeyHeader)) {
+            var authorities = List.of(new SimpleGrantedAuthority("ADMIN"), new SimpleGrantedAuthority("ROLE_ADMIN"));
+            var auth = new UsernamePasswordAuthenticationToken("internal-service", 0L, authorities);
+            SecurityContextHolder.getContext().setAuthentication(auth);
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         String authHeader = request.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
@@ -87,5 +100,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean esClaveInternaValida(String clave) {
+        if (internalApiKey == null || internalApiKey.isBlank() || clave == null) {
+            return false;
+        }
+        return java.security.MessageDigest.isEqual(
+                internalApiKey.getBytes(StandardCharsets.UTF_8),
+                clave.getBytes(StandardCharsets.UTF_8)
+        );
     }
 }

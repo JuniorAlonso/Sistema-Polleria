@@ -5,5 +5,6 @@ public enum EstadoPago {
     APROBADO,
     RECHAZADO,
     CANCELADO,
-    REEMBOLSADO
+    REEMBOLSADO,
+    REEMBOLSADO_PARCIAL
 }

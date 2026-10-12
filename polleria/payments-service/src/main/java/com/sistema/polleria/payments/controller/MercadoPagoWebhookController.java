@@ -85,19 +85,22 @@ public class MercadoPagoWebhookController {
                                 pago.setEstado(EstadoPago.RECHAZADO);
                                 pago.setDetalle("Pago rechazado por Mercado Pago: " + payment.getStatusDetail());
                                 pagoRepository.save(pago);
-                                log.warn("Pago ID={} marcado como RECHAZADO por Mercado Pago", pagoId);
+                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+                                log.warn("Pago ID={} marcado como RECHAZADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
                             }
                             case "cancelled" -> {
                                 pago.setEstado(EstadoPago.CANCELADO);
                                 pago.setDetalle("Pago cancelado por Mercado Pago");
                                 pagoRepository.save(pago);
-                                log.warn("Pago ID={} marcado como CANCELADO por Mercado Pago", pagoId);
+                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+                                log.warn("Pago ID={} marcado como CANCELADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
                             }
                             case "refunded" -> {
                                 pago.setEstado(EstadoPago.REEMBOLSADO);
                                 pago.setDetalle("Pago reembolsado por Mercado Pago");
                                 pagoRepository.save(pago);
-                                log.info("Pago ID={} marcado como REEMBOLSADO por Mercado Pago", pagoId);
+                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+                                log.info("Pago ID={} marcado como REEMBOLSADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
                             }
                             case "in_process", "pending" -> {
                                 pago.setEstado(EstadoPago.PENDIENTE);

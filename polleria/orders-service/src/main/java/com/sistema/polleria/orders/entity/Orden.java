@@ -85,9 +85,16 @@ public class Orden {
         actualizadoEn = LocalDateTime.now();
     }
 
+    public static final BigDecimal COSTO_DELIVERY = new BigDecimal("6.00");
+
     public void recalcularTotal() {
-        this.total = items.stream()
+        BigDecimal subtotal = items.stream()
                 .map(OrdenItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (tipo == OrdenTipo.DELIVERY && subtotal.compareTo(BigDecimal.ZERO) > 0) {
+            this.total = subtotal.add(COSTO_DELIVERY);
+        } else {
+            this.total = subtotal;
+        }
     }
 }
