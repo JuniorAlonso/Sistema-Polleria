@@ -472,18 +472,10 @@ export class CheckoutComponent implements OnInit {
             this.isProcessing.set(false);
             const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
             if (redirectUrl) {
-              if (pref.isMock) {
-                this.isMockPayment.set(true);
-                this.notify.showInfo('Modo Resiliencia Activado', 'Mercado Pago no está disponible. Continuando en modo demostración...');
-                setTimeout(() => {
-                  window.location.href = redirectUrl;
-                }, 1200);
-              } else {
-                this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
-                setTimeout(() => {
-                  window.location.href = redirectUrl;
-                }, 800);
-              }
+              this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+              setTimeout(() => {
+                window.location.href = redirectUrl;
+              }, 800);
             } else {
               this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
             }

@@ -70,16 +70,13 @@ export class PaymentAdapter {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const backendMetodo = this.toBackendMetodoPago(metodo);
 
-    let tokenPasarela: string | undefined = undefined;
-    if (backendMetodo === 'TARJETA') {
-      tokenPasarela = 'tok_mock_' + Math.random().toString(36).substring(2, 10);
-    }
-
+    // Sin tokenPasarela inventado: un token falso hace que el backend apruebe un cobro que
+    // nunca existió. El cobro real con tarjeta se resuelve en el Checkout Pro de Mercado Pago
+    // (POST /pagos/mercadopago/preferencia); sin token, la pasarela rechaza el cargo.
     return {
       ordenId: cleanOrderId,
       monto: Math.round(monto * 100) / 100,
       metodoPago: backendMetodo,
-      tokenPasarela: tokenPasarela,
       telefonoYape: backendMetodo === 'YAPE_PLIN' ? (telefonoYape || '987654321') : undefined
     };
   }

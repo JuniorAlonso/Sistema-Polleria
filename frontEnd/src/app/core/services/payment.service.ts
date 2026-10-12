@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, catchError, map, of, tap } from 'rxjs';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
 import { PaymentTransaction } from '../models/payment.model';
 import { BackendPagoResponse } from '../models/api-contracts.model';
@@ -35,20 +35,11 @@ export class PaymentService {
         this.isLoading.set(false);
         this.lastTransaction.set(tx);
       }),
-      catchError(() => {
+      catchError((error: HttpErrorResponse) => {
+        // Sin respuesta del backend no hay pago que registrar: el error sube al llamador
+        // en vez de fabricar una transacción aprobada.
         this.isLoading.set(false);
-        // Fallback simulado para no interrumpir el flujo si el servicio de pagos estuviese ocupado
-        const fallbackTx: PaymentTransaction = {
-          id: 'pay-' + Date.now(),
-          orderId: String(ordenId),
-          metodo: metodo,
-          monto: monto,
-          estado: metodo === 'EFECTIVO_CONTRAENTREGA' ? 'PENDIENTE' : 'APROBADO',
-          numeroOperacion: 'TXN-MOCK-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
-          fechaTransaccion: new Date().toISOString()
-        };
-        this.lastTransaction.set(fallbackTx);
-        return of(fallbackTx);
+        return throwError(() => error);
       })
     );
   }
@@ -91,7 +82,7 @@ export class PaymentService {
   /**
    * Mercado Pago Checkout Pro: Crear Preferencia
    * 1. Llama al microservicio de pagos propio (:8083), unico que habla con Mercado Pago.
-   * 2. Si la pasarela no responde, activa el modo resiliente simulado para no bloquear el checkout.
+   * 2. Si la pasarela no responde, el error sube al llamador: no se simula un cobro.
    * El access token de Mercado Pago nunca viaja al navegador.
    */
   crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<{
@@ -100,12 +91,10 @@ export class PaymentService {
     sandboxInitPoint: string;
     pagoId: number;
     ordenId: number;
-    isMock?: boolean;
   }> {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const montoFinal = Math.round(monto * 100) / 100;
 
-    // === TIER 1: microservicio de pagos propio (:8083) ===
     return this.http.post<{
       preferenceId: string;
       initPoint: string;
@@ -116,27 +105,6 @@ export class PaymentService {
       ordenId: cleanOrderId,
       monto: montoFinal,
       metodoPago: 'TARJETA'
-    }).pipe(
-      map(res => ({
-        ...res,
-        isMock: false
-      })),
-      catchError((mpErr) => {
-        // === MODO RESILIENTE: simulacion local de la pasarela.
-        // El cobro real ocurre SOLO en el backend (POST /pagos/mercadopago/preferencia):
-        // el navegador nunca maneja el access token de Mercado Pago.
-        console.warn('[PaymentService] La pasarela no respondio. Generando simulacion resiliente.', mpErr);
-        const mockPrefId = `mock_pref_${Date.now()}_${cleanOrderId}`;
-        const mockUrl = `/tracking?status=approved&mock=true&orderId=${cleanOrderId}`;
-        return of({
-          preferenceId: mockPrefId,
-          initPoint: mockUrl,
-          sandboxInitPoint: mockUrl,
-          pagoId: Date.now(),
-          ordenId: cleanOrderId,
-          isMock: true
-        });
-      })
-    );
+    });
   }
 }
