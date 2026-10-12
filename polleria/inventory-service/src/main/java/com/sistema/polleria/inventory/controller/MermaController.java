@@ -22,7 +22,7 @@ public class MermaController {
     private final MermaService mermaService;
 
     @PostMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<MermaResponse> registrar(
             @Valid @RequestBody RegistrarMermaRequest req,
             Principal principal) {
@@ -32,7 +32,7 @@ public class MermaController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<List<MermaResponse>> listarTodas() {
         return ResponseEntity.ok(mermaService.listarTodas());
     }

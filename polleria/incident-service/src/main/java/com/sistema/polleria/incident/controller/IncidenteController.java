@@ -23,13 +23,13 @@ public class IncidenteController {
     private final IncidenteService incidenteService;
 
     @PostMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF', 'MOZO', 'ROLE_MOZO')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA', 'MOZO', 'ROLE_MOZO')")
     public ResponseEntity<IncidenteResponse> registrar(@Valid @RequestBody CrearIncidenteRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(incidenteService.registrar(req));
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<List<IncidenteResponse>> listar(
             @RequestParam(value = "severidad", required = false) Severidad severidad,
             @RequestParam(value = "estado", required = false) EstadoIncidente estado) {
@@ -37,7 +37,7 @@ public class IncidenteController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<IncidenteResponse> obtenerPorId(@PathVariable Long id) {
         return ResponseEntity.ok(incidenteService.obtenerPorId(id));
     }

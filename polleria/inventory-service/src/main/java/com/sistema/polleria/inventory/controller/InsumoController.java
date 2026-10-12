@@ -21,13 +21,13 @@ public class InsumoController {
     private final InsumoService insumoService;
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<List<InsumoResponse>> listarTodos() {
         return ResponseEntity.ok(insumoService.listarTodos());
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<InsumoResponse> obtenerPorId(@PathVariable Long id) {
         return ResponseEntity.ok(insumoService.obtenerPorId(id));
     }
@@ -39,7 +39,7 @@ public class InsumoController {
     }
 
     @PatchMapping("/{id}/stock")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<InsumoResponse> actualizarStock(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarStockRequest req) {

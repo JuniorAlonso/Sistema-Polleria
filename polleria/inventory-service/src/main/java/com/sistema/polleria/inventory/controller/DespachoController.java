@@ -22,7 +22,7 @@ public class DespachoController {
     private final DespachoService despachoService;
 
     @PostMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<DespachoResponse> registrarDespacho(
             @Valid @RequestBody CrearDespachoRequest req,
             Principal principal) {
@@ -32,7 +32,7 @@ public class DespachoController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<List<DespachoResponse>> listarTodos() {
         return ResponseEntity.ok(despachoService.listarTodos());
     }

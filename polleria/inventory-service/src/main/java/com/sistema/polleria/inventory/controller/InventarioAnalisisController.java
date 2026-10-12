@@ -20,7 +20,7 @@ public class InventarioAnalisisController {
     private final InventarioAnalisisService analisisService;
 
     @GetMapping("/alertas")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CHEF', 'ROLE_CHEF')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<List<AlertaStockResponse>> obtenerAlertas() {
         return ResponseEntity.ok(analisisService.obtenerAlertasStock());
     }

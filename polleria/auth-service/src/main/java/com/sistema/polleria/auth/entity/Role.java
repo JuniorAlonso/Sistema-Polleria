@@ -5,5 +5,6 @@ public enum Role {
     MOZO,
     COCINA,
     ADMIN,
-    REPARTIDOR
+    REPARTIDOR,
+    CAJERO
 }
