@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const config = require('../config');
@@ -81,6 +83,31 @@ client.on('disconnected', razon => {
     }, 5000);
 });
 
+/**
+ * Empieza de cero con una sesión nueva (QR nuevo).
+ * Se usa cuando la sesión guardada quedó inválida y Windows no deja borrarla (EBUSY)
+ * porque Chrome sigue abierto: primero se cierra Chrome, luego se borra la carpeta y se reinicia.
+ */
+let reiniciando = false;
+async function reiniciarSesion() {
+    if (reiniciando) return;
+    reiniciando = true;
+    estado = 'INICIANDO';
+    try {
+        await client.destroy().catch(() => {});
+        await fs.promises.rm(path.join(config.sessionPath, 'session'), {
+            recursive: true, force: true, maxRetries: 5, retryDelay: 1000
+        });
+        console.log('🧹 Sesión anterior borrada. Generando un QR nuevo...');
+        await client.initialize();
+    } catch (error) {
+        console.error('❌ No se pudo reiniciar WhatsApp:', error.message,
+            '— detén el servicio, borra la carpeta de sesión y vuelve a iniciarlo.');
+    } finally {
+        reiniciando = false;
+    }
+}
+
 // Adaptador que usa el NotificacionService
 const whatsapp = {
     esperarListo: () => listo,
@@ -98,4 +125,4 @@ const whatsapp = {
     ultimoQr: () => ultimoQr
 };
 
-module.exports = { client, whatsapp };
+module.exports = { client, whatsapp, reiniciarSesion };

@@ -1,5 +1,5 @@
 const config = require('./src/config');
-const { client, whatsapp } = require('./src/whatsapp/client');
+const { client, whatsapp, reiniciarSesion } = require('./src/whatsapp/client');
 const handleMessage = require('./src/whatsapp/handler');
 const { crearStore } = require('./src/notifications/store');
 const { NotificacionService } = require('./src/notifications/service');
@@ -37,10 +37,11 @@ async function main() {
 process.on('unhandledRejection', error => {
     const mensaje = error && error.message ? error.message : String(error);
 
-    // En Windows, LocalAuth lanza EBUSY al borrar archivos de sesión que Chrome mantiene bloqueados
+    // En Windows, al cerrarse la sesión LocalAuth no puede borrar la carpeta porque Chrome la tiene abierta (EBUSY).
+    // Hay que cerrar Chrome antes de borrarla y volver a iniciar; si no, queda en bucle.
     if (mensaje.includes('EBUSY')) {
-        console.warn('⚠️ Sesión de WhatsApp bloqueada (EBUSY). Reiniciando el cliente en 3s...');
-        setTimeout(() => client.initialize().catch(e => console.error('❌ No se pudo reiniciar WhatsApp:', e.message)), 3000);
+        console.warn('⚠️ Sesión de WhatsApp bloqueada (EBUSY). Cerrando el navegador para empezar con una sesión nueva...');
+        reiniciarSesion();
         return;
     }
     console.error('❌ Error no controlado de WhatsApp:', mensaje);
