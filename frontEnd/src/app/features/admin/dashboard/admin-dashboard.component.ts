@@ -3410,6 +3410,11 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       return;
     }
 
+    if (this.manualOrder.tipo === 'DELIVERY' && !this.manualOrder.direccion.trim()) {
+      this.notify.showError('Ingresa la dirección de entrega para un pedido de delivery');
+      return;
+    }
+
     const prod = this.productsService.products().find(p => p.id === this.manualOrder.selectedProductId);
     if (!prod) {
       this.notify.showError('Selecciona un producto válido');
@@ -3422,8 +3427,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       cliente: {
         nombre: this.manualOrder.clienteNombre,
         celular: this.manualOrder.clienteCelular,
-        correo: 'orden.manual@sanpollo.pe',
-        direccion: this.manualOrder.direccion || 'Presencial / Salón'
+        // Sin dirección inventada: 'Presencial / Salón' no es una dirección de entrega.
+        direccion: this.manualOrder.direccion || undefined
       },
       items: [
         {

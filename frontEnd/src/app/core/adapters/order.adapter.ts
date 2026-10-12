@@ -187,10 +187,13 @@ export class OrderAdapter {
     return {
       tipo: tipo,
       mesaId: mesaId,
-      direccionEntrega: tipo === 'DELIVERY' ? (req.cliente.direccion || 'Dirección no especificada') : undefined,
-      referencia: tipo === 'DELIVERY' ? req.cliente.referencia : undefined,
-      nombreCliente: req.cliente.nombre || 'Cliente San Pollo',
-      telefonoCliente: req.cliente.celular || '999999999',
+      // Sin datos inventados: un pedido de delivery sin dirección real debe llegar
+      // incompleto para que el backend lo rechace (RF14), y un teléfono falso haría
+      // que las notificaciones de WhatsApp (RF30/RF31) apunten a un número inexistente.
+      direccionEntrega: tipo === 'DELIVERY' ? (req.cliente.direccion || undefined) : undefined,
+      referencia: tipo === 'DELIVERY' ? (req.cliente.referencia || undefined) : undefined,
+      nombreCliente: req.cliente.nombre || undefined,
+      telefonoCliente: req.cliente.celular || undefined,
       observaciones: req.notasGenerales || undefined,
       items: items
     };

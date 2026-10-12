@@ -1259,8 +1259,9 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       tipo: 'SALON',
       metodoPago: 'EFECTIVO_CONTRAENTREGA',
       cliente: {
+        // La comanda de salón no tiene celular del cliente: no se inventa uno.
         nombre: `Mesa #${mesaId}`,
-        celular: '999999999',
+        celular: '',
         mesaNumero: mesaId
       },
       items: itemsReq
