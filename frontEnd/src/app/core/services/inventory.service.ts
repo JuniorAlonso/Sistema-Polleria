@@ -118,31 +118,14 @@ export class InventoryService {
 
   cargarMermas(): void {
     this.http.get<Merma[]>(`${this.API_URL}/inventario/mermas`).pipe(
-      tap(data => {
-        const mapped = data.map(m => ({
-          ...m,
-          unidad: m.unidad ?? 'kg',
-          costoPerdida: m.costoPerdida ?? (m.cantidad * 12),
-          responsable: m.responsable ?? 'Jefe de Cocina'
-        }));
-        this.mermas.set(mapped);
-      }),
+      tap(data => this.mermas.set(data)),
       catchError(() => of([]))
     ).subscribe();
   }
 
   cargarAlertas(): void {
     this.http.get<AlertaStock[]>(`${this.API_URL}/inventario/alertas`).pipe(
-      tap(data => {
-        const mapped = data.map(a => ({
-          ...a,
-          nivelSeveridad: a.nivelSeveridad ?? (a.nivelCriticidad === 'CRITICO' ? 'CRITICA' : 'ALTA'),
-          consumoDiarioEstimado: a.consumoDiarioEstimado ?? 15,
-          diasRestantesEstimados: a.diasRestantesEstimados ?? Math.max(1, Math.round(a.stockActual / 15)),
-          sugerencia: a.sugerencia ?? `Emitir orden de compra inmediata para reponer ${a.insumoNombre}`
-        }));
-        this.alertas.set(mapped);
-      }),
+      tap(data => this.alertas.set(data)),
       catchError(() => of([]))
     ).subscribe();
   }

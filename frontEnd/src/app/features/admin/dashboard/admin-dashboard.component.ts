@@ -1150,7 +1150,7 @@ interface MotorizadoDelivery {
                 class="px-3.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
                 [ngClass]="inventarioSubTab() === 'PREDICCION' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
               >
-                Predicción
+                Alertas
               </button>
             </div>
           </div>
@@ -1305,8 +1305,7 @@ interface MotorizadoDelivery {
                       <th class="p-4">Insumo</th>
                       <th class="p-4">Cantidad</th>
                       <th class="p-4">Motivo</th>
-                      <th class="p-4">Costo Pérdida</th>
-                      <th class="p-4">Responsable</th>
+                      <th class="p-4">Justificación</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
@@ -1314,10 +1313,9 @@ interface MotorizadoDelivery {
                       <tr class="hover:bg-white/5 transition">
                         <td class="p-4 font-mono text-slate-400">{{ m.fecha }}</td>
                         <td class="p-4 font-bold text-white">{{ m.insumoNombre }}</td>
-                        <td class="p-4 font-mono text-rose-300 font-bold">{{ m.cantidad }} {{ m.unidad }}</td>
+                        <td class="p-4 font-mono text-rose-300 font-bold">{{ m.cantidad }} {{ unidadDeInsumo(m.insumoId) }}</td>
                         <td class="p-4 text-slate-300">{{ m.motivo.replace('_', ' ') }}</td>
-                        <td class="p-4 font-mono font-bold text-rose-400">{{ m.costoPerdida | currencyPEN }}</td>
-                        <td class="p-4 text-slate-400">{{ m.responsable }}</td>
+                        <td class="p-4 text-slate-400">{{ m.justificacion || '—' }}</td>
                       </tr>
                     }
                   </tbody>
@@ -1331,50 +1329,54 @@ interface MotorizadoDelivery {
             <div class="space-y-6">
               <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                  <span class="text-xs text-slate-400 uppercase font-bold">Consumo Promedio Diario</span>
-                  <p class="font-display text-3xl font-black text-polleria-gold">85 Pollos / día</p>
-                  <p class="text-xs text-emerald-400">↑ +14% los fines de semana</p>
+                  <span class="text-xs text-slate-400 uppercase font-bold">Valor del Inventario</span>
+                  <p class="font-display text-3xl font-black text-polleria-gold">
+                    {{ (inventoryService.rentabilidad()?.valorTotalInventario ?? 0) | currencyPEN }}
+                  </p>
+                  <p class="text-xs text-slate-400">{{ inventoryService.rentabilidad()?.totalInsumos ?? 0 }} insumos registrados</p>
                 </div>
 
                 <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                  <span class="text-xs text-slate-400 uppercase font-bold">Alertas Predictivas Activas</span>
-                  <p class="font-display text-3xl font-black text-rose-400">{{ inventoryService.alertas().length }} Insumos</p>
-                  <p class="text-xs text-slate-300">Cálculo de rotación según órdenes recientes.</p>
+                  <span class="text-xs text-slate-400 uppercase font-bold">Insumos Bajo Umbral</span>
+                  <p class="font-display text-3xl font-black text-rose-400">{{ inventoryService.alertas().length }}</p>
+                  <p class="text-xs text-slate-300">Stock igual o por debajo del mínimo configurado.</p>
                 </div>
 
                 <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3">
-                  <span class="text-xs text-slate-400 uppercase font-bold">Índice de Merma / Venta</span>
-                  <p class="font-display text-3xl font-black text-emerald-400">1.8%</p>
-                  <p class="text-xs text-slate-300">Dentro del rango óptimo institucional (&lt; 2.5%).</p>
+                  <span class="text-xs text-slate-400 uppercase font-bold">Costo de Mermas</span>
+                  <p class="font-display text-3xl font-black text-emerald-400">
+                    {{ (inventoryService.rentabilidad()?.costoTotalMermas ?? 0) | currencyPEN }}
+                  </p>
+                  <p class="text-xs text-slate-300">Valorizado al costo unitario de cada insumo.</p>
                 </div>
               </div>
 
               <!-- Lista de Alertas Predictivas -->
               <div class="bg-[#14161a] rounded-2xl border border-white/10 p-5 space-y-4">
                 <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-                  <span>Sugerencias Predictivas de Compra (RF25)</span>
+                  <span>Alertas de Abastecimiento por Umbral (RF25)</span>
                 </h3>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   @for (alerta of inventoryService.alertas(); track alerta.insumoId) {
                     <div 
                       class="p-4 rounded-xl border space-y-2"
-                      [ngClass]="alerta.nivelSeveridad === 'CRITICA' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-amber-500/10 border-amber-500/30'"
+                      [ngClass]="alerta.nivelCriticidad === 'CRITICO' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-amber-500/10 border-amber-500/30'"
                     >
                       <div class="flex justify-between items-start">
                         <h4 class="font-bold text-white text-sm">{{ alerta.insumoNombre }}</h4>
                         <span 
                           class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                          [ngClass]="alerta.nivelSeveridad === 'CRITICA' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-slate-950'"
+                          [ngClass]="alerta.nivelCriticidad === 'CRITICO' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-slate-950'"
                         >
-                          {{ alerta.nivelSeveridad }}
+                          {{ alerta.nivelCriticidad }}
                         </span>
                       </div>
                       <p class="text-xs text-slate-300">
-                        Consumo: <strong>{{ alerta.consumoDiarioEstimado }} / día</strong> • Stock restante para: <strong class="text-white">{{ alerta.diasRestantesEstimados }} días</strong>
+                        Stock actual: <strong class="text-white">{{ alerta.stockActual }} {{ alerta.unidadMedida }}</strong> • Mínimo configurado: <strong>{{ alerta.stockMinimoAlerta }} {{ alerta.unidadMedida }}</strong>
                       </p>
                       <p class="text-xs text-amber-300/90 font-medium italic">
-                        <svg class="w-3.5 h-3.5 inline mr-1 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>{{ alerta.sugerencia }}
+                        <svg class="w-3.5 h-3.5 inline mr-1 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>{{ alerta.mensaje }}
                       </p>
                     </div>
                   }
@@ -2443,20 +2445,21 @@ interface MotorizadoDelivery {
                     [(ngModel)]="mermaForm.motivo"
                     class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
                   >
-                    <option value="COCCION_EXCESIVA">Cocción Excesiva / Quemado</option>
-                    <option value="VENCIMIENTO">Vencimiento de Lote</option>
-                    <option value="DESCARTE_MANIPULACION">Descarte por Manipulación</option>
-                    <option value="DEFECTO_PROVEEDOR">Defecto de Proveedor</option>
+                    <option value="VENCIMIENTO">Vencimiento de lote</option>
+                    <option value="MAL_ESTADO">Mal estado / deterioro</option>
+                    <option value="ERROR_COCINA">Error de cocina (cocción excesiva o descarte)</option>
+                    <option value="CAIDA">Caída / accidente</option>
+                    <option value="OTRO">Otro motivo</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label class="block font-bold text-slate-300 mb-1">Responsable:</label>
+                <label class="block font-bold text-slate-300 mb-1">Justificación:</label>
                 <input 
                   type="text" 
-                  [(ngModel)]="mermaForm.responsable"
-                  placeholder="Ej. Jefe de Cocina / Maestro Pollero"
+                  [(ngModel)]="mermaForm.justificacion"
+                  placeholder="Detalle del descarte para la bitácora"
                   class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
                 />
               </div>
@@ -3101,8 +3104,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   mermaForm = {
     insumoId: 1,
     cantidad: 1,
-    motivo: 'COCCION_EXCESIVA' as MotivoMerma,
-    responsable: 'Jefe de Cocina'
+    motivo: 'VENCIMIENTO' as MotivoMerma,
+    justificacion: ''
   };
 
   // Modal de Apertura de Caja (Fase 6)
@@ -3849,13 +3852,19 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** Unidad de medida real del insumo (MermaResponse no la incluye). */
+  unidadDeInsumo(insumoId: number): string {
+    return this.inventoryService.insumos().find(i => i.id === insumoId)?.unidadMedida ?? '';
+  }
+
   abrirModalMerma(): void {
     const insumos = this.inventoryService.insumos();
     if (insumos.length > 0) {
       this.mermaForm.insumoId = insumos[0].id;
     }
     this.mermaForm.cantidad = 1;
-    this.mermaForm.motivo = 'COCCION_EXCESIVA';
+    this.mermaForm.motivo = 'VENCIMIENTO';
+    this.mermaForm.justificacion = '';
     this.showMermaModal = true;
   }
 
@@ -3868,7 +3877,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       insumoId: Number(this.mermaForm.insumoId),
       cantidad: Number(this.mermaForm.cantidad),
       motivo: this.mermaForm.motivo,
-      responsable: this.mermaForm.responsable || 'Jefe de Cocina'
+      justificacion: this.mermaForm.justificacion || undefined
     }).subscribe({
       next: () => {
         this.notify.showSuccess('Merma registrada en bitácora de inventario');
