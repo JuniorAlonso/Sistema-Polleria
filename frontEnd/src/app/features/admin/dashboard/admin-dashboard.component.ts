@@ -3886,13 +3886,9 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.ordersService.updateOrderStatus(order.id, order.estado, valor).subscribe(updated => {
-      // updateOrderStatus devuelve null cuando el backend rechaza la operación.
-      if (!updated) {
-        this.notify.showError(`No se pudo asignar el repartidor al pedido #${this.getCodeNum(order.codigoSeguimiento)}`);
-        return;
-      }
-      this.notify.showSuccess(`Repartidor #${valor} asignado al pedido #${this.getCodeNum(order.codigoSeguimiento)}`);
+    this.ordersService.updateOrderStatus(order.id, order.estado, valor).subscribe({
+      next: () => this.notify.showSuccess(`Repartidor #${valor} asignado al pedido #${this.getCodeNum(order.codigoSeguimiento)}`),
+      error: () => this.notify.showError(`No se pudo asignar el repartidor al pedido #${this.getCodeNum(order.codigoSeguimiento)}`)
     });
   }
 

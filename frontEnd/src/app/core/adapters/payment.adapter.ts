@@ -70,14 +70,13 @@ export class PaymentAdapter {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const backendMetodo = this.toBackendMetodoPago(metodo);
 
-    // Sin tokenPasarela inventado: un token falso hace que el backend apruebe un cobro que
-    // nunca existió. El cobro real con tarjeta se resuelve en el Checkout Pro de Mercado Pago
-    // (POST /pagos/mercadopago/preferencia); sin token, la pasarela rechaza el cargo.
+    // Sin teléfono no se inventa uno: YapePlinGateway rechaza la operación cuando
+    // telefonoYape llega vacío, que es la verdad si el cliente no lo dio.
     return {
       ordenId: cleanOrderId,
       monto: Math.round(monto * 100) / 100,
       metodoPago: backendMetodo,
-      telefonoYape: backendMetodo === 'YAPE_PLIN' ? (telefonoYape || '987654321') : undefined
+      telefonoYape: backendMetodo === 'YAPE_PLIN' ? telefonoYape : undefined
     };
   }
 }

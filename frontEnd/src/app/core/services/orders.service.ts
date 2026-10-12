@@ -1,6 +1,6 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
@@ -267,9 +267,11 @@ export class OrdersService {
   /**
    * RF19: Actualización de Estado de Orden
    */
-  updateOrderStatus(orderId: string, newStatus: OrderStatus, repartidorId?: number): Observable<Order | null> {
+  updateOrderStatus(orderId: string, newStatus: OrderStatus, repartidorId?: number): Observable<Order> {
     const cleanId = this.extractNumericId(orderId);
     const backendEstado = OrderAdapter.toBackendEstado(newStatus);
+    const estadoAnterior = this.orders();
+    const trackingAnterior = this.currentTrackingOrder();
 
     // Optimistic UI update
     this.orders.update(items =>
@@ -305,11 +307,17 @@ export class OrdersService {
             this.currentTrackingOrder.set(updated);
           }
         }),
-        catchError(() => of(null))
+        catchError((error: HttpErrorResponse) => {
+          // El backend rechazó la transición: la UI vuelve al estado real en lugar
+          // de dejar el cambio optimista aplicado y emitir un resultado nulo.
+          this.orders.set(estadoAnterior);
+          this.currentTrackingOrder.set(trackingAnterior);
+          return throwError(() => error);
+        })
       );
     }
 
-    return of(null);
+    return throwError(() => new Error(`No se pudo determinar el id de la orden: ${orderId}`));
   }
 
   /**
@@ -319,10 +327,14 @@ export class OrdersService {
     const order = this.orders().find(o => o.id === orderId || this.extractNumericId(o.id) === this.extractNumericId(orderId));
     if (!order) return;
 
+    // updateOrderStatus ya revierte el cambio optimista y propaga el error; aquí
+    // solo se consume para no dejarlo sin manejar.
+    const ignorarFallo = () => undefined;
+
     if (order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO') {
-      this.updateOrderStatus(order.id, 'EN_PREPARACION').subscribe();
+      this.updateOrderStatus(order.id, 'EN_PREPARACION').subscribe({ next: () => undefined, error: ignorarFallo });
     } else if (order.estado === 'EN_PREPARACION') {
-      this.updateOrderStatus(order.id, 'LISTO_COCINA').subscribe();
+      this.updateOrderStatus(order.id, 'LISTO_COCINA').subscribe({ next: () => undefined, error: ignorarFallo });
     }
   }
 

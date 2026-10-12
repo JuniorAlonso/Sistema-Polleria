@@ -470,7 +470,9 @@ export class CheckoutComponent implements OnInit {
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, this.metodoPago()).subscribe({
+        // El teléfono Yape/Plin es el del propio cliente que paga: sin él, el gateway
+        // rechaza el cobro en lugar de enviarlo a un número inventado.
+        this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, this.metodoPago(), celularLimpio).subscribe({
           next: () => {
             this.cart.clearCart();
             this.isProcessing.set(false);

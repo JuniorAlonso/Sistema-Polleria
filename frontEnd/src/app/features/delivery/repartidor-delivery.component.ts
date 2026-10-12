@@ -692,7 +692,12 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   }
 
   rendirCajaModal(): void {
-    this.notify.showSuccess('Arqueo de Efectivo Enviado', 'Se ha notificado al Administrador el cierre de caja.');
+    // No existe endpoint de rendición de caja para el repartidor: no se anuncia una
+    // acción que no ocurre.
+    this.notify.showInfo(
+      'Rendición de caja no disponible',
+      'El backend todavía no expone un endpoint para rendir el efectivo del repartidor. Coordina el arqueo con el administrador.'
+    );
   }
 
   cerrarSesion(): void {
