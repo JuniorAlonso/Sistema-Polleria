@@ -8,7 +8,6 @@ import { OrdersService } from '../../../core/services/orders.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, PaymentMethod } from '../../../core/models/order.model';
-import { ProductsService } from '../../../core/services/products.service';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { environment } from '../../../../environments/environment';
@@ -295,7 +294,6 @@ declare const MercadoPago: any;
 export class CheckoutComponent implements OnInit {
   readonly cart = inject(CartService);
   private ordersService = inject(OrdersService);
-  private productsService = inject(ProductsService);
   private paymentService = inject(PaymentService);
   private auth = inject(AuthService);
   private router = inject(Router);
@@ -326,15 +324,6 @@ export class CheckoutComponent implements OnInit {
         );
       }
     });
-
-    if (this.cart.isEmpty()) {
-      const p1 = this.productsService.products().find(p => p.id === '1' || p.id === 'prod-1');
-      const p6 = this.productsService.products().find(p => p.id === '6' || p.id === 'prod-6');
-      const p8 = this.productsService.products().find(p => p.id === '8' || p.id === 'prod-8');
-      if (p1) this.cart.addItem(p1, 1);
-      if (p6) this.cart.addItem(p6, 1);
-      if (p8) this.cart.addItem(p8, 1);
-    }
   }
 
   getSubtotalNeto(): number {
