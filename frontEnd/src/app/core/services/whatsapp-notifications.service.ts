@@ -26,6 +26,13 @@ export class WhatsappNotificationsService {
   readonly qrError = signal<string | null>(null);
   private sondeoQr?: Subscription;
 
+  /**
+   * Motivo por el que WhatsApp no arrancó (perfil de Chromium bloqueado, navegador
+   * que no lanza). Sin esto el panel muestra "Generando el código QR..." para
+   * siempre cuando el QR nunca va a aparecer.
+   */
+  readonly diagnostico = computed(() => this.qr()?.detalle ?? this.status()?.detalle ?? null);
+
   readonly totales = computed(() => {
     const logs = this.historial();
     return {

@@ -20,12 +20,14 @@ const client = new Client({
 
 let estado = 'INICIANDO';
 let ultimoQr = null;
+let ultimoError = null;
 let marcarListo;
 let listo = new Promise(resolve => { marcarListo = resolve; });
 
 client.on('qr', qr => {
     estado = 'ESPERANDO_QR';
     ultimoQr = qr;
+    ultimoError = null;
     console.log('--- ESCANEA EL CÓDIGO QR ---');
     qrcode.generate(qr, { small: true });
 });
@@ -33,6 +35,7 @@ client.on('qr', qr => {
 client.on('ready', () => {
     estado = 'CONECTADO';
     ultimoQr = null;
+    ultimoError = null;
     marcarListo();
     console.log('✅ ¡El servicio de WhatsApp de la Pollería está LISTO!');
 });
@@ -78,8 +81,7 @@ client.on('disconnected', razon => {
     estado = 'DESCONECTADO';
     console.warn('⚠️ WhatsApp desconectado:', razon, '— reconectando en 5s...');
     setTimeout(() => {
-        client.initialize()
-            .catch(error => console.error('❌ No se pudo reconectar WhatsApp:', error.message));
+        arrancar();
     }, 5000);
 });
 
@@ -99,13 +101,76 @@ async function reiniciarSesion() {
             recursive: true, force: true, maxRetries: 5, retryDelay: 1000
         });
         console.log('🧹 Sesión anterior borrada. Generando un QR nuevo...');
-        await client.initialize();
+        await arrancar();
     } catch (error) {
         console.error('❌ No se pudo reiniciar WhatsApp:', error.message,
             '— detén el servicio, borra la carpeta de sesión y vuelve a iniciarlo.');
     } finally {
         reiniciando = false;
     }
+}
+
+const ARCHIVOS_LOCK = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+const PERFIL_CHROMIUM = path.join(config.sessionPath, 'session');
+const MAX_INTENTOS_ARRANQUE = 5;
+
+/**
+ * Chromium deja un SingletonLock apuntando al host que creó el perfil. Cuando el
+ * contenedor se recrea, el host dueño del lock ya no existe y Chromium se niega a
+ * arrancar:
+ *
+ *   The profile appears to be in use by another Chromium process (18) on another
+ *   computer (2b3c3a5b55d9). Chromium has locked the profile so that it doesn't get
+ *   corrupted.
+ *
+ * El lock vive en el volumen de sesiones, así que sin borrarlo WhatsApp no vuelve a
+ * arrancar en ninguna recreación posterior. Aquí no hay otro Chromium vivo: el
+ * propio cliente acaba de fallar al lanzarlo.
+ */
+async function limpiarLocksHuerfanos() {
+    for (const nombre of ARCHIVOS_LOCK) {
+        await fs.promises.rm(path.join(PERFIL_CHROMIUM, nombre), { force: true }).catch(() => {});
+    }
+}
+
+/**
+ * Arranca el navegador con reintentos acotados. Sin esto, un fallo de arranque deja
+ * el servicio en INICIANDO indefinidamente: no hay evento 'qr', el panel muestra
+ * "Generando el código QR..." para siempre y el motivo solo vive en los logs.
+ */
+async function intentarArranque(intento) {
+    try {
+        await client.initialize();
+        ultimoError = null;
+        return true;
+    } catch (error) {
+        const mensaje = (error && error.message) || String(error);
+        ultimoError = mensaje;
+        console.error(`❌ Falló el arranque del navegador de WhatsApp (intento ${intento}/${MAX_INTENTOS_ARRANQUE}): ${mensaje}`);
+
+        if (intento >= MAX_INTENTOS_ARRANQUE) {
+            estado = 'ERROR_INICIO';
+            console.error('❌ WhatsApp queda sin arrancar. El motivo se expone en ' +
+                'GET /api/notificaciones/status (whatsapp: error_inicio).');
+            return false;
+        }
+
+        estado = 'INICIANDO';
+        await client.destroy().catch(() => {});
+        await limpiarLocksHuerfanos();
+        await new Promise(resolve => setTimeout(resolve, 3000 * intento));
+        return intentarArranque(intento + 1);
+    }
+}
+
+let arranqueEnCurso = null;
+
+/** Un solo arranque a la vez: varios eventos pueden pedir reconectar. */
+function arrancar() {
+    if (!arranqueEnCurso) {
+        arranqueEnCurso = intentarArranque(1).finally(() => { arranqueEnCurso = null; });
+    }
+    return arranqueEnCurso;
 }
 
 // Adaptador que usa el NotificacionService
@@ -122,7 +187,10 @@ const whatsapp = {
     estado: () => estado,
 
     // Último QR generado (para la página /qr); null si ya está conectado
-    ultimoQr: () => ultimoQr
+    ultimoQr: () => ultimoQr,
+
+    // Motivo del último fallo de arranque, para que el panel explique la espera
+    ultimoError: () => ultimoError
 };
 
-module.exports = { client, whatsapp, reiniciarSesion };
+module.exports = { client, whatsapp, reiniciarSesion, arrancar };

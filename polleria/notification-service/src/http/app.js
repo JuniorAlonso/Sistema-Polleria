@@ -10,7 +10,8 @@ const ESTADO_WHATSAPP = {
     ESPERANDO_QR: 'waiting_qr',
     INICIANDO: 'starting',
     DESCONECTADO: 'disconnected',
-    ERROR_AUTENTICACION: 'auth_failure'
+    ERROR_AUTENTICACION: 'auth_failure',
+    ERROR_INICIO: 'error_inicio'
 };
 
 function esIdValido(valor) {
@@ -35,6 +36,12 @@ function responderEncolado(res, log) {
  */
 const IPS_LOCALES = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
+function escaparHtml(texto) {
+    return String(texto)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function paginaQr(titulo, cuerpo, recargarSeg) {
     const recarga = recargarSeg ? `<meta http-equiv="refresh" content="${recargarSeg}">` : '';
     return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>QR WhatsApp - San Pollo</title>${recarga}
@@ -45,8 +52,9 @@ img{border:8px solid #fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1
 
 /**
  * @param ultimoQr  función que devuelve el último QR de WhatsApp (o null)
+ * @param errorWhatsapp función que devuelve el motivo del último fallo de arranque (o null)
  */
-function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null }) {
+function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null }) {
     const app = express();
     app.use(express.json());
 
@@ -170,7 +178,8 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null }) {
             const qr = estado === 'CONECTADO' ? null : ultimoQr();
             res.json({
                 whatsapp: ESTADO_WHATSAPP[estado] || estado,
-                qr: qr ? await QRCode.toDataURL(qr, { width: 280, margin: 1 }) : null
+                qr: qr ? await QRCode.toDataURL(qr, { width: 280, margin: 1 }) : null,
+                detalle: errorWhatsapp()
             });
         } catch (error) {
             next(error);
@@ -182,7 +191,8 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null }) {
         res.json({
             status: 'ok',
             whatsapp: ESTADO_WHATSAPP[estado] || estado,
-            colaPendiente: service.pendientes
+            colaPendiente: service.pendientes,
+            detalle: errorWhatsapp()
         });
     });
 
@@ -205,6 +215,12 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null }) {
             }
 
             const qr = ultimoQr();
+            const fallo = errorWhatsapp();
+            if (!qr && fallo) {
+                return res.send(paginaQr('WhatsApp no pudo arrancar',
+                    `<p>${escaparHtml(fallo)}</p><p>Reinicia el servicio de notificaciones. Si el fallo se repite, detén el servicio y borra la carpeta de sesión para volver a vincular.</p>`, 10));
+            }
+
             if (!qr) {
                 return res.send(paginaQr('Generando el QR...', '<p>La página se recarga sola en 5 segundos.</p>', 5));
             }

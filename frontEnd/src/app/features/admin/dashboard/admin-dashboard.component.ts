@@ -1785,6 +1785,10 @@ interface MotorizadoDelivery {
                     <img [src]="estadoQr.qr" alt="Código QR para vincular WhatsApp" class="w-full h-full" />
                   } @else if (whatsappService.qrError()) {
                     <span class="text-xs text-red-500 px-4 text-center">{{ whatsappService.qrError() }}</span>
+                  } @else if (whatsappService.diagnostico()) {
+                    <span class="text-xs text-red-500 px-4 text-center">
+                      WhatsApp no pudo iniciar. Reinicia el servicio de notificaciones.
+                    </span>
                   } @else {
                     <span class="text-xs text-slate-500 px-4 text-center">Generando el código QR...</span>
                   }
@@ -3232,7 +3236,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       waiting_qr: 'Esperando QR',
       starting: 'Iniciando',
       disconnected: 'Desconectado',
-      auth_failure: 'Error de sesión'
+      auth_failure: 'Error de sesión',
+      error_inicio: 'No pudo iniciar'
     };
     const status = this.whatsappService.status();
     return status ? (etiquetas[status.whatsapp] ?? status.whatsapp) : 'Sin conexión';

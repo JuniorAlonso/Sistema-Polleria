@@ -1,5 +1,5 @@
 const config = require('./src/config');
-const { client, whatsapp, reiniciarSesion } = require('./src/whatsapp/client');
+const { client, whatsapp, reiniciarSesion, arrancar } = require('./src/whatsapp/client');
 const handleMessage = require('./src/whatsapp/handler');
 const { crearStore } = require('./src/notifications/store');
 const { NotificacionService } = require('./src/notifications/service');
@@ -24,13 +24,21 @@ async function main() {
         console.log(`🔁 ${recuperados} notificaciones pendientes vueltas a encolar`);
     }
 
-    const app = crearApp({ service, store, estadoWhatsapp: whatsapp.estado, ultimoQr: whatsapp.ultimoQr });
+    const app = crearApp({
+        service,
+        store,
+        estadoWhatsapp: whatsapp.estado,
+        ultimoQr: whatsapp.ultimoQr,
+        errorWhatsapp: whatsapp.ultimoError
+    });
     app.listen(config.port, () => {
         console.log(`🚀 Notification service en puerto ${config.port} (delay entre mensajes: ${config.rateLimitMs} ms)`);
     });
 
     client.on('message', handleMessage);
-    client.initialize();
+    // arrancar() reintenta solo cuando Chromium no puede lanzarse (por ejemplo por un
+    // SingletonLock heredado de un contenedor anterior) y deja el motivo en /status.
+    arrancar();
 }
 
 // Un error interno de puppeteer/whatsapp-web.js no debe tumbar el servicio ni perder la cola
@@ -44,6 +52,16 @@ process.on('unhandledRejection', error => {
         reiniciarSesion();
         return;
     }
+
+    // Perfil de Chromium bloqueado o navegador que no arranca: reintentar limpiando el lock.
+    // Sin esto el servicio queda en INICIANDO para siempre y el QR nunca aparece.
+    if (mensaje.includes('Failed to launch the browser process') ||
+        mensaje.includes('profile appears to be in use')) {
+        console.warn('⚠️ El navegador de WhatsApp no arrancó. Reintentando con el perfil limpio...');
+        arrancar();
+        return;
+    }
+
     console.error('❌ Error no controlado de WhatsApp:', mensaje);
 });
 

@@ -9,7 +9,13 @@ export type TipoNotificacion =
   | 'ESTADO_ENTREGADO'
   | 'CODIGO_SEGUIMIENTO';
 
-export type EstadoSesionWhatsapp = 'connected' | 'waiting_qr' | 'starting' | 'disconnected' | 'auth_failure';
+export type EstadoSesionWhatsapp =
+  | 'connected'
+  | 'waiting_qr'
+  | 'starting'
+  | 'disconnected'
+  | 'auth_failure'
+  | 'error_inicio';
 
 export interface NotificationLog {
   id: string;
@@ -28,11 +34,13 @@ export interface WhatsappStatus {
   status: string;
   whatsapp: EstadoSesionWhatsapp;
   colaPendiente: number;
+  detalle?: string | null;
 }
 
 export interface WhatsappQr {
   whatsapp: EstadoSesionWhatsapp;
   qr: string | null; // imagen PNG en data URL; null si ya está conectado o aún no se genera
+  detalle?: string | null; // motivo del fallo de arranque de WhatsApp, si lo hubo
 }
 
 export interface FiltroHistorial {
