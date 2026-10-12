@@ -5,6 +5,7 @@ import { Observable, tap, catchError, of, throwError } from 'rxjs';
 import { RestaurantTable, TableStatus, OrdenActivaMesa, SalonZona } from '../models/table.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
+import { AuthService } from './auth.service';
 
 export interface AlertaPlatoListoEvento {
   tipo: string;
@@ -49,6 +50,7 @@ export class SalonService implements OnDestroy {
   private http = inject(HttpClient);
   private notify = inject(NotificationService);
   private platformId = inject(PLATFORM_ID);
+  private auth = inject(AuthService);
 
   private readonly API_URL = environment.ordersApiUrl || 'http://localhost:8082';
 
@@ -130,6 +132,12 @@ export class SalonService implements OnDestroy {
   }
 
   cargarMesas(): void {
+    // Sin sesión no hay nada que pedir: /mesas exige autenticación y respondería 403 (rellenando
+    // la consola de errores). El interceptor se encarga de devolver al usuario al login.
+    if (!this.haySesion()) {
+      return;
+    }
+
     this.isLoading.set(true);
     this.http.get<RestaurantTable[]>(`${this.API_URL}/mesas`).pipe(
       tap(data => {
@@ -144,6 +152,10 @@ export class SalonService implements OnDestroy {
         return of([]);
       })
     ).subscribe();
+  }
+
+  private haySesion(): boolean {
+    return !!this.auth.getAccessToken();
   }
 
   private manejarErrorMutacion(err: any): Observable<never> {
@@ -230,6 +242,9 @@ export class SalonService implements OnDestroy {
 
     // Fallback de polling de alta frecuencia (cada 6s) para actualizar el plano y alertar platos listos
     this.pollingInterval = setInterval(() => {
+      if (!this.haySesion()) {
+        return;
+      }
       this.http.get<RestaurantTable[]>(`${this.API_URL}/mesas`).pipe(
         catchError(() => of([]))
       ).subscribe(nuevasMesas => {

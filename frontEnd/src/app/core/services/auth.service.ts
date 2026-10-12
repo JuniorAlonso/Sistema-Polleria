@@ -1,6 +1,7 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
 import { Observable, tap, catchError, throwError, map } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
 import { BackendAuthResponse } from '../models/api-contracts.model';
@@ -13,6 +14,7 @@ import { environment } from '../../../environments/environment';
 export class AuthService {
   private http = inject(HttpClient);
   private platformId = inject(PLATFORM_ID);
+  private router = inject(Router);
   private readonly API_URL = environment.authApiUrl || 'http://localhost:8081';
 
   // Reactive State Signals
@@ -66,10 +68,10 @@ export class AuthService {
         if (this.isTokenExpired(savedToken)) {
           if (savedRefreshToken) {
             this.refreshTokens(savedRefreshToken).subscribe({
-              error: () => this.forceLogout()
+              error: () => this.limpiarSesion()
             });
           } else {
-            this.forceLogout();
+            this.limpiarSesion();
           }
           return;
         }
@@ -79,7 +81,7 @@ export class AuthService {
           this.token.set(savedToken);
           this.refreshToken.set(savedRefreshToken || null);
         } catch {
-          this.forceLogout();
+          this.limpiarSesion();
         }
       }
     }
@@ -190,9 +192,19 @@ export class AuthService {
   }
 
   /**
-   * Cierre forzado de sesión en caso de expiración irreversible o detección de reuso
+   * Cierre forzado de sesión: limpia las credenciales **y saca al usuario de la página**.
+   *
+   * La navegación es imprescindible: los guards solo se evalúan al navegar, así que un componente
+   * ya montado (por ejemplo `SalonService`, que carga mesas en su constructor y luego cada 6 s)
+   * seguiría llamando a endpoints protegidos sin sesión y llenaría la consola de errores 403.
    */
   forceLogout(): void {
+    this.limpiarSesion();
+    this.volverAlLogin();
+  }
+
+  /** Limpia las credenciales sin navegar. */
+  private limpiarSesion(): void {
     this.currentUser.set(null);
     this.token.set(null);
     this.refreshToken.set(null);
@@ -202,6 +214,20 @@ export class AuthService {
       localStorage.removeItem('polleria_token');
       localStorage.removeItem('polleria_refresh_token');
     }
+  }
+
+  /**
+   * No navega al arrancar (`restoreSession`): descartar una sesión vieja en el constructor del
+   * servicio no debe expulsar a un visitante anónimo de una página pública como la carta.
+   */
+  private volverAlLogin(): void {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
+    if (this.router.url.startsWith('/login')) {
+      return;
+    }
+    this.router.navigate(['/login']);
   }
 
   private setSession(auth: AuthResponse): void {
