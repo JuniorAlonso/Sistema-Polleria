@@ -187,12 +187,13 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
     });
 
     router.get('/status', (req, res) => {
+        // Público: solo el estado, sin el detalle del fallo de arranque (que expone
+        // hostnames y rutas internas). El detalle viaja por /qr, que exige ADMIN.
         const estado = estadoWhatsapp();
         res.json({
             status: 'ok',
             whatsapp: ESTADO_WHATSAPP[estado] || estado,
-            colaPendiente: service.pendientes,
-            detalle: errorWhatsapp()
+            colaPendiente: service.pendientes
         });
     });
 

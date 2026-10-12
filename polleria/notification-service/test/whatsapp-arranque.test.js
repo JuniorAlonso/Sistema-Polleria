@@ -53,13 +53,14 @@ function tokenAdmin() {
         { subject: 'a@a.com', algorithm: 'HS256' });
 }
 
-test('GET /status informa error_inicio en lugar de starting eterno', async () => {
+test('GET /status informa error_inicio sin filtrar el detalle a un endpoint público', async () => {
     const res = await fetch(`${base}/status`);
     const body = await res.json();
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(body.whatsapp, 'error_inicio');
-    assert.strictEqual(body.detalle, FALLO_ARRANQUE);
+    // /status no exige token: el mensaje de Chromium trae hostnames y rutas internas.
+    assert.strictEqual(body.detalle, undefined);
 });
 
 test('GET /qr informa el motivo del fallo en lugar de un QR vacío sin explicación', async () => {
