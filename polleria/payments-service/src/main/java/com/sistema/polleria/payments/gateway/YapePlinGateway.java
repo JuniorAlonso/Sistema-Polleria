@@ -45,4 +45,9 @@ public class YapePlinGateway implements PaymentGateway {
             "Solicitud Yape/Plin enviada. Esperando confirmación del usuario."
         );
     }
+
+    @Override
+    public boolean supports(com.sistema.polleria.payments.entity.MetodoPago metodoPago) {
+        return metodoPago == com.sistema.polleria.payments.entity.MetodoPago.YAPE_PLIN;
+    }
 }

@@ -42,4 +42,9 @@ public class TarjetaGateway implements PaymentGateway {
             "Cargo aprobado por pasarela de tarjeta"
         );
     }
+
+    @Override
+    public boolean supports(com.sistema.polleria.payments.entity.MetodoPago metodoPago) {
+        return metodoPago == com.sistema.polleria.payments.entity.MetodoPago.TARJETA;
+    }
 }

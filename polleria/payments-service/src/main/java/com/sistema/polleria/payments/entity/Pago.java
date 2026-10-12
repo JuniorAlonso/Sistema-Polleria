@@ -47,6 +47,10 @@ public class Pago {
     @Column(length = 500)
     private String detalle;
 
+    /** URL de redirección a checkout (p.ej. Checkout Pro de Mercado Pago) */
+    @Column(name = "checkout_url", length = 500)
+    private String checkoutUrl;
+
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();
 

@@ -5,10 +5,10 @@ import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.Pago;
-import com.sistema.polleria.payments.gateway.ContraentregaGateway;
 import com.sistema.polleria.payments.gateway.GatewayResult;
-import com.sistema.polleria.payments.gateway.TarjetaGateway;
-import com.sistema.polleria.payments.gateway.YapePlinGateway;
+import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
+import com.sistema.polleria.payments.gateway.PaymentGateway;
+import com.sistema.polleria.payments.gateway.PaymentGatewayService;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,9 +27,8 @@ import java.util.NoSuchElementException;
 public class PagoService {
 
     private final PagoRepository pagoRepository;
-    private final ContraentregaGateway contraentregaGateway;
-    private final TarjetaGateway tarjetaGateway;
-    private final YapePlinGateway yapePlinGateway;
+    private final PaymentGatewayService paymentGatewayService;
+    private final MercadoPagoGateway mercadoPagoGateway;
     private final RestClient ordersRestClient;
 
     @Transactional
@@ -38,11 +37,8 @@ public class PagoService {
             throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
         }
 
-        GatewayResult result = switch (request.metodoPago()) {
-            case CONTRAENTREGA -> contraentregaGateway.procesar(request, clienteId);
-            case TARJETA       -> tarjetaGateway.procesar(request, clienteId);
-            case YAPE_PLIN     -> yapePlinGateway.procesar(request, clienteId);
-        };
+        com.sistema.polleria.payments.gateway.PaymentGateway gateway = paymentGatewayService.seleccionar(request.metodoPago());
+        GatewayResult result = gateway.procesar(request, clienteId);
 
         Pago pago = new Pago();
         pago.setOrdenId(request.ordenId());
@@ -52,14 +48,15 @@ public class PagoService {
         pago.setEstado(result.estado());
         pago.setReferenciaExterna(result.referenciaExterna());
         pago.setDetalle(result.detalle());
+        pago.setCheckoutUrl(result.checkoutUrl());
         pago = pagoRepository.save(pago);
 
         if (result.estado() == EstadoPago.APROBADO) {
             notificarOrdenAsync(request.ordenId(), bearerToken);
         }
 
-        log.info("Pago iniciado — id={} orden={} método={} estado={}",
-                pago.getId(), pago.getOrdenId(), pago.getMetodoPago(), pago.getEstado());
+        log.info("Pago iniciado — id={} orden={} método={} estado={} checkoutUrl={}",
+                pago.getId(), pago.getOrdenId(), pago.getMetodoPago(), pago.getEstado(), pago.getCheckoutUrl());
 
         return PagoResponse.from(pago);
     }
@@ -115,6 +112,16 @@ public class PagoService {
         if (pago.getEstado() != EstadoPago.APROBADO) {
             throw new IllegalStateException("Solo se pueden reembolsar pagos que hayan sido APROBADOS. Estado actual: " + pago.getEstado());
         }
+
+        // Si es un pago de Mercado Pago, ejecutar reembolso en la pasarela externa
+        if (mercadoPagoGateway != null && mercadoPagoGateway.esPagoMercadoPago(pago)) {
+            try {
+                mercadoPagoGateway.procesarReembolso(pago, monto);
+            } catch (Exception e) {
+                log.warn("Advertencia al procesar reembolso en Mercado Pago (se continuará con el registro local): {}", e.getMessage());
+            }
+        }
+
         pago.setEstado(EstadoPago.REEMBOLSADO);
         pago.setDetalle("Reembolso procesado por S/ " + (monto != null ? monto : pago.getMonto()) + ". Motivo: " + (motivo != null ? motivo : "Reclamo procedente"));
         pago = pagoRepository.save(pago);
@@ -144,13 +151,26 @@ public class PagoService {
     }
 
     /**
-     * Registra en log que el pago fue aprobado.
-     * La transición de estado de la orden la maneja el personal (cocina/mozo)
-     * una vez que reciben la orden. Cuando se integre mensajería (RabbitMQ/Kafka)
-     * este método publicará un evento PaymentApproved en lugar de una llamada síncrona.
+     * Notifica a orders-service que el pago fue aprobado para avanzar
+     * automáticamente el estado del pedido (RF21).
      */
     @Async
     protected void notificarOrdenAsync(Long ordenId, String bearerToken) {
-        log.info("Pago aprobado para orden {} — la cocina procesará la orden en su panel", ordenId);
+        log.info("Pago aprobado para orden {} — notificando a orders-service", ordenId);
+        if (ordersRestClient != null) {
+            try {
+                var spec = ordersRestClient.patch()
+                        .uri("/ordenes/{id}/estado", ordenId)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .body(java.util.Map.of("nuevoEstado", "EN_PREPARACION"));
+                if (bearerToken != null && !bearerToken.isBlank()) {
+                    spec.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
+                }
+                spec.retrieve().toBodilessEntity();
+                log.info("Orden {} actualizada automáticamente a EN_PREPARACION en orders-service", ordenId);
+            } catch (Exception e) {
+                log.warn("No se pudo notificar automáticamente a orders-service para orden {}: {}", ordenId, e.getMessage());
+            }
+        }
     }
 }

@@ -22,4 +22,10 @@ public class ContraentregaGateway implements PaymentGateway {
             "Pago contra entrega registrado. El repartidor cobrará al entregar el pedido."
         );
     }
+
+    @Override
+    public boolean supports(com.sistema.polleria.payments.entity.MetodoPago metodoPago) {
+        return metodoPago == com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA;
+    }
 }
+

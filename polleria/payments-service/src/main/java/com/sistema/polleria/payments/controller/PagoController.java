@@ -31,10 +31,10 @@ public class PagoController {
     public PagoResponse iniciar(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal,
-            @RequestHeader("Authorization") String authorization) {
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
 
         Long clienteId = extractUserId(principal);
-        return pagoService.iniciar(request, clienteId, authorization);
+        return pagoService.iniciar(request, clienteId, authorization != null ? authorization : "");
     }
 
     /** Crear Preferencia de Mercado Pago (Checkout Pro) */
@@ -88,8 +88,8 @@ public class PagoController {
     public PagoResponse confirmar(
             @PathVariable Long id,
             @Valid @RequestBody ConfirmarPagoRequest req,
-            @RequestHeader("Authorization") String authorization) {
-        return pagoService.confirmar(id, req, authorization);
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return pagoService.confirmar(id, req, authorization != null ? authorization : "");
     }
 
     /** Cancelar pago */

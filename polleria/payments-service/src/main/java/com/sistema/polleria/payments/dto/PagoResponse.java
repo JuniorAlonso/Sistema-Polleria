@@ -17,8 +17,24 @@ public record PagoResponse(
     String referenciaExterna,
     String detalle,
     LocalDateTime creadoEn,
-    LocalDateTime actualizadoEn
+    LocalDateTime actualizadoEn,
+    String checkoutUrl
 ) {
+    public PagoResponse(
+        Long id,
+        Long ordenId,
+        Long clienteId,
+        BigDecimal monto,
+        MetodoPago metodoPago,
+        EstadoPago estado,
+        String referenciaExterna,
+        String detalle,
+        LocalDateTime creadoEn,
+        LocalDateTime actualizadoEn
+    ) {
+        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn, null);
+    }
+
     public static PagoResponse from(Pago p) {
         return new PagoResponse(
             p.getId(),
@@ -30,7 +46,8 @@ public record PagoResponse(
             p.getReferenciaExterna(),
             p.getDetalle(),
             p.getCreadoEn(),
-            p.getActualizadoEn()
+            p.getActualizadoEn(),
+            p.getCheckoutUrl()
         );
     }
 }
