@@ -55,6 +55,17 @@ public class CajaService {
         return ArqueoCajaResponse.from(arqueo);
     }
 
+    /**
+     * Movimientos de la caja abierta, del más reciente al más antiguo. Si no hay caja abierta
+     * devuelve una lista vacía: es una consulta de lectura para el panel, no un error.
+     */
+    @Transactional(readOnly = true)
+    public List<MovimientoCaja> listarMovimientosDeCajaAbierta() {
+        return arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+                .map(arqueo -> movimientoRepository.findByArqueoIdOrderByFechaDesc(arqueo.getId()))
+                .orElseGet(List::of);
+    }
+
     @Transactional
     public MovimientoCaja registrarMovimiento(MovimientoCajaRequest req, Long usuarioId) {
         ArqueoCaja actual = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)

@@ -7,6 +7,7 @@ import com.sistema.polleria.orders.entity.Mesa;
 import com.sistema.polleria.orders.entity.MesaEstado;
 import com.sistema.polleria.orders.entity.Orden;
 import com.sistema.polleria.orders.entity.OrdenEstado;
+import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.MesaRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import lombok.RequiredArgsConstructor;
@@ -152,7 +153,7 @@ public class MesaService {
                     actual, nuevoEstado, actual, transicionesPermitidas(actual)
             );
             log.warn(errorMsg);
-            throw new IllegalStateException(errorMsg);
+            throw new ConflictoDeEstadoException(errorMsg);
         }
 
         mesa.setEstado(nuevoEstado);
@@ -203,7 +204,7 @@ public class MesaService {
 
         List<Orden> ordenesActivas = ordenRepository.findByMesaIdAndEstadoNotIn(id, ESTADOS_TERMINALES);
         if (!ordenesActivas.isEmpty()) {
-            throw new IllegalStateException("No se puede dar de baja la mesa #" + mesa.getNumero() + " porque tiene una comanda activa en curso");
+            throw new ConflictoDeEstadoException("No se puede dar de baja la mesa #" + mesa.getNumero() + " porque tiene una comanda activa en curso");
         }
 
         // Soft delete para garantizar integridad con el histórico de órdenes y reportes
@@ -217,6 +218,18 @@ public class MesaService {
 
     public Mesa buscarOFallar(Long id) {
         return mesaRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Mesa no encontrada: " + id));
+    }
+
+    /**
+     * Igual que {@link #buscarOFallar(Long)} pero tomando un bloqueo pesimista sobre la fila
+     * de la mesa. Debe invocarse dentro de una transacción; el bloqueo se libera al confirmar.
+     * Se usa al abrir una comanda de salón para que la verificación de comanda activa y la
+     * creación de la orden sean una única operación atómica.
+     */
+    @Transactional
+    public Mesa buscarOFallarConBloqueo(Long id) {
+        return mesaRepository.buscarConBloqueo(id)
                 .orElseThrow(() -> new NoSuchElementException("Mesa no encontrada: " + id));
     }
 

@@ -100,6 +100,39 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    @ExceptionHandler(com.sistema.polleria.orders.exception.ConflictoDeEstadoException.class)
+    public ResponseEntity<Map<String, Object>> handleConflictoDeEstado(com.sistema.polleria.orders.exception.ConflictoDeEstadoException ex) {
+        log.warn("Operación rechazada por conflicto de estado: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "error", ex.getMessage(),
+                "status", 409
+        ));
+    }
+
+    /**
+     * Una ruta que no existe debe responder 404, nunca 500.
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResourceFound(
+            org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        log.warn("Ruta no encontrada: {}", ex.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                "error", "Ruta no encontrada: " + ex.getResourcePath(),
+                "status", 404));
+    }
+
+    /**
+     * Un método HTTP no soportado en una ruta existente debe responder 405, no 500.
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotAllowed(
+            org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        log.warn("Método {} no permitido", ex.getMethod());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of(
+                "error", "Método " + ex.getMethod() + " no permitido en esta ruta",
+                "status", 405));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
         log.error("Error inesperado: ", ex);

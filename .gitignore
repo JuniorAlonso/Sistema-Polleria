@@ -11,3 +11,9 @@
 **/.env
 
 .diseño_productos_y_servicios/
+.web_integrador/
+.playwright-mcp/
+.github/
+.codegraph/
+.atl/
+odd/

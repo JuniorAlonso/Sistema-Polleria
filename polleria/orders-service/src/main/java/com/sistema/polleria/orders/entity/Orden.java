@@ -59,6 +59,14 @@ public class Orden {
     @Column(length = 20)
     private String telefonoCliente;
 
+    /**
+     * Celular en forma canónica, derivado de {@code telefonoCliente}. Existe para que el índice
+     * único de numeración compare el mismo cliente aunque el número se haya escrito con
+     * formatos distintos (938924552, +51 938 924 552, (01) 938924552).
+     */
+    @Column(name = "telefono_normalizado", length = 20)
+    private String telefonoNormalizado;
+
     @Column(nullable = false, precision = 10, scale = 2)
     @Builder.Default
     private BigDecimal total = BigDecimal.ZERO;
@@ -75,14 +83,25 @@ public class Orden {
     @Builder.Default
     private List<OrdenItem> items = new ArrayList<>();
 
+    /**
+     * Bloqueo optimista: dos PATCH /ordenes/{id}/estado simultáneos sobre la misma orden
+     * hacían leer→validar→escribir sin control, permitiendo actualizaciones perdidas y que
+     * dos transiciones mutuamente excluyentes pasaran ambas. Con @Version, la segunda
+     * transacción recibe un conflicto (HTTP 409) en lugar de sobrescribir a la primera.
+     */
+    @Version
+    private Long version;
+
     @PrePersist
     protected void onCreate() {
         creadoEn = LocalDateTime.now();
+        telefonoNormalizado = com.sistema.polleria.orders.util.TelefonoUtil.canonico(telefonoCliente);
     }
 
     @PreUpdate
     protected void onUpdate() {
         actualizadoEn = LocalDateTime.now();
+        telefonoNormalizado = com.sistema.polleria.orders.util.TelefonoUtil.canonico(telefonoCliente);
     }
 
     public static final BigDecimal COSTO_DELIVERY = new BigDecimal("6.00");

@@ -11,7 +11,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres123
     ports:
+      # 5433 es el puerto para pruebas locales desde el host (JUnit/Maven).
+      # En muchas máquinas Windows, 127.0.0.1:5432 lo ocupa otro PostgreSQL (p. ej. vía WSL),
+      # por lo que localhost:5432 no llega a este contenedor.
       - "5432:5432"
+      - "5433:5432"
     volumes:
       - polleria_postgres_data:/var/lib/postgresql/data
     healthcheck:

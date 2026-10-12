@@ -31,7 +31,7 @@ export class FinanceService {
   }
 
   obtenerCajaActual(): void {
-    this.http.get<ArqueoCaja>(`${this.API_URL}/caja/actual`).pipe(
+    this.http.get<ArqueoCaja>(`${this.API_URL}/finanzas/caja/actual`).pipe(
       tap(caja => {
         if (caja) {
           caja.montoInicial = caja.montoApertura;
@@ -56,7 +56,7 @@ export class FinanceService {
       ? { montoApertura: reqOrMonto }
       : reqOrMonto;
 
-    return this.http.post<ArqueoCaja>(`${this.API_URL}/caja/apertura`, req).pipe(
+    return this.http.post<ArqueoCaja>(`${this.API_URL}/finanzas/caja/apertura`, req).pipe(
       tap(caja => {
         if (caja) {
           caja.montoInicial = caja.montoApertura;
@@ -74,7 +74,7 @@ export class FinanceService {
       ...req,
       motivo: req.motivo || req.concepto || 'Movimiento de caja'
     };
-    return this.http.post<MovimientoCaja>(`${this.API_URL}/caja/movimientos`, payload).pipe(
+    return this.http.post<MovimientoCaja>(`${this.API_URL}/finanzas/caja/movimientos`, payload).pipe(
       tap(mov => {
         this.notify.showSuccess(`Movimiento de ${mov.tipo} registrado por S/ ${mov.monto.toFixed(2)}`);
         this.obtenerCajaActual();
@@ -84,7 +84,7 @@ export class FinanceService {
   }
 
   cargarMovimientos(): void {
-    this.http.get<MovimientoCaja[]>(`${this.API_URL}/caja/movimientos`).pipe(
+    this.http.get<MovimientoCaja[]>(`${this.API_URL}/finanzas/caja/movimientos`).pipe(
       tap(m => {
         const mapped = m.map(item => ({
           ...item,
@@ -115,7 +115,7 @@ export class FinanceService {
       req = (typeof reqOrObs === 'object' && reqOrObs !== null ? reqOrObs : { montoCierreEfectivo: 0, montoCierrePos: 0 });
     }
 
-    const url = id ? `${this.API_URL}/caja/cierre?arqueoId=${id}` : `${this.API_URL}/caja/cierre`;
+    const url = id ? `${this.API_URL}/finanzas/caja/cierre?arqueoId=${id}` : `${this.API_URL}/finanzas/caja/cierre`;
     return this.http.post<ArqueoCaja>(url, req).pipe(
       tap(cerrada => {
         if (cerrada) {
@@ -134,7 +134,7 @@ export class FinanceService {
 
   cargarBalanceDiario(fecha?: string): void {
     const query = fecha ? `?fecha=${fecha}` : '';
-    this.http.get<BalanceDiario>(`${this.API_URL}/finanzas/balance-diario${query}`).pipe(
+    this.http.get<BalanceDiario>(`${this.API_URL}/finanzas/balance/diario${query}`).pipe(
       tap(b => {
         if (b) {
           b.totalVentas = b.ingresos?.totalIngresos || 0;
@@ -148,7 +148,7 @@ export class FinanceService {
   }
 
   cargarHistorial(): void {
-    this.http.get<ArqueoCaja[]>(`${this.API_URL}/caja/historial`).pipe(
+    this.http.get<ArqueoCaja[]>(`${this.API_URL}/finanzas/caja/historial`).pipe(
       tap(h => this.historial.set(h)),
       catchError(() => of([]))
     ).subscribe();

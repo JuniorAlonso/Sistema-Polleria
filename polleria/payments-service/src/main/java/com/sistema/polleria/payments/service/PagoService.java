@@ -12,12 +12,10 @@ import com.sistema.polleria.payments.gateway.PaymentGatewayService;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClient;
 
-import org.springframework.beans.factory.annotation.Value;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -30,14 +28,12 @@ public class PagoService {
     private final PagoRepository pagoRepository;
     private final PaymentGatewayService paymentGatewayService;
     private final MercadoPagoGateway mercadoPagoGateway;
-    private final RestClient ordersRestClient;
+    private final NotificadorOrden notificadorOrden;
     private final WhatsappNotificationClient whatsappNotificationClient;
-
-    @Value("${orders.service.internal-key:}")
-    private String ordersInternalKey;
 
     @Transactional
     public PagoResponse iniciar(IniciarPagoRequest request, Long clienteId, String bearerToken) {
+        // Camino rápido, para dar un mensaje claro en el caso normal.
         if (pagoRepository.findByOrdenId(request.ordenId()).isPresent()) {
             throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
         }
@@ -54,7 +50,15 @@ public class PagoService {
         pago.setReferenciaExterna(result.referenciaExterna());
         pago.setDetalle(result.detalle());
         pago.setCheckoutUrl(result.checkoutUrl());
-        pago = pagoRepository.save(pago);
+
+        // La comprobación de arriba es el camino rápido, pero es un check-then-act: dos pagos
+        // concurrentes de la misma orden podían pasar ambos. El índice único sobre orden_id es
+        // lo que realmente lo garantiza, y saveAndFlush fuerza la verificación aquí dentro.
+        try {
+            pago = pagoRepository.saveAndFlush(pago);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
+        }
 
         if (result.estado() == EstadoPago.APROBADO) {
             notificarOrdenAsync(request.ordenId(), bearerToken);
@@ -90,7 +94,18 @@ public class PagoService {
 
     @Transactional
     public PagoResponse confirmar(Long id, ConfirmarPagoRequest req, String bearerToken) {
-        Pago pago = buscar(id);
+        // Bloqueo pesimista: dos webhooks concurrentes de Mercado Pago para el mismo pago
+        // se serializan aquí. Sin él, ambos leían el pago como no aprobado y ambos confirmaban.
+        Pago pago = pagoRepository.buscarConBloqueo(id)
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+
+        // Idempotencia: Mercado Pago reintenta los webhooks. Si el pago ya está aprobado se
+        // devuelve el estado actual sin volver a notificar la orden ni reenviar el WhatsApp.
+        if (pago.getEstado() == EstadoPago.APROBADO) {
+            log.info("Pago id={} ya estaba APROBADO: confirmación idempotente sin notificaciones", id);
+            return PagoResponse.from(pago);
+        }
+
         validarTransicion(pago.getEstado(), EstadoPago.APROBADO);
         pago.setEstado(EstadoPago.APROBADO);
         pago.setReferenciaExterna(req.referenciaExterna());
@@ -142,6 +157,33 @@ public class PagoService {
         return reembolsar(pago.getId(), monto, motivo);
     }
 
+    /**
+     * Aplica un estado informado por la pasarela (webhook) tomando el bloqueo pesimista del pago.
+     *
+     * Antes esas ramas escribían la entidad directamente desde el controlador, sin transacción
+     * ni bloqueo: un webhook {@code in_process} posterior a un {@code approved} podía degradar el
+     * pago de APROBADO a PENDIENTE, y un conflicto de versión se perdía silenciosamente.
+     */
+    @Transactional
+    public PagoResponse actualizarEstadoDesdePasarela(Long pagoId, EstadoPago nuevoEstado, String detalle) {
+        Pago pago = pagoRepository.buscarConBloqueo(pagoId)
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + pagoId));
+
+        if (pago.getEstado() == EstadoPago.APROBADO && nuevoEstado == EstadoPago.PENDIENTE) {
+            log.info("Se ignora el paso a PENDIENTE del pago id={}: ya estaba APROBADO", pagoId);
+            return PagoResponse.from(pago);
+        }
+        if (pago.getEstado() == nuevoEstado) {
+            return PagoResponse.from(pago);
+        }
+
+        pago.setEstado(nuevoEstado);
+        pago.setDetalle(detalle);
+        pago = pagoRepository.save(pago);
+        log.info("Pago id={} → {} (webhook de pasarela)", pagoId, nuevoEstado);
+        return PagoResponse.from(pago);
+    }
+
     // ─── helpers ────────────────────────────────────────────────────
 
     private Pago buscar(Long id) {
@@ -159,36 +201,17 @@ public class PagoService {
     /**
      * Notifica a orders-service que el pago fue aprobado para avanzar
      * automáticamente el estado del pedido a EN_PREPARACION (RF21).
+     * Se delega a {@link NotificadorOrden} para que @Async realmente se aplique.
      */
-    @Async
-    protected void notificarOrdenAsync(Long ordenId, String bearerToken) {
-        notificarOrdenEstadoAsync(ordenId, "EN_PREPARACION", bearerToken);
+    private void notificarOrdenAsync(Long ordenId, String bearerToken) {
+        notificadorOrden.notificarPagoAprobado(ordenId, bearerToken);
     }
 
     /**
      * Notifica cualquier cambio de estado a orders-service autenticándose con
      * la clave interna X-Internal-Key (o Bearer token si está disponible).
      */
-    @Async
     public void notificarOrdenEstadoAsync(Long ordenId, String nuevoEstado, String bearerToken) {
-        log.info("Notificando a orders-service para orden {} → nuevoEstado={}", ordenId, nuevoEstado);
-        if (ordersRestClient != null) {
-            try {
-                var spec = ordersRestClient.patch()
-                        .uri("/ordenes/{id}/estado", ordenId)
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .body(java.util.Map.of("estado", nuevoEstado, "nuevoEstado", nuevoEstado));
-                if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
-                    spec.header("X-Internal-Key", ordersInternalKey);
-                }
-                if (bearerToken != null && !bearerToken.isBlank()) {
-                    spec.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
-                }
-                spec.retrieve().toBodilessEntity();
-                log.info("Orden {} actualizada automáticamente a {} en orders-service", ordenId, nuevoEstado);
-            } catch (Exception e) {
-                log.warn("No se pudo notificar a orders-service para orden {}: {}", ordenId, e.getMessage());
-            }
-        }
+        notificadorOrden.notificarEstado(ordenId, nuevoEstado, bearerToken);
     }
 }

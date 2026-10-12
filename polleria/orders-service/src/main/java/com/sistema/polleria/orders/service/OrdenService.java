@@ -4,6 +4,7 @@ import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.dto.CrearOrdenRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.*;
+import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +26,11 @@ public class OrdenService {
     private final SalonEventPublisher salonEventPublisher;
     private final NumeroPedidoService numeroPedidoService;
 
+    private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
+            OrdenEstado.ENTREGADO,
+            OrdenEstado.CANCELADO
+    );
+
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
         validarRequest(request);
@@ -40,7 +46,20 @@ public class OrdenService {
                 .build();
 
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() != null) {
-            Mesa mesa = mesaService.buscarOFallar(request.getMesaId());
+            // Bloqueo pesimista: sin él, dos mozos podían abrir una comanda en la misma mesa
+            // a la vez porque ambos veían la mesa sin comanda activa.
+            Mesa mesa = mesaService.buscarOFallarConBloqueo(request.getMesaId());
+            if (!Boolean.TRUE.equals(mesa.getActivo())) {
+                throw new ConflictoDeEstadoException(
+                        "La mesa " + mesa.getNumero() + " está dada de baja y no puede recibir comandas. "
+                        + "Reactívala en el panel para volver a usarla.");
+            }
+            List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
+            if (!comandasActivas.isEmpty()) {
+                throw new ConflictoDeEstadoException(
+                        "La mesa " + mesa.getNumero() + " ya tiene una comanda activa. "
+                        + "Agrega los productos a esa comanda en lugar de abrir una nueva.");
+            }
             orden.setMesa(mesa);
             mesa.setEstado(MesaEstado.OCUPADA);
         }

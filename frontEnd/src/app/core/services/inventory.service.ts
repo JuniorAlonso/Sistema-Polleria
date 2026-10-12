@@ -36,7 +36,7 @@ export class InventoryService {
 
   cargarInsumos(): void {
     this.isLoading.set(true);
-    this.http.get<Insumo[]>(`${this.API_URL}/insumos`).pipe(
+    this.http.get<Insumo[]>(`${this.API_URL}/inventario/insumos`).pipe(
       tap(data => {
         const mapped = data.map(ins => ({
           ...ins,
@@ -55,7 +55,7 @@ export class InventoryService {
   }
 
   crearInsumo(req: CrearInsumoRequest): Observable<Insumo> {
-    return this.http.post<Insumo>(`${this.API_URL}/insumos`, req).pipe(
+    return this.http.post<Insumo>(`${this.API_URL}/inventario/insumos`, req).pipe(
       tap(nuevo => {
         this.insumos.update(prev => [...prev, nuevo]);
         this.notify.showSuccess(`Insumo "${nuevo.nombre}" creado exitosamente`);
@@ -65,7 +65,8 @@ export class InventoryService {
   }
 
   actualizarStock(id: number, req: ActualizarStockRequest): Observable<Insumo> {
-    return this.http.put<Insumo>(`${this.API_URL}/insumos/${id}/stock`, req).pipe(
+    // El backend expone PATCH /inventario/insumos/{id}/stock, no PUT.
+    return this.http.patch<Insumo>(`${this.API_URL}/inventario/insumos/${id}/stock`, req).pipe(
       tap(actualizado => {
         this.insumos.update(prev => prev.map(i => i.id === id ? actualizado : i));
         this.notify.showSuccess(`Stock actualizado para ${actualizado.nombre}`);
@@ -76,7 +77,7 @@ export class InventoryService {
   }
 
   registrarDespacho(req: CrearDespachoRequest): Observable<DespachoCocina> {
-    return this.http.post<DespachoCocina>(`${this.API_URL}/despachos`, req).pipe(
+    return this.http.post<DespachoCocina>(`${this.API_URL}/inventario/despachos`, req).pipe(
       tap(despacho => {
         this.despachos.update(prev => [despacho, ...prev]);
         this.notify.showSuccess(`Despacho a cocina #${despacho.id} registrado con éxito`);
@@ -98,14 +99,14 @@ export class InventoryService {
   }
 
   cargarDespachos(): void {
-    this.http.get<DespachoCocina[]>(`${this.API_URL}/despachos`).pipe(
+    this.http.get<DespachoCocina[]>(`${this.API_URL}/inventario/despachos`).pipe(
       tap(data => this.despachos.set(data)),
       catchError(() => of([]))
     ).subscribe();
   }
 
   registrarMerma(req: RegistrarMermaRequest): Observable<Merma> {
-    return this.http.post<Merma>(`${this.API_URL}/mermas`, req).pipe(
+    return this.http.post<Merma>(`${this.API_URL}/inventario/mermas`, req).pipe(
       tap(merma => {
         this.mermas.update(prev => [merma, ...prev]);
         this.notify.showSuccess(`Merma de ${merma.cantidad} ${merma.insumoNombre} registrada`);
@@ -116,7 +117,7 @@ export class InventoryService {
   }
 
   cargarMermas(): void {
-    this.http.get<Merma[]>(`${this.API_URL}/mermas`).pipe(
+    this.http.get<Merma[]>(`${this.API_URL}/inventario/mermas`).pipe(
       tap(data => {
         const mapped = data.map(m => ({
           ...m,
@@ -131,7 +132,7 @@ export class InventoryService {
   }
 
   cargarAlertas(): void {
-    this.http.get<AlertaStock[]>(`${this.API_URL}/inventario/analisis/alertas`).pipe(
+    this.http.get<AlertaStock[]>(`${this.API_URL}/inventario/alertas`).pipe(
       tap(data => {
         const mapped = data.map(a => ({
           ...a,
@@ -147,7 +148,7 @@ export class InventoryService {
   }
 
   cargarRentabilidad(): void {
-    this.http.get<RentabilidadInventario>(`${this.API_URL}/inventario/analisis/rentabilidad`).pipe(
+    this.http.get<RentabilidadInventario>(`${this.API_URL}/inventario/rentabilidad`).pipe(
       tap(data => this.rentabilidad.set(data)),
       catchError(() => of(null))
     ).subscribe();

@@ -31,12 +31,15 @@ export class FeedbackService {
   });
 
   constructor() {
+    // Solo la carga pública. `cargarReportes()` pega a /feedback/admin/reportes, que exige
+    // ADMIN: como este servicio lo inyecta también la página pública de seguimiento, llamarlo
+    // aquí provocaba un 403 en la consola de cada visitante anónimo. El panel de administración
+    // lo invoca explícitamente cuando corresponde.
     this.cargarResenias();
-    this.cargarReportes();
   }
 
   cargarResenias(): void {
-    this.http.get<Resenia[]>(`${this.API_URL}/resenias`).pipe(
+    this.http.get<Resenia[]>(`${this.API_URL}/feedback/resenias`).pipe(
       tap(data => {
         const mapped = data.map(r => ({
           ...r,
@@ -50,7 +53,7 @@ export class FeedbackService {
   }
 
   enviarResenia(req: CrearReseniaRequest): Observable<Resenia> {
-    return this.http.post<Resenia>(`${this.API_URL}/resenias`, req).pipe(
+    return this.http.post<Resenia>(`${this.API_URL}/feedback/resenias`, req).pipe(
       tap(res => {
         const mapped = {
           ...res,
@@ -64,7 +67,7 @@ export class FeedbackService {
   }
 
   cargarReportes(): void {
-    this.http.get<ReporteIncidencia[]>(`${this.API_URL}/reportes-incidencia`).pipe(
+    this.http.get<ReporteIncidencia[]>(`${this.API_URL}/feedback/admin/reportes`).pipe(
       tap(data => this.reportes.set(data)),
       catchError(() => of([]))
     ).subscribe();
@@ -82,7 +85,8 @@ export class FeedbackService {
       formData.append('foto', foto);
     }
 
-    return this.http.post<ReporteIncidencia>(`${this.API_URL}/reportes-incidencia`, formData).pipe(
+    // El backend recibe el reporte con foto en /feedback/reportes/multipart (FormData).
+    return this.http.post<ReporteIncidencia>(`${this.API_URL}/feedback/reportes/multipart`, formData).pipe(
       tap(nuevo => {
         this.reportes.update(prev => [nuevo, ...prev]);
         this.notify.showSuccess('Incidencia reportada. Nuestro equipo de soporte la revisará a la brevedad.');
@@ -91,7 +95,8 @@ export class FeedbackService {
   }
 
   resolverReporte(id: number, req: ResolverReporteRequest): Observable<ReporteIncidencia> {
-    return this.http.put<ReporteIncidencia>(`${this.API_URL}/reportes-incidencia/${id}/resolver`, req).pipe(
+    // El backend expone PATCH /feedback/admin/reportes/{id}/resolver.
+    return this.http.patch<ReporteIncidencia>(`${this.API_URL}/feedback/admin/reportes/${id}/resolver`, req).pipe(
       tap(resuelto => {
         this.reportes.update(prev => prev.map(r => r.id === id ? resuelto : r));
         this.notify.showSuccess(`Incidencia #${id} ${resuelto.estado.toLowerCase()}`);

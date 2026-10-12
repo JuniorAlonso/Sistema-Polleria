@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -77,7 +77,8 @@ class OrdenServiceFase2Test {
         itemReq.setCantidad(2);
         req.setItems(List.of(itemReq));
 
-        when(mesaService.buscarOFallar(1L)).thenReturn(mesa);
+        when(mesaService.buscarOFallarConBloqueo(1L)).thenReturn(mesa);
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(1L), anyList())).thenReturn(List.of());
         when(productoService.buscarOFallar(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenAnswer(i -> {
             Orden o = i.getArgument(0);

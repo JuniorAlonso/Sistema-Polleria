@@ -48,6 +48,18 @@ public class CajaController {
         return ResponseEntity.status(HttpStatus.CREATED).body(cajaService.registrarMovimiento(req, usuarioId));
     }
 
+    /**
+     * Movimientos de la caja abierta. Devuelve una lista vacía si no hay caja abierta, para
+     * que el panel muestre "sin movimientos" en lugar de un error.
+     * El frontend ya llamaba a este GET, pero el controlador solo exponía el POST: la petición
+     * respondía HTTP 405 y los movimientos nunca se mostraban.
+     */
+    @GetMapping("/movimientos")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
+    public ResponseEntity<List<MovimientoCaja>> listarMovimientos() {
+        return ResponseEntity.ok(cajaService.listarMovimientosDeCajaAbierta());
+    }
+
     @PostMapping("/cierre")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
     public ResponseEntity<ArqueoCajaResponse> cerrarCaja(

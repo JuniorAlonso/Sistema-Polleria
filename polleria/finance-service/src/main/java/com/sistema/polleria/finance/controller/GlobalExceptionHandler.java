@@ -40,6 +40,29 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Validación fallida", "detalles", errors));
     }
 
+    /**
+     * Una ruta que no existe debe responder 404, nunca 500. Antes caía en el manejador genérico
+     * y devolvía "error interno" con traza completa de Tomcat para una petición normal.
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNoResourceFound(
+            org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        log.warn("Ruta no encontrada: {}", e.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Ruta no encontrada: " + e.getResourcePath()));
+    }
+
+    /**
+     * Un método HTTP no soportado en una ruta existente debe responder 405, no 500.
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, String>> handleMethodNotAllowed(
+            org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        log.warn("Método {} no permitido: {}", e.getMethod(), e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Map.of("error", "Método " + e.getMethod() + " no permitido en esta ruta"));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleGeneral(Exception e) {
         log.error("Unhandled exception: ", e);

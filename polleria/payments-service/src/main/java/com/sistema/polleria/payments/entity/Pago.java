@@ -57,6 +57,14 @@ public class Pago {
     @Column(name = "actualizado_en")
     private LocalDateTime actualizadoEn;
 
+    /**
+     * Bloqueo optimista: dos transiciones simultáneas sobre el mismo pago (por ejemplo un
+     * webhook de Mercado Pago y una confirmación manual del cajero) provocaban
+     * actualizaciones perdidas. Con @Version la segunda recibe un conflicto.
+     */
+    @Version
+    private Long version;
+
     @PreUpdate
     void preUpdate() {
         this.actualizadoEn = LocalDateTime.now();

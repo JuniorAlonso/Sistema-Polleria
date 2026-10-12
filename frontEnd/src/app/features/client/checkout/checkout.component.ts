@@ -441,7 +441,7 @@ export class CheckoutComponent implements OnInit {
       },
       items: [...this.cart.items()],
       tipo: 'DELIVERY',
-      estado: 'RECIBIDO',
+      estado: 'PENDIENTE_PAGO',
       metodoPago: 'TARJETA',
       subtotal: this.cart.subtotal(),
       costoEnvio: this.cart.costoEnvio(),

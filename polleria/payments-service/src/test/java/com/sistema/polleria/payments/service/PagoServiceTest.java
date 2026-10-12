@@ -18,7 +18,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClient;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -41,7 +40,7 @@ class PagoServiceTest {
     private MercadoPagoGateway mercadoPagoGateway;
 
     @Mock
-    private RestClient ordersRestClient;
+    private NotificadorOrden notificadorOrden;
 
     @Mock
     private WhatsappNotificationClient whatsappNotificationClient;
@@ -59,7 +58,7 @@ class PagoServiceTest {
         when(pagoRepository.findByOrdenId(10L)).thenReturn(Optional.empty());
         when(paymentGatewayService.seleccionar(MetodoPago.TARJETA)).thenReturn(mockGateway);
         when(mockGateway.procesar(request, 1L)).thenReturn(result);
-        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> {
+        when(pagoRepository.saveAndFlush(any(Pago.class))).thenAnswer(inv -> {
             Pago p = inv.getArgument(0);
             p.setId(100L);
             return p;
@@ -71,7 +70,7 @@ class PagoServiceTest {
         assertThat(response.estado()).isEqualTo(EstadoPago.PENDIENTE);
         assertThat(response.referenciaExterna()).isEqualTo("PREF-123");
         assertThat(response.checkoutUrl()).isEqualTo("https://mp.com/checkout");
-        verify(pagoRepository).save(any(Pago.class));
+        verify(pagoRepository).saveAndFlush(any(Pago.class));
     }
 
     @Test
@@ -82,7 +81,7 @@ class PagoServiceTest {
         pago.setOrdenId(50L);
         pago.setEstado(EstadoPago.PENDIENTE);
 
-        when(pagoRepository.findById(5L)).thenReturn(Optional.of(pago));
+        when(pagoRepository.buscarConBloqueo(5L)).thenReturn(Optional.of(pago));
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ConfirmarPagoRequest req = new ConfirmarPagoRequest("MP-12345", "Pago aprobado");
@@ -172,11 +171,68 @@ class PagoServiceTest {
         pago.setEstado(EstadoPago.PENDIENTE);
         pago.setCreadoEn(LocalDateTime.now());
 
-        when(pagoRepository.findById(3L)).thenReturn(Optional.of(pago));
+        when(pagoRepository.buscarConBloqueo(3L)).thenReturn(Optional.of(pago));
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
 
         pagoService.confirmar(3L, new ConfirmarPagoRequest("YP-123", "Yape recibido"), "Bearer x");
 
         verify(whatsappNotificationClient).notificarPagoConfirmado(52L, new BigDecimal("68.50"), MetodoPago.YAPE_PLIN);
+    }
+
+    @Test
+    @DisplayName("Confirmar un pago ya aprobado es idempotente: no vuelve a notificar (webhooks reintentados)")
+    void confirmar_deUnPagoYaAprobadoNoVuelveANotificar() {
+        Pago pago = new Pago();
+        pago.setId(9L);
+        pago.setOrdenId(90L);
+        pago.setMonto(new BigDecimal("34.00"));
+        pago.setMetodoPago(MetodoPago.YAPE_PLIN);
+        pago.setEstado(EstadoPago.APROBADO);
+
+        when(pagoRepository.buscarConBloqueo(9L)).thenReturn(Optional.of(pago));
+
+        PagoResponse res = pagoService.confirmar(9L, new ConfirmarPagoRequest("MP-DUP", "reintento"), "");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(whatsappNotificationClient, never())
+                .notificarPagoConfirmado(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Un webhook 'in_process' tardío no degrada a PENDIENTE un pago ya APROBADO")
+    void actualizarEstadoDesdePasarela_noDegradaUnPagoAprobado() {
+        Pago pago = new Pago();
+        pago.setId(12L);
+        pago.setOrdenId(120L);
+        pago.setEstado(EstadoPago.APROBADO);
+
+        when(pagoRepository.buscarConBloqueo(12L)).thenReturn(Optional.of(pago));
+
+        PagoResponse res = pagoService.actualizarEstadoDesdePasarela(
+                12L, EstadoPago.PENDIENTE, "Pago en proceso en Mercado Pago (in_process)");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(pago.getEstado()).isEqualTo(EstadoPago.APROBADO);
+        verify(pagoRepository, never()).save(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("Un webhook de rechazo sí cambia el estado y toma el bloqueo del pago")
+    void actualizarEstadoDesdePasarela_aplicaElRechazo() {
+        Pago pago = new Pago();
+        pago.setId(13L);
+        pago.setOrdenId(130L);
+        pago.setEstado(EstadoPago.PENDIENTE);
+
+        when(pagoRepository.buscarConBloqueo(13L)).thenReturn(Optional.of(pago));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.actualizarEstadoDesdePasarela(
+                13L, EstadoPago.RECHAZADO, "Pago rechazado por Mercado Pago");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.RECHAZADO);
+        verify(pagoRepository).buscarConBloqueo(13L);
+        verify(pagoRepository).save(pago);
     }
 }
