@@ -1,0 +1,141 @@
+###############################################################################
+# SISTEMA POLLERÍA - FASE 3: NOTIFICACIONES WHATSAPP (notification-service)
+# Extensión: REST Client (humao.rest-client)
+#
+# Antes de probar:
+#   1. cd polleria/notification-service && npm start
+#   2. Escanear el QR (solo la primera vez)
+#   3. Cambiar @TELEFONO por un número real con WhatsApp para ver los mensajes
+###############################################################################
+
+@NOTIF_URL = http://localhost:3001/api/notificaciones
+@AUTH_URL = http://localhost:8081
+
+# Debe coincidir con NOTIFICATION_API_KEY (dejar vacío si no está configurada)
+@INTERNAL_KEY = sanpollo-dev-notification-key
+
+@TELEFONO = 51938924552
+
+# Token de un usuario ADMIN (generar vía login previo)
+@TOKEN_ADMIN = Bearer eyJhbGciOiJIUzI1NiJ9.test
+
+### 3.0 Estado de la sesión de WhatsApp
+GET {{NOTIF_URL}}/status
+
+### 3.1 RF30 - Pago de delivery confirmado → 202 EN_COLA
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 52,
+  "telefono": "{{TELEFONO}}",
+  "nombreCliente": "María García",
+  "montoTotal": 68.50,
+  "metodoPago": "YAPE_PLIN",
+  "tiempoEstimado": "35-45 min"
+}
+
+### 3.2 RF31 - Pedido EN_PREPARACION
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 52,
+  "telefono": "{{TELEFONO}}",
+  "nombreCliente": "María",
+  "estadoNuevo": "EN_PREPARACION"
+}
+
+### 3.3 RF31 - Pedido EN_CAMINO con datos del repartidor
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 52,
+  "telefono": "{{TELEFONO}}",
+  "nombreCliente": "María",
+  "estadoNuevo": "EN_CAMINO",
+  "repartidorNombre": "Juan Pérez",
+  "repartidorTelefono": "987654321"
+}
+
+### 3.4 RF31 - Pedido ENTREGADO
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 52,
+  "telefono": "{{TELEFONO}}",
+  "nombreCliente": "María",
+  "estadoNuevo": "ENTREGADO"
+}
+
+# RNF10: si se ejecutan 3.1 a 3.4 seguidos, los mensajes llegan con 10 s de separación.
+# Revisar los logs del servicio o el historial (3.7).
+
+### 3.5 Número inválido → 422 y registro con estado ERROR (no bloquea la cola)
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 53,
+  "telefono": "12345",
+  "estadoNuevo": "EN_CAMINO"
+}
+
+### 3.6 Estado no permitido → 400
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "ordenId": 52,
+  "telefono": "{{TELEFONO}}",
+  "estadoNuevo": "LISTO"
+}
+
+### 3.7 RF32 - Historial de la orden 52 (solo ADMIN)
+GET {{NOTIF_URL}}/historial?ordenId=52
+Authorization: {{TOKEN_ADMIN}}
+
+### 3.8 RF32 - Solo envíos fallidos desde una fecha
+GET {{NOTIF_URL}}/historial?estado=ERROR&desde=2026-10-01
+Authorization: {{TOKEN_ADMIN}}
+
+### 3.9 Historial sin token → 401
+GET {{NOTIF_URL}}/historial
+
+### 3.10 Código de seguimiento por WhatsApp (lo usa orders-service)
+POST {{NOTIF_URL}}/whatsapp/codigo
+Content-Type: application/json
+X-Internal-Key: {{INTERNAL_KEY}}
+
+{
+  "telefono": "{{TELEFONO}}",
+  "codigo": "4827"
+}
+
+# ---- Flujo completo desde orders-service (sin iniciar sesión) ----
+@ORDERS_URL = http://localhost:8082
+
+### 3.11 Pedir código (llega por WhatsApp si el celular tiene pedidos)
+POST {{ORDERS_URL}}/ordenes/seguimiento/codigo
+Content-Type: application/json
+
+{ "telefono": "{{TELEFONO}}" }
+
+### 3.12 Verificar el código recibido → devuelve token
+# @name verificar
+POST {{ORDERS_URL}}/ordenes/seguimiento/verificar
+Content-Type: application/json
+
+{ "telefono": "{{TELEFONO}}", "codigo": "0000" }
+
+### 3.13 Ver los pedidos de ese celular
+GET {{ORDERS_URL}}/ordenes/seguimiento
+X-Seguimiento-Token: {{verificar.response.body.token}}

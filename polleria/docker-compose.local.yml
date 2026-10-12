@@ -88,6 +88,8 @@ services:
       DB_PASSWORD: postgres123
       JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+      NOTIFICATION_URL: http://notification-service:3001
+      NOTIFICATION_API_KEY: sanpollo-dev-notification-key
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +115,8 @@ services:
       JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
       ORDERS_SERVICE_URL: http://orders-service:8082
+      NOTIFICATION_URL: http://notification-service:3001
+      NOTIFICATION_API_KEY: sanpollo-dev-notification-key
     depends_on:
       postgres:
         condition: service_healthy
@@ -221,9 +225,38 @@ services:
     networks:
       - polleria-network
 
+  # ============================================================
+  # Fase 3 - Notificaciones WhatsApp (:3001)
+  # Primer arranque: `docker logs -f polleria-notification-service` y escanear el QR
+  # ============================================================
+  notification-service:
+    build:
+      context: ./notification-service
+    container_name: polleria-notification-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgres://postgres:postgres123@postgres:5432/polleria
+      JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
+      NOTIFICATION_API_KEY: sanpollo-dev-notification-key
+      WHATSAPP_RATE_LIMIT_MS: 10000
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+    volumes:
+      - polleria_whatsapp_session:/app/whatsapp-session
+    shm_size: "1gb"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - polleria-network
+
 volumes:
   polleria_postgres_data:
     name: polleria_local_postgres_data
+  polleria_whatsapp_session:
+    name: polleria_local_whatsapp_session
 
 networks:
   polleria-network:

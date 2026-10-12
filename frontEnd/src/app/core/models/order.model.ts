@@ -28,7 +28,8 @@ export interface OrderCustomerInfo {
 
 export interface Order {
   id: string;
-  codigoSeguimiento: string; // Ej: POL-9482
+  codigoSeguimiento: string; // Ej: POL-9482 (uso interno del personal)
+  numeroCliente?: number;    // Número que ve el cliente: su pedido N.° 1, 2, 3...
   cliente: OrderCustomerInfo;
   items: CartItem[];
   tipo: OrderType;

@@ -42,7 +42,7 @@ export class AuthAdapter {
       id: dto.email ? `usr-${dto.email.split('@')[0]}` : 'usr-current',
       nombre: dto.name || (dto.email ? dto.email.split('@')[0] : 'Usuario San Pollo'),
       correo: dto.email || '',
-      celular: '',
+      celular: dto.phone || '',
       rol: rol,
       token: dto.token || undefined
     };

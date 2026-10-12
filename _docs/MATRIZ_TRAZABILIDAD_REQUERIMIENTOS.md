@@ -40,9 +40,9 @@
 | **RF27** | Feedback y Reseñas | Clientes reportan problemas adjuntando descripción y evidencia fotográfica. | `feedback-service` (:8085) + Storage S3 | `POST /feedback/reclamos`<br>Subida multipart/form-data | **Fase 4** | ⭐ Fase 4 |
 | **RF28** | Feedback y Reseñas | Administrador visualiza, responde y gestiona estado de reseñas/reportes (Abierto, En Revisión, Resuelto). | `feedback-service` (:8085) + `frontEnd` | `GET /feedback/reclamos`<br>`PATCH /feedback/reclamos/{id}/estado` | **Fase 4** | ⭐ Fase 4 |
 | **RF29** | Feedback y Reseñas | Administrador emite reembolsos asociados a reportes procedentes. | `feedback-service` → `payments-service` | `POST /pagos/{id}/reembolso` | **Fase 4** | ⭐ Fase 4 |
-| **RF30** | Notificaciones | Notificación WhatsApp al cliente al confirmar el pago de delivery. | `notification-service` (:3001) | `POST /api/notificaciones/whatsapp/pago`<br>whatsapp-web.js client | **Fase 3** | 📲 Fase 3 (Base F1 lista) |
-| **RF31** | Notificaciones | Notificaciones WhatsApp automáticas en cada cambio de estado de delivery. | `orders-service` → `notification-service` | `POST /api/notificaciones/whatsapp/estado` | **Fase 3** | 📲 Fase 3 (Base F1 lista) |
-| **RF32** | Notificaciones | Registro y auditoría del estado de envíos de notificaciones (enviado, en cola, fallido). | `notification-service` (:3001) | `NotificationLog`<br>`GET /api/notificaciones/historial` | **Fase 3** | 📲 Fase 3 |
+| **RF30** | Notificaciones | Notificación WhatsApp al cliente al confirmar el pago de delivery. | `notification-service` (:3001) | `POST /api/notificaciones/whatsapp/pago`<br>whatsapp-web.js client | **Fase 3** | ✅ Fase 3 |
+| **RF31** | Notificaciones | Notificaciones WhatsApp automáticas en cada cambio de estado de delivery. | `orders-service` → `notification-service` | `POST /api/notificaciones/whatsapp/estado` | **Fase 3** | ✅ Fase 3 |
+| **RF32** | Notificaciones | Registro y auditoría del estado de envíos de notificaciones (enviado, en cola, fallido). | `notification-service` (:3001) | `NotificationLog`<br>`GET /api/notificaciones/historial` | **Fase 3** | ✅ Fase 3 |
 | **RF33** | Notificaciones | Notificación en tiempo real al dispositivo del mozo indicando plato listo en cocina. | `orders-service` (:8082) + WS STOMP | WebSocket Broker `/topic/mozo/mesas`<br>Trigger al pasar orden a `LISTO` | Fase 2 | 🔄 Fase 2 |
 | **RF34** | Incidentes | Registro y documentación de incidentes técnicos u operativos (causa raíz y solución). | `incident-service` (:8088) | `POST /incidentes`<br>Entidad `IncidenteOperativo` | **Fase 6** | 🏢 Fase 6 |
 
@@ -61,7 +61,7 @@
 | **RNF07** | Rendimiento | Actualización de pedidos casi en tiempo real. | Polling reactivo cada 3-5s en Frontend (Fase 1) y eventos WebSockets / Push en Fase 2. | ✅ Implementado |
 | **RNF08** | Escalabilidad | Microservicios desplegados independientemente con escalabilidad individual. | Contenedores Docker independientes por servicio (`auth-service`, `orders-service`, `payments-service`, `notification-service`). | ✅ Implementado |
 | **RNF09** | Fiabilidad | Registro y notificación automática de cancelaciones de pago por pasarela. | `MercadoPagoWebhookController` gestiona eventos `payment.cancelled` o `payment.rejected` actualizando el estado inmediatamente. | ✅ F1 (Mock) · 💳 F5 (Real) |
-| **RNF10** | Fiabilidad | Respeto a límites de WhatsApp.js: cola y espera de 10s entre envíos anti-baneo. | Queue Worker FIFO con delay programado de 10.000 ms en `notification-service`. | 📲 Fase 3 |
+| **RNF10** | Fiabilidad | Respeto a límites de WhatsApp.js: cola y espera de 10s entre envíos anti-baneo. | Queue Worker FIFO con delay programado de 10.000 ms en `notification-service`. | ✅ Fase 3 |
 | **RNF11** | Mantenibilidad | Código documentado, comentado y commits bajo Git/GitHub. | Convención Conventional Commits, arquitectura hexagonal/limpia en paquetes, documentación viva en `_docs/`. | ✅ Implementado |
 | **RNF12** | Mantenibilidad | Portabilidad multi-ambiente (dev, test, prod) mediante variables de entorno. | `application.properties` desacoplado con `${DB_URL}`, `${JWT_SECRET}`, etc.; archivo `.env.example`. | ✅ Implementado |
 | **RNF13** | Trazabilidad | Logs guardados de transacciones y errores para investigar incidentes. | SLF4J + Logback estructurado con correlación por `orderId` y `pagoId`. | ✅ Implementado |
@@ -92,7 +92,7 @@
 | :---: | :--- | :---: | :--- | :--- |
 | **1** | 🚨 Flujo Crítico del Pedido (MVP) | Alta | RF01–RF10, RF13–RF21 | [fase_1_core_pedidos/](./fases/fase_1_core_pedidos/README.md) |
 | **2** | 🔄 Operatividad en Salón y Tiempo Real | Media | RF11, RF12, RF16, RF33 | [fase_2_salon_mesas/](./fases/fase_2_salon_mesas/README.md) |
-| **3** | 📲 Notificaciones WhatsApp | Media | RF30, RF31, RF32 | [fase_3_notificaciones_wasap/](./fases/fase_3_notificaciones_wasap/README.md) |
+| **3** | 📲 Notificaciones WhatsApp | Media | RF30, RF31, RF32 | [fase_3_notificaciones_wasap/](./fases/fase_3_notificaciones_whatsapp/README.md) |
 | **4** | ⭐ Feedback, Reseñas y Reclamos | Media-Baja | RF26, RF27, RF28, RF29 | [fase_4_feedback_resenas/](./fases/fase_4_feedback_resenas/README.md) |
 | **5** | 💳 Pasarela de Pagos Mercado Pago | Media | RF19*, RF20*, RF21* | [fase_5_pagos_mercadopago/](./fases/fase_5_pagos_mercadopago/README.md) |
 | **6** | 🏢 Backoffice, Inventario, Finanzas y Seguridad | Baja | RF22–RF25, RF34 | [fase_6_backoffice_inventario/](./fases/fase_6_backoffice_inventario/README.md) |

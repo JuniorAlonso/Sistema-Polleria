@@ -76,7 +76,21 @@ En la Fase 1 ya existe un servicio base funcional en `polleria/notification-serv
 
 **Alcance a Desarrollar en Fase 3:** Reemplazar los envíos síncronos directos por una cola FIFO con delay estricto de 10s (RNF10), endpoints REST desacoplados por tipo de evento (`/pago`, `/estado`) y persistencia de logs para auditoría de envíos (`/historial`, RF32).
 
+> ✅ **Implementado.** El endpoint `POST /notificar` fue reemplazado por los endpoints de la sección 4. Ver la sección 9 para la estructura del código.
+
 ### 3.2 Implementación Técnica de la Cola Anti-Ban
+
+La implementación final usa una cola propia (`src/notifications/queue.js`) en lugar de `p-queue`, porque las versiones actuales de `p-queue` solo funcionan como ES Module y el servicio usa CommonJS. El comportamiento es el mismo:
+
+- Un solo envío a la vez (concurrencia 1), en orden FIFO.
+- Al menos `WHATSAPP_RATE_LIMIT_MS` (10.000 ms) entre un envío y el siguiente.
+- Si un envío falla, se registra y la cola continúa con el siguiente.
+- Los fallos temporales se reintentan hasta `WHATSAPP_MAX_INTENTOS` (3). Un número sin WhatsApp pasa directo a `ERROR`, sin reintentos.
+- Si WhatsApp aún no está conectado (esperando QR), la cola espera a que lo esté.
+- Al reiniciar el servicio, los registros que quedaron `EN_COLA` se vuelven a encolar.
+
+Pseudocódigo de referencia (diseño original):
+
 ```javascript
 const PQueue = require('p-queue');
 
@@ -126,7 +140,9 @@ async function enqueueMessage(notification) {
 POST /api/notificaciones/whatsapp/pago
 ```
 
-**Llamado por:** `payments-service` al confirmar un pago de delivery.
+**Llamado por:** `payments-service` al confirmar un pago de delivery (`WhatsappNotificationClient`). Lee el teléfono y el nombre del cliente desde `GET /ordenes/{id}` de `orders-service` y solo notifica si la orden es `DELIVERY`.
+
+**Header:** `X-Internal-Key: <NOTIFICATION_API_KEY>` (obligatorio solo si la variable está definida).
 
 **Request Body:**
 ```json
@@ -142,13 +158,18 @@ POST /api/notificaciones/whatsapp/pago
 
 **Mensaje generado:**
 ```
-🍗 ¡Hola María! Tu pago de S/ 68.50 por el pedido #52 ha sido confirmado.
+Hola, María.
 
-📦 Tiempo estimado de entrega: 35-45 min.
-📞 ¿Problemas? Llámanos al (056) 123-456.
+Confirmamos el pago de S/ 68.50 por tu pedido N.° 52. Ya está registrado y pasará a cocina en breve.
 
-— San Pollo de Ica 🐔
+Tiempo estimado de entrega: 35-45 min.
+
+Si necesitas ayuda con tu pedido, puedes llamarnos al (056) 123-456.
+
+San Pollo de Ica
 ```
+
+> Los mensajes usan un tono formal y cercano, sin emojis. Solo se usa el primer nombre del cliente, con mayúscula inicial. Las plantillas están en `src/notifications/messages.js`.
 
 **Response `202 Accepted`:**
 ```json
@@ -165,7 +186,11 @@ POST /api/notificaciones/whatsapp/pago
 POST /api/notificaciones/whatsapp/estado
 ```
 
-**Llamado por:** `orders-service` al cambiar el estado de una orden de delivery.
+**Llamado por:** `orders-service` al cambiar el estado de una orden de delivery (`NotificationService`). Solo envía para `tipo = DELIVERY` y los estados `EN_PREPARACION`, `EN_CAMINO` y `ENTREGADO`; cualquier otro estado responde `400`.
+
+**Header:** `X-Internal-Key: <NOTIFICATION_API_KEY>` (obligatorio solo si la variable está definida).
+
+> ℹ️ `repartidorNombre` y `repartidorTelefono` son opcionales. Hoy `Orden` solo guarda `repartidorId`, así que `orders-service` todavía no los envía y el mensaje `EN_CAMINO` sale sin datos del repartidor.
 
 **Request Body:**
 ```json
@@ -181,11 +206,13 @@ POST /api/notificaciones/whatsapp/estado
 
 **Mensajes según estado:**
 
-| Estado | Mensaje |
+Todos empiezan con `Hola, María.` y terminan con la firma `San Pollo de Ica`. El cuerpo según el estado:
+
+| Estado | Cuerpo del mensaje |
 | :--- | :--- |
-| `EN_PREPARACION` | `🔥 ¡María! Tu pedido #52 está siendo preparado por nuestro chef. ¡Ya falta poco!` |
-| `EN_CAMINO` | `🛵 ¡Tu pedido #52 ya va en camino! Repartidor: Juan Pérez (987654321)` |
-| `ENTREGADO` | `✅ ¡Pedido #52 entregado! Gracias por preferir San Pollo. ¿Te gustó? ¡Déjanos tu opinión!` |
+| `EN_PREPARACION` | Tu pedido N.° 52 ya está en preparación. Te avisaremos cuando salga a reparto. |
+| `EN_CAMINO` | Tu pedido N.° 52 ya salió a reparto. Te lo lleva Juan Pérez (987 654 321). *(Sin datos del repartidor: "...ya salió a reparto y llegará en los próximos minutos.")* |
+| `ENTREGADO` | Tu pedido N.° 52 fue entregado. Gracias por elegirnos. Si tienes un momento, nos ayudaría mucho conocer tu opinión sobre el pedido. |
 
 ### 4.3 Historial de Notificaciones (RF32)
 
@@ -193,7 +220,7 @@ POST /api/notificaciones/whatsapp/estado
 GET /api/notificaciones/historial
 ```
 
-**Acceso:** 🔒 Solo `ADMIN`
+**Acceso:** 🔒 Solo `ADMIN` (header `Authorization: Bearer <token de auth-service>`, validado con el mismo `JWT_SECRET`).
 
 **Query Params opcionales:** `?ordenId=52&estado=ENVIADO&desde=2026-10-01`
 
@@ -205,7 +232,7 @@ GET /api/notificaciones/historial
     "ordenId": 52,
     "destinatario": "51999888777",
     "tipo": "PAGO_CONFIRMADO",
-    "mensaje": "🍗 ¡Hola María! Tu pago de S/ 68.50...",
+    "mensaje": "Hola, María.\n\nConfirmamos el pago de S/ 68.50...",
     "estado": "ENVIADO",
     "intentos": 1,
     "enviadoEn": "2026-10-04T23:45:10Z",
@@ -216,7 +243,69 @@ GET /api/notificaciones/historial
 
 ---
 
+### 4.3.1 Número de pedido que ve el cliente
+
+Los mensajes **no muestran el ID interno** de la orden. `orders-service` asigna a cada pedido un `numeroCliente` (1, 2, 3...) por cliente con cuenta, o por celular si es invitado, y lo envía como `numeroPedido` en `/pago` y `/estado`. El mensaje dice "tu pedido N.° 3". Si `numeroPedido` no llega, se usa `ordenId`.
+
+### 4.3.2 Código de seguimiento por WhatsApp
+
+```
+POST /api/notificaciones/whatsapp/codigo
+```
+
+**Llamado por:** `orders-service` cuando un cliente sin sesión quiere ver sus pedidos (`POST /ordenes/seguimiento/codigo`).
+
+```json
+{ "telefono": "938924552", "codigo": "4827" }
+```
+
+Mensaje enviado:
+```
+Tu código para ver tus pedidos en San Pollo de Ica es 4827.
+
+Vence en 5 minutos. Si no lo solicitaste, puedes ignorar este mensaje.
+```
+
+En el historial se guarda con el código oculto (`****`), sin `ordenId`, con tipo `CODIGO_SEGUIMIENTO`. Si el servicio se reinicia antes de enviarlo, se descarta.
+
+Flujo completo en `orders-service` (rutas públicas):
+
+| Endpoint | Qué hace |
+| :--- | :--- |
+| `POST /ordenes/seguimiento/codigo` `{ telefono }` | Envía el código solo si ese celular tiene pedidos (responde igual en ambos casos). Máximo 1 cada 60 s. |
+| `POST /ordenes/seguimiento/verificar` `{ telefono, codigo }` | 5 intentos, vence a los 5 min. Devuelve un acceso temporal (`token`, 30 min). |
+| `GET /ordenes/seguimiento` header `X-Seguimiento-Token` | Pedidos de ese celular. |
+
+Además, `GET /ordenes/{id}` ahora solo responde al dueño del pedido, al personal o a otro microservicio con `X-Internal-Key` (`INTERNAL_API_KEY`, por defecto `polleria-dev-internal-key` en desarrollo). A cualquier otro le responde 404.
+
+### 4.4 Respuestas de error
+
+| Código | Cuándo |
+| :--- | :--- |
+| `400` | Faltan campos obligatorios o `estadoNuevo` no es un estado de delivery. |
+| `401` | Falta o es incorrecta la `X-Internal-Key` (o el token en `/historial`). |
+| `403` | El token de `/historial` no es de un `ADMIN`. |
+| `422` | El teléfono no tiene formato válido. Igual se registra en el historial con estado `ERROR`. |
+
+### 4.5 Estado del servicio
+
+```
+GET /api/notificaciones/status
+```
+
+```json
+{ "status": "ok", "whatsapp": "connected", "colaPendiente": 0 }
+```
+
+Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`.
+
+---
+
 ## 5. Esquema de Datos (Trazabilidad de Envíos)
+
+Tabla `notification_log` en PostgreSQL (se crea sola al arrancar si se define `DATABASE_URL`). Sin `DATABASE_URL`, el historial se guarda en memoria.
+
+> El estado de fallo se llama `ERROR` (RF32 lo menciona como "fallido").
 
 ### NotificationLog
 | Campo | Tipo | Descripción |
@@ -265,18 +354,32 @@ payments-service          orders-service          notification-service       Wha
 
 ## 7. Variables de Entorno
 
+Ver `polleria/notification-service/.env.example`.
+
 ```env
 # notification-service (:3001)
 PORT=3001
 NODE_ENV=production
 
 # Sesión de WhatsApp
-WHATSAPP_SESSION_PATH=./whatsapp-session  # Directorio de persistencia de sesión QR
+WHATSAPP_SESSION_PATH=./.wwebjs_auth      # Directorio de persistencia de sesión QR (NO subir a git)
 WHATSAPP_RATE_LIMIT_MS=10000              # Delay entre mensajes (default: 10000)
+WHATSAPP_MAX_INTENTOS=3                   # Reintentos ante fallos temporales
 
-# Comunicación inter-servicio (opcional si se llama desde otros servicios)
-ORDERS_SERVICE_URL=http://localhost:8082
-PAYMENTS_SERVICE_URL=http://localhost:8083
+# Historial (RF32)
+DATABASE_URL=postgres://postgres:postgres123@localhost:5432/polleria
+
+# Seguridad
+JWT_SECRET=<mismo que auth-service>       # Protege GET /historial
+NOTIFICATION_API_KEY=<clave compartida>   # Header X-Internal-Key de orders/payments
+```
+
+En `orders-service` y `payments-service`:
+
+```env
+NOTIFICATION_URL=http://localhost:3001
+NOTIFICATION_API_KEY=<la misma clave>
+WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 ```
 
 ---
@@ -287,6 +390,7 @@ PAYMENTS_SERVICE_URL=http://localhost:8083
 1. Escanear el código QR de WhatsApp Web desde el celular designado para la pollería.
 2. La sesión queda persistida en `WHATSAPP_SESSION_PATH` (no requiere re-escaneo en cada reinicio).
 3. Verificar conexión: `GET /api/notificaciones/status` → `{ "whatsapp": "connected" }`.
+4. ⚠️ La carpeta de sesión equivale a tener el celular iniciado: está en `.gitignore` y nunca debe subirse al repositorio.
 
 ### 8.2 Pruebas Funcionales
 | Caso | Entrada | Resultado Esperado |
@@ -303,3 +407,38 @@ PAYMENTS_SERVICE_URL=http://localhost:8083
 - [ ] La cola respeta el delay de 10s entre envíos consecutivos.
 - [ ] El historial registra TODOS los intentos con su estado final.
 - [ ] Un número inválido NO bloquea la cola para los siguientes mensajes.
+
+---
+
+## 9. Implementación (`polleria/notification-service`)
+
+```
+main.js                         # Arranque: store → servicio → API → WhatsApp
+src/config.js                   # Variables de entorno
+src/notifications/queue.js      # Cola FIFO con delay (RNF10)
+src/notifications/service.js    # Registra EN_COLA → envía → ENVIADO / ERROR, reintentos
+src/notifications/store.js      # NotificationLog en PostgreSQL o en memoria (RF32)
+src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
+src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
+src/http/app.js                 # Endpoints /api/notificaciones/*
+src/http/auth.js                # JWT ADMIN y X-Internal-Key
+src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
+src/whatsapp/handler.js         # Chatbot de respuestas (fuera del alcance de RF30-32)
+test/                           # Tests con node:test (`npm test`)
+Dockerfile                      # Imagen con Chromium para puppeteer
+```
+
+**Ejecutar en local:**
+
+```bash
+cd polleria/notification-service
+cp .env.example .env
+npm install
+npm start          # escanear el QR la primera vez
+npm test
+```
+
+**Con Docker:** el servicio está en `docker-compose.local.yml`. La sesión se guarda en el volumen `polleria_local_whatsapp_session`; el QR se ve con `docker logs -f polleria-notification-service`.
+
+Pruebas manuales: `rest-tests/05-fase-3-whatsapp.http`.
+

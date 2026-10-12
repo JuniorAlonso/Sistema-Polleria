@@ -5,7 +5,9 @@ import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.entity.OrdenTipo;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 public interface OrdenRepository extends JpaRepository<Orden, Long> {
@@ -34,4 +36,22 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
     List<Orden> findByRepartidorIdAndEstado(Long repartidorId, OrdenEstado estado);
 
     List<Orden> findByMesaIdAndEstadoNotIn(Long mesaId, List<OrdenEstado> estados);
+
+    // ─── Número de pedido por cliente ───────────────────────────────
+
+    @Query("SELECT COALESCE(MAX(o.numeroCliente), 0) FROM Orden o WHERE o.clienteId = :clienteId")
+    Integer maxNumeroPorCliente(@Param("clienteId") Long clienteId);
+
+    // Invitados (sin cuenta): se numera por celular
+    @Query("SELECT COALESCE(MAX(o.numeroCliente), 0) FROM Orden o " +
+           "WHERE (o.clienteId IS NULL OR o.clienteId = 0) AND o.telefonoCliente IN :telefonos")
+    Integer maxNumeroPorTelefono(@Param("telefonos") Collection<String> telefonos);
+
+    List<Orden> findByNumeroClienteIsNullOrderByIdAsc();
+
+    // ─── Seguimiento por celular ────────────────────────────────────
+
+    boolean existsByTelefonoClienteIn(Collection<String> telefonos);
+
+    List<Orden> findTop20ByTelefonoClienteInOrderByCreadoEnDesc(Collection<String> telefonos);
 }

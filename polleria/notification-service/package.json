@@ -1,18 +1,25 @@
 {
-  "name": "wwebjs-bot",
+  "name": "notification-service",
   "version": "1.0.0",
-  "description": "",
+  "description": "Notificaciones WhatsApp de San Pollo (Fase 3)",
   "license": "ISC",
   "author": "",
   "type": "commonjs",
   "main": "main.js",
   "scripts": {
-    "start": "node .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node main.js",
+    "test": "node --test"
   },
   "dependencies": {
+    "dotenv": "^18.0.7",
     "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

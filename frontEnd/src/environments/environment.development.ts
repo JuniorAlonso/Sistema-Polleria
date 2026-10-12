@@ -7,6 +7,7 @@ export const environment = {
   inventoryApiUrl: 'http://localhost:8086',
   financeApiUrl: 'http://localhost:8087',
   incidentApiUrl: 'http://localhost:8088',
+  notificationApiUrl: 'http://localhost:3001/api/notificaciones',
   wsUrl: 'http://localhost:8082/ws-polleria',
   services: {
     auth: 'http://localhost:8081/auth',

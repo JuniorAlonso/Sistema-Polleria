@@ -1,87 +1,52 @@
-const express = require('express');
-const client = require('./src/whatsapp/client');
-const { getLatestQr } = require('./src/whatsapp/client');
+const config = require('./src/config');
+const { client, whatsapp } = require('./src/whatsapp/client');
 const handleMessage = require('./src/whatsapp/handler');
+const { crearStore } = require('./src/notifications/store');
+const { NotificacionService } = require('./src/notifications/service');
+const { crearApp } = require('./src/http/app');
 
-const app = express();
-app.use(express.json());
+async function main() {
+    const store = crearStore(config.databaseUrl);
+    await store.init();
+    if (!config.databaseUrl) {
+        console.warn('⚠️ DATABASE_URL no definido: el historial se guardará solo en memoria');
+    }
 
-function buildMessage(orderId, estado, nombreCliente) {
-    const nombre = nombreCliente || 'Cliente';
-    const mensajes = {
-        'RECIBIDO':       `✅ Hola *${nombre}*, tu pedido *#${orderId}* fue recibido y está en cola. 🍗`,
-        'EN_PREPARACION': `👨‍🍳 Tu pedido *#${orderId}* está siendo preparado. ¡Ya casi!`,
-        'LISTO':          `🔔 Tu pedido *#${orderId}* está *listo*. ¡Lo estamos empacando!`,
-        'EN_CAMINO':      `🛵 Tu pedido *#${orderId}* va *en camino*. El repartidor está cerca.`,
-        'ENTREGADO':      `🎉 Pedido *#${orderId}* entregado. ¡Buen provecho! Gracias por *San Pollo de Ica* 🐔`,
-        'CANCELADO':      `❌ Tu pedido *#${orderId}* fue cancelado. Contáctanos si tienes dudas.`
-    };
-    return mensajes[estado] || `Tu pedido #${orderId} cambió a: ${estado}`;
+    const service = new NotificacionService({
+        store,
+        whatsapp,
+        intervaloMs: config.rateLimitMs,
+        maxIntentos: config.maxIntentos
+    });
+
+    const recuperados = await service.recuperarPendientes();
+    if (recuperados > 0) {
+        console.log(`🔁 ${recuperados} notificaciones pendientes vueltas a encolar`);
+    }
+
+    const app = crearApp({ service, store, estadoWhatsapp: whatsapp.estado, ultimoQr: whatsapp.ultimoQr });
+    app.listen(config.port, () => {
+        console.log(`🚀 Notification service en puerto ${config.port} (delay entre mensajes: ${config.rateLimitMs} ms)`);
+    });
+
+    client.on('message', handleMessage);
+    client.initialize();
 }
 
-// POST /notificar — llamado por orders-service al cambiar estado
-app.post('/notificar', async (req, res) => {
-    const { telefono, orderId, estado, nombreCliente } = req.body;
+// Un error interno de puppeteer/whatsapp-web.js no debe tumbar el servicio ni perder la cola
+process.on('unhandledRejection', error => {
+    const mensaje = error && error.message ? error.message : String(error);
 
-    if (!telefono || !orderId || !estado) {
-        return res.status(400).json({ error: 'Faltan campos: telefono, orderId, estado' });
-    }
-
-    let numero = String(telefono).replace(/\D/g, '');
-    if (numero.startsWith('0')) numero = numero.slice(1);
-    if (!numero.startsWith('51')) numero = '51' + numero;
-    const chatId = `${numero}@c.us`;
-
-    const mensaje = buildMessage(orderId, estado, nombreCliente);
-
-    try {
-        await client.sendMessage(chatId, mensaje);
-        console.log(`✅ WhatsApp → ${chatId}: [${estado}] #${orderId}`);
-        res.json({ ok: true, chatId, mensaje });
-    } catch (err) {
-        console.error(`❌ Error → ${chatId}:`, err.message);
-        res.status(500).json({ ok: false, error: err.message });
-    }
-});
-
-app.get('/status', (req, res) => {
-    res.json({ status: 'ok', whatsapp: client.info ? 'connected' : 'waiting_qr' });
-});
-
-app.get('/qr', (req, res) => {
-    if (client.info) {
-        return res.send('<h2 style="font-family:sans-serif;color:green">✅ WhatsApp ya está conectado. No se necesita QR.</h2>');
-    }
-    const qr = getLatestQr();
-    if (!qr) {
-        return res.send('<h2 style="font-family:sans-serif;color:orange">⏳ QR aún no generado. Recarga en 5 segundos.</h2><script>setTimeout(()=>location.reload(),5000)</script>');
-    }
-    const encoded = encodeURIComponent(qr);
-    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR WhatsApp</title>
-<meta http-equiv="refresh" content="25">
-<style>body{font-family:sans-serif;text-align:center;padding:40px;background:#f0f0f0}
-h2{color:#333}img{border:8px solid white;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.15)}</style></head>
-<body><h2>📱 Escanea con WhatsApp</h2>
-<img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encoded}" width="300" height="300" />
-<p style="color:#888;font-size:13px">Esta página se actualiza automáticamente cada 25 segundos.<br>
-Abrí WhatsApp → Dispositivos vinculados → Vincular dispositivo → escanea este QR.</p>
-</body></html>`);
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀 Notification service en puerto ${PORT}`));
-
-client.on('message', handleMessage);
-
-// En Windows, LocalAuth lanza EBUSY al intentar borrar archivos de sesión
-// bloqueados por Chrome. Capturamos el error para que el proceso no muera.
-process.on('unhandledRejection', (reason) => {
-    if (reason && reason.message && reason.message.includes('EBUSY')) {
-        console.warn('⚠️  Sesión WhatsApp bloqueada (EBUSY). Reiniciando cliente...');
-        setTimeout(() => client.initialize(), 3000);
+    // En Windows, LocalAuth lanza EBUSY al borrar archivos de sesión que Chrome mantiene bloqueados
+    if (mensaje.includes('EBUSY')) {
+        console.warn('⚠️ Sesión de WhatsApp bloqueada (EBUSY). Reiniciando el cliente en 3s...');
+        setTimeout(() => client.initialize().catch(e => console.error('❌ No se pudo reiniciar WhatsApp:', e.message)), 3000);
         return;
     }
-    console.error('Unhandled rejection:', reason);
+    console.error('❌ Error no controlado de WhatsApp:', mensaje);
 });
 
-client.initialize();
+main().catch(error => {
+    console.error('❌ No se pudo iniciar notification-service:', error);
+    process.exit(1);
+});

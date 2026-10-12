@@ -32,6 +32,9 @@ public class Orden {
     // ID del cliente (viene del JWT, no FK cruzado entre microservicios)
     private Long clienteId;
 
+    // Número de pedido que ve el cliente: 1, 2, 3... por cada cliente (o por celular si es invitado)
+    private Integer numeroCliente;
+
     // ID del mozo que tomó el pedido (salón)
     private Long mozoId;
 

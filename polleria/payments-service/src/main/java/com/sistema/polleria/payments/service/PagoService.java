@@ -30,6 +30,7 @@ public class PagoService {
     private final PaymentGatewayService paymentGatewayService;
     private final MercadoPagoGateway mercadoPagoGateway;
     private final RestClient ordersRestClient;
+    private final WhatsappNotificationClient whatsappNotificationClient;
 
     @Transactional
     public PagoResponse iniciar(IniciarPagoRequest request, Long clienteId, String bearerToken) {
@@ -53,6 +54,7 @@ public class PagoService {
 
         if (result.estado() == EstadoPago.APROBADO) {
             notificarOrdenAsync(request.ordenId(), bearerToken);
+            whatsappNotificationClient.notificarPagoConfirmado(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
         }
 
         log.info("Pago iniciado — id={} orden={} método={} estado={} checkoutUrl={}",
@@ -91,6 +93,7 @@ public class PagoService {
         pago.setDetalle(req.detalle());
         pago = pagoRepository.save(pago);
         notificarOrdenAsync(pago.getOrdenId(), bearerToken);
+        whatsappNotificationClient.notificarPagoConfirmado(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
         log.info("Pago confirmado — id={} orden={}", pago.getId(), pago.getOrdenId());
         return PagoResponse.from(pago);
     }

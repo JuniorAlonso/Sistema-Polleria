@@ -12,6 +12,7 @@ import java.util.List;
 @Builder
 public class OrdenResponse {
     private Long id;
+    private Integer numeroCliente;
     private OrdenTipo tipo;
     private OrdenEstado estado;
     private Long clienteId;
@@ -53,6 +54,7 @@ public class OrdenResponse {
 
         return OrdenResponse.builder()
                 .id(o.getId())
+                .numeroCliente(o.getNumeroCliente())
                 .tipo(o.getTipo())
                 .estado(o.getEstado())
                 .clienteId(o.getClienteId())

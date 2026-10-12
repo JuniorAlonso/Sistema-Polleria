@@ -38,6 +38,7 @@ export interface BackendAuthResponse {
   expiresIn?: number | null;
   name: string | null;
   email: string;
+  phone?: string | null;
   role: BackendRole;
   requiresTwoFactor: boolean;
   message?: string;
@@ -115,6 +116,7 @@ export interface BackendItemResponse {
 
 export interface BackendOrdenResponse {
   id: number;
+  numeroCliente?: number | null;
   tipo: BackendOrdenTipo;
   estado: BackendOrdenEstado;
   clienteId?: number;

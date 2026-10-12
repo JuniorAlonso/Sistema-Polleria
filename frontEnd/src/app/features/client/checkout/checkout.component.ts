@@ -1,3 +1,4 @@
+import { etiquetaPedido } from '../../../core/utils/pedido';
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -172,6 +173,19 @@ declare const MercadoPago: any;
               class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
             />
 
+            <!-- Input Celular: recibe las notificaciones de WhatsApp (Fase 3) -->
+            <div class="space-y-1">
+              <input 
+                type="tel" 
+                [(ngModel)]="celular" 
+                inputmode="numeric"
+                maxlength="12"
+                placeholder="Celular para WhatsApp (ej. 912345678)"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
+              />
+              <p class="text-[10px] text-white/50 px-1">Te avisaremos por WhatsApp el pago y el estado de tu pedido.</p>
+            </div>
+
             <!-- Input Instrucciones Especiales -->
             <input 
               type="text" 
@@ -341,12 +355,15 @@ export class CheckoutComponent implements OnInit {
   readonly isProcessing = signal<boolean>(false);
 
   direccion = 'Av. Larco 1234, Miraflores';
+  celular = '';
   instrucciones = 'Instrucciones especiales (ej. Timbre 301)';
   numeroTarjeta = '4557 8890 1234 5678';
   vencimiento = '12/28';
   cvv = '882';
 
   ngOnInit(): void {
+    this.celular = this.auth.currentUser()?.celular || '';
+
     if (this.cart.isEmpty()) {
       const p1 = this.productsService.products().find(p => p.id === '1' || p.id === 'prod-1');
       const p6 = this.productsService.products().find(p => p.id === '6' || p.id === 'prod-6');
@@ -410,6 +427,12 @@ export class CheckoutComponent implements OnInit {
       return;
     }
 
+    const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
+    if (!/^9\d{8}$/.test(celularLimpio)) {
+      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
+      return;
+    }
+
     if (this.cart.isEmpty()) {
       this.notify.showError('Tu carrito está vacío');
       return;
@@ -419,7 +442,7 @@ export class CheckoutComponent implements OnInit {
 
     const currentUser = this.auth.currentUser();
     const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
-    const clienteCelular = currentUser?.celular || '987654321';
+    const clienteCelular = celularLimpio;
 
     const orderData: Order = {
       id: '0',
@@ -450,7 +473,7 @@ export class CheckoutComponent implements OnInit {
           next: () => {
             this.cart.clearCart();
             this.isProcessing.set(false);
-            this.notify.showSuccess(`¡Pedido ${createdOrder.codigoSeguimiento} confirmado!`);
+            this.notify.showSuccess(`¡${etiquetaPedido(createdOrder)} confirmado!`, 'Te avisaremos por WhatsApp cada cambio de estado.');
             this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
           },
           error: () => {
@@ -460,9 +483,9 @@ export class CheckoutComponent implements OnInit {
           }
         });
       },
-      error: () => {
+      error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('Hubo un problema al procesar el pedido. Intenta nuevamente.');
+        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
       }
     });
   }

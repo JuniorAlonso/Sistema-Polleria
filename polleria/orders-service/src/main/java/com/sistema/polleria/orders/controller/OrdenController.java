@@ -7,21 +7,33 @@ import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.service.OrdenService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.Principal;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/ordenes")
 @RequiredArgsConstructor
 public class OrdenController {
 
+    private static final Set<String> ROLES_PERSONAL = Set.of("ADMIN", "MOZO", "COCINA", "REPARTIDOR", "CAJERO");
+
     private final OrdenService ordenService;
+
+    // Clave compartida con otros microservicios (p. ej. payments-service) para leer órdenes sin JWT
+    @Value("${internal.api-key:}")
+    private String internalApiKey;
 
     @PostMapping
     public ResponseEntity<OrdenResponse> crear(
@@ -32,9 +44,21 @@ public class OrdenController {
                 .body(ordenService.crear(request, extraerUserId(principal)));
     }
 
+    /**
+     * Un pedido solo lo ve su dueño, el personal o un microservicio con la clave interna.
+     * A cualquier otro se le responde 404 para no revelar qué pedidos existen.
+     */
     @GetMapping("/{id}")
-    public ResponseEntity<OrdenResponse> obtener(@PathVariable Long id) {
-        return ResponseEntity.ok(ordenService.obtener(id));
+    public ResponseEntity<OrdenResponse> obtener(
+            @PathVariable Long id,
+            Authentication authentication,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
+    ) {
+        OrdenResponse orden = ordenService.obtener(id);
+        if (esLlamadaInterna(claveInterna) || esPersonal(authentication) || esDueno(authentication, orden)) {
+            return ResponseEntity.ok(orden);
+        }
+        throw new NoSuchElementException("Orden no encontrada: " + id);
     }
 
     @GetMapping("/cocina")
@@ -50,11 +74,17 @@ public class OrdenController {
     }
 
     @GetMapping("/mis-ordenes")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<OrdenResponse>> misOrdenes(Principal principal) {
-        return ResponseEntity.ok(ordenService.listarPorCliente(extraerUserId(principal)));
+        Long userId = extraerUserId(principal);
+        if (userId <= 0) {
+            return ResponseEntity.ok(List.of());
+        }
+        return ResponseEntity.ok(ordenService.listarPorCliente(userId));
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR','CAJERO')")
     public ResponseEntity<List<OrdenResponse>> listar(
             @RequestParam(required = false) OrdenEstado estado,
             @RequestParam(required = false, defaultValue = "false") boolean soloActivos
@@ -76,6 +106,22 @@ public class OrdenController {
             Principal principal
     ) {
         return ResponseEntity.ok(ordenService.actualizarEstado(id, request, extraerUserId(principal)));
+    }
+
+    private boolean esLlamadaInterna(String claveInterna) {
+        return internalApiKey != null && !internalApiKey.isBlank() && claveInterna != null
+                && MessageDigest.isEqual(internalApiKey.getBytes(StandardCharsets.UTF_8),
+                                         claveInterna.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean esPersonal(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> ROLES_PERSONAL.contains(a.getAuthority()));
+    }
+
+    private boolean esDueno(Authentication authentication, OrdenResponse orden) {
+        Long userId = extraerUserId(authentication);
+        return userId > 0 && userId.equals(orden.getClienteId());
     }
 
     private Long extraerUserId(Principal principal) {

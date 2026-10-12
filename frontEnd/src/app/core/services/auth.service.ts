@@ -103,7 +103,10 @@ export class AuthService {
       }),
       catchError(err => {
         this.isLoading.set(false);
-        const errMsg = err?.error?.message || err?.error || 'Error al registrar usuario';
+        // El backend responde { errors: { campo: mensaje } } en validaciones o { error: mensaje } en reglas de negocio
+        const erroresCampo = err?.error?.errors ? Object.values(err.error.errors).join('. ') : null;
+        const errMsg = erroresCampo || err?.error?.error || err?.error?.message
+          || (err?.status === 0 ? 'No se pudo conectar con el servidor de autenticación' : 'Error al registrar usuario');
         return throwError(() => new Error(typeof errMsg === 'string' ? errMsg : 'Error de registro'));
       })
     );

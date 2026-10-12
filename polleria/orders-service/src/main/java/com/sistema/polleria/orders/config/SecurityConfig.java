@@ -41,6 +41,9 @@ public class SecurityConfig {
                         .requestMatchers("/productos/**").permitAll()
                         .requestMatchers("/ws-polleria/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.POST, "/ordenes").permitAll()
+                        // Seguimiento sin cuenta: verificación del celular por WhatsApp
+                        .requestMatchers("/ordenes/seguimiento", "/ordenes/seguimiento/**").permitAll()
+                        // El acceso a cada orden se valida en OrdenController (dueño, personal o clave interna)
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/ordenes/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.PATCH, "/ordenes/**").permitAll()
                         .requestMatchers("/mesas/**").permitAll()

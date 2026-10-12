@@ -53,6 +53,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     .parseSignedClaims(token)
                     .getPayload();
 
+            // El acceso temporal de seguimiento por celular no es un inicio de sesión
+            if ("seguimiento".equals(claims.get("tipo", String.class))) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             String email  = claims.getSubject();
             String role   = claims.get("role", String.class);
             Object rawUserId = claims.get("userId");

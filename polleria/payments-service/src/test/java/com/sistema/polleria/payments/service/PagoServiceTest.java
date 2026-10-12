@@ -43,6 +43,9 @@ class PagoServiceTest {
     @Mock
     private RestClient ordersRestClient;
 
+    @Mock
+    private WhatsappNotificationClient whatsappNotificationClient;
+
     @InjectMocks
     private PagoService pagoService;
 
@@ -156,5 +159,24 @@ class PagoServiceTest {
         assertThat(res.estado()).isEqualTo(EstadoPago.REEMBOLSADO);
         verify(pagoRepository).findByOrdenId(250L);
         verify(pagoRepository).save(pago);
+    }
+
+    @Test
+    @DisplayName("Al confirmar un pago se encola el WhatsApp de pago confirmado (RF30)")
+    void confirmar_notificaPorWhatsapp() {
+        Pago pago = new Pago();
+        pago.setId(3L);
+        pago.setOrdenId(52L);
+        pago.setMonto(new BigDecimal("68.50"));
+        pago.setMetodoPago(MetodoPago.YAPE_PLIN);
+        pago.setEstado(EstadoPago.PENDIENTE);
+        pago.setCreadoEn(LocalDateTime.now());
+
+        when(pagoRepository.findById(3L)).thenReturn(Optional.of(pago));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        pagoService.confirmar(3L, new ConfirmarPagoRequest("YP-123", "Yape recibido"), "Bearer x");
+
+        verify(whatsappNotificationClient).notificarPagoConfirmado(52L, new BigDecimal("68.50"), MetodoPago.YAPE_PLIN);
     }
 }

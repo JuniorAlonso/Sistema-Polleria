@@ -40,6 +40,9 @@ class OrdenServiceFase2Test {
     @Mock
     private SalonEventPublisher salonEventPublisher;
 
+    @Mock
+    private NumeroPedidoService numeroPedidoService;
+
     @InjectMocks
     private OrdenService ordenService;
 

@@ -18,6 +18,7 @@ public class AuthResponse {
     private Long expiresIn;
     private String name;
     private String email;
+    private String phone;
     private Role role;
     private boolean requiresTwoFactor;
     private String message;

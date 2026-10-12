@@ -116,15 +116,52 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                   </svg>
                 </span>
-                <input 
-                  type="password" 
-                  [(ngModel)]="password" 
+                <input
+                  [type]="mostrarPassword ? 'text' : 'password'"
+                  [(ngModel)]="password"
                   name="password"
-                  placeholder="Mínimo 6 caracteres"
-                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition rounded-xs"
+                  placeholder="Mínimo 6 caracteres, letras y números"
+                  autocomplete="new-password"
+                  class="w-full pl-10 pr-11 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition rounded-xs"
                   required
                 />
+                <button
+                  type="button"
+                  (click)="mostrarPassword = !mostrarPassword"
+                  [attr.aria-label]="mostrarPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  [title]="mostrarPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  class="absolute right-3 text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                >
+                  @if (mostrarPassword) {
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                    </svg>
+                  } @else {
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                  }
+                </button>
               </div>
+
+              <!-- Requisitos de la contraseña (mismas reglas que auth-service) -->
+              <ul class="pt-1 space-y-1 text-[11px]">
+                @for (regla of reglasPassword; track regla.texto) {
+                  <li class="flex items-center gap-1.5" [ngClass]="regla.cumple(password) ? 'text-emerald-400' : 'text-slate-500'">
+                    @if (regla.cumple(password)) {
+                      <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                      </svg>
+                    } @else {
+                      <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="8" stroke-width="2"/>
+                      </svg>
+                    }
+                    <span>{{ regla.texto }}</span>
+                  </li>
+                }
+              </ul>
             </div>
 
             <!-- Botón Principal Crimson Red -->
@@ -178,10 +215,27 @@ export class RegisterComponent {
   celular = '';
   correo = '';
   password = '';
+  mostrarPassword = false;
+
+  // Deben coincidir con las validaciones de RegisterRequest en auth-service
+  readonly reglasPassword = [
+    { texto: 'Al menos 6 caracteres', cumple: (p: string) => p.length >= 6 },
+    { texto: 'Al menos una letra (a-z o A-Z)', cumple: (p: string) => /[A-Za-z]/.test(p) },
+    { texto: 'Al menos un número (0-9)', cumple: (p: string) => /\d/.test(p) }
+  ];
 
   handleRegister(): void {
     if (!this.nombre || !this.celular || !this.correo || !this.password) {
       this.notify.showError('Por favor completa todos los campos para tu registro');
+      return;
+    }
+
+    const faltantes = this.reglasPassword.filter(r => !r.cumple(this.password));
+    if (faltantes.length > 0) {
+      this.notify.showError(
+        'La contraseña no cumple los requisitos',
+        'Falta: ' + faltantes.map(r => r.texto.toLowerCase()).join(', ')
+      );
       return;
     }
 

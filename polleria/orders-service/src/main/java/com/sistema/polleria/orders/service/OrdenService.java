@@ -23,6 +23,7 @@ public class OrdenService {
     private final MesaService mesaService;
     private final NotificationService notificationService;
     private final SalonEventPublisher salonEventPublisher;
+    private final NumeroPedidoService numeroPedidoService;
 
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
@@ -62,9 +63,11 @@ public class OrdenService {
 
         orden.getItems().addAll(items);
         orden.recalcularTotal();
+        numeroPedidoService.asignar(orden);
 
         ordenRepository.save(orden);
-        log.info("Orden #{} creada — tipo: {}, total: S/.{}", orden.getId(), orden.getTipo(), orden.getTotal());
+        log.info("Orden #{} creada — tipo: {}, total: S/.{}, N.° {} del cliente",
+                orden.getId(), orden.getTipo(), orden.getTotal(), orden.getNumeroCliente());
         salonEventPublisher.notificarNuevaComanda(orden);
         if (orden.getMesa() != null) {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));

@@ -1,5 +1,5 @@
-import { Component, inject, signal, computed, effect, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, inject, signal, computed, effect, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
+import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { OrdersService } from '../../../core/services/orders.service';
@@ -9,6 +9,8 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { AuthService } from '../../../core/services/auth.service';
+import { etiquetaPedido } from '../../../core/utils/pedido';
+import { Subscription, interval } from 'rxjs';
 
 @Component({
   selector: 'app-order-tracking',
@@ -52,7 +54,7 @@ import { AuthService } from '../../../core/services/auth.service';
                   <div class="flex flex-col">
                     <div class="flex items-center gap-2">
                       <span class="font-mono text-xs font-black" [ngClass]="currentOrder()?.id === order.id ? 'text-polleria-gold' : 'text-white'">
-                        {{ order.codigoSeguimiento }}
+                        {{ etiqueta(order) }}
                       </span>
                       <!-- Badge Estado -->
                       <span 
@@ -87,7 +89,7 @@ import { AuthService } from '../../../core/services/auth.service';
             <!-- Order Code Badge -->
             <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-mono tracking-widest text-slate-300 shadow">
               <span class="w-2 h-2 rounded-full bg-polleria-gold"></span>
-              <span>ORDEN {{ currentOrder()?.codigoSeguimiento }}</span>
+              <span class="uppercase">{{ etiqueta(currentOrder()) }}</span>
               <span class="text-white/40">|</span>
               <span class="text-polleria-gold font-bold uppercase">{{ currentOrder()?.tipo || 'DELIVERY' }}</span>
             </div>
@@ -320,7 +322,11 @@ import { AuthService } from '../../../core/services/auth.service';
             </div>
             <h2 class="font-display text-2xl sm:text-3xl text-white uppercase tracking-wider">Aún no has seleccionado un pedido</h2>
             <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
-              Ingresa el código de tu pedido o haz clic en Explorar Menú para realizar tu primer pedido.
+              @if (auth.token()) {
+                Cuando hagas un pedido, aparecerá aquí para que lo sigas en tiempo real.
+              } @else {
+                Si ya hiciste un pedido, verifica tu celular más abajo para verlo. Si no, explora la carta.
+              }
             </p>
             <div class="pt-2">
               <a 
@@ -333,21 +339,61 @@ import { AuthService } from '../../../core/services/auth.service';
           </div>
         }
 
-        <!-- Search other order code shortcut -->
-        <div class="pt-4 text-center">
-          <form (ngSubmit)="searchOrder()" class="inline-flex items-center gap-2 p-1.5 rounded-full bg-white/5 border border-white/10">
-            <input 
-              type="text" 
-              [(ngModel)]="searchCode" 
-              name="searchCode"
-              placeholder="Buscar #POL-1, 2, 3..." 
-              class="px-4 py-1.5 bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none uppercase font-mono tracking-wider w-44"
-            />
-            <button type="submit" class="px-4 py-1.5 rounded-full bg-polleria-gold text-slate-950 text-xs font-bold uppercase cursor-pointer hover:bg-amber-400 transition">
-              Buscar
-            </button>
-          </form>
-        </div>
+        <!-- ================= SEGUIMIENTO SIN CUENTA (código por WhatsApp) ================= -->
+        @if (!auth.token()) {
+          <div class="bg-[#181a1e]/90 p-5 sm:p-6 rounded-2xl border border-white/10 shadow-xl max-w-xl mx-auto">
+            @if (ordersService.seguimientoTelefono(); as telefono) {
+              <div class="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                <span class="text-slate-300">
+                  Mostrando los pedidos del celular <strong class="text-white font-mono">{{ formatearCelular(telefono) }}</strong>
+                </span>
+                <button type="button" (click)="cambiarCelular()"
+                  class="px-4 py-1.5 rounded-full border border-white/15 text-slate-300 hover:text-white hover:border-white/30 font-bold uppercase transition cursor-pointer">
+                  Usar otro celular
+                </button>
+              </div>
+            } @else {
+              <div class="space-y-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white uppercase tracking-wider">Consulta tus pedidos</h3>
+                  <p class="text-xs text-slate-400 mt-1">
+                    @if (pasoSeguimiento() === 'CELULAR') {
+                      Escribe el celular que usaste en tu pedido y te enviaremos un código por WhatsApp.
+                    } @else {
+                      Te enviamos un código de 4 dígitos por WhatsApp al {{ formatearCelular(celularSeguimiento) }}. Puede tardar unos segundos.
+                    }
+                  </p>
+                </div>
+
+                @if (pasoSeguimiento() === 'CELULAR') {
+                  <form (ngSubmit)="enviarCodigo()" class="flex flex-col sm:flex-row gap-2">
+                    <input type="tel" inputmode="numeric" maxlength="12" [(ngModel)]="celularSeguimiento" name="celularSeguimiento"
+                      placeholder="Celular, ej. 912345678"
+                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-polleria-gold" />
+                    <button type="submit" [disabled]="procesandoSeguimiento()"
+                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
+                      {{ procesandoSeguimiento() ? 'Enviando...' : 'Enviar código' }}
+                    </button>
+                  </form>
+                } @else {
+                  <form (ngSubmit)="verificarCodigo()" class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" inputmode="numeric" maxlength="4" [(ngModel)]="codigoSeguimiento" name="codigoSeguimiento"
+                      placeholder="Código de 4 dígitos" autocomplete="one-time-code"
+                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/15 text-sm text-white tracking-[0.4em] font-mono placeholder:tracking-normal placeholder:font-sans placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-polleria-gold" />
+                    <button type="submit" [disabled]="procesandoSeguimiento()"
+                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
+                      {{ procesandoSeguimiento() ? 'Verificando...' : 'Ver mis pedidos' }}
+                    </button>
+                  </form>
+                  <div class="flex gap-4 text-[11px]">
+                    <button type="button" (click)="enviarCodigo()" class="text-slate-400 hover:text-white underline cursor-pointer">Reenviar código</button>
+                    <button type="button" (click)="cambiarCelular()" class="text-slate-400 hover:text-white underline cursor-pointer">Cambiar celular</button>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
 
       </div>
 
@@ -360,7 +406,7 @@ import { AuthService } from '../../../core/services/auth.service';
             <div class="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
                 <h3 class="font-display text-2xl uppercase tracking-wider text-polleria-gold">
-                  Detalle de Comanda {{ currentOrder()?.codigoSeguimiento }}
+                  Detalle del {{ etiqueta(currentOrder()) }}
                 </h3>
                 <p class="text-xs text-slate-400 mt-0.5">
                   Cliente: <strong class="text-white">{{ currentOrder()?.cliente?.nombre || 'Cliente San Pollo' }}</strong>
@@ -379,7 +425,7 @@ import { AuthService } from '../../../core/services/auth.service';
 
             <!-- Items List -->
             <div class="space-y-3 max-h-60 overflow-y-auto pr-1">
-              @for (item of currentOrder()?.items; track item.product.id) {
+              @for (item of currentOrder()?.items ?? []; track $index) {
                 <div class="flex items-center justify-between text-xs py-2 border-b border-slate-800/60">
                   <div class="flex items-center gap-3">
                     <span class="px-2 py-0.5 rounded bg-polleria-crimson text-white font-mono font-bold">{{ item.cantidad }}x</span>
@@ -392,6 +438,8 @@ import { AuthService } from '../../../core/services/auth.service';
                   </div>
                   <span class="font-bold text-polleria-gold">{{ item.subtotal | currencyPEN }}</span>
                 </div>
+              } @empty {
+                <p class="py-6 text-center text-xs text-slate-400">No se encontraron los productos de este pedido.</p>
               }
             </div>
 
@@ -434,7 +482,7 @@ import { AuthService } from '../../../core/services/auth.service';
                   <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-rose-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> Libro de Reclamaciones</span>
                 </h3>
                 <p class="text-xs text-slate-400 mt-0.5">
-                  Registra un reclamo para el Pedido <strong class="text-white">{{ currentOrder()?.codigoSeguimiento }}</strong>
+                  Registra un reclamo para el <strong class="text-white">{{ etiqueta(currentOrder()) }}</strong>
                 </p>
               </div>
               <button 
@@ -518,11 +566,11 @@ import { AuthService } from '../../../core/services/auth.service';
     </div>
   `
 })
-export class OrderTrackingComponent implements OnInit {
+export class OrderTrackingComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   readonly ordersService = inject(OrdersService);
-  private auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private feedbackService = inject(FeedbackService);
 
@@ -537,7 +585,16 @@ export class OrderTrackingComponent implements OnInit {
   reportDescripcion = '';
   reportMonto = 0;
   reportEvidenciaUrl = '';
-  searchCode = '';
+
+  // Seguimiento sin cuenta
+  readonly pasoSeguimiento = signal<'CELULAR' | 'CODIGO'>('CELULAR');
+  readonly procesandoSeguimiento = signal<boolean>(false);
+  celularSeguimiento = '';
+  codigoSeguimiento = '';
+
+  private refrescoSub?: Subscription;
+  private platformId = inject(PLATFORM_ID);
+  readonly etiqueta = etiquetaPedido;
 
   readonly availableOrders = computed<Order[]>(() => {
     return this.ordersService.myOrders();
@@ -546,17 +603,25 @@ export class OrderTrackingComponent implements OnInit {
   constructor() {
     effect(() => {
       const list = this.availableOrders();
-      if (list.length > 0 && !this.currentOrder()) {
+      const actual = this.currentOrder();
+      if (list.length > 0 && !actual) {
         this.currentOrder.set(list[0]);
-        this.searchCode = list[0].codigoSeguimiento;
+        return;
+      }
+      // Mantener actualizado el pedido seleccionado cuando cambia su estado
+      const refrescado = actual ? list.find(o => o.id === actual.id) : undefined;
+      if (refrescado && refrescado !== actual) {
+        this.currentOrder.set(refrescado);
       }
     });
   }
 
   ngOnInit(): void {
-    // 1. Cargar las órdenes del backend y del cliente
-    this.ordersService.loadActiveOrders();
+    // 1. Cargar los pedidos del cliente y refrescarlos para ver los cambios de estado
     this.ordersService.loadMyOrders();
+    if (isPlatformBrowser(this.platformId)) {
+      this.refrescoSub = interval(15000).subscribe(() => this.ordersService.loadMyOrders());
+    }
 
     // 2. Comprobar parámetros de la URL (soporta códigos internos y retornos de Mercado Pago)
     this.route.queryParams.subscribe(params => {
@@ -577,15 +642,71 @@ export class OrderTrackingComponent implements OnInit {
       }
 
       if (params['code']) {
-        this.searchCode = params['code'];
-        this.loadOrder(this.searchCode);
+        this.loadOrder(params['code']);
       }
     });
   }
 
+  ngOnDestroy(): void {
+    this.refrescoSub?.unsubscribe();
+  }
+
   selectOrder(order: Order): void {
     this.currentOrder.set(order);
-    this.searchCode = order.codigoSeguimiento;
+  }
+
+  // ================= SEGUIMIENTO SIN CUENTA =================
+
+  enviarCodigo(): void {
+    const celular = this.celularSeguimiento.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
+    if (!/^9\d{8}$/.test(celular)) {
+      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9');
+      return;
+    }
+    this.celularSeguimiento = celular;
+    this.procesandoSeguimiento.set(true);
+    this.ordersService.solicitarCodigoSeguimiento(celular).subscribe({
+      next: mensaje => {
+        this.procesandoSeguimiento.set(false);
+        this.codigoSeguimiento = '';
+        this.pasoSeguimiento.set('CODIGO');
+        this.notify.showInfo('Revisa tu WhatsApp', mensaje);
+      },
+      error: err => {
+        this.procesandoSeguimiento.set(false);
+        this.notify.showError(err.message);
+      }
+    });
+  }
+
+  verificarCodigo(): void {
+    if (!/^\d{4}$/.test(this.codigoSeguimiento)) {
+      this.notify.showError('El código tiene 4 dígitos');
+      return;
+    }
+    this.procesandoSeguimiento.set(true);
+    this.ordersService.verificarCodigoSeguimiento(this.celularSeguimiento, this.codigoSeguimiento).subscribe({
+      next: () => {
+        this.procesandoSeguimiento.set(false);
+        this.currentOrder.set(null);
+        this.notify.showSuccess('Celular verificado');
+      },
+      error: err => {
+        this.procesandoSeguimiento.set(false);
+        this.notify.showError(err.message);
+      }
+    });
+  }
+
+  cambiarCelular(): void {
+    this.ordersService.cerrarSeguimiento();
+    this.currentOrder.set(null);
+    this.codigoSeguimiento = '';
+    this.pasoSeguimiento.set('CELULAR');
+  }
+
+  formatearCelular(celular: string): string {
+    return celular.replace(/^(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3');
   }
 
   loadOrder(code: string): void {
@@ -782,11 +903,6 @@ export class OrderTrackingComponent implements OnInit {
       'Contacto con Motorizado',
       `Llamando al Rider: ${nombre} (${cel}) asignado a tu entrega.`
     );
-  }
-
-  searchOrder(): void {
-    if (!this.searchCode) return;
-    this.loadOrder(this.searchCode);
   }
 
   enviarCalificacion(): void {

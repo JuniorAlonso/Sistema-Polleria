@@ -1,7 +1,7 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Observable, catchError, map, of, tap, forkJoin } from 'rxjs';
+import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
 import { OrderAdapter } from '../adapters/order.adapter';
@@ -35,141 +35,102 @@ export class OrdersService {
     )
   );
 
+  // Seguimiento sin cuenta: acceso temporal obtenido al verificar el celular por WhatsApp
+  private static readonly SEGUIMIENTO_KEY = 'polleria_seguimiento';
+  readonly seguimientoTelefono = signal<string | null>(null);
+
   constructor() {
-    this.loadActiveOrders();
+    // Las listas generales (/ordenes) son solo para el personal: sus pantallas las cargan
+    this.seguimientoTelefono.set(this.leerSeguimiento()?.telefono ?? null);
     this.loadMyOrders();
   }
 
-  private getStorageKey(): string {
-    if (!isPlatformBrowser(this.platformId)) return 'polleria_my_orders';
-    try {
-      const userStr = localStorage.getItem('polleria_user');
-      if (userStr) {
-        const u = JSON.parse(userStr);
-        if (u && (u.email || u.id)) {
-          return `polleria_my_orders_${u.email || u.id}`;
-        }
-      }
-    } catch {}
-    return 'polleria_my_orders_guest';
-  }
-
   /**
-   * Registra una orden en el historial local del cliente
+   * Registra en memoria una orden recién creada para mostrarla de inmediato en el seguimiento
    */
   registerClientOrder(order: Order): void {
     this.myOrders.update(prev => [order, ...prev.filter(o => o.id !== order.id)]);
     this.currentTrackingOrder.set(order);
-
-    if (isPlatformBrowser(this.platformId)) {
-      try {
-        const key = this.getStorageKey();
-        const stored = localStorage.getItem(key);
-        const ids: string[] = stored ? JSON.parse(stored) : [];
-        if (!ids.includes(order.id)) {
-          ids.unshift(order.id);
-          localStorage.setItem(key, JSON.stringify(ids.slice(0, 20)));
-        }
-      } catch {
-        // Ignorar error de storage
-      }
-    }
   }
 
   /**
-   * Carga exclusivamente las órdenes del cliente actual
+   * Pedidos del cliente:
+   * - con sesión iniciada: los de su cuenta;
+   * - sin sesión pero con el celular verificado: los de ese celular;
+   * - si no, se conserva lo que haya en memoria (p. ej. el pedido recién creado).
    */
   loadMyOrders(): void {
     if (!isPlatformBrowser(this.platformId)) return;
 
-    const hasToken = !!localStorage.getItem('polleria_token');
-    const storageKey = this.getStorageKey();
-    let localIds: string[] = [];
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) localIds = JSON.parse(stored);
-    } catch {}
-
-    if (hasToken) {
-      // 1. Intentar cargar desde el endpoint del backend /ordenes/mis-ordenes
+    if (localStorage.getItem('polleria_token')) {
       this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/mis-ordenes`).pipe(
         map(dtos => OrderAdapter.toOrderList(dtos)),
-        tap(backendOrders => {
-          if (localIds.length > 0) {
-            this.mergeMyOrders(backendOrders, localIds);
-          } else {
-            const sorted = [...backendOrders].sort((a, b) => Number(b.id) - Number(a.id));
-            this.myOrders.set(sorted);
-          }
-        }),
-        catchError(() => {
-          this.loadLocalStoredOrders(localIds);
+        tap(orders => this.myOrders.set([...orders].sort((a, b) => Number(b.id) - Number(a.id)))),
+        catchError(() => of([]))
+      ).subscribe();
+      return;
+    }
+
+    const seguimiento = this.leerSeguimiento();
+    if (seguimiento) {
+      this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/seguimiento`, {
+        headers: { 'X-Seguimiento-Token': seguimiento.token }
+      }).pipe(
+        map(dtos => OrderAdapter.toOrderList(dtos)),
+        tap(orders => this.myOrders.set(orders)),
+        catchError(err => {
+          // Acceso vencido: hay que volver a verificar el celular
+          if (err?.status === 400) this.cerrarSeguimiento();
           return of([]);
         })
       ).subscribe();
-    } else {
-      // 2. Si no está autenticado, cargar solo las órdenes de invitado
-      this.loadLocalStoredOrders(localIds);
     }
   }
 
-  private mergeMyOrders(backendOrders: Order[], localIds: string[]): void {
-    const existingIds = new Set(backendOrders.map(o => o.id));
-    const pendingIds = localIds.filter(id => !existingIds.has(id));
-
-    if (pendingIds.length === 0) {
-      const sorted = [...backendOrders].sort((a, b) => Number(b.id) - Number(a.id));
-      this.myOrders.set(sorted);
-      return;
-    }
-
-    const requests = pendingIds.map(id => 
-      this.http.get<BackendOrdenResponse>(`${this.API_URL}/ordenes/${id}`).pipe(
-        map(dto => OrderAdapter.toOrder(dto)),
-        catchError(() => of(null))
-      )
+  /** Paso 1: pide un código de 4 dígitos que llega por WhatsApp. */
+  solicitarCodigoSeguimiento(telefono: string): Observable<string> {
+    return this.http.post<{ mensaje: string }>(`${this.API_URL}/ordenes/seguimiento/codigo`, { telefono }).pipe(
+      map(res => res.mensaje),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo enviar el código'))))
     );
-
-    forkJoin(requests).subscribe(localOrders => {
-      const validLocal = localOrders.filter((o): o is Order => !!o);
-      const combined = [...backendOrders, ...validLocal];
-      const sorted = combined.sort((a, b) => Number(b.id) - Number(a.id));
-      this.myOrders.set(sorted);
-
-      if (isPlatformBrowser(this.platformId) && validLocal.length !== pendingIds.length) {
-        try {
-          const validIds = sorted.map(o => o.id);
-          localStorage.setItem(this.getStorageKey(), JSON.stringify(validIds));
-        } catch {}
-      }
-    });
   }
 
-  private loadLocalStoredOrders(localIds: string[]): void {
-    if (localIds.length === 0) {
-      this.myOrders.set([]);
-      return;
-    }
-
-    const requests = localIds.map(id => 
-      this.http.get<BackendOrdenResponse>(`${this.API_URL}/ordenes/${id}`).pipe(
-        map(dto => OrderAdapter.toOrder(dto)),
-        catchError(() => of(null))
-      )
-    );
-
-    forkJoin(requests).subscribe(orders => {
-      const valid = orders.filter((o): o is Order => !!o);
-      const sorted = valid.sort((a, b) => Number(b.id) - Number(a.id));
-      this.myOrders.set(sorted);
-
-      if (isPlatformBrowser(this.platformId) && valid.length !== localIds.length) {
+  /** Paso 2: valida el código y carga los pedidos de ese celular. */
+  verificarCodigoSeguimiento(telefono: string, codigo: string): Observable<void> {
+    return this.http.post<{ token: string }>(`${this.API_URL}/ordenes/seguimiento/verificar`, { telefono, codigo }).pipe(
+      tap(res => {
         try {
-          const validIds = valid.map(o => o.id);
-          localStorage.setItem(this.getStorageKey(), JSON.stringify(validIds));
+          sessionStorage.setItem(OrdersService.SEGUIMIENTO_KEY, JSON.stringify({ token: res.token, telefono }));
         } catch {}
-      }
-    });
+        this.seguimientoTelefono.set(telefono);
+        this.loadMyOrders();
+      }),
+      map(() => undefined),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo verificar el código'))))
+    );
+  }
+
+  cerrarSeguimiento(): void {
+    try {
+      sessionStorage.removeItem(OrdersService.SEGUIMIENTO_KEY);
+    } catch {}
+    this.seguimientoTelefono.set(null);
+    this.myOrders.set([]);
+  }
+
+  private leerSeguimiento(): { token: string; telefono: string } | null {
+    if (!isPlatformBrowser(this.platformId)) return null;
+    try {
+      const guardado = sessionStorage.getItem(OrdersService.SEGUIMIENTO_KEY);
+      return guardado ? JSON.parse(guardado) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private mensajeError(err: any, porDefecto: string): string {
+    if (err?.status === 0) return 'No se pudo conectar con el servicio de pedidos';
+    return err?.error?.error || err?.error?.mensaje || porDefecto;
   }
 
   /**
@@ -209,40 +170,13 @@ export class OrdersService {
         this.orders.update(prev => [createdOrder, ...prev.filter(o => o.id !== createdOrder.id)]);
         this.registerClientOrder(createdOrder);
       }),
-      catchError(() => {
+      catchError(err => {
         this.isLoading.set(false);
-        // Fallback local si el microservicio devuelve error
-        const fallbackOrder: Order = {
-          id: String(Date.now()),
-          codigoSeguimiento: `POL-${Math.floor(1000 + Math.random() * 9000)}`,
-          cliente: createReq.cliente,
-          items: (createReq.items || []).map(it => ({
-            product: {
-              id: String(it.productoId),
-              nombre: 'Producto',
-              descripcion: '',
-              precio: 0,
-              imagenUrl: '/assets/images/hero-panoramic.jpg',
-              categoria: 'POLLOS_A_LA_BRASA',
-              agotado: false
-            },
-            cantidad: it.cantidad,
-            notas: it.notas,
-            subtotal: 0
-          })),
-          tipo: createReq.tipo,
-          estado: 'EN_PREPARACION',
-          metodoPago: createReq.metodoPago,
-          subtotal: 0,
-          costoEnvio: createReq.tipo === 'DELIVERY' ? 6 : 0,
-          descuento: 0,
-          total: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        this.orders.update(prev => [fallbackOrder, ...prev]);
-        this.registerClientOrder(fallbackOrder);
-        return of(fallbackOrder);
+        // No se inventa un pedido local: si el backend falla, el cliente debe saberlo y reintentar
+        const erroresCampo = err?.error?.errors ? Object.values(err.error.errors).join('. ') : null;
+        const errMsg = erroresCampo || err?.error?.error || err?.error?.message
+          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : 'No se pudo registrar el pedido');
+        return throwError(() => new Error(typeof errMsg === 'string' ? errMsg : 'No se pudo registrar el pedido'));
       })
     );
   }

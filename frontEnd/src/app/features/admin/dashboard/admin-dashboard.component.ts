@@ -13,6 +13,7 @@ import { FeedbackService } from '../../../core/services/feedback.service';
 import { SecurityAuditService } from '../../../core/services/security-audit.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
+import { WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
 import { Order, OrderStatus, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { Product } from '../../../core/models/product.model';
 import { MesaSalon, MesaEstado, SalonZona } from '../../../core/models/table.model';
@@ -20,6 +21,7 @@ import { Insumo, RegistroMerma, MotivoMerma, InsumoCategoria } from '../../../co
 import { CajaSesion, MovimientoCaja, BalanceDiario, TipoMovimiento } from '../../../core/models/finance.model';
 import { Resenia, ReporteReclamo, MotivoReclamo } from '../../../core/models/feedback.model';
 import { IncidenteOperativo, IpBloqueada } from '../../../core/models/incident.model';
+import { EstadoNotificacion, TipoNotificacion } from '../../../core/models/notification-log.model';
 
 export type DashboardTab = 
   | 'ORDENES' 
@@ -42,17 +44,6 @@ interface MotorizadoDelivery {
   pedidosHoy: number;
   estado: 'DISPONIBLE' | 'EN_RUTA' | 'DESCANSO';
   pedidoActual?: string;
-}
-
-interface NotificacionLog {
-  id: string;
-  destinatario: string;
-  telefono: string;
-  canal: 'WHATSAPP' | 'WEBSOCKET_MOZO' | 'EMAIL';
-  plantilla: string;
-  estado: 'ENVIADO' | 'EN_COLA' | 'FALLIDO';
-  latenciaMs: number;
-  fechaHora: string;
 }
 
 @Component({
@@ -176,7 +167,7 @@ interface NotificacionLog {
 
           <button 
             type="button"
-            (click)="activeTab.set('NOTIFICACIONES')"
+            (click)="activeTab.set('NOTIFICACIONES'); cargarNotificaciones()"
             class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
             [ngClass]="activeTab() === 'NOTIFICACIONES' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
           >
@@ -1741,58 +1732,135 @@ interface NotificacionLog {
       }
 
 
-      <!-- ================= TAB 7: NOTIFICACIONES & WHATSAPP ================= -->
+      <!-- ================= TAB 7: NOTIFICACIONES & WHATSAPP (FASE 3) ================= -->
       @if (activeTab() === 'NOTIFICACIONES') {
         <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-          
+
           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Monitor de Notificaciones & WhatsApp</span>
                 <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
-                  Fase 2/3 - En Vivo
+                  Fase 3 - En Vivo
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">Cola de mensajes con control de espera de 10s (RNF10) y push WebSocket a mozos.</p>
+              <p class="text-xs text-slate-400">Historial de envíos (RF32) con cola de 10s entre mensajes (RNF10) en notification-service (:3001).</p>
             </div>
 
-            <button 
-              (click)="notify.showSuccess('Mensaje de prueba enviado por WhatsApp')"
-              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+            <button
+              (click)="cargarNotificaciones()"
+              [disabled]="whatsappService.isLoading()"
+              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition cursor-pointer"
             >
-              Probar Envío WhatsApp
+              {{ whatsappService.isLoading() ? 'Actualizando...' : 'Actualizar' }}
             </button>
           </div>
 
-          <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
+          <!-- Estado de la sesión y totales -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10">
+              <p class="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Sesión WhatsApp</p>
+              <p class="mt-1 text-lg font-bold" [ngClass]="whatsappService.status()?.whatsapp === 'connected' ? 'text-emerald-400' : 'text-amber-300'">
+                {{ etiquetaSesionWhatsapp() }}
+              </p>
+              <p class="text-[11px] text-slate-500">En cola ahora: {{ whatsappService.status()?.colaPendiente ?? '-' }}</p>
+            </div>
+            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10">
+              <p class="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Enviados</p>
+              <p class="mt-1 text-2xl font-bold text-emerald-400">{{ whatsappService.totales().enviados }}</p>
+            </div>
+            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10">
+              <p class="text-[11px] uppercase tracking-wider text-slate-400 font-bold">En cola</p>
+              <p class="mt-1 text-2xl font-bold text-amber-300">{{ whatsappService.totales().enCola }}</p>
+            </div>
+            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10">
+              <p class="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Con error</p>
+              <p class="mt-1 text-2xl font-bold text-red-400">{{ whatsappService.totales().errores }}</p>
+            </div>
+          </div>
+
+          <!-- Filtros -->
+          <div class="flex flex-wrap items-end gap-3 bg-[#14161a] p-4 rounded-2xl border border-white/10">
+            <label class="flex flex-col gap-1 text-[11px] text-slate-400 font-bold uppercase">
+              N° Orden
+              <input type="number" min="1" [(ngModel)]="filtroNotifOrdenId" placeholder="Todas"
+                class="w-32 px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs normal-case font-normal" />
+            </label>
+            <label class="flex flex-col gap-1 text-[11px] text-slate-400 font-bold uppercase">
+              Estado
+              <select [(ngModel)]="filtroNotifEstado"
+                class="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs normal-case font-normal">
+                <option value="">Todos</option>
+                <option value="EN_COLA">En cola</option>
+                <option value="ENVIADO">Enviado</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <label class="flex flex-col gap-1 text-[11px] text-slate-400 font-bold uppercase">
+              Desde
+              <input type="date" [(ngModel)]="filtroNotifDesde"
+                class="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs normal-case font-normal" />
+            </label>
+            <button (click)="cargarNotificaciones()"
+              class="px-4 py-2 bg-white/10 hover:bg-white/15 text-white font-bold text-xs rounded-xl transition cursor-pointer">
+              Filtrar
+            </button>
+            <button (click)="limpiarFiltrosNotificaciones()"
+              class="px-4 py-2 text-slate-400 hover:text-white font-bold text-xs rounded-xl transition cursor-pointer">
+              Limpiar
+            </button>
+          </div>
+
+          @if (whatsappService.error()) {
+            <div class="p-4 rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300 text-xs">
+              {{ whatsappService.error() }}
+            </div>
+          }
+
+          <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-x-auto shadow-xl">
             <table class="w-full text-left text-xs">
               <thead class="bg-black/40 border-b border-white/10 text-slate-400 font-bold uppercase tracking-wider">
                 <tr>
+                  <th class="p-4">ID</th>
+                  <th class="p-4">Orden</th>
                   <th class="p-4">Destinatario</th>
-                  <th class="p-4">Canal</th>
-                  <th class="p-4">Plantilla</th>
-                  <th class="p-4">Latencia</th>
-                  <th class="p-4">Fecha y Hora</th>
+                  <th class="p-4">Tipo</th>
+                  <th class="p-4">Mensaje</th>
+                  <th class="p-4 text-center">Intentos</th>
+                  <th class="p-4">Creado / Enviado</th>
                   <th class="p-4 text-center">Estado</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-white/5">
-                @for (log of notificaciones; track log.id) {
-                  <tr class="hover:bg-white/5 transition">
-                    <td class="p-4 font-bold text-white">
-                      {{ log.destinatario }} <span class="text-slate-500 font-mono text-[11px]">({{ log.telefono }})</span>
+                @for (log of whatsappService.historial(); track log.id) {
+                  <tr class="hover:bg-white/5 transition align-top">
+                    <td class="p-4 text-slate-500 font-mono text-[11px]">{{ log.id }}</td>
+                    <td class="p-4 font-bold text-white">{{ log.ordenId ? '#' + log.ordenId : '—' }}</td>
+                    <td class="p-4 text-slate-300 font-mono">{{ log.destinatario }}</td>
+                    <td class="p-4 text-slate-300">{{ etiquetaTipoNotificacion(log.tipo) }}</td>
+                    <td class="p-4 text-slate-400 max-w-xs">
+                      <p class="truncate" [title]="log.mensaje">{{ log.mensaje }}</p>
+                      @if (log.errorDetalle) {
+                        <p class="mt-1 text-red-400 text-[11px]">{{ log.errorDetalle }}</p>
+                      }
                     </td>
-                    <td class="p-4 text-slate-300 font-mono">{{ log.canal }}</td>
-                    <td class="p-4 text-slate-300">{{ log.plantilla }}</td>
-                    <td class="p-4 font-mono text-emerald-400">{{ log.latenciaMs }} ms</td>
-                    <td class="p-4 text-slate-400 font-mono">{{ log.fechaHora }}</td>
+                    <td class="p-4 text-center font-mono text-slate-300">{{ log.intentos }}</td>
+                    <td class="p-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                      {{ log.creadoEn | date:'dd/MM HH:mm:ss' }}
+                      @if (log.enviadoEn) {
+                        <br /><span class="text-emerald-400">{{ log.enviadoEn | date:'dd/MM HH:mm:ss' }}</span>
+                      }
+                    </td>
                     <td class="p-4 text-center">
-                      <span 
-                        class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
-                        [ngClass]="log.estado === 'ENVIADO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'"
-                      >
+                      <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold" [ngClass]="claseEstadoNotificacion(log.estado)">
                         {{ log.estado }}
                       </span>
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="8" class="p-8 text-center text-slate-500">
+                      {{ whatsappService.isLoading() ? 'Cargando historial...' : 'No hay notificaciones registradas con estos filtros.' }}
                     </td>
                   </tr>
                 }
@@ -2948,6 +3016,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly financeService = inject(FinanceService);
   readonly feedbackService = inject(FeedbackService);
   readonly securityAuditService = inject(SecurityAuditService);
+  readonly whatsappService = inject(WhatsappNotificationsService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -3103,12 +3172,54 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     { id: 'MOT-03', nombre: 'Jorge Silva', telefono: '987000015', placa: '1122-3C', pedidosHoy: 9, estado: 'DISPONIBLE' }
   ];
 
-  // Notificaciones Logs (RF30, RF31, RF32, RF33 - Fase 2/3)
-  notificaciones: NotificacionLog[] = [
-    { id: 'NOTIF-01', destinatario: 'Juan Pérez', telefono: '987654321', canal: 'WHATSAPP', plantilla: 'Confirmación de Pago Aprobado', estado: 'ENVIADO', latenciaMs: 140, fechaHora: '17:43:52' },
-    { id: 'NOTIF-02', destinatario: 'Carlos Ramos (Moto)', telefono: '987000013', canal: 'WHATSAPP', plantilla: 'Nuevo Delivery Asignado #POL-1001', estado: 'ENVIADO', latenciaMs: 165, fechaHora: '17:44:05' },
-    { id: 'NOTIF-03', destinatario: 'Mozo Salón (Mesa 03)', telefono: '987000003', canal: 'WEBSOCKET_MOZO', plantilla: 'Plato Listo en Cocina: 1x Pollo Entero', estado: 'ENVIADO', latenciaMs: 18, fechaHora: '17:45:10' }
-  ];
+  // Notificaciones WhatsApp (RF30, RF31, RF32 - Fase 3)
+  filtroNotifOrdenId: number | null = null;
+  filtroNotifEstado: EstadoNotificacion | '' = '';
+  filtroNotifDesde = '';
+
+  cargarNotificaciones(): void {
+    this.whatsappService.cargar({
+      ordenId: this.filtroNotifOrdenId,
+      estado: this.filtroNotifEstado,
+      desde: this.filtroNotifDesde
+    });
+  }
+
+  limpiarFiltrosNotificaciones(): void {
+    this.filtroNotifOrdenId = null;
+    this.filtroNotifEstado = '';
+    this.filtroNotifDesde = '';
+    this.cargarNotificaciones();
+  }
+
+  etiquetaSesionWhatsapp(): string {
+    const etiquetas: Record<string, string> = {
+      connected: 'Conectado',
+      waiting_qr: 'Esperando QR',
+      starting: 'Iniciando',
+      disconnected: 'Desconectado',
+      auth_failure: 'Error de sesión'
+    };
+    const status = this.whatsappService.status();
+    return status ? (etiquetas[status.whatsapp] ?? status.whatsapp) : 'Sin conexión';
+  }
+
+  etiquetaTipoNotificacion(tipo: TipoNotificacion): string {
+    const etiquetas: Record<TipoNotificacion, string> = {
+      PAGO_CONFIRMADO: 'Pago confirmado',
+      ESTADO_EN_PREPARACION: 'En preparación',
+      ESTADO_EN_CAMINO: 'En camino',
+      ESTADO_ENTREGADO: 'Entregado',
+      CODIGO_SEGUIMIENTO: 'Código de seguimiento'
+    };
+    return etiquetas[tipo] ?? tipo;
+  }
+
+  claseEstadoNotificacion(estado: EstadoNotificacion): string {
+    if (estado === 'ENVIADO') return 'bg-emerald-500/20 text-emerald-400';
+    if (estado === 'ERROR') return 'bg-red-500/20 text-red-400';
+    return 'bg-amber-500/20 text-amber-300';
+  }
 
   ngOnInit(): void {
     this.ordersService.loadActiveOrders();

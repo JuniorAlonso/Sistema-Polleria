@@ -129,6 +129,7 @@ export class OrderAdapter {
     return {
       id: String(dto.id),
       codigoSeguimiento: trackingCode,
+      numeroCliente: dto.numeroCliente ?? undefined,
       cliente: {
         nombre: dto.nombreCliente || 'Cliente',
         celular: dto.telefonoCliente || '',

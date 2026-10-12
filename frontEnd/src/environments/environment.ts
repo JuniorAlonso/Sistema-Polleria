@@ -7,6 +7,7 @@ export const environment = {
   inventoryApiUrl: '/api/inventory',
   financeApiUrl: '/api/finance',
   incidentApiUrl: '/api/incident',
+  notificationApiUrl: '/api/notificaciones',
   wsUrl: '/ws-polleria',
   services: {
     auth: '/api/auth',

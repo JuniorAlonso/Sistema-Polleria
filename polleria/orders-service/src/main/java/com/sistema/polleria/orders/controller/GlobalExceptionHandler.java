@@ -62,6 +62,17 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", "No tienes permisos para esta acción", "status", 403));
     }
 
+    @ExceptionHandler(com.sistema.polleria.orders.exception.DemasiadasSolicitudesException.class)
+    public ResponseEntity<Map<String, Object>> handleDemasiadasSolicitudes(RuntimeException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of("error", ex.getMessage(), "status", 429));
+    }
+
+    @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingHeader(org.springframework.web.bind.MissingRequestHeaderException ex) {
+        return ResponseEntity.badRequest().body(Map.of("error", "Falta el header " + ex.getHeaderName(), "status", 400));
+    }
+
     @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
     public ResponseEntity<Map<String, Object>> handleTypeMismatch(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
         return ResponseEntity.badRequest().body(Map.of("error", "Parámetro inválido: " + ex.getName(), "status", 400));

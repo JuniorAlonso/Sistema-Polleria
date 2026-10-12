@@ -1,0 +1,6 @@
+node_modules/
+# Sesión de WhatsApp: equivale a tener el celular de la pollería iniciado. NUNCA subir a git.
+.wwebjs_auth/
+.wwebjs_cache/
+whatsapp-session/
+.env
