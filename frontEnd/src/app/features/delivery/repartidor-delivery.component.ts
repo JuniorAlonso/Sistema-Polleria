@@ -9,6 +9,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Order, OrderStatus } from '../../core/models/order.model';
+import { leerUserIdDelToken } from '../../core/utils/jwt.util';
 
 export type DeliveryTab = 'ENTREGAS_ACTIVAS' | 'MAPA_RUTA' | 'COBROS_RENDICION' | 'HISTORIAL';
 export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
@@ -54,7 +55,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
               <span>Mis Entregas Activas</span>
             </div>
             <span class="px-2 py-0.5 rounded-full bg-sky-500 text-slate-950 font-black text-xs">
-              {{ activeDeliveryOrders().length }}
+              {{ misEntregasActivas().length }}
             </span>
           </button>
 
@@ -169,7 +170,14 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
         <!-- ================= TAB 1: ENTREGAS ACTIVAS ================= -->
         @if (activeTab() === 'ENTREGAS_ACTIVAS') {
           <main class="flex-1 p-4 sm:p-6 max-w-6xl mx-auto w-full space-y-4">
-            
+
+            @if (miIdMotorizado() === null) {
+              <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-start gap-2.5">
+                <svg class="w-4 h-4 shrink-0 mt-0.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                <span>No se pudo identificar tu usuario en la sesión. Vuelve a iniciar sesión para poder tomar pedidos.</span>
+              </div>
+            }
+
             <!-- Filters Toolbar -->
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3.5 rounded-2xl border border-white/10 shadow">
               <div class="flex items-center gap-1.5 text-xs bg-black/40 p-1 rounded-xl border border-white/5">
@@ -199,8 +207,8 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                   class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5"
                   [ngClass]="subFilter() === 'EN_RUTA' ? 'bg-sky-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
                 >
-                  <span>En Ruta</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="subFilter() === 'EN_RUTA' ? 'bg-black/30 text-slate-950' : 'bg-white/10 text-slate-300'">{{ inRouteOrders().length }}</span>
+                  <span>Mis Entregas</span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="subFilter() === 'EN_RUTA' ? 'bg-black/30 text-slate-950' : 'bg-white/10 text-slate-300'">{{ misEntregasActivas().length }}</span>
                 </button>
               </div>
 
@@ -309,15 +317,12 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                     <div class="flex items-center gap-2">
                       @if (order.estado === 'LISTO_COCINA') {
                         <button 
-                          (click)="avanzarAReparto(order)"
-                          class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
+                          (click)="tomarPedido(order)"
+                          [disabled]="!miIdMotorizado()"
+                          class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
                         >
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Tomar y Empezar Reparto</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Tomar Pedido</span>
                         </button>
-                      } @else if (order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO') {
-                        <span class="text-xs text-amber-400/90 font-medium px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>En cocina / horno — Aún no listo</span>
-                        </span>
                       } @else if (order.estado === 'EN_REPARTO') {
                         <button 
                           (click)="abrirModalCobroEntrega(order)"
@@ -359,13 +364,13 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                   <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>Local San Pollo (Av. San Martín 450, Ica)</span>
                 </div>
                 <div class="text-xs font-mono text-sky-400 bg-black/60 px-3 py-1.5 rounded-xl border border-white/10">
-                  En ruta: {{ inRouteOrders().length }} pedidos
+                  En ruta: {{ misEntregasActivas().length }} pedidos
                 </div>
               </div>
 
               <!-- Markers List on Map -->
               <div class="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                @for (order of inRouteOrders(); track order.id) {
+                @for (order of misEntregasActivas(); track order.id) {
                   <div class="p-3 rounded-xl bg-black/70 border border-sky-500/30 text-xs space-y-1 shadow">
                     <div class="flex justify-between items-center">
                       <span class="font-bold text-white">Destino: #{{ getCodeNum(order.codigoSeguimiento) }}</span>
@@ -565,21 +570,41 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     this.ordersService.orders().filter(o => (o.tipo || 'DELIVERY').toUpperCase() === 'DELIVERY')
   );
 
-  readonly activeDeliveryOrders = computed(() =>
-    this.deliveryOrders().filter(o => !['COMPLETADO', 'CANCELADO'].includes(o.estado))
-  );
+  /** Identidad real del motorizado autenticado (claim `userId` del JWT). */
+  readonly miIdMotorizado = computed(() => leerUserIdDelToken(this.auth.getAccessToken()));
 
+  /**
+   * S6.6 — Cola compartida: pedidos DELIVERY listos en cocina que todavía no tienen motorizado.
+   * Un pedido ya asignado (a mí o a otro) no es un pedido disponible.
+   */
   readonly readyForPickupOrders = computed(() =>
-    this.activeDeliveryOrders().filter(o => o.estado === 'LISTO_COCINA')
+    this.deliveryOrders().filter(o => o.estado === 'LISTO_COCINA' && o.repartidorId == null)
   );
 
-  readonly inRouteOrders = computed(() =>
-    this.activeDeliveryOrders().filter(o => o.estado === 'EN_REPARTO')
-  );
+  /**
+   * S6.6 — Mis entregas activas: lo que ya es mío, en ruta o asignado y todavía listo.
+   * Si el admin me lo asignó antes de despachar, tiene que verlo aquí aunque siga LISTO.
+   */
+  readonly misEntregasActivas = computed(() => {
+    const miId = this.miIdMotorizado();
+    if (!miId) return [];
+    return this.deliveryOrders().filter(
+      o => o.repartidorId === miId && (o.estado === 'EN_REPARTO' || o.estado === 'LISTO_COCINA')
+    );
+  });
 
-  readonly completedDeliveryOrders = computed(() =>
-    this.deliveryOrders().filter(o => o.estado === 'COMPLETADO')
-  );
+  /** S6.6 — Historial del día: entregas completadas por mí. */
+  readonly completedDeliveryOrders = computed(() => {
+    const miId = this.miIdMotorizado();
+    if (!miId) return [];
+    return this.deliveryOrders().filter(o => o.estado === 'COMPLETADO' && o.repartidorId === miId);
+  });
+
+  /** `TODAS` = disponibles + mis entregas activas. */
+  readonly activeDeliveryOrders = computed(() => [
+    ...this.readyForPickupOrders(),
+    ...this.misEntregasActivas()
+  ]);
 
   readonly filteredActiveDeliveryOrders = computed(() => {
     const filter = this.subFilter();
@@ -587,7 +612,7 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
       return this.readyForPickupOrders();
     }
     if (filter === 'EN_RUTA') {
-      return this.inRouteOrders();
+      return this.misEntregasActivas();
     }
     return this.activeDeliveryOrders();
   });
@@ -638,17 +663,31 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     return encodeURIComponent(str);
   }
 
-  avanzarAReparto(order: Order): void {
+  /**
+   * S6.6 — El motorizado toma un pedido listo de la cola compartida y se auto-asigna con el
+   * `userId` de su token. Sin identidad no se envía nada: un `repartidorId` nulo dejaría el
+   * pedido sin dueño (el defecto que se está corrigiendo).
+   */
+  tomarPedido(order: Order): void {
+    const miId = this.miIdMotorizado();
+    if (!miId) {
+      this.notify.showError('No se pudo identificar tu usuario. Vuelve a iniciar sesión para tomar pedidos.');
+      return;
+    }
     if (order.estado !== 'LISTO_COCINA') {
       this.notify.showError('El pedido aún está en preparación en cocina. Espera que esté listo.');
       return;
     }
-    this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO').subscribe({
+    if (order.repartidorId != null && order.repartidorId !== miId) {
+      this.notify.showError(`La orden #${this.getCodeNum(order.codigoSeguimiento)} ya fue tomada por otro motorizado.`);
+      return;
+    }
+    this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO', miId).subscribe({
       next: () => {
-        this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} en ruta de entrega`);
+        this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)} e iniciaste el reparto`);
       },
       error: () => {
-        this.notify.showError(`Error al iniciar reparto de orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+        this.notify.showError(`Error al tomar la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
       }
     });
   }
