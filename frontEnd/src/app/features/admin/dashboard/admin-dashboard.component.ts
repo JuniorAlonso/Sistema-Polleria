@@ -11,6 +11,7 @@ import { InventoryService } from '../../../core/services/inventory.service';
 import { FinanceService } from '../../../core/services/finance.service';
 import { FeedbackService } from '../../../core/services/feedback.service';
 import { SecurityAuditService } from '../../../core/services/security-audit.service';
+import { RepartidoresService } from '../../../core/services/repartidores.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
@@ -475,9 +476,13 @@ export type InsumoAlmacen = Insumo;
 
                         <button 
                           (click)="advanceAfterReady(order)"
-                          class="px-4 py-1.5 rounded-lg bg-[#2a2e36] hover:bg-purple-600 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs"
+                          class="px-4 py-1.5 rounded-lg text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                          [ngClass]="order.tipo === 'DELIVERY' ? 'bg-amber-600/30 hover:bg-amber-500 text-amber-200 hover:text-slate-950 border border-amber-500/40' : 'bg-[#2a2e36] hover:bg-purple-600'"
                         >
-                          {{ order.tipo === 'DELIVERY' ? 'A REPARTO' : 'ENTREGAR' }}
+                          @if (order.tipo === 'DELIVERY') {
+                            <span>🛵</span>
+                          }
+                          <span>{{ order.tipo === 'DELIVERY' ? 'A REPARTO' : 'ENTREGAR' }}</span>
                         </button>
                       </div>
 
@@ -534,6 +539,12 @@ export type InsumoAlmacen = Insumo;
                           <p class="line-clamp-1">{{ item.cantidad }}x {{ item.product.nombre }}</p>
                         }
                         <p class="text-[11px] text-slate-300 truncate">Dir: {{ order.cliente.direccion }}</p>
+                        @if (order.repartidorId) {
+                          <div class="flex items-center gap-1.5 text-[10px] text-amber-300 font-semibold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
+                            <span>🛵</span>
+                            <span>{{ nombreMotorizado(order) }}</span>
+                          </div>
+                        }
                       </div>
 
                       <!-- Bottom -->
@@ -1403,8 +1414,9 @@ export type InsumoAlmacen = Insumo;
           </div>
 
           <p class="text-[11px] text-slate-500">
-            El backend guarda el <strong>id</strong> del repartidor en la orden; no existe todavía un endpoint que liste
-            motorizados con nombre, placa o teléfono, así que esta tabla muestra el id y no un roster inventado.
+            El motorizado se elige del roster real de <strong>auth-service</strong>
+            (<code>GET /auth/admin/repartidores</code>); el nombre se resuelve por id y nunca se
+            inventa un repartidor ni su vehículo.
           </p>
 
           <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
@@ -1430,36 +1442,20 @@ export type InsumoAlmacen = Insumo;
                     <td class="p-4 text-slate-300">{{ order.cliente.direccion || '—' }}</td>
                     <td class="p-4 text-slate-300">{{ order.estado }}</td>
                     <td class="p-4">
-                      @if (order.repartidorAsignado) {
-                        <span class="text-emerald-400 font-bold">{{ order.repartidorAsignado.nombre }}</span>
+                      @if (order.repartidorId) {
+                        <span class="text-emerald-400 font-bold">{{ nombreMotorizado(order) }}</span>
                       } @else {
                         <span class="text-amber-300 font-bold">Por asignar</span>
                       }
                     </td>
-                    <td class="p-4">
-                      @if (puedeAsignarRepartidor(order)) {
-                        <div class="flex items-center justify-center gap-2">
-                          <input
-                            type="number"
-                            min="1"
-                            [ngModel]="repartidorPorOrden()[order.id] ?? ''"
-                            (ngModelChange)="setRepartidorInput(order.id, $event)"
-                            [ngModelOptions]="{ standalone: true }"
-                            placeholder="ID"
-                            class="w-20 px-2 py-1 rounded bg-black/50 border border-white/10 text-white text-xs focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                          />
-                          <button
-                            (click)="asignarRepartidor(order)"
-                            class="px-3 py-1 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold rounded text-[11px] transition cursor-pointer"
-                          >
-                            Asignar
-                          </button>
-                        </div>
-                      } @else {
-                        <span class="block text-center text-[11px] text-slate-500">
-                          Se asigna al pasar el pedido a «En camino»
-                        </span>
-                      }
+                    <td class="p-4 text-center">
+                      <button
+                        (click)="abrirModalAsignarMotorizado(order)"
+                        class="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-bold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                      >
+                        <span>🛵</span>
+                        <span>{{ order.repartidorId ? 'Reasignar (' + nombreMotorizado(order) + ')' : 'Asignar motorizado' }}</span>
+                      </button>
                     </td>
                   </tr>
                 } @empty {
@@ -2076,6 +2072,19 @@ export type InsumoAlmacen = Insumo;
                 <span class="text-slate-400">Método de Pago:</span>
                 <span class="text-polleria-gold font-bold">{{ order.metodoPago }}</span>
               </div>
+              @if (order.tipo === 'DELIVERY') {
+                <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
+                  <span class="text-slate-400">Motorizado Asignado:</span>
+                  @if (order.repartidorId) {
+                    <span class="text-emerald-400 font-bold flex items-center gap-1">
+                      <span>🛵</span>
+                      <span>{{ nombreMotorizado(order) }}</span>
+                    </span>
+                  } @else {
+                    <span class="text-amber-400 italic">Por asignar al despachar</span>
+                  }
+                </div>
+              }
             </div>
 
             <!-- Items List -->
@@ -2135,6 +2144,165 @@ export type InsumoAlmacen = Insumo;
                   Confirmar Entrega
                 </button>
               }
+            </div>
+
+          </div>
+        </div>
+      }
+
+
+      <!-- ================= MODAL: ASIGNACIÓN DE MOTORIZADO (RF18) ================= -->
+      @if (orderToAssignDelivery(); as order) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="w-full max-w-lg bg-[#14161a] border border-amber-500/30 rounded-2xl p-6 shadow-2xl space-y-5 text-slate-100 animate-scale-up">
+            
+            <!-- Modal Header -->
+            <div class="flex justify-between items-start border-b border-white/10 pb-4">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h2m-6 0a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-display text-xl font-bold text-white flex items-center gap-2">
+                    Asignar Motorizado
+                    <span class="font-mono text-sm font-black text-polleria-gold px-2 py-0.5 rounded bg-black/40 border border-amber-500/30">
+                      #{{ getCodeNum(order.codigoSeguimiento) }}
+                    </span>
+                  </h3>
+                  <p class="text-xs text-slate-400 mt-0.5">
+                    Selecciona el repartidor para despachar la orden a <span class="text-sky-300 font-bold">«En camino»</span>.
+                  </p>
+                </div>
+              </div>
+
+              <button 
+                (click)="cerrarModalAsignarMotorizado()" 
+                class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
+                aria-label="Cerrar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- Order Quick Summary -->
+            <div class="bg-black/40 p-3.5 rounded-xl border border-white/5 space-y-2 text-xs">
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400 font-semibold">Cliente:</span>
+                <span class="text-white font-bold">{{ order.cliente.nombre }} ({{ order.cliente.celular }})</span>
+              </div>
+              <div class="flex justify-between items-start gap-3">
+                <span class="text-slate-400 font-semibold shrink-0">Dirección:</span>
+                <span class="text-slate-200 text-right truncate font-medium">{{ order.cliente.direccion || 'Sin dirección especificada' }}</span>
+              </div>
+              @if (order.cliente.referencia) {
+                <div class="flex justify-between items-start gap-3">
+                  <span class="text-slate-400 font-semibold shrink-0">Referencia:</span>
+                  <span class="text-amber-300/80 text-right italic">{{ order.cliente.referencia }}</span>
+                </div>
+              }
+              <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
+                <span class="text-slate-400 font-semibold">Total / Pago:</span>
+                <span class="font-bold text-polleria-gold">{{ order.total | currencyPEN }} <span class="text-slate-400 font-normal">({{ order.metodoPago }})</span></span>
+              </div>
+            </div>
+
+            <!-- Motorizado Selector -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  Repartidores disponibles
+                </label>
+              </div>
+
+              @if (repartidoresService.isLoading()) {
+                <p class="text-xs text-slate-400">Cargando motorizados...</p>
+              } @else if (repartidoresService.hasError()) {
+                <div class="p-3 rounded-xl bg-rose-900/30 border border-rose-500/40 text-xs text-rose-200">
+                  No se pudo leer el roster de motorizados (auth-service). Sin esa lista no se sabe a quién
+                  mandar el pedido, así que el despacho queda bloqueado.
+                </div>
+              } @else if (repartidoresService.repartidores().length === 0) {
+                <div class="p-3 rounded-xl bg-amber-900/30 border border-amber-500/40 text-xs text-amber-200">
+                  No hay usuarios con rol REPARTIDOR activos. Registra un motorizado antes de despachar.
+                </div>
+              } @else {
+                <div class="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  @for (motorizado of repartidoresService.repartidores(); track motorizado.id) {
+                    <div 
+                      (click)="selectedRepartidorId = motorizado.id"
+                      class="p-3 rounded-xl border transition cursor-pointer flex items-center justify-between group"
+                      [ngClass]="selectedRepartidorId === motorizado.id 
+                        ? 'bg-amber-500/10 border-amber-500/60 ring-1 ring-amber-500/40' 
+                        : 'bg-black/30 border-white/5 hover:border-white/20 hover:bg-white/5'"
+                    >
+                      <div class="flex items-center gap-3">
+                        <div 
+                          class="w-9 h-9 rounded-lg flex items-center justify-center font-black text-xs transition"
+                          [ngClass]="selectedRepartidorId === motorizado.id 
+                            ? 'bg-amber-500 text-slate-950 font-bold shadow' 
+                            : 'bg-white/10 text-slate-300 group-hover:bg-white/20'"
+                        >
+                          #{{ motorizado.id }}
+                        </div>
+                        <div>
+                          <div class="text-xs font-bold text-white flex items-center gap-2">
+                            <span>{{ motorizado.nombre }}</span>
+                          </div>
+                          <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                            <span class="font-mono">{{ motorizado.telefono || 'sin teléfono registrado' }}</span>
+                            <span>•</span>
+                            <span class="font-mono text-slate-500">{{ motorizado.email }}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div 
+                        class="w-5 h-5 rounded-full border flex items-center justify-center transition"
+                        [ngClass]="selectedRepartidorId === motorizado.id 
+                          ? 'border-amber-400 bg-amber-400 text-slate-950' 
+                          : 'border-white/20'"
+                      >
+                        @if (selectedRepartidorId === motorizado.id) {
+                          <svg class="w-3.5 h-3.5 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                          </svg>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+
+            <!-- Modal Actions -->
+            <div class="flex justify-end items-center gap-3 pt-3 border-t border-white/10">
+              <button 
+                type="button"
+                (click)="cerrarModalAsignarMotorizado()"
+                class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition cursor-pointer"
+                [disabled]="isDispatchingDelivery()"
+              >
+                Cancelar
+              </button>
+
+              <button 
+                type="button"
+                (click)="confirmarAsignacionYDespacho()"
+                class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-bold transition cursor-pointer shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                [disabled]="isDispatchingDelivery() || !puedeConfirmarDespacho()"
+              >
+                @if (isDispatchingDelivery()) {
+                  <span class="inline-block w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></span>
+                  <span>Despachando...</span>
+                } @else {
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                  </svg>
+                  <span>Confirmar & Pasar a «En Camino»</span>
+                }
+              </button>
             </div>
 
           </div>
@@ -3044,6 +3212,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly feedbackService = inject(FeedbackService);
   readonly securityAuditService = inject(SecurityAuditService);
   readonly whatsappService = inject(WhatsappNotificationsService);
+  readonly repartidoresService = inject(RepartidoresService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -3198,8 +3367,11 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
       o.tipo === 'DELIVERY' && o.estado !== 'COMPLETADO' && o.estado !== 'CANCELADO')
   );
 
-  /** Borrador del id de repartidor por pedido, antes de asignarlo. */
-  readonly repartidorPorOrden = signal<Record<string, string>>({});
+  // Modal de Asignación de Motorizado (RF18)
+  readonly orderToAssignDelivery = signal<Order | null>(null);
+  /** Id del motorizado elegido en el modal. Sale del roster real de auth-service, no de una lista local. */
+  selectedRepartidorId: number | null = null;
+  readonly isDispatchingDelivery = signal<boolean>(false);
 
   // Notificaciones WhatsApp (RF30, RF31, RF32 - Fase 3)
   filtroNotifOrdenId: number | null = null;
@@ -3373,10 +3545,66 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   advanceAfterReady(order: Order): void {
     if (order.tipo === 'DELIVERY') {
-      this.advanceOrderStatus(order, 'EN_REPARTO');
+      this.abrirModalAsignarMotorizado(order);
     } else {
       this.advanceOrderStatus(order, 'COMPLETADO');
     }
+  }
+
+  /**
+   * Nombre real del motorizado, resuelto contra el roster de auth-service.
+   * Sin ese roster se muestra el id: nunca un nombre inventado.
+   */
+  nombreMotorizado(order: Order): string {
+    const id = order.repartidorId;
+    if (id == null) return 'Por asignar';
+    return this.repartidoresService.nombrePorId()[id] ?? `Motorizado #${id}`;
+  }
+
+  /** Sin un motorizado elegido no hay a quién despachar el pedido. */
+  puedeConfirmarDespacho(): boolean {
+    const id = Number(this.selectedRepartidorId);
+    return Number.isInteger(id) && id > 0;
+  }
+
+  abrirModalAsignarMotorizado(order: Order): void {
+    this.orderToAssignDelivery.set(order);
+    // El roster exige rol ADMIN y no se consulta desde el constructor: se pide al abrir el modal.
+    this.repartidoresService.cargar();
+    this.selectedRepartidorId = order.repartidorId ?? null;
+  }
+
+  cerrarModalAsignarMotorizado(): void {
+    this.orderToAssignDelivery.set(null);
+    this.isDispatchingDelivery.set(false);
+  }
+
+  confirmarAsignacionYDespacho(): void {
+    const order = this.orderToAssignDelivery();
+    if (!order) return;
+
+    if (!this.puedeConfirmarDespacho()) {
+      this.notify.showWarning('Selecciona un motorizado de la lista para despachar el pedido');
+      return;
+    }
+
+    const repId = Number(this.selectedRepartidorId);
+    this.isDispatchingDelivery.set(true);
+
+    this.ordersService.dispatchDeliveryOrder(order, repId).subscribe({
+      next: () => {
+        const nombre = this.repartidoresService.nombrePorId()[repId] ?? `Motorizado #${repId}`;
+        this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} asignada a ${nombre} y en camino`);
+        this.cerrarModalAsignarMotorizado();
+      },
+      error: (err) => {
+        // El backend rechaza la transición (p. ej. EN_PREPARACION -> EN_CAMINO): se muestra su motivo.
+        this.isDispatchingDelivery.set(false);
+        this.notify.showError(
+          err?.error?.error || `No se pudo despachar la orden #${this.getCodeNum(order.codigoSeguimiento)}`
+        );
+      }
+    });
   }
 
   cancelarOrden(order: Order): void {
@@ -3866,35 +4094,6 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   /** Unidad de medida real del insumo (MermaResponse no la incluye). */
   unidadDeInsumo(insumoId: number): string {
     return this.inventoryService.insumos().find(i => i.id === insumoId)?.unidadMedida ?? '';
-  }
-
-  // ================= MÉTODOS DE REPARTO (RF18) =================
-
-  setRepartidorInput(orderId: string, valor: string): void {
-    this.repartidorPorOrden.update(mapa => ({ ...mapa, [orderId]: valor }));
-  }
-
-  /**
-   * El backend persiste el repartidor reenviando el estado actual de la orden, y
-   * notifica por WhatsApp los estados EN_PREPARACION, EN_CAMINO y ENTREGADO. Asignar
-   * en esos estados reenviaría el mensaje al cliente, así que ahí la asignación
-   * ocurre al avanzar el pedido.
-   */
-  puedeAsignarRepartidor(order: Order): boolean {
-    return !['EN_PREPARACION', 'EN_REPARTO', 'COMPLETADO'].includes(order.estado);
-  }
-
-  asignarRepartidor(order: Order): void {
-    const valor = Number(this.repartidorPorOrden()[order.id]);
-    if (!Number.isInteger(valor) || valor <= 0) {
-      this.notify.showWarning('Ingresa el ID numérico del repartidor');
-      return;
-    }
-
-    this.ordersService.updateOrderStatus(order.id, order.estado, valor).subscribe({
-      next: () => this.notify.showSuccess(`Repartidor #${valor} asignado al pedido #${this.getCodeNum(order.codigoSeguimiento)}`),
-      error: () => this.notify.showError(`No se pudo asignar el repartidor al pedido #${this.getCodeNum(order.codigoSeguimiento)}`)
-    });
   }
 
   abrirModalMerma(): void {
