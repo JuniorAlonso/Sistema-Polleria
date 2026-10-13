@@ -29,7 +29,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
 
-    @Value("${cors.allowed-origins:*}")
+    @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
     /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
