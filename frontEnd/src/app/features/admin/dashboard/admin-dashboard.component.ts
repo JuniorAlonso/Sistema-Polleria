@@ -1458,13 +1458,19 @@ export type InsumoAlmacen = Insumo;
                       }
                     </td>
                     <td class="p-4 text-center">
-                      <button
-                        (click)="abrirModalAsignarMotorizado(order)"
-                        class="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-bold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
-                      >
-                        <span>🛵</span>
-                        <span>{{ order.repartidorId ? 'Reasignar (' + nombreMotorizado(order) + ')' : 'Asignar motorizado' }}</span>
-                      </button>
+                      @if (puedeDespachar(order)) {
+                        <button
+                          (click)="abrirModalAsignarMotorizado(order)"
+                          class="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-bold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                        >
+                          <span>🛵</span>
+                          <span>{{ order.repartidorId ? 'Reasignar (' + nombreMotorizado(order) + ')' : 'Asignar motorizado' }}</span>
+                        </button>
+                      } @else {
+                        <span class="block text-[11px] text-slate-500">
+                          Se habilita cuando la cocina lo marque LISTO
+                        </span>
+                      }
                     </td>
                   </tr>
                 } @empty {
@@ -3587,6 +3593,20 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     } else {
       this.advanceOrderStatus(order, 'COMPLETADO');
     }
+  }
+
+  /**
+   * Estados desde los que el panel puede abrir el despacho con motorizado:
+   * - `EN_PREPARACION`: el despacho encadena el paso `LISTO` antes de `EN_CAMINO`.
+   * - `LISTO_COCINA`: transición directa a `EN_CAMINO` con `repartidorId`.
+   * - `EN_REPARTO`: reasignar un pedido ya en ruta; el backend acepta reenviar el mismo estado
+   *   con otro `repartidorId`.
+   *
+   * En `PAGADO`/`PENDIENTE_PAGO` el backend solo admite `EN_PREPARACION`: la cocina todavía no
+   * empezó ese pedido, así que la acción no se ofrece.
+   */
+  puedeDespachar(order: Order): boolean {
+    return ['EN_PREPARACION', 'LISTO_COCINA', 'EN_REPARTO'].includes(order.estado);
   }
 
   /**
