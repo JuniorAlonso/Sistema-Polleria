@@ -71,10 +71,10 @@ class NotificacionService {
     }
 
     async _procesar({ logId, numero, mensaje, intentos }) {
-        await this.whatsapp.esperarListo();
         const intento = intentos + 1;
 
         try {
+            await this.whatsapp.esperarListo();
             const chatId = await this.whatsapp.obtenerChatId(numero);
             if (!chatId) {
                 await this.store.update(logId, {

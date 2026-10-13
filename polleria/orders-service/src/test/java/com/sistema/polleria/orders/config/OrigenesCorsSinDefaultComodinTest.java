@@ -40,6 +40,10 @@ class OrigenesCorsSinDefaultComodinTest {
     /**
      * Captura lo declarado dentro de {@code @Value("...")} en cualquier línea que mencione
      * {@code cors.allowed-origins}; el grupo 1 revela si hay un default tras los dos puntos.
+     *
+     * Se revisan **todas** las coincidencias del archivo, no solo la primera: un segundo
+     * {@code @Value} con comodín en el mismo archivo también es un agujero, y quedarse con la
+     * primera declaración lo dejaría pasar.
      */
     private static final Pattern DECLARACION = Pattern.compile(
             "@Value\\(\\s*\"(\\$\\{cors\\.allowed-origins[^\"]*)\"\\s*\\)");
@@ -72,15 +76,22 @@ class OrigenesCorsSinDefaultComodinTest {
     /** Infracciones del archivo indicado; vacío si declara la propiedad sin default. */
     private List<String> revisar(String etiqueta, Path archivo) throws IOException {
         Matcher valor = DECLARACION.matcher(Files.readString(archivo, StandardCharsets.UTF_8));
-        if (!valor.find()) {
-            return List.of(etiqueta + ": no declara " + DECLARACION_EXACTA);
+
+        List<String> infracciones = new ArrayList<>();
+        boolean encontrada = false;
+        while (valor.find()) {
+            encontrada = true;
+            String declarado = valor.group(1).trim();
+            if (!"${cors.allowed-origins}".equals(declarado)) {
+                infracciones.add(etiqueta + ": declara " + declarado
+                        + "  (debe ser exactamente ${cors.allowed-origins}, sin valor por defecto)");
+            }
         }
-        String declarado = valor.group(1).trim();
-        if (!"${cors.allowed-origins}".equals(declarado)) {
-            return List.of(etiqueta + ": declara " + declarado
-                    + "  (debe ser exactamente ${cors.allowed-origins}, sin valor por defecto)");
+
+        if (!encontrada) {
+            infracciones.add(etiqueta + ": no declara " + DECLARACION_EXACTA);
         }
-        return List.of();
+        return infracciones;
     }
 
     /** Cada servicio tiene su propio paquete base bajo {@code src/main/java}. */

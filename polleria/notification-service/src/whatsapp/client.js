@@ -21,8 +21,6 @@ const client = new Client({
 let estado = 'INICIANDO';
 let ultimoQr = null;
 let ultimoError = null;
-let marcarListo;
-let listo = new Promise(resolve => { marcarListo = resolve; });
 
 client.on('qr', qr => {
     estado = 'ESPERANDO_QR';
@@ -36,7 +34,6 @@ client.on('ready', () => {
     estado = 'CONECTADO';
     ultimoQr = null;
     ultimoError = null;
-    marcarListo();
     console.log('✅ ¡El servicio de WhatsApp de la Pollería está LISTO!');
 });
 
@@ -66,9 +63,6 @@ client.on('auth_failure', msg => {
 });
 
 client.on('disconnected', razon => {
-    // Los envíos esperarán hasta que vuelva a estar listo
-    listo = new Promise(resolve => { marcarListo = resolve; });
-
     if (razon === 'LOGOUT') {
         // Cerraron la sesión desde el celular: whatsapp-web.js borra la sesión
         // y genera un QR nuevo por su cuenta, no hay que reiniciar nada.
@@ -175,14 +169,52 @@ function arrancar() {
 
 // Adaptador que usa el NotificacionService
 const whatsapp = {
-    esperarListo: () => listo,
+    esperarListo(timeoutMs = 30000) {
+        if (estado === 'CONECTADO') {
+            return Promise.resolve();
+        }
 
-    async obtenerChatId(numero) {
-        const numberId = await client.getNumberId(numero);
-        return numberId ? numberId._serialized : null;
+        return new Promise((resolve, reject) => {
+            let timer;
+            const onReady = () => {
+                clearTimeout(timer);
+                client.off('ready', onReady);
+                resolve();
+            };
+
+            timer = setTimeout(() => {
+                client.off('ready', onReady);
+                reject(new Error(`Tiempo de espera agotado (${timeoutMs / 1000}s) esperando conexión de WhatsApp. Estado actual: ${estado}`));
+            }, timeoutMs);
+
+            client.once('ready', onReady);
+        });
     },
 
-    enviar: (chatId, mensaje) => client.sendMessage(chatId, mensaje),
+    async obtenerChatId(numero, timeoutMs = 8000) {
+        try {
+            const numberPromise = client.getNumberId(numero);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout en getNumberId')), timeoutMs)
+            );
+            const numberId = await Promise.race([numberPromise, timeoutPromise]);
+            if (numberId && numberId._serialized) {
+                return numberId._serialized;
+            }
+            return `${numero}@c.us`;
+        } catch (err) {
+            console.warn(`⚠️ Verificación de número para ${numero} demoró o falló (${err.message}). Usando formato directo.`);
+            return `${numero}@c.us`;
+        }
+    },
+
+    async enviar(chatId, mensaje, timeoutMs = 20000) {
+        const sendPromise = client.sendMessage(chatId, mensaje);
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout (${timeoutMs / 1000}s) enviando mensaje a ${chatId}`)), timeoutMs)
+        );
+        return Promise.race([sendPromise, timeoutPromise]);
+    },
 
     estado: () => estado,
 
