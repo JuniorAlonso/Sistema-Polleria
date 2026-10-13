@@ -150,7 +150,8 @@ gcloud run deploy auth-service \
    - El código Angular **no lee variables `NG_APP_*`**: `environment.ts` y `environment.development.ts` son archivos estáticos, y la compilación de producción define URLs relativas (`authApiUrl: '/api'`, `ordersApiUrl: '/api'`, `wsUrl: '/ws-polleria'`).
    - Por lo tanto, la configuración real de las URLs de backend en Vercel son las **reescrituras de `vercel.json`**, no las variables de entorno. `frontEnd/.env.example` documenta una convención que quedó sin cablear y sirve solo como referencia histórica.
 3. **CORS en Backend:**
-   - Una vez que Vercel te dé tu dominio (ej: `https://sistema-polleria.vercel.app`), actualiza la variable `CORS_ALLOWED_ORIGINS` en Cloud Run para permitir que tu frontend consuma los servicios. El valor por defecto del repositorio es `http://localhost:4200` (y `http://localhost:4200,http://localhost:80,http://localhost` en `feedback`, `finance` e `inventory`).
+   - Una vez que Vercel te dé tu dominio (ej: `https://sistema-polleria.vercel.app`), actualiza la variable `CORS_ALLOWED_ORIGINS` en Cloud Run para permitir que tu frontend consuma los servicios. El valor por defecto del repositorio es `http://localhost:4200` en `auth`, `orders` y `payments`, y `http://localhost:4200,http://localhost:80,http://localhost` en `feedback`, `finance`, `inventory` e `incident`.
+   - Además de esa lista, los 7 servicios Java aceptan **cualquier puerto de loopback** (`localhost`, `127.0.0.1` y `[::1]`, en cualquier puerto), porque en local `ng serve` arranca en otro puerto cuando 4200 está ocupado y la app puede abrirse por `127.0.0.1`. Ese permiso **no habilita orígenes externos**: un origen ajeno sigue rechazado con `403` y cada servicio tiene un `OrigenesCorsLoopbackTest` que lo fija.
 
 ---
 
