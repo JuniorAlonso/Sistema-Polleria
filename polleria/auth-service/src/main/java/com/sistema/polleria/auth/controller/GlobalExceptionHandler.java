@@ -73,6 +73,22 @@ public class GlobalExceptionHandler {
                 "status", 405));
     }
 
+    /**
+     * Un rechazo de autorización debe responder 403, nunca 500.
+     *
+     * `@PreAuthorize` lanza AccessDeniedException (AuthorizationDeniedException) dentro del
+     * DispatcherServlet, así que el catch-all de abajo lo convertía en "Error interno del
+     * servidor" y el cliente no podía distinguir "no tenés permiso" de "el servicio se rompió".
+     */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex) {
+        log.warn("Acceso denegado: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                "error", "No tienes permisos para realizar esta operación",
+                "status", 403));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
         log.error("Error inesperado: ", ex);
