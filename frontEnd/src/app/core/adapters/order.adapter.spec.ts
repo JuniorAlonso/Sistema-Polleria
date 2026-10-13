@@ -63,3 +63,41 @@ describe('OrderAdapter.toBackendCrearRequest — sin datos inventados', () => {
     expect(req.direccionEntrega).toBeUndefined();
   });
 });
+
+/**
+ * RF18: el nombre del motorizado vive en el roster de auth-service, que exige rol ADMIN.
+ * El adaptador solo puede propagar el id; fabricar un nombre ("Repartidor #7" o un caso
+ * particular hardcodeado) pondría un dato falso en el panel y en el seguimiento del cliente.
+ */
+describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
+  const dto = {
+    id: 5,
+    tipo: 'DELIVERY',
+    estado: 'EN_CAMINO',
+    total: 68.5,
+    nombreCliente: 'María',
+    telefonoCliente: '999888777',
+    items: [],
+    creadoEn: '2026-01-01T00:00:00Z'
+  };
+
+  it('propaga el id del repartidor asignado', () => {
+    const orden = OrderAdapter.toOrder({ ...dto, repartidorId: 7 } as never);
+
+    expect(orden.repartidorId).toBe(7);
+  });
+
+  it('no fabrica un nombre de motorizado a partir del id', () => {
+    const orden = OrderAdapter.toOrder({ ...dto, repartidorId: 7 } as never) as unknown as Record<string, unknown>;
+
+    expect(orden['repartidorAsignado'])
+      .withContext('el nombre solo lo puede resolver el roster real del admin')
+      .toBeUndefined();
+  });
+
+  it('deja el pedido sin motorizado cuando el backend no manda id', () => {
+    const orden = OrderAdapter.toOrder({ ...dto, repartidorId: null } as never);
+
+    expect(orden.repartidorId == null).toBeTrue();
+  });
+});

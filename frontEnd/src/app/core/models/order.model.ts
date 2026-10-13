@@ -43,10 +43,6 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
   repartidorId?: number;
-  /** Derivado de repartidorId: el backend no expone nombre ni teléfono del repartidor. */
-  repartidorAsignado?: {
-    nombre: string;
-  };
 }
 
 export interface CreateOrderRequest {

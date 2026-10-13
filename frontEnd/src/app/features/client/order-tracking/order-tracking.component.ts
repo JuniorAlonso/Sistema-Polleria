@@ -895,9 +895,9 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   }
 
   contactRider(): void {
-    const repartidor = this.currentOrder()?.repartidorAsignado;
-
-    if (!repartidor) {
+    // El backend solo guarda el id del repartidor, y su nombre vive en el roster de auth-service,
+    // que exige rol ADMIN: un cliente no puede leerlo. Sin nombre real no se inventa uno.
+    if (!this.currentOrder()?.repartidorId) {
       this.notify.showInfo(
         'Motorizado aún sin asignar',
         'Todavía no se asignó un motorizado a tu pedido. Aparecerá aquí cuando salga a reparto.'
@@ -905,11 +905,9 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // El backend solo guarda el id del repartidor: no hay nombre ni teléfono reales
-    // que mostrar, así que no se inventa una llamada a un número inexistente.
     this.notify.showInfo(
       'Motorizado asignado',
-      `${repartidor.nombre} está a cargo de tu entrega.`
+      'Un motorizado está a cargo de tu entrega. Te contactará al llegar.'
     );
   }
 

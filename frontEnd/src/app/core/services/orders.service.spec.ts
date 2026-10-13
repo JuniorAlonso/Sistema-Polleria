@@ -94,4 +94,72 @@ describe('OrdersService — updateOrderStatus', () => {
     expect(actualizado).not.toBeNull();
     expect(service.orders()[0].estado).toBe('CANCELADO');
   });
+
+  describe('dispatchDeliveryOrder', () => {
+    it('pasa primero por LISTO_COCINA cuando la orden está EN_PREPARACION y luego a EN_REPARTO con repartidorId', () => {
+      service.orders.set([orden('EN_PREPARACION')]);
+
+      let resultadoFinal: Order | null = null;
+      service.dispatchDeliveryOrder(orden('EN_PREPARACION'), 4).subscribe(res => {
+        resultadoFinal = res;
+      });
+
+      // Primer request: debe solicitar LISTO
+      const req1 = http.expectOne(req => req.method === 'PATCH' && req.body.estado === 'LISTO');
+      req1.flush({
+        id: 5,
+        tipo: 'DELIVERY',
+        estado: 'LISTO',
+        total: 68.5,
+        nombreCliente: 'María',
+        telefonoCliente: '999888777',
+        items: [],
+        creadoEn: '2026-01-01T00:00:00Z'
+      });
+
+      // Segundo request: debe solicitar EN_CAMINO con repartidorId = 4
+      const req2 = http.expectOne(req => req.method === 'PATCH' && req.body.estado === 'EN_CAMINO' && req.body.repartidorId === 4);
+      req2.flush({
+        id: 5,
+        tipo: 'DELIVERY',
+        estado: 'EN_CAMINO',
+        repartidorId: 4,
+        total: 68.5,
+        nombreCliente: 'María',
+        telefonoCliente: '999888777',
+        items: [],
+        creadoEn: '2026-01-01T00:00:00Z'
+      });
+
+      expect(resultadoFinal).not.toBeNull();
+      expect(service.orders()[0].estado).toBe('EN_REPARTO');
+      expect(service.orders()[0].repartidorId).toBe(4);
+    });
+
+    it('despacha directamente a EN_REPARTO con repartidorId cuando la orden ya está LISTO_COCINA', () => {
+      service.orders.set([orden('LISTO_COCINA')]);
+
+      let resultado: Order | null = null;
+      service.dispatchDeliveryOrder(orden('LISTO_COCINA'), 4).subscribe(res => {
+        resultado = res;
+      });
+
+      const req = http.expectOne(req => req.method === 'PATCH' && req.body.estado === 'EN_CAMINO' && req.body.repartidorId === 4);
+      req.flush({
+        id: 5,
+        tipo: 'DELIVERY',
+        estado: 'EN_CAMINO',
+        repartidorId: 4,
+        total: 68.5,
+        nombreCliente: 'María',
+        telefonoCliente: '999888777',
+        items: [],
+        creadoEn: '2026-01-01T00:00:00Z'
+      });
+
+      expect(resultado).not.toBeNull();
+      expect(service.orders()[0].estado).toBe('EN_REPARTO');
+      expect(service.orders()[0].repartidorId).toBe(4);
+    });
+  });
 });

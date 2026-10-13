@@ -1,7 +1,7 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
+import { Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
 import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
 import { OrderAdapter } from '../adapters/order.adapter';
@@ -277,9 +277,10 @@ export class OrdersService {
     this.orders.update(items =>
       items.map(order => {
         if (order.id === orderId || (cleanId > 0 && order.id === String(cleanId))) {
-          const updated = {
+          const updated: Order = {
             ...order,
             estado: newStatus,
+            repartidorId: repartidorId !== undefined ? repartidorId : order.repartidorId,
             updatedAt: new Date().toISOString()
           };
           if (this.currentTrackingOrder()?.id === order.id) {
@@ -318,6 +319,21 @@ export class OrdersService {
     }
 
     return throwError(() => new Error(`No se pudo determinar el id de la orden: ${orderId}`));
+  }
+
+  /**
+   * RF18: Despacha una orden de delivery hacia 'EN_REPARTO' con motorizado asignado.
+   * Si la orden se encuentra en 'EN_PREPARACION', realiza primero la transición obligatoria
+   * hacia 'LISTO_COCINA' antes de enviarla a 'EN_REPARTO' con el repartidorId para cumplir
+   * con la máquina de estados del backend.
+   */
+  dispatchDeliveryOrder(order: Order, repartidorId: number): Observable<Order> {
+    if (order.estado === 'EN_PREPARACION') {
+      return this.updateOrderStatus(order.id, 'LISTO_COCINA').pipe(
+        switchMap(() => this.updateOrderStatus(order.id, 'EN_REPARTO', repartidorId))
+      );
+    }
+    return this.updateOrderStatus(order.id, 'EN_REPARTO', repartidorId);
   }
 
   /**

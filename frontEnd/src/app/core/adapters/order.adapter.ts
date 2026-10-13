@@ -148,10 +148,9 @@ export class OrderAdapter {
       notasGenerales: dto.observaciones || undefined,
       createdAt: dto.creadoEn || new Date().toISOString(),
       updatedAt: dto.actualizadoEn || dto.creadoEn || new Date().toISOString(),
-      repartidorId: dto.repartidorId,
-      repartidorAsignado: dto.repartidorId ? {
-        nombre: `Repartidor #${dto.repartidorId}`
-      } : undefined
+      // Solo el id: el nombre del motorizado vive en el roster de auth-service (solo ADMIN),
+      // así que aquí no se fabrica un "Repartidor #7".
+      repartidorId: dto.repartidorId
     };
   }
 
