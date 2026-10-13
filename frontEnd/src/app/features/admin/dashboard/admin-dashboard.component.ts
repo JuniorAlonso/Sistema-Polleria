@@ -474,16 +474,25 @@ export type InsumoAlmacen = Insumo;
                           <span>{{ order.cliente.nombre }}</span>
                         </div>
 
-                        <button 
-                          (click)="advanceAfterReady(order)"
-                          class="px-4 py-1.5 rounded-lg text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs flex items-center gap-1.5"
-                          [ngClass]="order.tipo === 'DELIVERY' ? 'bg-amber-600/30 hover:bg-amber-500 text-amber-200 hover:text-slate-950 border border-amber-500/40' : 'bg-[#2a2e36] hover:bg-purple-600'"
-                        >
-                          @if (order.tipo === 'DELIVERY') {
-                            <span>🛵</span>
-                          }
-                          <span>{{ order.tipo === 'DELIVERY' ? 'A REPARTO' : 'ENTREGAR' }}</span>
-                        </button>
+                        @if (order.estado === 'EN_PREPARACION') {
+                          <button 
+                            (click)="marcarListo(order)"
+                            class="px-4 py-1.5 rounded-lg bg-[#2a2e36] hover:bg-amber-600 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs"
+                          >
+                            <span>LISTO</span>
+                          </button>
+                        } @else {
+                          <button 
+                            (click)="advanceAfterReady(order)"
+                            class="px-4 py-1.5 rounded-lg text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                            [ngClass]="order.tipo === 'DELIVERY' ? 'bg-amber-600/30 hover:bg-amber-500 text-amber-200 hover:text-slate-950 border border-amber-500/40' : 'bg-[#2a2e36] hover:bg-purple-600'"
+                          >
+                            @if (order.tipo === 'DELIVERY') {
+                              <span>🛵</span>
+                            }
+                            <span>{{ order.tipo === 'DELIVERY' ? 'A REPARTO' : 'ENTREGAR' }}</span>
+                          </button>
+                        }
                       </div>
 
                     </div>
@@ -2129,7 +2138,14 @@ export type InsumoAlmacen = Insumo;
                 >
                   Aceptar & Pasar a Cocina
                 </button>
-              } @else if (order.estado === 'EN_PREPARACION' || order.estado === 'LISTO_COCINA') {
+              } @else if (order.estado === 'EN_PREPARACION') {
+                <button 
+                  (click)="marcarListo(order); selectedOrderForModal.set(null)"
+                  class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold transition cursor-pointer"
+                >
+                  Marcar Listo en Cocina
+                </button>
+              } @else if (order.estado === 'LISTO_COCINA') {
                 <button 
                   (click)="advanceAfterReady(order); selectedOrderForModal.set(null)"
                   class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer"
@@ -3554,6 +3570,15 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.notify.showError(`Error al actualizar estado de la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
       }
     });
+  }
+
+  /**
+   * El backend solo acepta `EN_PREPARACION -> LISTO`. Sin este paso, un pedido de salón o de
+   * recojo en preparación no se podía cerrar desde el panel: el botón único intentaba
+   * `EN_PREPARACION -> ENTREGADO` y el backend lo rechazaba.
+   */
+  marcarListo(order: Order): void {
+    this.advanceOrderStatus(order, 'LISTO_COCINA');
   }
 
   advanceAfterReady(order: Order): void {
