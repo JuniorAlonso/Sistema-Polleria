@@ -3379,6 +3379,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   filtroNotifDesde = '';
 
   // El QR solo se consulta mientras la pestaña de WhatsApp está abierta
+  // El QR solo se consulta mientras la pestaña de WhatsApp está abierta
   private readonly sondeoQrPorPestana = effect(() => {
     const enWhatsapp = this.activeTab() === 'NOTIFICACIONES';
     untracked(() => {
@@ -3388,6 +3389,18 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.whatsappService.detenerSondeoQr();
       }
     });
+  });
+
+  /**
+   * El roster de motorizados se pide al abrir la pestaña de reparto, no en el constructor:
+   * el endpoint exige rol ADMIN y `/admin` también es accesible para MOZO, COCINA y REPARTIDOR.
+   * Sin esta carga, la tabla mostraría "Motorizado #7" hasta abrir el modal de despacho.
+   */
+  private readonly rosterAlAbrirReparto = effect(() => {
+    const enReparto = this.activeTab() === 'REPARTO';
+    if (enReparto && isPlatformBrowser(this.platformId)) {
+      untracked(() => this.repartidoresService.cargar());
+    }
   });
 
   cargarNotificaciones(): void {
