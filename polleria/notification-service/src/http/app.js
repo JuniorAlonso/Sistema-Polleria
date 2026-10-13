@@ -36,6 +36,21 @@ function responderEncolado(res, log) {
  */
 const IPS_LOCALES = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
+const ORIGEN_LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+/**
+ * Orígenes del panel: la lista configurada más cualquier puerto de loopback. El panel
+ * corre en la misma máquina que este servicio, y `ng serve` cambia de puerto cuando
+ * 4200 está ocupado (o el usuario abre la app por 127.0.0.1). Con la lista exacta, el
+ * navegador bloqueaba la petición del QR en esos casos. Un origen externo sigue sin
+ * habilitarse.
+ */
+function origenPermitido(origen) {
+    if (!origen) return false;
+    if (config.corsOrigins.includes(origen)) return true;
+    return ORIGEN_LOOPBACK.test(origen);
+}
+
 function escaparHtml(texto) {
     return String(texto)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -61,7 +76,7 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
     // CORS para el panel de administración (Angular)
     app.use((req, res, next) => {
         const origen = req.headers.origin;
-        if (origen && config.corsOrigins.includes(origen)) {
+        if (origenPermitido(origen)) {
             res.setHeader('Access-Control-Allow-Origin', origen);
             res.setHeader('Vary', 'Origin');
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
