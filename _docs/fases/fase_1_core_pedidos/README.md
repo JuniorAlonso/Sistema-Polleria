@@ -71,7 +71,7 @@ Alineada 1:1 con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../B
 | **RF15** | Máquina de estados robusta para el ciclo de vida del pedido | `orders-service` | `RECIBIDO → EN_PREP → LISTO → EN_CAMINO → ENTREGADO` | ✅ |
 | **RF16** | Personal de cocina y admin actualiza estado de pedidos | `orders-service` | `PATCH /ordenes/{id}/estado` | ✅ |
 | **RF17** | Clientes consultan el estado actual de su pedido | `orders-service` | `GET /ordenes/{id}` | ✅ |
-| **RF18** | Asignación de repartidor a pedidos de delivery | `orders-service` | Campo `repartidorId` en `PATCH /ordenes/{id}/estado` | ✅ (Manual) |
+| **RF18** | Asignación de repartidor a pedidos de delivery | `auth-service` + `orders-service` | Roster real en `GET /auth/admin/repartidores` + `repartidorId` en `PATCH /ordenes/{id}/estado` (modal del panel) | ✅ |
 | **RF19** | Métodos de pago (contraentrega, tarjeta, monederos Yape/Plin) | `payments-service` | `POST /pagos` (`CONTRAENTREGA` y simulación mock de desarrollo) | ✅ |
 | **RF20** | Registrar cada transacción con su estado | `payments-service` | `EstadoPago` (`PENDIENTE, APROBADO, RECHAZADO, CANCELADO`) | ✅ |
 | **RF21** | Actualización automática de estado según pasarela | `payments-service` | Feign/REST hacia `orders-service` al confirmar cobro (*Pasarela Mercado Pago migrada a Fase 5*) | ✅ |

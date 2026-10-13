@@ -111,6 +111,13 @@ stateDiagram-v2
 | **En Limpieza** | `EN_LIMPIEZA` / `LIMPIEZA` | Celeste (`bg-sky-950`, `border-sky-500`) | Comensales se retiraron; personal desinfectando y alistando vajilla. |
 | **Reservada** | `RESERVADA` | Púrpura (`bg-purple-950`, `border-purple-500`) | Asignada para reserva especial con horario programado. |
 
+> **El cobro cierra la comanda.** La mesa no se libera sola: al cobrar, el mozo marca la orden de salón
+> como `ENTREGADO` (`PATCH /ordenes/{id}/estado`) y `OrdenService.actualizarEstado` deja la mesa en
+> `LIBRE`. Si la comanda sigue en `EN_PREPARACION`, el backend rechaza el cierre (la cocina debe
+> marcarla `LISTO` primero) y el mozo ve ese motivo en pantalla. Liberar la mesa sin cerrar la comanda
+> la deja mostrada como libre pero inutilizable: `OrdenService.crear` rechaza una segunda comanda
+> mientras la anterior siga activa (`ESTADOS_TERMINALES = ENTREGADO | CANCELADO`).
+
 ---
 
 ## 5. Croquis Matricial Virtual por Zonas (Slides)
