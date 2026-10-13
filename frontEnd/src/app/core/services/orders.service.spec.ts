@@ -163,3 +163,104 @@ describe('OrdersService — updateOrderStatus', () => {
     });
   });
 });
+
+/**
+ * S6.5 — lectura puntual de una orden para el modal de mesa del mozo.
+ * Es una consulta sin efectos secundarios: no puede alterar las listas compartidas del servicio.
+ */
+describe('OrdersService — obtenerOrden', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  const dtoOrden = (estado = 'LISTO', total = 98.5) => ({
+    id: 7,
+    tipo: 'SALON' as const,
+    estado,
+    total,
+    mesaNumero: 3,
+    nombreCliente: 'Mesa 03',
+    telefonoCliente: '',
+    items: [
+      { productoId: 1, productoNombre: 'Pollo a la Brasa Entero', cantidad: 1, precioUnitario: 65, subtotal: 65 },
+      { productoId: 2, productoNombre: 'Jarra Chicha Morada 1L', cantidad: 1, precioUnitario: 14, subtotal: 14 },
+      { productoId: 3, productoNombre: 'Porción Tequeños Criollos', cantidad: 1, precioUnitario: 19.5, subtotal: 19.5 }
+    ],
+    creadoEn: '2026-01-01T00:00:00Z'
+  });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+
+    // El constructor dispara loadMyOrders(): se descarta esa carga inicial.
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('hace GET a /ordenes/7 y mapea la respuesta a Order', () => {
+    let resultado: Order | null = null;
+    service.obtenerOrden('7').subscribe(o => (resultado = o));
+
+    const req = http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'));
+    req.flush(dtoOrden());
+
+    expect(resultado).not.toBeNull();
+    expect(resultado!.id).toBe('7');
+    expect(resultado!.tipo).toBe('SALON');
+    expect(resultado!.estado).withContext('LISTO del backend equivale a LISTO_COCINA').toBe('LISTO_COCINA');
+    expect(resultado!.items.map(i => i.product.nombre)).toEqual([
+      'Pollo a la Brasa Entero',
+      'Jarra Chicha Morada 1L',
+      'Porción Tequeños Criollos'
+    ]);
+    expect(resultado!.total).toBe(98.5);
+  });
+
+  it('propaga el mensaje real del backend cuando la orden no existe', () => {
+    const capturado: { mensaje?: string } = {};
+    service.obtenerOrden('7').subscribe({ error: err => (capturado.mensaje = err.message) });
+
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush({ error: 'La orden no existe' }, { status: 404, statusText: 'Not Found' });
+
+    expect(capturado.mensaje).toBe('La orden no existe');
+  });
+
+  it('con un id inválido no dispara ninguna petición y falla con un mensaje claro', () => {
+    const capturado: { mensaje?: string } = {};
+    service.obtenerOrden('no-es-un-id').subscribe({ error: err => (capturado.mensaje = err.message) });
+
+    http.expectNone(r => r.method === 'GET' && r.url.includes('/ordenes'));
+    expect(capturado.mensaje).withContext('no se puede pedir GET /ordenes/NaN').toContain('inválido');
+  });
+
+  it('no altera orders() ni currentTrackingOrder()', () => {
+    const previa: Order = {
+      id: '5',
+      codigoSeguimiento: 'POL-5',
+      cliente: { nombre: 'María', celular: '999888777', direccion: 'Av. Siempre Viva 742' },
+      items: [],
+      tipo: 'DELIVERY',
+      estado: 'EN_PREPARACION',
+      metodoPago: 'TARJETA',
+      subtotal: 68.5,
+      costoEnvio: 0,
+      descuento: 0,
+      total: 68.5,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    };
+    service.orders.set([previa]);
+    const trackingAntes = service.currentTrackingOrder();
+
+    service.obtenerOrden('7').subscribe();
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
+
+    expect(service.orders().map(o => o.id)).toEqual(['5']);
+    expect(service.currentTrackingOrder()).toBe(trackingAntes);
+  });
+});

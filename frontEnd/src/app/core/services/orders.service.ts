@@ -214,6 +214,26 @@ export class OrdersService {
   }
 
   /**
+   * S6.5: lectura puntual de una orden (modal de mesa del mozo).
+   * Sin efectos secundarios: no toca orders(), myOrders() ni currentTrackingOrder().
+   * El id debe ser un entero positivo (acepta el prefijo POL-/ord-); si no, no se
+   * dispara ningún GET a /ordenes/NaN.
+   */
+  obtenerOrden(id: string | number): Observable<Order> {
+    const raw = String(id ?? '').trim().replace(/^POL-/i, '').replace(/^ord-/i, '');
+    const idNumerico = Number(raw);
+
+    if (!Number.isInteger(idNumerico) || idNumerico <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${id}`));
+    }
+
+    return this.http.get<BackendOrdenResponse>(`${this.API_URL}/ordenes/${idNumerico}`).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo cargar la orden'))))
+    );
+  }
+
+  /**
    * RF19: Cargar órdenes (activas e históricas)
    */
   loadActiveOrders(): void {

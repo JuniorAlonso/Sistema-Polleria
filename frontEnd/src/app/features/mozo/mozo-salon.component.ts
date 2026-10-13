@@ -10,6 +10,7 @@ import { SalonService, ZonaSalonConfig } from '../../core/services/salon.service
 import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
+import { Order, OrderStatus } from '../../core/models/order.model';
 
 export type MozoTab = 'MESAS' | 'TOMAR_COMANDA' | 'ALERTAS_COCINA' | 'HISTORIAL_TURNO';
 
@@ -879,7 +880,7 @@ export interface AlertaPlatoListo {
                   <h3 class="font-display text-2xl font-bold text-white">{{ selectedMesaModal()?.nombre }}</h3>
                   <span class="text-xs text-slate-400">{{ selectedMesaModal()?.zona }} • Capacidad {{ selectedMesaModal()?.capacidad }} pers.</span>
                 </div>
-                <button (click)="selectedMesaModal.set(null)" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+                <button (click)="cerrarModalMesa()" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>
 
               <!-- Estado de la Mesa -->
@@ -895,18 +896,40 @@ export interface AlertaPlatoListo {
                   </span>
                 </div>
 
-                <!-- Detalle de Consumo -->
+                <!-- Detalle de Consumo (comanda real de la orden activa) -->
                 <div class="p-3 rounded-xl bg-black/40 space-y-2 border border-white/5">
                   <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
-                  <div class="space-y-1 text-slate-400">
-                    <p class="flex justify-between"><span>1x Pollo a la Brasa Entero</span> <span class="font-mono text-white">S/. 65.00</span></p>
-                    <p class="flex justify-between"><span>1x Jarra Chicha Morada 1L</span> <span class="font-mono text-white">S/. 14.00</span></p>
-                    <p class="flex justify-between"><span>1x Porción Tequeños Criollos</span> <span class="font-mono text-white">S/. 19.50</span></p>
-                  </div>
-                  <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
-                    <span>Total a Cobrar:</span>
-                    <span>S/. 98.50</span>
-                  </div>
+
+                  @if (comandaMesa(); as comanda) {
+                    <div class="space-y-1 text-slate-400">
+                      @for (item of comanda.items; track $index) {
+                        <p class="flex justify-between">
+                          <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
+                          <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
+                        </p>
+                      }
+                      @if (comanda.items.length === 0) {
+                        <p class="text-slate-500">La comanda no tiene ítems registrados.</p>
+                      }
+                    </div>
+                    <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
+                      <span>Total a Cobrar:</span>
+                      <span>{{ comanda.total | currencyPEN }}</span>
+                    </div>
+                    <div class="flex justify-between text-[11px] text-slate-400">
+                      <span>Estado de la comanda:</span>
+                      <span class="font-bold" [ngClass]="{
+                        'text-amber-400': comanda.estado === 'EN_PREPARACION',
+                        'text-emerald-400': comanda.estado === 'LISTO_COCINA'
+                      }">{{ etiquetaEstadoComanda(comanda.estado) }}</span>
+                    </div>
+                  } @else if (cargandoComanda()) {
+                    <p class="text-slate-400 text-xs">Cargando comanda del servidor...</p>
+                  } @else if (errorComanda()) {
+                    <p class="text-rose-400 text-xs">{{ errorComanda() }}</p>
+                  } @else {
+                    <p class="text-slate-500 text-xs">Sin comanda activa</p>
+                  }
                 </div>
 
                 <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
@@ -980,7 +1003,7 @@ export interface AlertaPlatoListo {
                     (click)="cobrarMesaModal()"
                     class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
                   >
-                    <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Emitir Pre-Cuenta</span>
+                    <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Cerrar Comanda</span>
                   </button>
                 </div>
               </div>
@@ -1005,6 +1028,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly activeTab = signal<MozoTab>('MESAS');
   readonly selectedZone = signal<string>('TODAS');
   readonly selectedMesaModal = signal<MesaSalon | null>(null);
+  readonly comandaMesa = signal<Order | null>(null);
+  readonly cargandoComanda = signal<boolean>(false);
+  readonly errorComanda = signal<string | null>(null);
+  private comandaRequestId = 0;
   readonly vistaMesas = signal<'CROQUIS' | 'TARJETAS'>('CROQUIS');
 
   // Croquis Virtual por Zonas (Slides) & Cuadrícula Personalizable
@@ -1084,6 +1111,56 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
 
   seleccionarMesa(m: MesaSalon): void {
     this.selectedMesaModal.set({ ...m });
+    this.cargarComandaMesa(m.ordenId);
+  }
+
+  /**
+   * S6.5: lee del backend la comanda real de la mesa seleccionada (solo lectura).
+   * Los tres estados del bloque «Comanda Acumulada» son cargando, comanda real y error.
+   */
+  private cargarComandaMesa(ordenId?: string): void {
+    const requestId = ++this.comandaRequestId;
+    this.comandaMesa.set(null);
+    this.errorComanda.set(null);
+
+    if (!ordenId) {
+      this.cargandoComanda.set(false);
+      return;
+    }
+
+    this.cargandoComanda.set(true);
+    this.ordersService.obtenerOrden(ordenId).subscribe({
+      next: (orden) => {
+        if (requestId !== this.comandaRequestId) return;
+        this.cargandoComanda.set(false);
+        this.comandaMesa.set(orden);
+      },
+      error: (err) => {
+        if (requestId !== this.comandaRequestId) return;
+        this.cargandoComanda.set(false);
+        this.errorComanda.set(err?.message || 'No se pudo cargar la comanda de la mesa');
+      }
+    });
+  }
+
+  cerrarModalMesa(): void {
+    this.comandaRequestId++;
+    this.comandaMesa.set(null);
+    this.errorComanda.set(null);
+    this.cargandoComanda.set(false);
+    this.selectedMesaModal.set(null);
+  }
+
+  etiquetaEstadoComanda(estado: OrderStatus): string {
+    switch (estado) {
+      case 'EN_PREPARACION': return 'Cocinando';
+      case 'LISTO_COCINA': return 'Listo';
+      case 'PAGADO': return 'En cola';
+      case 'EN_REPARTO': return 'En reparto';
+      case 'COMPLETADO': return 'Entregado';
+      case 'CANCELADO': return 'Cancelado';
+      default: return 'Pendiente de pago';
+    }
   }
 
   // ================= CROQUIS POR ZONAS (SLIDES) & CUADRÍCULA MATRICIAL =================
@@ -1305,10 +1382,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       this.salonService.actualizarEstado(m.id, estado).subscribe({
         next: (upd) => {
           m.estado = upd.estado;
-          this.selectedMesaModal.set(null);
+          this.cerrarModalMesa();
         },
         error: () => {
-          this.selectedMesaModal.set(null);
+          this.cerrarModalMesa();
           this.salonService.cargarMesas();
         }
       });
@@ -1322,25 +1399,46 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * S6.4: si la mesa tiene comanda activa, el cobro cierra la orden (ENTREGADO en el backend,
+   * que además libera la mesa). Sin comanda activa se conserva la liberación directa de la mesa.
+   * Un rechazo del backend se muestra tal cual y nunca anuncia un éxito inexistente.
+   */
   cobrarMesaModal(): void {
     const m = this.selectedMesaModal();
-    if (m) {
-      this.salonService.actualizarEstado(m.id, 'LIBRE').subscribe({
+    if (!m) return;
+
+    if (m.ordenId) {
+      this.ordersService.updateOrderStatus(m.ordenId, 'COMPLETADO').subscribe({
         next: () => {
-          this.selectedMesaModal.set(null);
-          this.notify.showSuccess(`Cuenta cobrada y Pre-Cuenta emitida para ${m.nombre}`);
-        },
-        error: () => {
-          this.selectedMesaModal.set(null);
           this.salonService.cargarMesas();
+          this.cerrarModalMesa();
+          this.notify.showSuccess(`Cuenta cobrada para ${m.nombre}. La comanda quedó cerrada.`);
+        },
+        error: (err) => {
+          const motivo = err?.error?.error || err?.error?.mensaje || err?.error?.message
+            || err?.message || 'El backend rechazó el cierre de la comanda';
+          this.notify.showError('No se pudo cobrar la cuenta', motivo);
         }
       });
+      return;
     }
+
+    this.salonService.actualizarEstado(m.id, 'LIBRE').subscribe({
+      next: () => {
+        this.cerrarModalMesa();
+        this.notify.showSuccess(`Mesa ${m.nombre} liberada`);
+      },
+      error: () => {
+        this.cerrarModalMesa();
+        this.salonService.cargarMesas();
+      }
+    });
   }
 
   ngOnDestroy(): void {
     this.mesaEnMovimiento.set(null);
-    this.selectedMesaModal.set(null);
+    this.cerrarModalMesa();
   }
 
   cerrarSesion(): void {
