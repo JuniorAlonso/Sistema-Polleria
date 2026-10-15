@@ -34,13 +34,13 @@ public class MercadoPagoGateway implements PaymentGateway {
     @Value("${mercadopago.webhook.url:}")
     private String webhookUrl;
 
-    @Value("${mercadopago.back-urls.success:http://localhost:4200/checkout/success}")
+    @Value("${mercadopago.back-urls.success:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/success}")
     private String successUrl;
 
-    @Value("${mercadopago.back-urls.failure:http://localhost:4200/checkout/failure}")
+    @Value("${mercadopago.back-urls.failure:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/failure}")
     private String failureUrl;
 
-    @Value("${mercadopago.back-urls.pending:http://localhost:4200/checkout/pending}")
+    @Value("${mercadopago.back-urls.pending:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/pending}")
     private String pendingUrl;
 
     @Value("${mercadopago.sandbox:true}")

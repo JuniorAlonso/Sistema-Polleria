@@ -7,13 +7,17 @@ export type OrderType = 'DELIVERY' | 'RECOJO_EN_TIENDA' | 'SALON';
  * PENDIENTE_PAGO -> PAGADO -> EN_PREPARACION -> LISTO_COCINA -> EN_REPARTO -> COMPLETADO (o CANCELADO)
  */
 export type OrderStatus =
+  | 'RECIBIDO'
+  | 'EN_PREPARACION'
+  | 'LISTO'
+  | 'EN_CAMINO'
+  | 'ENTREGADO'
+  | 'CANCELADO'
   | 'PENDIENTE_PAGO'
   | 'PAGADO'
-  | 'EN_PREPARACION'
   | 'LISTO_COCINA'
   | 'EN_REPARTO'
-  | 'COMPLETADO'
-  | 'CANCELADO';
+  | 'COMPLETADO';
 
 export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA';
 

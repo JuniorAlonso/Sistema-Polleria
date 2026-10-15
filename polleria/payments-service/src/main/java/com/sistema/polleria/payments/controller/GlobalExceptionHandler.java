@@ -3,6 +3,8 @@ package com.sistema.polleria.payments.controller;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -31,6 +33,14 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
         pd.setTitle("No encontrado");
         pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler({AccessDeniedException.class, AuthorizationDeniedException.class})
+    public ProblemDetail handleAccessDenied(RuntimeException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        pd.setTitle("Acceso denegado");
+        pd.setDetail("No tienes permisos para realizar esta acción");
         return pd;
     }
 
