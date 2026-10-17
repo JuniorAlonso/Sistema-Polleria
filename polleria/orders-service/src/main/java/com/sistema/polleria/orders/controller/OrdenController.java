@@ -1,6 +1,7 @@
 package com.sistema.polleria.orders.controller;
 
 import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
+import com.sistema.polleria.orders.dto.AgregarItemsRequest;
 import com.sistema.polleria.orders.dto.CrearOrdenRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.OrdenEstado;
@@ -54,6 +55,21 @@ public class OrdenController {
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ordenService.crear(request, extraerUserId(authentication)));
+    }
+
+    /**
+     * Segunda ronda sobre la comanda de salón: reutiliza la misma orden en lugar de abrir otra.
+     * Solo ADMIN/MOZO: es la operación de mozo/administrador en el salón.
+     */
+    @PostMapping("/{id}/items")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
+    public ResponseEntity<OrdenResponse> agregarItems(
+            @PathVariable Long id,
+            @Valid @RequestBody AgregarItemsRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                ordenService.agregarItems(id, request.getItems(), extraerUserId(authentication)));
     }
 
     /**

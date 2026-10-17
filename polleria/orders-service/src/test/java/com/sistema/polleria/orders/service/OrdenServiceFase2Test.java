@@ -5,6 +5,7 @@ import com.sistema.polleria.orders.dto.CrearOrdenRequest;
 import com.sistema.polleria.orders.dto.MesaResponse;
 import com.sistema.polleria.orders.dto.OrdenItemRequest;
 import com.sistema.polleria.orders.entity.*;
+import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -151,6 +152,139 @@ class OrdenServiceFase2Test {
         verify(ordenRepository).save(captor.capture());
         assertEquals(5L, captor.getValue().getClienteId());
         assertNull(captor.getValue().getMozoId(), "delivery no lleva mozo");
+    }
+
+    // S4.3 — segunda ronda: misma comanda, total recalculado, evento de cocina
+    @Test
+    void testAgregarItemsSumaALaComandaExistenteYEmiteEventoDeCocina() {
+        Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
+        Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.RECIBIDO, 1);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(2);
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
+
+        var response = ordenService.agregarItems(100L, List.of(nuevo), 2L);
+
+        assertEquals(2, response.getItems().size(), "la misma comanda suma el ítem nuevo");
+        assertEquals(new BigDecimal("66.00"), response.getTotal(), "total = suma de subtotales");
+        assertEquals(OrdenEstado.RECIBIDO, orden.getEstado(), "una comanda en curso no cambia de estado");
+        verify(ordenRepository, times(1)).save(orden);
+        verify(salonEventPublisher).notificarNuevaComanda(orden);
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testAgregarItemsAComandaListoLaDevuelveAEnPreparacion() {
+        Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
+        Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.LISTO, 1);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
+
+        ordenService.agregarItems(100L, List.of(nuevo), 2L);
+
+        assertEquals(OrdenEstado.EN_PREPARACION, orden.getEstado(),
+                "la nueva ronda debe volver a pasar por cocina");
+        verify(salonEventPublisher).notificarNuevaComanda(orden);
+    }
+
+    @Test
+    void testAgregarItemsAComandaEntregadaLanzaConflicto() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .estado(OrdenEstado.ENTREGADO)
+                .items(new ArrayList<>())
+                .build();
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));
+
+        assertTrue(ex.getMessage().contains("100"), "el mensaje debe nombrar la comanda: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("ENTREGADO"), "el mensaje debe dar el estado: " + ex.getMessage());
+        verify(ordenRepository, never()).save(any());
+        verify(salonEventPublisher, never()).notificarNuevaComanda(any());
+    }
+
+    @Test
+    void testAgregarItemsAOrdenDeliveryLanzaIllegalArgument() {
+        Orden orden = Orden.builder()
+                .id(200L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.RECIBIDO)
+                .items(new ArrayList<>())
+                .build();
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.findById(200L)).thenReturn(Optional.of(orden));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ordenService.agregarItems(200L, List.of(nuevo), 2L));
+
+        assertTrue(ex.getMessage().contains("Solo las comandas de salón"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("DELIVERY"), ex.getMessage());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testAgregarItemsConProductoAgotadoLanzaIllegalArgument() {
+        Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
+        Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.RECIBIDO, 1);
+        producto.setDisponible(false);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));
+
+        assertTrue(ex.getMessage().contains("está agotado"), ex.getMessage());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    /** Comanda de salón con {@code cantidadPrevia} unidades de {@link #producto} ya cargadas. */
+    private Orden comandaDeSalon(Long id, Mesa mesaComanda, OrdenEstado estado, int cantidadPrevia) {
+        Orden orden = Orden.builder()
+                .id(id)
+                .tipo(OrdenTipo.SALON)
+                .mesa(mesaComanda)
+                .estado(estado)
+                .items(new ArrayList<>())
+                .build();
+        orden.getItems().add(OrdenItem.builder()
+                .orden(orden)
+                .producto(producto)
+                .cantidad(cantidadPrevia)
+                .precioUnitario(producto.getPrecio())
+                .subtotal(producto.getPrecio().multiply(BigDecimal.valueOf(cantidadPrevia)))
+                .build());
+        orden.recalcularTotal();
+        return orden;
     }
 
     @Test

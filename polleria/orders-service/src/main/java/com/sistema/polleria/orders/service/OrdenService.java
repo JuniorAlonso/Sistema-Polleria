@@ -2,6 +2,7 @@ package com.sistema.polleria.orders.service;
 
 import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.dto.CrearOrdenRequest;
+import com.sistema.polleria.orders.dto.OrdenItemRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.*;
 import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
@@ -69,20 +70,9 @@ public class OrdenService {
         }
 
         // Construir items
-        List<OrdenItem> items = request.getItems().stream().map(itemReq -> {
-            Producto producto = productoService.buscarOFallar(itemReq.getProductoId());
-            if (!producto.isDisponible()) {
-                throw new IllegalArgumentException("El producto '" + producto.getNombre() + "' está agotado");
-            }
-            return OrdenItem.builder()
-                    .orden(orden)
-                    .producto(producto)
-                    .cantidad(itemReq.getCantidad())
-                    .precioUnitario(producto.getPrecio())
-                    .subtotal(producto.getPrecio().multiply(java.math.BigDecimal.valueOf(itemReq.getCantidad())))
-                    .notas(itemReq.getNotas())
-                    .build();
-        }).toList();
+        List<OrdenItem> items = request.getItems().stream()
+                .map(itemReq -> construirItem(orden, itemReq))
+                .toList();
 
         orden.getItems().addAll(items);
         orden.recalcularTotal();
@@ -96,6 +86,65 @@ public class OrdenService {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
         }
         return OrdenResponse.from(orden);
+    }
+
+    /**
+     * Segunda ronda sobre una comanda de salón: los platos nuevos se suman a la MISMA orden
+     * (no se abre otra comanda para la mesa), se recalcula el total y se vuelve a publicar el
+     * evento de cocina. Una comanda {@code LISTO} regresa a {@code EN_PREPARACION} porque la
+     * ronda nueva tiene que pasar por cocina.
+     */
+    @Transactional
+    public OrdenResponse agregarItems(Long id, List<OrdenItemRequest> itemsReq, Long usuarioId) {
+        Orden orden = buscarOFallar(id);
+
+        if (orden.getTipo() != OrdenTipo.SALON) {
+            throw new IllegalArgumentException(
+                    "Solo las comandas de salón aceptan productos adicionales; el pedido #" + id
+                    + " es de tipo " + orden.getTipo() + ".");
+        }
+
+        if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
+            throw new ConflictoDeEstadoException(
+                    "La comanda #" + id + " ya está " + orden.getEstado()
+                    + " y no admite productos nuevos.");
+        }
+
+        List<OrdenItem> nuevos = itemsReq.stream()
+                .map(itemReq -> construirItem(orden, itemReq))
+                .toList();
+
+        orden.getItems().addAll(nuevos);
+        orden.recalcularTotal();
+
+        if (orden.getEstado() == OrdenEstado.LISTO) {
+            orden.setEstado(OrdenEstado.EN_PREPARACION);
+        }
+
+        ordenRepository.save(orden);
+        log.info("Comanda #{} ampliada con {} ítem(s) por usuario {} — nuevo total: S/.{}",
+                id, nuevos.size(), usuarioId, orden.getTotal());
+        salonEventPublisher.notificarNuevaComanda(orden);
+        if (orden.getMesa() != null) {
+            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
+        }
+        return OrdenResponse.from(orden);
+    }
+
+    /** Ítem de comanda validando que el producto exista y esté disponible. */
+    private OrdenItem construirItem(Orden orden, OrdenItemRequest itemReq) {
+        Producto producto = productoService.buscarOFallar(itemReq.getProductoId());
+        if (!producto.isDisponible()) {
+            throw new IllegalArgumentException("El producto '" + producto.getNombre() + "' está agotado");
+        }
+        return OrdenItem.builder()
+                .orden(orden)
+                .producto(producto)
+                .cantidad(itemReq.getCantidad())
+                .precioUnitario(producto.getPrecio())
+                .subtotal(producto.getPrecio().multiply(java.math.BigDecimal.valueOf(itemReq.getCantidad())))
+                .notas(itemReq.getNotas())
+                .build();
     }
 
     // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre. Fuera de una
