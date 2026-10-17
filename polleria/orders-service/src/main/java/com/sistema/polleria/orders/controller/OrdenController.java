@@ -4,6 +4,7 @@ import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.dto.CrearOrdenRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.OrdenEstado;
+import com.sistema.polleria.orders.entity.OrdenTipo;
 import com.sistema.polleria.orders.service.OrdenService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -39,10 +40,20 @@ public class OrdenController {
     @PostMapping
     public ResponseEntity<OrdenResponse> crear(
             @Valid @RequestBody CrearOrdenRequest request,
-            Principal principal
+            Authentication authentication,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
     ) {
+        // El checkout público es DELIVERY/RECOJO: un invitado debe poder pedir. La comanda de
+        // salón, en cambio, la toma el personal de la pollería (mozo o administrador) o un
+        // microservicio con la clave interna; si no, cualquiera ocuparía una mesa.
+        if (request.getTipo() == OrdenTipo.SALON && !esLlamadaInterna(claveInterna)
+                && !esPersonal(authentication)) {
+            throw new AccessDeniedException(
+                    "La comanda de salón la toma el personal de la pollería (mozo o administrador).");
+        }
+
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ordenService.crear(request, extraerUserId(principal)));
+                .body(ordenService.crear(request, extraerUserId(authentication)));
     }
 
     /**

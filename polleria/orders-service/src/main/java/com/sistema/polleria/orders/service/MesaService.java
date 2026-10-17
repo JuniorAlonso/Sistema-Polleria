@@ -156,6 +156,23 @@ public class MesaService {
             throw new ConflictoDeEstadoException(errorMsg);
         }
 
+        // Liberar o pasar a limpieza una mesa con comanda activa dejaba la comanda huérfana:
+        // la mesa quedaba LIBRE, mapearMesaConOrdenActiva ocultaba la comanda y no había forma
+        // de cobrarla. Primero se cobra o se cancela; forzar=true sigue siendo el override.
+        if (!esForzado && (nuevoEstado == MesaEstado.LIBRE || nuevoEstado == MesaEstado.EN_LIMPIEZA)) {
+            List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
+            if (!comandasActivas.isEmpty()) {
+                Orden comanda = comandasActivas.get(0);
+                String errorMsg = String.format(
+                        "No se puede pasar la mesa #%d a %s porque tiene la comanda #%d en estado %s. "
+                        + "Cóbrala o cancélala antes de liberar la mesa.",
+                        mesa.getNumero(), nuevoEstado, comanda.getId(), comanda.getEstado()
+                );
+                log.warn(errorMsg);
+                throw new ConflictoDeEstadoException(errorMsg);
+            }
+        }
+
         mesa.setEstado(nuevoEstado);
         mesaRepository.save(mesa);
         log.info("Mesa {} transición de estado: {} → {} (forzado: {})", mesa.getNumero(), actual, nuevoEstado, esForzado);

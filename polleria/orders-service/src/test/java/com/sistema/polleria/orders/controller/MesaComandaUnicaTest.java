@@ -7,6 +7,8 @@ import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.repository.MesaRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import com.sistema.polleria.orders.repository.ProductoRepository;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -17,13 +19,17 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+
+import javax.crypto.SecretKey;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +46,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MesaComandaUnicaTest {
 
     private static final String CLAVE_INTERNA = "X-Internal-Key";
+    private static final String SECRETO = "sanpollo-dev-secret-key-2026-super-segura-256bits-minimo";
+    private static final long MOZO_ID = 777L;
 
     @Autowired
     private TestRestTemplate rest;
@@ -77,12 +85,14 @@ class MesaComandaUnicaTest {
 
         long comandasAntes = comandasActivas(mesa.getId());
 
-        ResponseEntity<String> primera = rest.postForEntity("/ordenes", pedido, String.class);
+        ResponseEntity<String> primera = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(pedido, cabecerasDeMozo()), String.class);
         assertEquals(HttpStatus.CREATED, primera.getStatusCode(),
                 "la primera comanda de la mesa debe crearse: " + primera.getBody());
         assertEquals(comandasAntes + 1, comandasActivas(mesa.getId()));
 
-        ResponseEntity<String> segunda = rest.postForEntity("/ordenes", pedido, String.class);
+        ResponseEntity<String> segunda = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(pedidoDeSalon(mesa.getId(), productoId), cabecerasDeMozo()), String.class);
 
         assertEquals(HttpStatus.CONFLICT, segunda.getStatusCode(),
                 "la segunda comanda debe rechazarse con 409, no con 500 ni aceptarse: " + segunda.getBody());
@@ -122,8 +132,8 @@ class MesaComandaUnicaTest {
         assertEquals(HttpStatus.NO_CONTENT, baja.getStatusCode(),
                 "no se pudo dar de baja la mesa: " + baja.getBody());
 
-        ResponseEntity<String> respuesta = rest.postForEntity(
-                "/ordenes", pedidoDeSalon(mesaId, productoId), String.class);
+        ResponseEntity<String> respuesta = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(pedidoDeSalon(mesaId, productoId), cabecerasDeMozo()), String.class);
 
         assertEquals(HttpStatus.CONFLICT, respuesta.getStatusCode(),
                 "una mesa dada de baja debe rechazar la comanda con 409: " + respuesta.getBody());
@@ -131,6 +141,25 @@ class MesaComandaUnicaTest {
                 "el mensaje debe explicar que la mesa está dada de baja. Cuerpo: " + respuesta.getBody());
         assertEquals(0, comandasActivas(mesaId),
                 "no debe quedar ninguna comanda almacenada para la mesa dada de baja");
+    }
+
+    private HttpHeaders cabecerasDeMozo() {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        cabeceras.setBearerAuth(tokenDeMozo());
+        return cabeceras;
+    }
+
+    private String tokenDeMozo() {
+        SecretKey clave = Keys.hmacShaKeyFor(SECRETO.getBytes(StandardCharsets.UTF_8));
+        return Jwts.builder()
+                .subject("mozo" + MOZO_ID + "@prueba.local")
+                .claim("role", "MOZO")
+                .claim("userId", MOZO_ID)
+                .issuedAt(new java.util.Date())
+                .expiration(new java.util.Date(System.currentTimeMillis() + 3_600_000))
+                .signWith(clave)
+                .compact();
     }
 
     private Map<String, Object> pedidoDeSalon(Long mesaId, Long productoId) {

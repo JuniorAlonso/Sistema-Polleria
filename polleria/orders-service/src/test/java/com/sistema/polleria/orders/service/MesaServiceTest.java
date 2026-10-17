@@ -7,6 +7,7 @@ import com.sistema.polleria.orders.entity.Mesa;
 import com.sistema.polleria.orders.entity.MesaEstado;
 import com.sistema.polleria.orders.entity.Orden;
 import com.sistema.polleria.orders.entity.OrdenEstado;
+import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.MesaRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -187,6 +188,99 @@ class MesaServiceTest {
         assertFalse(mesaLibre.getActivo());
         verify(mesaRepository).save(mesaLibre);
         verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    // S4.2 — liberar una mesa con comanda activa dejaría la comanda huérfana: se rechaza con 409
+    @Test
+    void testLiberarMesaConComandaActivaLanzaConflicto() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList()))
+                .thenReturn(List.of(Orden.builder().id(99L).estado(OrdenEstado.EN_PREPARACION).build()));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> mesaService.actualizarEstado(2L, MesaEstado.LIBRE));
+
+        assertTrue(ex.getMessage().contains("2"), "el mensaje debe nombrar la mesa: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("99"), "el mensaje debe nombrar la comanda: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("EN_PREPARACION"), "el mensaje debe dar el estado: " + ex.getMessage());
+        assertEquals(MesaEstado.OCUPADA, mesaOcupada.getEstado(), "la mesa conserva su estado");
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testPasarMesaAEnLimpiezaConComandaActivaLanzaConflicto() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList()))
+                .thenReturn(List.of(Orden.builder().id(99L).estado(OrdenEstado.LISTO).build()));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> mesaService.actualizarEstado(2L, MesaEstado.EN_LIMPIEZA));
+
+        assertTrue(ex.getMessage().contains("99"), "el mensaje debe nombrar la comanda: " + ex.getMessage());
+        assertEquals(MesaEstado.OCUPADA, mesaOcupada.getEstado());
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testLiberarMesaConComandaActivaForzadaPermite() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaOcupada);
+
+        MesaResponse response = mesaService.actualizarEstado(2L, MesaEstado.LIBRE, true);
+
+        assertEquals(MesaEstado.LIBRE, response.getEstado());
+        verify(mesaRepository).save(mesaOcupada);
+        verify(ordenRepository, never()).findByMesaIdAndEstadoNotIn(anyLong(), anyList());
+    }
+
+    @Test
+    void testLiberarMesaSinComandaActivaMantieneComportamientoPrevio() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of());
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaOcupada);
+
+        MesaResponse response = mesaService.actualizarEstado(2L, MesaEstado.LIBRE);
+
+        assertEquals(MesaEstado.LIBRE, response.getEstado());
+        verify(mesaRepository).save(mesaOcupada);
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testOrdenActivaPrefiereMozoIdYcaeAClienteId() {
+        Mesa mesaTres = Mesa.builder()
+                .id(3L)
+                .numero(3)
+                .capacidad(2)
+                .estado(MesaEstado.OCUPADA)
+                .activo(true)
+                .build();
+
+        Orden conMozo = Orden.builder()
+                .id(46L)
+                .clienteId(3L)
+                .mozoId(7L)
+                .total(new BigDecimal("10.00"))
+                .estado(OrdenEstado.RECIBIDO)
+                .build();
+
+        Orden sinMozo = Orden.builder()
+                .id(47L)
+                .clienteId(9L)
+                .total(new BigDecimal("10.00"))
+                .estado(OrdenEstado.RECIBIDO)
+                .build();
+
+        when(mesaRepository.findByActivoTrueOrderByNumeroAsc()).thenReturn(List.of(mesaOcupada, mesaTres));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(conMozo));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(3L), anyList())).thenReturn(List.of(sinMozo));
+
+        List<MesaResponse> result = mesaService.listarTodas();
+
+        assertEquals(7L, result.get(0).getOrdenActiva().getMozoId(),
+                "mozoId debe ser el mozo real de la comanda");
+        assertEquals(9L, result.get(1).getOrdenActiva().getMozoId(),
+                "sin mozoId registrado se conserva el fallback a clienteId");
     }
 
     @Test

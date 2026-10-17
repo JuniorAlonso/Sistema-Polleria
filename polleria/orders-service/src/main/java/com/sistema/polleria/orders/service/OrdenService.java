@@ -38,6 +38,10 @@ public class OrdenService {
         Orden orden = Orden.builder()
                 .tipo(request.getTipo())
                 .clienteId(usuarioId)
+                // En salón el usuario autenticado es el mozo que toma la comanda: se registra
+                // también en mozoId para que la ventana del mozo y el admin lo muestren.
+                .mozoId(usuarioId != null && usuarioId > 0 && request.getTipo() == OrdenTipo.SALON
+                        ? usuarioId : null)
                 .direccionEntrega(request.getDireccionEntrega())
                 .referencia(request.getReferencia())
                 .nombreCliente(request.getNombreCliente())
