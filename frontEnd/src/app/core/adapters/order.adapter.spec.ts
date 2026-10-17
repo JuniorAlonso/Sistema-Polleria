@@ -51,16 +51,29 @@ describe('OrderAdapter.toBackendCrearRequest — sin datos inventados', () => {
     expect(req.referencia).toBe('Portón azul');
   });
 
-  it('no envía dirección ni referencia en un pedido de salón', () => {
+  it('envía el mesaId explícito y no la dirección en un pedido de salón', () => {
     const req = OrderAdapter.toBackendCrearRequest({
       ...base,
       tipo: 'SALON',
-      cliente: { nombre: 'Mesa 4', celular: '999888777', mesaNumero: 4 }
+      mesaId: 4,
+      cliente: { nombre: 'Mesa 04', celular: '', mesaNumero: 4 }
     });
 
     expect(req.tipo).toBe('SALON');
     expect(req.mesaId).toBe(4);
     expect(req.direccionEntrega).toBeUndefined();
+  });
+
+  // S4.4: el número visible (`mesaNumero`) no es el id de la mesa. Sin mesaId explícito el
+  // adaptador no inventa la mesa 1: lo deja ausente para que el backend responda con su validación.
+  it('no inventa la mesa 1 cuando falta el mesaId de un pedido de salón', () => {
+    const req = OrderAdapter.toBackendCrearRequest({
+      ...base,
+      tipo: 'SALON',
+      cliente: { nombre: 'Mesa 04', celular: '', mesaNumero: 4 }
+    });
+
+    expect(req.mesaId).toBeUndefined();
   });
 });
 

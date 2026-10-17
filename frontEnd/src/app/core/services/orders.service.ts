@@ -234,6 +234,48 @@ export class OrdersService {
   }
 
   /**
+   * S3.3 / S4.5: segunda ronda sobre la comanda de salón.
+   * Reutiliza la MISMA orden (`POST /ordenes/{id}/items`), nunca abre otra comanda para la mesa.
+   * El backend recalcula el total y, si la comanda estaba LISTO, la devuelve a EN_PREPARACION.
+   */
+  agregarItemsAOrden(
+    ordenId: string | number,
+    items: { productoId: string | number; cantidad: number; notas?: string }[]
+  ): Observable<Order> {
+    const cleanId = this.extractNumericId(String(ordenId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
+    if (!items || items.length === 0) {
+      return throwError(() => new Error('La comanda debe tener al menos un producto'));
+    }
+
+    const body = {
+      items: items.map(it => ({
+        productoId: Number(String(it.productoId).replace('prod-', '')),
+        cantidad: it.cantidad || 1,
+        notas: it.notas || undefined
+      }))
+    };
+
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/items`, body).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+        if (this.currentTrackingOrder()?.id === updated.id) {
+          this.currentTrackingOrder.set(updated);
+        }
+      }),
+      catchError(err => {
+        const msg = err?.error?.error || err?.error?.message
+          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : null)
+          || 'No se pudieron agregar los platos a la comanda';
+        return throwError(() => new Error(typeof msg === 'string' ? msg : 'No se pudieron agregar los platos a la comanda'));
+      })
+    );
+  }
+
+  /**
    * RF19: Cargar órdenes (activas e históricas)
    */
   loadActiveOrders(): void {

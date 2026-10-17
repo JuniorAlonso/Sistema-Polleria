@@ -169,7 +169,10 @@ export class OrderAdapter {
    */
   static toBackendCrearRequest(req: CreateOrderRequest): BackendCrearOrdenRequest {
     const tipo = this.toBackendTipo(req.tipo);
-    const mesaId = tipo === 'SALON' ? (req.cliente.mesaNumero || 1) : undefined;
+    // El id de la mesa viaja explícito. Antes se derivaba de `cliente.mesaNumero || 1`, que
+    // confundía número visible con id y mandaba toda comanda sin mesa a la mesa 1. Si falta,
+    // se deja ausente y el backend responde con su validación.
+    const mesaId = tipo === 'SALON' ? req.mesaId : undefined;
 
     const items = (req.items || []).map(it => {
       // Extraer ID numérico si viene como 'prod-1' o '1'

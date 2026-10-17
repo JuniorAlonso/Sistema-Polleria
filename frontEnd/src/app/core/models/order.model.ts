@@ -51,6 +51,8 @@ export interface Order {
 
 export interface CreateOrderRequest {
   tipo: OrderType;
+  /** Id real de la mesa en orders-service (no el número visible). Obligatorio para SALON. */
+  mesaId?: number;
   cliente: OrderCustomerInfo;
   items: {
     productoId: string;
