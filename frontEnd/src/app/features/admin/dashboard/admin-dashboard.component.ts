@@ -894,6 +894,7 @@ export type InsumoAlmacen = Insumo;
                             'bg-amber-950/80 border-amber-500 text-amber-300 ring-4 ring-amber-500/30 animate-pulse': mesa.estado === 'POR_COBRAR',
                             'bg-sky-950/80 border-sky-500 text-sky-300 ring-2 ring-sky-500/20 hover:scale-[1.02]': mesa.estado === 'EN_LIMPIEZA' || mesa.estado === 'LIMPIEZA',
                             'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
+                            'animate-pulse motion-reduce:animate-none': mesa.ordenActiva?.estadoOrden === 'LISTO' && !mesa.ordenActiva?.servidoEn,
 
                             'ring-4 ring-polleria-gold border-polleria-gold scale-[1.03] shadow-polleria-gold/30 z-20': selectedMesa()?.id === mesa.id,
                             'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id
@@ -915,6 +916,15 @@ export type InsumoAlmacen = Insumo;
                             <span class="text-[9px] font-bold uppercase tracking-wider opacity-80 mt-0.5">
                               {{ mesa.estado }}
                             </span>
+                            @if (mesa.ordenActiva?.estadoOrden === 'LISTO' && !mesa.ordenActiva?.servidoEn) {
+                              <span class="mt-1 px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[8px] font-black uppercase tracking-wider animate-pulse motion-reduce:animate-none">
+                                Listo para servir
+                              </span>
+                            } @else if (mesa.ordenActiva?.servidoEn) {
+                              <span class="mt-1 px-1.5 py-0.5 rounded-full bg-emerald-500 text-slate-950 text-[8px] font-black uppercase tracking-wider">
+                                Servida
+                              </span>
+                            }
                           </div>
 
                           <!-- Footer de Casilla: Total & Botón Mover -->
@@ -1031,6 +1041,15 @@ export type InsumoAlmacen = Insumo;
                           <span>Total consumo:</span>
                           <span class="font-bold text-white">{{ t.ordenActiva.total | currencyPEN }}</span>
                         </div>
+                        @if (t.ordenActiva.estadoOrden === 'LISTO' && !t.ordenActiva.servidoEn) {
+                          <div class="flex justify-end">
+                            <span class="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black uppercase tracking-wider animate-pulse motion-reduce:animate-none">Listo para servir</span>
+                          </div>
+                        } @else if (t.ordenActiva.servidoEn) {
+                          <div class="flex justify-end">
+                            <span class="px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-wider">Servida</span>
+                          </div>
+                        }
                       </div>
                     }
                   </div>
@@ -1091,6 +1110,19 @@ export type InsumoAlmacen = Insumo;
                   <p class="text-xs text-slate-300">
                     Comanda en curso <strong>#{{ mesa.ordenActiva.codigoSeguimiento || mesa.ordenActiva.ordenId }}</strong> • Monto: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong> • Estado: <strong class="text-amber-300">{{ mesa.ordenActiva.estadoOrden }}</strong>
                   </p>
+                  <div class="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-bold">
+                    <span class="px-2 py-0.5 rounded-full bg-white/10 text-slate-300">Creada hace {{ mesa.ordenActiva.tiempoEsperaMinutos }} min</span>
+                    <span class="text-slate-600">→</span>
+                    <span class="px-2 py-0.5 rounded-full" [ngClass]="mesa.ordenActiva.estadoOrden === 'LISTO' ? 'bg-amber-500/20 text-amber-300' : 'bg-sky-500/20 text-sky-300'">
+                      {{ mesa.ordenActiva.estadoOrden === 'LISTO' ? 'Lista' : 'En cocina' }}
+                    </span>
+                    <span class="text-slate-600">→</span>
+                    @if (mesa.ordenActiva.servidoEn) {
+                      <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">Servida</span>
+                    } @else {
+                      <span class="px-2 py-0.5 rounded-full bg-white/10 text-slate-400">Pendiente de servir</span>
+                    }
+                  </div>
                 } @else {
                   <p class="text-xs text-slate-400">Sin comanda activa vinculada. Capacidad configurada: {{ mesa.capacidad }} personas.</p>
                 }

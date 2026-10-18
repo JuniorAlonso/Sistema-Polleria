@@ -40,7 +40,7 @@ function mesa(over: Partial<MesaSalon> = {}): MesaSalon {
   };
 }
 
-function mesaConComanda(estadoComanda = 'LISTO'): MesaSalon {
+function mesaConComanda(estadoComanda = 'LISTO', servidoEn: string | null = null): MesaSalon {
   return mesa({
     estado: 'OCUPADA',
     ordenActiva: {
@@ -48,7 +48,8 @@ function mesaConComanda(estadoComanda = 'LISTO'): MesaSalon {
       mozoId: 7,
       total: 45.5,
       estadoOrden: estadoComanda,
-      tiempoEsperaMinutos: 5
+      tiempoEsperaMinutos: 5,
+      servidoEn
     }
   });
 }
@@ -205,5 +206,37 @@ describe('AdminDashboardComponent — comanda de salón', () => {
     expect(notify.showWarning).toHaveBeenCalled();
     expect((notify.showWarning as jasmine.Spy).calls.mostRecent().args.join(' '))
       .toContain('LISTO');
+  });
+
+  it('marca en el croquis la mesa lista para servir y la servida (S3.5)', () => {
+    component.activeTab.set('MESAS');
+    salon.mesas.set([mesaConComanda('LISTO')]);
+    fixture.detectChanges();
+
+    let texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Listo para servir');
+
+    salon.mesas.set([mesaConComanda('LISTO', '2026-01-01T00:05:00Z')]);
+    fixture.detectChanges();
+
+    texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Servida');
+    expect(texto).not.toContain('Listo para servir');
+  });
+
+  it('el inspector muestra la línea de tiempo de la comanda (S3.5)', () => {
+    component.activeTab.set('MESAS');
+    component.selectedMesa.set(mesaConComanda('LISTO'));
+    fixture.detectChanges();
+
+    let texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Creada hace');
+    expect(texto).toContain('Pendiente de servir');
+
+    component.selectedMesa.set(mesaConComanda('LISTO', '2026-01-01T00:05:00Z'));
+    fixture.detectChanges();
+
+    texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Servida');
   });
 });
