@@ -24,6 +24,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -260,6 +262,7 @@ class MesaServiceTest {
                 .id(46L)
                 .clienteId(3L)
                 .mozoId(7L)
+                .mesa(mesaOcupada)
                 .total(new BigDecimal("10.00"))
                 .estado(OrdenEstado.RECIBIDO)
                 .build();
@@ -267,13 +270,14 @@ class MesaServiceTest {
         Orden sinMozo = Orden.builder()
                 .id(47L)
                 .clienteId(9L)
+                .mesa(mesaTres)
                 .total(new BigDecimal("10.00"))
                 .estado(OrdenEstado.RECIBIDO)
                 .build();
 
         when(mesaRepository.findByActivoTrueOrderByNumeroAsc()).thenReturn(List.of(mesaOcupada, mesaTres));
-        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(conMozo));
-        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(3L), anyList())).thenReturn(List.of(sinMozo));
+        when(ordenRepository.findByMesaIdInAndEstadoNotIn(anyList(), anyList()))
+                .thenReturn(List.of(conMozo, sinMozo));
 
         List<MesaResponse> result = mesaService.listarTodas();
 
@@ -288,13 +292,15 @@ class MesaServiceTest {
         Orden ordenActiva = Orden.builder()
                 .id(45L)
                 .clienteId(3L)
+                .mesa(mesaOcupada)
                 .total(new BigDecimal("75.50"))
                 .estado(OrdenEstado.EN_PREPARACION)
                 .creadoEn(LocalDateTime.now().minusMinutes(15))
                 .build();
 
         when(mesaRepository.findByActivoTrueOrderByNumeroAsc()).thenReturn(List.of(mesaOcupada));
-        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(ordenActiva));
+        when(ordenRepository.findByMesaIdInAndEstadoNotIn(anyList(), anyList()))
+                .thenReturn(List.of(ordenActiva));
 
         List<MesaResponse> result = mesaService.listarTodas();
 
@@ -305,5 +311,43 @@ class MesaServiceTest {
         assertEquals(45L, mesaDto.getOrdenActiva().getOrdenId());
         assertEquals(OrdenEstado.EN_PREPARACION, mesaDto.getOrdenActiva().getEstadoOrden());
         assertEquals(new BigDecimal("75.50"), mesaDto.getOrdenActiva().getTotal());
+    }
+
+    // N+1: listar el salón debe hacer UNA consulta de comandas activas, no una por mesa.
+    @Test
+    void testListarTodasHaceUnaSolaConsultaDeComandasActivas() {
+        Mesa mesaTres = Mesa.builder()
+                .id(3L)
+                .numero(3)
+                .capacidad(2)
+                .estado(MesaEstado.OCUPADA)
+                .activo(true)
+                .build();
+
+        Orden enMesaDos = Orden.builder()
+                .id(50L)
+                .mesa(mesaOcupada)
+                .total(new BigDecimal("10.00"))
+                .estado(OrdenEstado.EN_PREPARACION)
+                .build();
+        Orden enMesaTres = Orden.builder()
+                .id(51L)
+                .mesa(mesaTres)
+                .total(new BigDecimal("20.00"))
+                .estado(OrdenEstado.LISTO)
+                .build();
+
+        when(mesaRepository.findByActivoTrueOrderByNumeroAsc())
+                .thenReturn(List.of(mesaOcupada, mesaTres));
+        when(ordenRepository.findByMesaIdInAndEstadoNotIn(anyList(), anyList()))
+                .thenReturn(List.of(enMesaDos, enMesaTres));
+
+        List<MesaResponse> result = mesaService.listarTodas();
+
+        assertEquals(2, result.size());
+        assertNotNull(result.get(0).getOrdenActiva());
+        assertNotNull(result.get(1).getOrdenActiva());
+        verify(ordenRepository, times(1)).findByMesaIdInAndEstadoNotIn(anyList(), anyList());
+        verify(ordenRepository, never()).findByMesaIdAndEstadoNotIn(anyLong(), anyList());
     }
 }

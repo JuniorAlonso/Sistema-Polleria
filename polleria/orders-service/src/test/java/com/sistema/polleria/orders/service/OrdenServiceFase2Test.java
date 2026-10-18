@@ -165,7 +165,7 @@ class OrdenServiceFase2Test {
         nuevo.setProductoId(10L);
         nuevo.setCantidad(2);
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
         when(productoService.buscarOFallar(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
         when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
@@ -189,7 +189,7 @@ class OrdenServiceFase2Test {
         nuevo.setProductoId(10L);
         nuevo.setCantidad(1);
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
         when(productoService.buscarOFallar(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
         when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
@@ -214,7 +214,7 @@ class OrdenServiceFase2Test {
         nuevo.setProductoId(10L);
         nuevo.setCantidad(1);
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
 
         ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
                 () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));
@@ -238,7 +238,7 @@ class OrdenServiceFase2Test {
         nuevo.setProductoId(10L);
         nuevo.setCantidad(1);
 
-        when(ordenRepository.findById(200L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(200L)).thenReturn(Optional.of(orden));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> ordenService.agregarItems(200L, List.of(nuevo), 2L));
@@ -258,7 +258,7 @@ class OrdenServiceFase2Test {
         nuevo.setProductoId(10L);
         nuevo.setCantidad(1);
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
         when(productoService.buscarOFallar(10L)).thenReturn(producto);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -274,7 +274,7 @@ class OrdenServiceFase2Test {
         Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
         Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.LISTO, 1);
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
         when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
 
@@ -301,7 +301,7 @@ class OrdenServiceFase2Test {
                 .items(new ArrayList<>())
                 .build();
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
 
         var response = ordenService.marcarServido(100L, 9L);
 
@@ -320,7 +320,7 @@ class OrdenServiceFase2Test {
                 .items(new ArrayList<>())
                 .build();
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
 
         ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
                 () -> ordenService.marcarServido(100L, 2L));
@@ -340,7 +340,7 @@ class OrdenServiceFase2Test {
                 .items(new ArrayList<>())
                 .build();
 
-        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
 
         ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
                 () -> ordenService.marcarServido(100L, 2L));
@@ -358,7 +358,7 @@ class OrdenServiceFase2Test {
                 .items(new ArrayList<>())
                 .build();
 
-        when(ordenRepository.findById(200L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.buscarConBloqueo(200L)).thenReturn(Optional.of(orden));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> ordenService.marcarServido(200L, 2L));
@@ -434,5 +434,84 @@ class OrdenServiceFase2Test {
         assertEquals(OrdenEstado.ENTREGADO, orden.getEstado());
         assertEquals(MesaEstado.LIBRE, mesa.getEstado());
         verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testCrearSalonEnMesaEnLimpiezaLanzaConflicto() {
+        mesa.setEstado(MesaEstado.EN_LIMPIEZA);
+        CrearOrdenRequest req = new CrearOrdenRequest();
+        req.setTipo(OrdenTipo.SALON);
+        req.setMesaId(1L);
+        OrdenItemRequest itemReq = new OrdenItemRequest();
+        itemReq.setProductoId(10L);
+        itemReq.setCantidad(1);
+        req.setItems(List.of(itemReq));
+
+        when(mesaService.buscarOFallarConBloqueo(1L)).thenReturn(mesa);
+
+        assertThrows(ConflictoDeEstadoException.class, () -> ordenService.crear(req, 2L));
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testDeliveryEnCaminoSinRepartidorLanzaIllegalArgument() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.LISTO)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.EN_CAMINO);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> ordenService.actualizarEstado(100L, req, 2L));
+        assertEquals(OrdenEstado.LISTO, orden.getEstado(), "el estado no debe cambiar");
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testDeliveryEnCaminoConRepartidorAsignaElMotorizado() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.LISTO)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.EN_CAMINO);
+        req.setRepartidorId(4L);
+
+        ordenService.actualizarEstado(100L, req, 2L);
+
+        assertEquals(OrdenEstado.EN_CAMINO, orden.getEstado());
+        assertEquals(4L, orden.getRepartidorId());
+        verify(ordenRepository).save(orden);
+    }
+
+    @Test
+    void testSalonNoGuardaRepartidorAunqueLoEnvieElRequest() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .estado(OrdenEstado.LISTO)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.ENTREGADO);
+        req.setRepartidorId(9L);
+
+        ordenService.actualizarEstado(100L, req, 2L);
+
+        assertEquals(OrdenEstado.ENTREGADO, orden.getEstado());
+        assertNull(orden.getRepartidorId(), "SALON no lleva repartidor");
     }
 }

@@ -60,6 +60,12 @@ public class OrdenService {
                         "La mesa " + mesa.getNumero() + " está dada de baja y no puede recibir comandas. "
                         + "Reactívala en el panel para volver a usarla.");
             }
+            // Una mesa en limpieza no está operativa: primero se termina la limpieza.
+            if (mesa.getEstado() == MesaEstado.EN_LIMPIEZA) {
+                throw new ConflictoDeEstadoException(
+                        "La mesa " + mesa.getNumero() + " está en limpieza. "
+                        + "Terminá la limpieza antes de abrir una comanda.");
+            }
             List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
             if (!comandasActivas.isEmpty()) {
                 throw new ConflictoDeEstadoException(
@@ -97,7 +103,7 @@ public class OrdenService {
      */
     @Transactional
     public OrdenResponse agregarItems(Long id, List<OrdenItemRequest> itemsReq, Long usuarioId) {
-        Orden orden = buscarOFallar(id);
+        Orden orden = buscarOFallarConBloqueo(id);
 
         if (orden.getTipo() != OrdenTipo.SALON) {
             throw new IllegalArgumentException(
@@ -156,27 +162,33 @@ public class OrdenService {
         return OrdenResponse.from(buscarOFallar(id));
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarActivos() {
         return ordenRepository.findActivos().stream().map(OrdenResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarActivosYCompletadosHoy() {
         return ordenRepository.findActivosYCompletadosHoy().stream().map(OrdenResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarTodos() {
         return ordenRepository.findAllByOrderByCreadoEnDesc().stream().map(OrdenResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarParaCocina() {
         return ordenRepository.findParaCocina().stream().map(OrdenResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarPorCliente(Long clienteId) {
         return ordenRepository.findByClienteIdOrderByCreadoEnDesc(clienteId)
                 .stream().map(OrdenResponse::from).toList();
     }
 
+    @Transactional(readOnly = true)
     public List<OrdenResponse> listarPorEstado(OrdenEstado estado) {
         return ordenRepository.findByEstadoOrderByCreadoEnDesc(estado)
                 .stream().map(OrdenResponse::from).toList();
@@ -187,11 +199,24 @@ public class OrdenService {
         Orden orden = buscarOFallar(id);
         validarTransicionEstado(orden.getEstado(), request.getEstado(), orden.getTipo());
 
-        orden.setEstado(request.getEstado());
-
-        if (request.getRepartidorId() != null) {
+        boolean esDelivery = orden.getTipo() == OrdenTipo.DELIVERY;
+        if (request.getEstado() == OrdenEstado.EN_CAMINO) {
+            if (!esDelivery) {
+                throw new IllegalArgumentException("Solo un pedido de delivery puede pasar a EN_CAMINO.");
+            }
+            Long repartidor = request.getRepartidorId() != null
+                    ? request.getRepartidorId()
+                    : orden.getRepartidorId();
+            if (repartidor == null || repartidor <= 0) {
+                throw new IllegalArgumentException(
+                        "Asigná un motorizado antes de pasar el pedido a EN_CAMINO.");
+            }
+            orden.setRepartidorId(repartidor);
+        } else if (esDelivery && request.getRepartidorId() != null) {
             orden.setRepartidorId(request.getRepartidorId());
         }
+
+        orden.setEstado(request.getEstado());
 
         // Liberar mesa cuando la orden termina en salón
         if (orden.getMesa() != null &&
@@ -220,7 +245,7 @@ public class OrdenService {
      */
     @Transactional
     public OrdenResponse marcarServido(Long id, Long usuarioId) {
-        Orden orden = buscarOFallar(id);
+        Orden orden = buscarOFallarConBloqueo(id);
 
         if (orden.getTipo() != OrdenTipo.SALON) {
             throw new IllegalArgumentException(
@@ -295,6 +320,16 @@ public class OrdenService {
 
     public Orden buscarOFallar(Long id) {
         return ordenRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Orden no encontrada: " + id));
+    }
+
+    /**
+     * Igual que {@link #buscarOFallar(Long)} pero con bloqueo pesimista sobre la fila de la orden.
+     * Se usa en mutaciones idempotentes/acumulativas para que dos peticiones simultáneas no se
+     * pisen (servir dos veces, agregar ítems en paralelo).
+     */
+    private Orden buscarOFallarConBloqueo(Long id) {
+        return ordenRepository.buscarConBloqueo(id)
                 .orElseThrow(() -> new NoSuchElementException("Orden no encontrada: " + id));
     }
 }

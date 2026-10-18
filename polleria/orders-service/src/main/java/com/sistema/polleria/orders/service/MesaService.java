@@ -16,7 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -36,13 +39,31 @@ public class MesaService {
         return listarTodas(false);
     }
 
+    @Transactional(readOnly = true)
     public List<MesaResponse> listarTodas(boolean incluirInactivas) {
         List<Mesa> mesas = incluirInactivas
                 ? mesaRepository.findAll()
                 : mesaRepository.findByActivoTrueOrderByNumeroAsc();
 
+        if (mesas.isEmpty()) {
+            return List.of();
+        }
+
+        // Una sola consulta para todas las comandas activas del salón. Antes se hacía una
+        // consulta por mesa (N+1) y cada cliente que hace polling multiplicaba la carga.
+        List<Long> mesaIds = mesas.stream().map(Mesa::getId).toList();
+        Map<Long, Orden> activasPorMesa = ordenRepository
+                .findByMesaIdInAndEstadoNotIn(mesaIds, ESTADOS_TERMINALES)
+                .stream()
+                .collect(Collectors.toMap(o -> o.getMesa().getId(), Function.identity(), (a, b) -> a));
+
         return mesas.stream()
-                .map(this::mapearMesaConOrdenActiva)
+                .map(mesa -> {
+                    Orden activa = mesa.getEstado() != MesaEstado.LIBRE
+                            ? activasPorMesa.get(mesa.getId())
+                            : null;
+                    return MesaResponse.from(mesa, activa != null ? OrdenActivaResponse.from(activa) : null);
+                })
                 .toList();
     }
 

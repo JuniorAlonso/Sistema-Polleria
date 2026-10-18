@@ -26,6 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -64,8 +65,20 @@ class MesaComandaUnicaTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    /** Órdenes creadas por esta clase: se borran en el cleanup para no dejar comandas activas. */
+    private final List<Long> creadas = new ArrayList<>();
+
     @AfterEach
     void liberarMesa() {
+        for (Long id : creadas) {
+            try {
+                ordenRepository.deleteById(id);
+            } catch (Exception ignored) {
+                // La limpieza no debe ocultar el resultado del test.
+            }
+        }
+        creadas.clear();
+
         mesaRepository.findByEstadoAndActivoTrue(MesaEstado.OCUPADA).forEach(mesa -> {
             mesa.setEstado(MesaEstado.LIBRE);
             mesaRepository.save(mesa);
@@ -73,7 +86,7 @@ class MesaComandaUnicaTest {
     }
 
     @Test
-    void elSegundoPedidoDeSalonSobreLaMismaMesaDevuelve409YNoCreaComanda() {
+    void elSegundoPedidoDeSalonSobreLaMismaMesaDevuelve409YNoCreaComanda() throws Exception {
         Assumptions.assumeTrue(postgresDisponible(),
                 "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
 
@@ -89,6 +102,7 @@ class MesaComandaUnicaTest {
                 new HttpEntity<>(pedido, cabecerasDeMozo()), String.class);
         assertEquals(HttpStatus.CREATED, primera.getStatusCode(),
                 "la primera comanda de la mesa debe crearse: " + primera.getBody());
+        creadas.add(objectMapper.readTree(primera.getBody()).path("id").asLong());
         assertEquals(comandasAntes + 1, comandasActivas(mesa.getId()));
 
         ResponseEntity<String> segunda = rest.exchange("/ordenes", HttpMethod.POST,
