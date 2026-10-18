@@ -3,8 +3,8 @@
 # Extensión: REST Client (humao.rest-client)
 #
 # Recorrido: login de mozo → comanda de salón en una mesa concreta → segunda ronda
-# → cocina (EN_PREPARACION / LISTO) → guarda de liberación (409) → cobro (ENTREGADO)
-# → mesa LIBRE. Al final, los negativos de seguridad.
+# → cocina (EN_PREPARACION / LISTO) → servir en mesa (marca persistida) → guarda de
+# liberación (409) → cobro (ENTREGADO) → mesa LIBRE. Al final, los negativos de seguridad.
 #
 # Requisitos: stack local (`docker compose -f polleria/docker-compose.local.yml up -d`)
 # y productos/mesas sembrados. Ajustá MESA_ID y PRODUCTO_ID a los ids reales.
@@ -80,7 +80,18 @@ Content-Type: application/json
 
 { "estado": "LISTO" }
 
-### 5. GUARDA: no se puede liberar la mesa con la comanda activa
+### 5. El mozo confirma que ya sirvió la comanda en mesa
+# Esperado: 200 con servidoEn y servidoPor. NO cambia el estado: sigue LISTO y la mesa OCUPADA.
+# Idempotente: repetirlo devuelve la misma marca.
+POST {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/servir
+Authorization: Bearer {{MOZO_TOKEN}}
+
+### 5.1 La mesa expone la marca de servido sin otra consulta
+# Esperado: ordenActiva.servidoEn no nulo, estadoOrden LISTO y la mesa sigue OCUPADA.
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{MOZO_TOKEN}}
+
+### 6. GUARDA: aunque ya se sirvió, no se puede liberar la mesa con la comanda activa
 # Esperado: 409 con el id de la comanda en el mensaje. La mesa conserva su estado.
 PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
 Authorization: Bearer {{MOZO_TOKEN}}
@@ -88,7 +99,7 @@ Content-Type: application/json
 
 { "estado": "LIBRE" }
 
-### 6. Cobro: el mozo cierra la comanda
+### 7. Cobro: el mozo cierra la comanda
 # Esperado: 200. La orden pasa a ENTREGADO y el backend deja la mesa LIBRE.
 PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
 Authorization: Bearer {{MOZO_TOKEN}}
@@ -96,11 +107,11 @@ Content-Type: application/json
 
 { "estado": "ENTREGADO" }
 
-### 7. Verificación: la mesa volvió a LIBRE y sin ordenActiva
+### 8. Verificación: la mesa volvió a LIBRE y sin ordenActiva
 GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
 Authorization: Bearer {{MOZO_TOKEN}}
 
-### 8. La mesa ya acepta una comanda nueva
+### 9. La mesa ya acepta una comanda nueva
 # Esperado: 201 (la comanda anterior está cerrada).
 POST {{ORDERS_URL}}/ordenes
 Authorization: Bearer {{MOZO_TOKEN}}
@@ -113,7 +124,7 @@ Content-Type: application/json
   "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
 }
 
-### 9. NEGATIVO: un anónimo no puede abrir una comanda de salón
+### 10. NEGATIVO: un anónimo no puede abrir una comanda de salón
 # Esperado: 403. No se crea la orden ni se ocupa la mesa.
 POST {{ORDERS_URL}}/ordenes
 Content-Type: application/json
@@ -124,7 +135,7 @@ Content-Type: application/json
   "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
 }
 
-### 10. NEGATIVO: agregar platos a una comanda ya cerrada
+### 11. NEGATIVO: agregar platos a una comanda ya cerrada
 # Requiere una orden ENTREGADO/CANCELADO. Esperado: 409.
 POST {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/items
 Authorization: Bearer {{MOZO_TOKEN}}
@@ -134,7 +145,12 @@ Content-Type: application/json
   "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
 }
 
-### 11. NEGATIVO: una comanda de delivery no acepta la segunda ronda de salón
+### 12. NEGATIVO: servir una comanda que todavía no está LISTO
+# Requiere el id de una comanda en RECIBIDO/EN_PREPARACION. Esperado: 409.
+# POST {{ORDERS_URL}}/ordenes/{{ORDEN_PENDIENTE_ID}}/servir
+# Authorization: Bearer {{MOZO_TOKEN}}
+
+### 13. NEGATIVO: una comanda de delivery no acepta la segunda ronda de salón
 # Requiere el id de una orden DELIVERY. Esperado: 400.
 # POST {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY_ID}}/items
 # Authorization: Bearer {{MOZO_TOKEN}}

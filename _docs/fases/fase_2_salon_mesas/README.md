@@ -53,7 +53,7 @@ graph TD
 | Código | Tipo | Requerimiento Oficial | Implementación Técnica | Estado |
 | :--- | :---: | :--- | :--- | :---: |
 | **RF11** | RF | Visualización del estado de mesas, ocupación y vinculación a orden. | `MesaController` + `SalonService.mesas` + Cuadrícula matricial reactiva. | ✅ 100% |
-| **RF12** | RF | Registro de pedidos de salón en dispositivo móvil tras selección presencial. | Modal de Comanda rápida en `MozoSalonComponent` conectado a `POST /ordenes` y `POST /ordenes/{id}/items` para la segunda ronda. | ✅ 100% |
+| **RF12** | RF | Registro de pedidos de salón en dispositivo móvil tras selección presencial. | Modal de Comanda rápida en `MozoSalonComponent` conectado a `POST /ordenes`, `POST /ordenes/{id}/items` (segunda ronda) y `POST /ordenes/{id}/servir` (marca de entrega en mesa). | ✅ 100% |
 | **RF16** | RF | Cocina y admin actualizan estado de pedidos (`LISTO` cocina), validando transiciones. | `PATCH /ordenes/{id}/estado` en KDS Cocina activando evento automático. | ✅ 100% |
 | **RF33** | RF | Notificación en tiempo real al mozo con plato y mesa listos. | Evento WebSocket `/ws-polleria` + fallback de polling reactivo cada 6s. | ✅ 100% |
 | **RNF06** | RNF | Notificaciones con baja latencia (< 500 ms) hacia tablets de mozos. | STOMP over SockJS + banners visuales con sonido de alerta. | ✅ 100% |
@@ -128,6 +128,12 @@ stateDiagram-v2
 > ventanas del mozo y del admin avisan antes de disparar la petición: primero se cobra o se cancela.
 > Sin esta guarda, la mesa quedaba mostrada como libre pero `OrdenService.crear` la rechazaba para
 > siempre (`ESTADOS_TERMINALES = ENTREGADO | CANCELADO`).
+>
+> **Servir no es cobrar.** El mozo confirma la entrega con `POST /ordenes/{id}/servir`, que persiste
+> `servidoEn`/`servidoPor` sin cambiar el estado (sigue `LISTO`). Recién al cobrar la orden pasa a
+> `ENTREGADO` y la mesa queda `LIBRE`. La ventana del mozo muestra un banner con la comanda lista y
+> la acción *Servir en mesa*; el croquis y el inspector del admin distinguen *lista para servir* de
+> *servida*; cocina ordena por antigüedad y muestra el tiempo transcurrido.
 
 ---
 
@@ -245,6 +251,7 @@ CREATE INDEX idx_zonas_orden ON zonas_salon(orden);
 | `DELETE` | `/mesas/{id}` | `ADMIN` | Baja de mesa (desactivación lógica para preservar el histórico de comandas). |
 | `GET` | `/mesas/{id}/orden-activa` | `ADMIN`, `MOZO` | Obtiene el detalle de la comanda abierta para facturación o precuenta. |
 | `POST` | `/ordenes/{id}/items` | `ADMIN`, `MOZO` | Segunda ronda: suma platos a la MISMA comanda de salón, recalcula el total y republica el evento de cocina. Una comanda `LISTO` vuelve a `EN_PREPARACION`; una terminal responde `409`. |
+| `POST` | `/ordenes/{id}/servir` | `ADMIN`, `MOZO` | Marca que el mozo ya entregó la comanda en mesa (`servidoEn`/`servidoPor`). Idempotente, solo `SALON` en `LISTO`; no cambia el estado ni libera la mesa (eso ocurre al cobrar). |
 | `GET` | `/zonas` | Público (sin `@PreAuthorize`) | Listado de zonas del salón persistidas en PostgreSQL (`ZonaSalon`). |
 | `GET` | `/zonas/{id}` | Público (sin `@PreAuthorize`) | Detalle de una zona específica. |
 | `PUT` | `/zonas/{id}/dimensiones` | `ADMIN`, `MOZO` (`hasAnyRole`) | Ajuste dinámico de cuadrícula matricial (filas y columnas) persistido en base de datos. |
@@ -305,7 +312,7 @@ if (orden.getMesa() != null) {
 2. **Pruebas de Microservicio:** Peticiones HTTP a `GET /mesas` validadas con código 200 OK y tiempo de respuesta inferior a 45 ms.
 3. **Persistencia Dockerizada:** Contenedores `polleria-orders-service` y `polleria-postgres` validados en ejecución saludable tras el ajuste de DDL y security filters.
 4. **Resiliencia de Red:** Errores de desconexión transitoria capturados con RxJS `catchError` sin congelar el renderizado del navegador.
-5. **Flujo local completo (auditoría 2026-10):** `orders-service` 67 tests; specs Angular del adaptador/servicio de órdenes 21, mozo 12, admin 5 y cocina 3; build AOT y `tsc --noEmit` en 0. El recorrido manual está en `rest-tests/06-flujo-salon-local.http`.
+5. **Flujo local completo (auditoría 2026-10):** `orders-service` 77 tests; Angular 82 (adaptador/servicio de órdenes 28, mozo 17, admin 7, cocina 6); build AOT y `tsc --noEmit` en 0. El recorrido manual está en `rest-tests/06-flujo-salon-local.http` e incluye servir en mesa, guarda de liberación y cobro.
 
 ---
 
