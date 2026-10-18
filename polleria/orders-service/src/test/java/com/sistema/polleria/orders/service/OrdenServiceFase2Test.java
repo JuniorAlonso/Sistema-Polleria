@@ -16,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -264,6 +265,105 @@ class OrdenServiceFase2Test {
                 () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));
 
         assertTrue(ex.getMessage().contains("está agotado"), ex.getMessage());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    // S3.1 — «el mozo ya entregó el pedido en mesa» como marca persistida, sin estado nuevo
+    @Test
+    void testMarcarServidoRegistraMarcaYConservaElEstadoListo() {
+        Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
+        Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.LISTO, 1);
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
+
+        var response = ordenService.marcarServido(100L, 2L);
+
+        assertNotNull(orden.getServidoEn(), "la marca de servido debe quedar en la orden");
+        assertEquals(2L, orden.getServidoPor(), "se registra quién la sirvió");
+        assertNotNull(response.getServidoEn());
+        assertEquals(2L, response.getServidoPor());
+        assertEquals(OrdenEstado.LISTO, orden.getEstado(), "servir no cambia la máquina de estados");
+        verify(ordenRepository, times(1)).save(orden);
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testMarcarServidoEsIdempotenteYNoPisaLaPrimeraMarca() {
+        LocalDateTime primera = LocalDateTime.now().minusMinutes(5);
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .estado(OrdenEstado.LISTO)
+                .servidoEn(primera)
+                .servidoPor(2L)
+                .items(new ArrayList<>())
+                .build();
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        var response = ordenService.marcarServido(100L, 9L);
+
+        assertEquals(primera, orden.getServidoEn(), "una segunda llamada no reescribe la marca");
+        assertEquals(2L, orden.getServidoPor());
+        assertEquals(primera, response.getServidoEn());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testMarcarServidoAntesDeListoLanzaConflicto() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .estado(OrdenEstado.EN_PREPARACION)
+                .items(new ArrayList<>())
+                .build();
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> ordenService.marcarServido(100L, 2L));
+
+        assertTrue(ex.getMessage().contains("100"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("EN_PREPARACION"), ex.getMessage());
+        assertNull(orden.getServidoEn());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testMarcarServidoUnaComandaEntregadaLanzaConflicto() {
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .estado(OrdenEstado.ENTREGADO)
+                .items(new ArrayList<>())
+                .build();
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> ordenService.marcarServido(100L, 2L));
+
+        assertTrue(ex.getMessage().contains("ENTREGADO"), ex.getMessage());
+        verify(ordenRepository, never()).save(any());
+    }
+
+    @Test
+    void testMarcarServidoUnaOrdenDeliveryLanzaIllegalArgument() {
+        Orden orden = Orden.builder()
+                .id(200L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.LISTO)
+                .items(new ArrayList<>())
+                .build();
+
+        when(ordenRepository.findById(200L)).thenReturn(Optional.of(orden));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ordenService.marcarServido(200L, 2L));
+
+        assertTrue(ex.getMessage().contains("Solo las comandas de salón"), ex.getMessage());
         verify(ordenRepository, never()).save(any());
     }
 

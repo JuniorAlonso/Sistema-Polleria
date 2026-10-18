@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -209,6 +210,48 @@ public class OrdenService {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
         }
 
+        return OrdenResponse.from(orden);
+    }
+
+    /**
+     * S3.1: el mozo marca que ya entregó el pedido en mesa. Es una marca persistida, no un estado:
+     * la orden sigue en LISTO y la mesa se libera recién al cobrar (LISTO → ENTREGADO).
+     * Idempotente: si ya estaba servida devuelve la misma marca sin reescribirla.
+     */
+    @Transactional
+    public OrdenResponse marcarServido(Long id, Long usuarioId) {
+        Orden orden = buscarOFallar(id);
+
+        if (orden.getTipo() != OrdenTipo.SALON) {
+            throw new IllegalArgumentException(
+                    "Solo las comandas de salón se marcan como servidas; el pedido #" + id
+                    + " es de tipo " + orden.getTipo() + ".");
+        }
+
+        if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
+            throw new ConflictoDeEstadoException(
+                    "La comanda #" + id + " ya está " + orden.getEstado()
+                    + " y no puede marcarse como servida.");
+        }
+
+        if (orden.getServidoEn() != null) {
+            return OrdenResponse.from(orden);
+        }
+
+        if (orden.getEstado() != OrdenEstado.LISTO) {
+            throw new ConflictoDeEstadoException(
+                    "La comanda #" + id + " todavía no está lista (estado actual: "
+                    + orden.getEstado() + ").");
+        }
+
+        orden.setServidoEn(LocalDateTime.now());
+        orden.setServidoPor(usuarioId != null && usuarioId > 0 ? usuarioId : null);
+
+        ordenRepository.save(orden);
+        log.info("Comanda #{} marcada como servida en mesa (usuario: {})", id, usuarioId);
+        if (orden.getMesa() != null) {
+            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
+        }
         return OrdenResponse.from(orden);
     }
 

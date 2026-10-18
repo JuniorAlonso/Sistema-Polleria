@@ -27,6 +27,8 @@ public class OrdenResponse {
     private String observaciones;
     private LocalDateTime creadoEn;
     private LocalDateTime actualizadoEn;
+    private LocalDateTime servidoEn;
+    private Long servidoPor;
     private List<ItemResponse> items;
 
     @Data
@@ -69,6 +71,8 @@ public class OrdenResponse {
                 .observaciones(o.getObservaciones())
                 .creadoEn(o.getCreadoEn())
                 .actualizadoEn(o.getActualizadoEn())
+                .servidoEn(o.getServidoEn())
+                .servidoPor(o.getServidoPor())
                 .items(items)
                 .build();
     }

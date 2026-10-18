@@ -58,6 +58,19 @@ public class OrdenController {
     }
 
     /**
+     * S3.1: el mozo confirma que ya entregó el pedido en mesa. No cambia el estado de la orden ni
+     * libera la mesa: eso ocurre al cobrar.
+     */
+    @PostMapping("/{id}/servir")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
+    public ResponseEntity<OrdenResponse> marcarServido(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(ordenService.marcarServido(id, extraerUserId(authentication)));
+    }
+
+    /**
      * Segunda ronda sobre la comanda de salón: reutiliza la misma orden en lugar de abrir otra.
      * Solo ADMIN/MOZO: es la operación de mozo/administrador en el salón.
      */

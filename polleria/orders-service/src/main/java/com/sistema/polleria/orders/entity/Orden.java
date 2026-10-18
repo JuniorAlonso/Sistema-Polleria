@@ -41,6 +41,11 @@ public class Orden {
     // ID del repartidor asignado (delivery)
     private Long repartidorId;
 
+    // Marca de «el mozo ya entregó el pedido en mesa». No es un estado nuevo: el cobro
+    // (LISTO → ENTREGADO) sigue siendo el único evento que libera la mesa.
+    private LocalDateTime servidoEn;
+    private Long servidoPor;
+
     // Referencia a la mesa (salón)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "mesa_id")
