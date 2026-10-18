@@ -1089,7 +1089,7 @@ export type InsumoAlmacen = Insumo;
                 </div>
                 @if (mesa.ordenActiva) {
                   <p class="text-xs text-slate-300">
-                    Comanda en curso <strong>#{{ mesa.ordenActiva.codigoSeguimiento || mesa.ordenActiva.ordenId }}</strong> • Monto: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong>
+                    Comanda en curso <strong>#{{ mesa.ordenActiva.codigoSeguimiento || mesa.ordenActiva.ordenId }}</strong> • Monto: <strong class="text-polleria-gold">{{ mesa.ordenActiva.total | currencyPEN }}</strong> • Estado: <strong class="text-amber-300">{{ mesa.ordenActiva.estadoOrden }}</strong>
                   </p>
                 } @else {
                   <p class="text-xs text-slate-400">Sin comanda activa vinculada. Capacidad configurada: {{ mesa.capacidad }} personas.</p>
@@ -1097,6 +1097,39 @@ export type InsumoAlmacen = Insumo;
               </div>
 
               <div class="flex flex-wrap gap-2">
+                @if (mesa.ordenActiva) {
+                  <button 
+                    (click)="abrirAgregarPlatosMesa(mesa)"
+                    class="px-4 py-2 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/30 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                    title="Agregar una segunda ronda a la comanda activa"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    <span>Agregar platos</span>
+                  </button>
+                  <button 
+                    (click)="cobrarComandaMesa(mesa)"
+                    class="px-4 py-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                    title="Cobrar la comanda y liberar la mesa"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
+                    </svg>
+                    <span>Cobrar comanda</span>
+                  </button>
+                } @else {
+                  <button 
+                    (click)="abrirTomarComandaMesa(mesa)"
+                    class="px-4 py-2 bg-polleria-crimson hover:bg-polleria-crimsonHover text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                    title="Tomar la comanda de esta mesa"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    <span>Tomar comanda</span>
+                  </button>
+                }
                 <button 
                   (click)="abrirEditarMesaModal(mesa)"
                   class="px-4 py-2 bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow"
@@ -2338,7 +2371,15 @@ export type InsumoAlmacen = Insumo;
           <div class="w-full max-w-lg bg-slate-900 border border-polleria-gold/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
             
             <div class="flex justify-between items-center border-b border-white/10 pb-3">
-              <h3 class="font-display text-xl font-bold text-white">Registrar Nueva Orden Manual</h3>
+              <h3 class="font-display text-xl font-bold text-white">
+                @if (manualOrder.modo === 'AGREGAR') {
+                  Agregar platos a la comanda #{{ getCodeNum(manualOrder.ordenId || '') }}
+                } @else if (manualOrder.tipo === 'SALON') {
+                  Tomar comanda de salón
+                } @else {
+                  Registrar Nueva Orden Manual
+                }
+              </h3>
               <button (click)="showCreateOrderModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
 
@@ -2348,7 +2389,8 @@ export type InsumoAlmacen = Insumo;
                   <label class="block font-bold text-slate-400 mb-1">Tipo de Pedido:</label>
                   <select 
                     [(ngModel)]="manualOrder.tipo"
-                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                    [disabled]="manualOrder.modo === 'AGREGAR'"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="DELIVERY">Delivery</option>
                     <option value="SALON">Salón</option>
@@ -2369,29 +2411,57 @@ export type InsumoAlmacen = Insumo;
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block font-bold text-slate-400 mb-1">Nombre del Cliente:</label>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="manualOrder.clienteNombre"
-                    placeholder="Ej. Juan Pérez"
-                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                  />
+              @if (manualOrder.modo === 'AGREGAR' && manualOrder.ordenId) {
+                <div class="p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-200 leading-snug">
+                  Segunda ronda sobre la comanda <strong>#{{ getCodeNum(manualOrder.ordenId) }}</strong>.
+                  Los platos se suman a la misma orden y la cocina vuelve a prepararla.
                 </div>
+              }
 
+              @if (manualOrder.tipo === 'SALON') {
                 <div>
-                  <label class="block font-bold text-slate-400 mb-1">Teléfono:</label>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="manualOrder.clienteCelular"
-                    placeholder="987654321"
-                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                  />
+                  <label class="block font-bold text-slate-400 mb-1">Mesa:</label>
+                  <select 
+                    [(ngModel)]="manualOrder.mesaId"
+                    [disabled]="manualOrder.modo === 'AGREGAR'"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <option [ngValue]="null">Seleccioná una mesa</option>
+                    @for (m of salonService.mesas(); track m.id) {
+                      <option [ngValue]="m.id">
+                        Mesa {{ m.numero }} — {{ m.estado }}{{ m.ordenActiva ? ' (comanda #' + m.ordenActiva.ordenId + ')' : '' }}
+                      </option>
+                    }
+                  </select>
+                  @if (salonService.mesas().length === 0) {
+                    <p class="text-[11px] text-amber-300 mt-1">No hay mesas registradas. Creá una en la pestaña Mesas.</p>
+                  }
                 </div>
-              </div>
+              } @else {
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block font-bold text-slate-400 mb-1">Nombre del Cliente:</label>
+                    <input 
+                      type="text" 
+                      [(ngModel)]="manualOrder.clienteNombre"
+                      placeholder="Ej. Juan Pérez"
+                      class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                    />
+                  </div>
 
-              @if (manualOrder.tipo === 'DELIVERY') {
+                  <div>
+                    <label class="block font-bold text-slate-400 mb-1">Teléfono:</label>
+                    <input 
+                      type="text" 
+                      [(ngModel)]="manualOrder.clienteCelular"
+                      placeholder="987654321"
+                      class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                    />
+                  </div>
+                </div>
+              }
+
+              @if (manualOrder.tipo === 'DELIVERY' && manualOrder.modo === 'CREAR') {
                 <div>
                   <label class="block font-bold text-slate-400 mb-1">Dirección de Entrega:</label>
                   <input 
@@ -2403,16 +2473,29 @@ export type InsumoAlmacen = Insumo;
                 </div>
               }
 
-              <div>
-                <label class="block font-bold text-slate-400 mb-1">Plato / Combo:</label>
-                <select 
-                  [(ngModel)]="manualOrder.selectedProductId"
-                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                >
-                  @for (p of productsService.products(); track p.id) {
-                    <option [value]="p.id">{{ p.nombre }} - {{ p.precio | currencyPEN }}</option>
-                  }
-                </select>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="col-span-2">
+                  <label class="block font-bold text-slate-400 mb-1">Plato / Combo:</label>
+                  <select 
+                    [(ngModel)]="manualOrder.selectedProductId"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  >
+                    @for (p of productsService.products(); track p.id) {
+                      <option [value]="p.id">{{ p.nombre }} - {{ p.precio | currencyPEN }}</option>
+                    }
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block font-bold text-slate-400 mb-1">Cantidad:</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    step="1"
+                    [(ngModel)]="manualOrder.cantidad"
+                    class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                  />
+                </div>
               </div>
 
               <div>
@@ -2437,7 +2520,13 @@ export type InsumoAlmacen = Insumo;
                 (click)="crearOrdenManual()" 
                 class="px-5 py-2 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover text-white text-xs font-bold transition cursor-pointer shadow"
               >
-                Crear Pedido
+                @if (manualOrder.modo === 'AGREGAR') {
+                  Agregar a la comanda
+                } @else if (manualOrder.tipo === 'SALON') {
+                  Tomar comanda
+                } @else {
+                  Crear Pedido
+                }
               </button>
             </div>
 
@@ -3266,12 +3355,17 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   // Modal de Creación de Orden Manual
   showCreateOrderModal = false;
   manualOrder = {
+    // CREAR abre una comanda nueva; AGREGAR suma platos a la comanda activa de la mesa.
+    modo: 'CREAR' as 'CREAR' | 'AGREGAR',
+    ordenId: null as string | null,
+    mesaId: null as string | number | null,
     tipo: 'DELIVERY' as OrderType,
     metodoPago: 'EFECTIVO_CONTRAENTREGA' as PaymentMethod,
     clienteNombre: '',
     clienteCelular: '',
     direccion: '',
     selectedProductId: '1',
+    cantidad: 1,
     notas: ''
   };
 
@@ -3679,58 +3773,199 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   abrirModalNuevaOrden(): void {
     const prods = this.productsService.products();
     this.manualOrder = {
+      modo: 'CREAR',
+      ordenId: null,
+      mesaId: null,
       tipo: 'DELIVERY',
       metodoPago: 'EFECTIVO_CONTRAENTREGA',
       clienteNombre: '',
       clienteCelular: '',
       direccion: '',
       selectedProductId: prods.length > 0 ? prods[0].id : '1',
+      cantidad: 1,
       notas: ''
     };
     this.showCreateOrderModal = true;
   }
 
+  /** Toma de comanda de salón desde el inspector de la mesa (sin comanda activa). */
+  abrirTomarComandaMesa(mesa: MesaSalon): void {
+    const prods = this.productsService.products();
+    this.manualOrder = {
+      modo: 'CREAR',
+      ordenId: null,
+      mesaId: mesa.id,
+      tipo: 'SALON',
+      metodoPago: 'EFECTIVO_CONTRAENTREGA',
+      clienteNombre: '',
+      clienteCelular: '',
+      direccion: '',
+      selectedProductId: prods.length > 0 ? prods[0].id : '1',
+      cantidad: 1,
+      notas: ''
+    };
+    this.showCreateOrderModal = true;
+  }
+
+  /** Segunda ronda: suma platos a la comanda activa de la mesa. */
+  abrirAgregarPlatosMesa(mesa: MesaSalon): void {
+    if (!mesa.ordenActiva) {
+      this.abrirTomarComandaMesa(mesa);
+      return;
+    }
+    const prods = this.productsService.products();
+    this.manualOrder = {
+      modo: 'AGREGAR',
+      ordenId: String(mesa.ordenActiva.ordenId),
+      mesaId: mesa.id,
+      tipo: 'SALON',
+      metodoPago: 'EFECTIVO_CONTRAENTREGA',
+      clienteNombre: '',
+      clienteCelular: '',
+      direccion: '',
+      selectedProductId: prods.length > 0 ? prods[0].id : '1',
+      cantidad: 1,
+      notas: ''
+    };
+    this.showCreateOrderModal = true;
+  }
+
+  /** Cobro de una comanda de salón: cierra la orden y el backend libera la mesa. */
+  cobrarComandaMesa(mesa: MesaSalon): void {
+    const orden = mesa.ordenActiva;
+    if (!orden) {
+      this.notify.showWarning('La mesa no tiene una comanda activa');
+      return;
+    }
+    if (orden.estadoOrden !== 'LISTO') {
+      this.notify.showWarning(
+        'La comanda todavía no está lista',
+        `Cocina debe marcarla LISTO antes de cobrar (estado actual: ${orden.estadoOrden}).`
+      );
+      return;
+    }
+
+    this.ordersService.updateOrderStatus(String(orden.ordenId), 'COMPLETADO').subscribe({
+      next: () => {
+        this.recargarSalonYOrdenes();
+        this.selectedMesa.set(null);
+        this.notify.showSuccess(`Comanda #${orden.ordenId} cobrada; la mesa quedó libre`);
+      },
+      error: (err) => {
+        const motivo = err?.error?.error || err?.error?.message || err?.message
+          || 'El backend rechazó el cierre de la comanda';
+        this.notify.showError('No se pudo cobrar la comanda', motivo);
+      }
+    });
+  }
+
+  private recargarSalonYOrdenes(): void {
+    this.salonService.cargarMesas();
+    this.ordersService.loadActiveOrders();
+  }
+
   crearOrdenManual(): void {
-    if (!this.manualOrder.clienteNombre || !this.manualOrder.clienteCelular) {
-      this.notify.showError('Por favor ingresa nombre y celular del cliente');
-      return;
-    }
-
-    if (this.manualOrder.tipo === 'DELIVERY' && !this.manualOrder.direccion.trim()) {
-      this.notify.showError('Ingresa la dirección de entrega para un pedido de delivery');
-      return;
-    }
-
     const prod = this.productsService.products().find(p => p.id === this.manualOrder.selectedProductId);
     if (!prod) {
       this.notify.showError('Selecciona un producto válido');
       return;
     }
 
+    const cantidad = Math.max(1, Number(this.manualOrder.cantidad) || 1);
+    const items = [{ productoId: prod.id, cantidad, notas: this.manualOrder.notas }];
+
+    if (this.manualOrder.modo === 'AGREGAR') {
+      const ordenId = this.manualOrder.ordenId;
+      if (!ordenId) {
+        this.notify.showError('No se pudo determinar la comanda a ampliar');
+        return;
+      }
+      this.ordersService.agregarItemsAOrden(ordenId, items).subscribe({
+        next: () => {
+          this.showCreateOrderModal = false;
+          this.recargarSalonYOrdenes();
+          this.notify.showSuccess(`${cantidad} plato(s) agregado(s) a la comanda #${this.getCodeNum(ordenId)}`);
+        },
+        error: (err) => this.notify.showError(
+          'No se pudieron agregar los platos',
+          err?.message || 'El servidor rechazó los platos nuevos'
+        )
+      });
+      return;
+    }
+
+    const tipo = this.manualOrder.tipo;
+
+    if (tipo === 'SALON') {
+      const mesaId = Number(this.manualOrder.mesaId);
+      const mesa = this.salonService.mesas().find(m => Number(m.id) === mesaId);
+      if (!mesa) {
+        this.notify.showError('Selecciona la mesa de la comanda');
+        return;
+      }
+      if (mesa.ordenActiva) {
+        this.notify.showWarning(
+          'La mesa ya tiene una comanda activa',
+          'Usá «Agregar platos» en el inspector de la mesa para sumar la segunda ronda.'
+        );
+        return;
+      }
+
+      this.ordersService.createOrder({
+        tipo: 'SALON',
+        mesaId,
+        metodoPago: this.manualOrder.metodoPago,
+        cliente: {
+          nombre: `Mesa ${String(mesa.numero).padStart(2, '0')}`,
+          celular: '',
+          mesaNumero: mesa.numero
+        },
+        items
+      }).subscribe({
+        next: (created) => {
+          this.showCreateOrderModal = false;
+          this.recargarSalonYOrdenes();
+          this.notify.showSuccess(`Comanda de ${mesa.nombre} creada (Orden #${this.getCodeNum(created.codigoSeguimiento)})`);
+        },
+        error: (err) => this.notify.showError(
+          'Error al crear la comanda',
+          err?.message || 'El servidor rechazó la comanda'
+        )
+      });
+      return;
+    }
+
+    // DELIVERY / RECOJO: el cliente y su contacto son obligatorios.
+    if (!this.manualOrder.clienteNombre || !this.manualOrder.clienteCelular) {
+      this.notify.showError('Por favor ingresa nombre y celular del cliente');
+      return;
+    }
+
+    if (tipo === 'DELIVERY' && !this.manualOrder.direccion.trim()) {
+      this.notify.showError('Ingresa la dirección de entrega para un pedido de delivery');
+      return;
+    }
+
     this.ordersService.createOrder({
-      tipo: this.manualOrder.tipo,
+      tipo,
       metodoPago: this.manualOrder.metodoPago,
       cliente: {
         nombre: this.manualOrder.clienteNombre,
         celular: this.manualOrder.clienteCelular,
-        // Sin dirección inventada: 'Presencial / Salón' no es una dirección de entrega.
-        direccion: this.manualOrder.direccion || undefined
+        // Sin dirección inventada: RECOJO no lleva dirección de entrega.
+        direccion: tipo === 'DELIVERY' ? (this.manualOrder.direccion || undefined) : undefined
       },
-      items: [
-        {
-          productoId: prod.id,
-          cantidad: 1,
-          notas: this.manualOrder.notas
-        }
-      ]
+      items
     }).subscribe({
       next: (created) => {
-        this.notify.showSuccess(`Orden #${this.getCodeNum(created.codigoSeguimiento)} creada con éxito`);
         this.showCreateOrderModal = false;
+        this.ordersService.loadActiveOrders();
+        this.notify.showSuccess(`Orden #${this.getCodeNum(created.codigoSeguimiento)} creada con éxito`);
       },
-      error: () => {
-        this.notify.showError('Error al crear orden en el backend');
-      }
+      error: (err) => this.notify.showError(
+        'Error al crear orden en el backend',
+        err?.message || 'El servidor rechazó el pedido'
+      )
     });
   }
 
@@ -3883,6 +4118,16 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   }
 
   cambiarEstadoMesaDirecto(mesa: MesaSalon, nuevoEstado: MesaEstado): void {
+    // El backend rechaza LIBRE/EN_LIMPIEZA con comanda activa (409). En la UI se avisa antes
+    // de disparar la petición, igual que en la ventana del mozo.
+    if ((nuevoEstado === 'LIBRE' || nuevoEstado === 'EN_LIMPIEZA') && mesa.ordenActiva) {
+      this.notify.showWarning(
+        'Comanda activa',
+        `Cobrá o cancelá la comanda #${mesa.ordenActiva.ordenId} antes de pasar la mesa a ${nuevoEstado}.`
+      );
+      return;
+    }
+
     this.isProcesandoMesa.set(true);
     this.mensajeProcesandoMesa.set(`Actualizando estado de Mesa #${mesa.numero} a ${nuevoEstado}...`);
     this.salonService.actualizarEstadoMesa(mesa.id, nuevoEstado).subscribe({
