@@ -113,4 +113,17 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
 
     expect(orden.repartidorId == null).toBeTrue();
   });
+
+  it('propaga la marca persistida de servido en mesa', () => {
+    const orden = OrderAdapter.toOrder({
+      ...dto,
+      tipo: 'SALON',
+      estado: 'LISTO',
+      servidoEn: '2026-01-01T00:05:00Z',
+      servidoPor: 7
+    } as never);
+
+    expect(orden.servidoEn).toBe('2026-01-01T00:05:00Z');
+    expect(orden.servidoPor).toBe(7);
+  });
 });

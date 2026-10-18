@@ -276,6 +276,35 @@ export class OrdersService {
   }
 
   /**
+   * S3.1 / S3.3: el mozo confirma que ya entregó la comanda en mesa.
+   * No cambia el estado ni libera la mesa (eso ocurre al cobrar): solo persiste la marca.
+   * El backend es idempotente y exige ADMIN/MOZO.
+   */
+  marcarServido(ordenId: string | number): Observable<Order> {
+    const cleanId = this.extractNumericId(String(ordenId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
+
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/servir`, {}).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+        if (this.currentTrackingOrder()?.id === updated.id) {
+          this.currentTrackingOrder.set(updated);
+        }
+      }),
+      catchError(err => {
+        const msg = err?.error?.error || err?.error?.message
+          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : null)
+          || 'No se pudo marcar la comanda como servida';
+        return throwError(() => new Error(
+          typeof msg === 'string' ? msg : 'No se pudo marcar la comanda como servida'));
+      })
+    );
+  }
+
+  /**
    * RF19: Cargar órdenes (activas e históricas)
    */
   loadActiveOrders(): void {

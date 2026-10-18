@@ -356,3 +356,91 @@ describe('OrdersService — agregarItemsAOrden', () => {
     expect(capturado.mensaje).toContain('inválido');
   });
 });
+
+/**
+ * S3.1 / S3.3 — el mozo confirma que ya sirvió la comanda. Es una marca persistida, no un cambio
+ * de estado: la orden sigue LISTO y la mesa se libera recién al cobrar.
+ */
+describe('OrdersService — marcarServido', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  const comanda = (): Order => ({
+    id: '7',
+    codigoSeguimiento: 'POL-7',
+    cliente: { nombre: 'Mesa 03', celular: '', mesaNumero: 3 },
+    items: [],
+    tipo: 'SALON',
+    estado: 'LISTO_COCINA',
+    metodoPago: 'EFECTIVO_CONTRAENTREGA',
+    subtotal: 45.5,
+    costoEnvio: 0,
+    descuento: 0,
+    total: 45.5,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  });
+
+  const dtoServida = (servidoEn: string | null) => ({
+    id: 7,
+    tipo: 'SALON' as const,
+    estado: 'LISTO',
+    total: 45.5,
+    mesaNumero: 3,
+    nombreCliente: 'Mesa 03',
+    telefonoCliente: '',
+    servidoEn,
+    servidoPor: servidoEn ? 7 : null,
+    items: [],
+    creadoEn: '2026-01-01T00:00:00Z'
+  });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('hace POST a /ordenes/7/servir y actualiza la orden en memoria', () => {
+    service.orders.set([comanda()]);
+
+    let resultado: Order | null = null;
+    service.marcarServido('7').subscribe(o => (resultado = o));
+
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
+    req.flush(dtoServida('2026-01-01T00:05:00Z'));
+
+    expect(resultado!.servidoEn).toBe('2026-01-01T00:05:00Z');
+    expect(service.orders()[0].servidoEn)
+      .withContext('la marca debe quedar en la lista compartida')
+      .toBe('2026-01-01T00:05:00Z');
+    expect(resultado!.estado).withContext('servir no cambia el estado').toBe('LISTO_COCINA');
+  });
+
+  it('propaga el rechazo del backend sin marcar la orden en memoria', () => {
+    service.orders.set([comanda()]);
+    const capturado: { mensaje?: string } = {};
+
+    service.marcarServido('7').subscribe({ error: err => (capturado.mensaje = err.message) });
+
+    http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'))
+      .flush({ error: 'La comanda #7 todavía no está lista (estado actual: EN_PREPARACION).' },
+        { status: 409, statusText: 'Conflict' });
+
+    expect(capturado.mensaje).toContain('todavía no está lista');
+    expect(service.orders()[0].servidoEn).toBeUndefined();
+  });
+
+  it('con un id inválido no dispara la petición', () => {
+    const capturado: { mensaje?: string } = {};
+    service.marcarServido('no-es-un-id').subscribe({ error: err => (capturado.mensaje = err.message) });
+
+    http.expectNone(r => r.method === 'POST' && r.url.includes('/servir'));
+    expect(capturado.mensaje).toContain('inválido');
+  });
+});

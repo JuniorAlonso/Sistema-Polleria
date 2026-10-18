@@ -47,6 +47,9 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
   repartidorId?: number;
+  /** ISO timestamp de cuando el mozo confirmó que entregó la comanda en mesa. */
+  servidoEn?: string;
+  servidoPor?: number;
 }
 
 export interface CreateOrderRequest {

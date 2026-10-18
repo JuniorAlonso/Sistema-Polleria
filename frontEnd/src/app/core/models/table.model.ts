@@ -9,6 +9,9 @@ export interface OrdenActivaMesa {
   total: number;
   estadoOrden: string;
   tiempoEsperaMinutos: number;
+  /** ISO timestamp de cuando el mozo confirmó que la comanda ya se sirvió en mesa. */
+  servidoEn?: string | null;
+  creadoEn?: string | null;
   codigoSeguimiento?: string;
   itemsResumen?: string;
 }

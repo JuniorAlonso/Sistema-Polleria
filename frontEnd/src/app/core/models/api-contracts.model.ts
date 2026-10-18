@@ -122,6 +122,9 @@ export interface BackendOrdenResponse {
   clienteId?: number;
   mozoId?: number;
   repartidorId?: number;
+  /** Momento en que el mozo confirmó que entregó la comanda en mesa (no cambia el estado). */
+  servidoEn?: string | null;
+  servidoPor?: number | null;
   mesaNumero?: number;
   direccionEntrega?: string;
   referencia?: string;

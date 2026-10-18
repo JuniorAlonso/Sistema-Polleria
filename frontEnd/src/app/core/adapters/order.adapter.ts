@@ -150,7 +150,10 @@ export class OrderAdapter {
       updatedAt: dto.actualizadoEn || dto.creadoEn || new Date().toISOString(),
       // Solo el id: el nombre del motorizado vive en el roster de auth-service (solo ADMIN),
       // así que aquí no se fabrica un "Repartidor #7".
-      repartidorId: dto.repartidorId
+      repartidorId: dto.repartidorId,
+      // Marca persistida de "ya se sirvió en mesa"; el estado sigue siendo LISTO hasta el cobro.
+      servidoEn: dto.servidoEn || undefined,
+      servidoPor: dto.servidoPor ?? undefined
     };
   }
 
