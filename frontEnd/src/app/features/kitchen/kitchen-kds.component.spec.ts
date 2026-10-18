@@ -117,4 +117,35 @@ describe('KitchenKdsComponent — comanda de salón', () => {
     expect(texto).toContain('Esperando que el motorizado retire el pedido');
     expect(texto).not.toContain('servirla en mesa');
   });
+
+  it('ordena las comandas por antigüedad: la más vieja primero (S3.4)', () => {
+    orders.orders.set([
+      ordenDe('DELIVERY', 'EN_PREPARACION', { createdAt: '2026-01-01T00:10:00Z' }),
+      ordenDe('SALON', 'EN_PREPARACION', { createdAt: '2026-01-01T00:00:00Z' })
+    ]);
+    fixture.detectChanges();
+
+    expect(component.rawKitchenOrders().map(o => o.id))
+      .withContext('cocina atiende por orden de llegada')
+      .toEqual(['7', '8']);
+  });
+
+  it('calcula los minutos de espera y tolera una fecha inválida (S3.4)', () => {
+    const haceDiez = new Date(Date.now() - 10 * 60_000).toISOString();
+
+    expect(component.minutosEspera(ordenDe('SALON', 'PAGADO', { createdAt: haceDiez })))
+      .toBeGreaterThanOrEqual(9);
+    expect(component.minutosEspera(ordenDe('SALON', 'PAGADO', { createdAt: 'no-es-fecha' })))
+      .toBe(0);
+  });
+
+  it('marca la comanda recién recibida y muestra el tiempo transcurrido (S3.4)', () => {
+    orders.orders.set([ordenDe('SALON', 'PAGADO')]);
+    fixture.detectChanges();
+
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Nueva');
+    expect(texto).toContain('hace');
+    expect(texto).toContain('min');
+  });
 });

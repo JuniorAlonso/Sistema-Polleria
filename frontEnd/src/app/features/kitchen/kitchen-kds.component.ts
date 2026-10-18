@@ -237,7 +237,7 @@ export interface MermaCierre {
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-2">
               @for (order of filteredKitchenOrders(); track order.id) {
                 <div 
-                  class="rounded-3xl border flex flex-col justify-between transition-all duration-300 shadow-xl overflow-hidden"
+                  class="rounded-3xl border flex flex-col justify-between transition-all duration-300 shadow-xl overflow-hidden animate-slide-up motion-reduce:animate-none"
                   [ngClass]="{
                     'border-rose-500/40 ring-1 ring-rose-500/20': order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO',
                     'border-amber-500/50 ring-1 ring-amber-500/30': order.estado === 'EN_PREPARACION',
@@ -255,6 +255,11 @@ export interface MermaCierre {
                         <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-white/10 text-slate-300">
                           {{ order.tipo }}
                         </span>
+                        @if (esNueva(order)) {
+                          <span class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse motion-reduce:animate-none">
+                            Nueva
+                          </span>
+                        }
                       </div>
                       <h3 class="font-bold text-sm text-slate-200 mt-1">
                         {{ order.cliente.nombre || 'Cliente San Pollo' }}
@@ -269,7 +274,16 @@ export interface MermaCierre {
                       }
                     </div>
 
-                    <app-order-status-badge [status]="order.estado" />
+                    <div class="flex flex-col items-end gap-1">
+                      <app-order-status-badge [status]="order.estado" />
+                      <span 
+                        class="px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap"
+                        [ngClass]="claseEspera(order)"
+                        [title]="'Pedido recibido hace ' + minutosEspera(order) + ' minutos'"
+                      >
+                        hace {{ minutosEspera(order) }} min
+                      </span>
+                    </div>
                   </div>
 
                   <!-- Items List -->
@@ -489,9 +503,11 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   ];
 
   readonly rawKitchenOrders = computed(() =>
-    this.ordersService.orders().filter(o =>
-      ['PAGADO', 'PENDIENTE_PAGO', 'EN_PREPARACION', 'LISTO_COCINA'].includes(o.estado)
-    )
+    this.ordersService.orders()
+      .filter(o => ['PAGADO', 'PENDIENTE_PAGO', 'EN_PREPARACION', 'LISTO_COCINA'].includes(o.estado))
+      // Cocina atiende por orden de llegada: la comanda más vieja primero (no la más nueva).
+      .slice()
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   );
 
   readonly kitchenOrdersCount = computed(() => this.rawKitchenOrders().length);
@@ -540,6 +556,24 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
 
   getCodeNum(code: string): string {
     return code ? code.replace('POL-', '') : '1001';
+  }
+
+  /** Minutos transcurridos desde que entró la comanda; 0 si la fecha no es válida. */
+  minutosEspera(order: Order): number {
+    const inicio = new Date(order.createdAt).getTime();
+    if (!Number.isFinite(inicio)) return 0;
+    return Math.max(0, Math.floor((Date.now() - inicio) / 60000));
+  }
+
+  /** Una comanda recién recibida (todavía sin empezar) se marca como nueva. */
+  esNueva(order: Order): boolean {
+    return order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO';
+  }
+
+  claseEspera(order: Order): string {
+    return this.minutosEspera(order) >= 10
+      ? 'text-rose-300 bg-rose-500/15 border-rose-500/30'
+      : 'text-slate-300 bg-white/5 border-white/10';
   }
 
   getActiveTabLabel(): string {
