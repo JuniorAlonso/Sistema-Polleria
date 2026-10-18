@@ -5,6 +5,8 @@ import { provideRouter } from '@angular/router';
 import { MozoSalonComponent, MesaSalon } from './mozo-salon.component';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
+import { SalonService } from '../../core/services/salon.service';
+import { Product } from '../../core/models/product.model';
 
 /** Token de 3 partes: a SalonService solo le importa que exista para habilitar /mesas. */
 function tokenDeSesion(): string {
@@ -120,6 +122,8 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
       creadoEn: '2026-01-01T00:00:00Z'
     });
     flushMesasReload();
+    // El cobro también refresca el historial del turno desde /ordenes.
+    http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes')).forEach(r => r.flush([]));
 
     expect(component.selectedMesaModal()).toBeNull();
     const exito = notify.showSuccess as jasmine.Spy;
@@ -227,5 +231,161 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Sin comanda activa');
     expect(fixture.nativeElement.textContent).not.toContain('Chaufa de Pollo');
+  });
+});
+
+/**
+ * S4.5/S4.6 — la ventana del mozo reutiliza la comanda activa de la mesa
+ * (`POST /ordenes/{id}/items`), no libera mesas con comanda activa y el historial del turno
+ * sale de `/ordenes`, sin totales ni filas hardcodeadas.
+ */
+describe('MozoSalonComponent — comanda de salón e historial real', () => {
+  let fixture: ComponentFixture<MozoSalonComponent>;
+  let component: MozoSalonComponent;
+  let http: HttpTestingController;
+  let notify: NotificationService;
+  let salon: SalonService;
+
+  const producto: Product = {
+    id: 'prod-1',
+    nombre: 'Chaufa de Pollo',
+    descripcion: 'Chaufa clásico',
+    precio: 32.5,
+    imagenUrl: '',
+    categoria: 'POLLO_A_LA_BRASA' as Product['categoria'],
+    agotado: false
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    TestBed.configureTestingModule({
+      imports: [MozoSalonComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])]
+    });
+
+    TestBed.inject(AuthService).token.set(tokenDeSesion());
+    fixture = TestBed.createComponent(MozoSalonComponent);
+    component = fixture.componentInstance;
+    http = TestBed.inject(HttpTestingController);
+    notify = TestBed.inject(NotificationService);
+    salon = TestBed.inject(SalonService);
+
+    spyOn(notify, 'showSuccess');
+    spyOn(notify, 'showError');
+    spyOn(notify, 'showInfo');
+    spyOn(notify, 'showWarning');
+
+    fixture.detectChanges();
+
+    // Peticiones iniciales (zonas, mesas, productos, /ordenes del historial).
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => {
+    fixture.destroy();
+    http.verify();
+  });
+
+  /** Mesa 3 del backend: ocupada con la comanda #7, o libre sin comanda. */
+  function cargarMesaEnSalon(conComanda: boolean, estado: 'LIBRE' | 'OCUPADA' = 'OCUPADA'): void {
+    salon.mesas.set([{
+      id: 3,
+      numero: 3,
+      capacidad: 4,
+      estado,
+      posicionX: 1,
+      posicionY: 1,
+      zona: 'SALON_PRINCIPAL',
+      ordenActiva: conComanda
+        ? { ordenId: 7, mozoId: 7, total: 45.5, estadoOrden: 'LISTO', tiempoEsperaMinutos: 5 }
+        : undefined
+    }]);
+  }
+
+  function flushMesasReload(): void {
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+  }
+
+  it('con comanda activa agrega los platos a esa comanda, sin abrir otra (S4.5)', () => {
+    cargarMesaEnSalon(true);
+    component.selectedMesaForOrder = 3;
+    component.comandaItems = [{ producto, cantidad: 2, notas: 'sin ají' }];
+
+    component.enviarComandaACocina();
+
+    const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/items'));
+    expect(post.request.body.items)
+      .withContext('los platos viajan a la comanda existente con su producto y cantidad')
+      .toEqual([{ productoId: 1, cantidad: 2, notas: 'sin ají' }]);
+
+    http.expectNone(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+
+    post.flush(dtoOrden());
+    flushMesasReload();
+
+    const exito = notify.showSuccess as jasmine.Spy;
+    expect(exito).toHaveBeenCalled();
+    expect(exito.calls.mostRecent().args.join(' ')).toContain('2 platos agregados');
+    expect(component.comandaItems.length).toBe(0);
+    expect(component.activeTab()).toBe('MESAS');
+  });
+
+  it('sin comanda activa abre la comanda de salón con el mesaId elegido (S4.5)', () => {
+    cargarMesaEnSalon(false, 'LIBRE');
+    component.selectedMesaForOrder = 3;
+    component.comandaItems = [{ producto, cantidad: 1, notas: '' }];
+
+    component.enviarComandaACocina();
+
+    const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+    expect(post.request.body.tipo).toBe('SALON');
+    expect(post.request.body.mesaId).toBe(3);
+    http.expectNone(r => r.url.includes('/items'));
+
+    post.flush(dtoOrden({ estado: 'RECIBIDO' }));
+    flushMesasReload();
+
+    expect(notify.showSuccess).toHaveBeenCalled();
+    expect(component.activeTab()).toBe('MESAS');
+  });
+
+  it('no libera ni pasa a limpieza una mesa con comanda activa (S4.6)', () => {
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
+
+    component.cambiarEstadoMesa('LIBRE');
+    http.expectNone(r => r.method === 'PUT' && r.url.includes('/mesas/3/estado'));
+    const advertencia = notify.showWarning as jasmine.Spy;
+    expect(advertencia).toHaveBeenCalled();
+    expect(advertencia.calls.mostRecent().args.join(' ')).toContain('comanda #7');
+    expect(component.selectedMesaModal()).withContext('el modal queda abierto para cobrar').not.toBeNull();
+
+    component.cambiarEstadoMesa('EN_LIMPIEZA');
+    http.expectNone(r => r.method === 'PUT' && r.url.includes('/mesas/3/estado'));
+    expect(advertencia.calls.count()).toBe(2);
+    expect(component.selectedMesaModal()).not.toBeNull();
+  });
+
+  it('el historial del turno usa las comandas cerradas reales de /ordenes (S4.6)', () => {
+    component.ordersService.loadActiveOrders();
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes'))
+      .flush([dtoOrden({ estado: 'ENTREGADO', total: 45.5 })]);
+
+    expect(component.historialSalon().length).toBe(1);
+    expect(component.mesasAtendidasHoy()).toBe(1);
+    expect(component.totalCobradoTurno()).toBe(45.5);
+
+    component.activeTab.set('HISTORIAL_TURNO');
+    fixture.detectChanges();
+
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Cerrada');
+    expect(texto).toContain('Mesa 3');
+    expect(texto).toContain('1x Chaufa de Pollo');
+    expect(texto).withContext('los totales y métodos de pago simulados deben desaparecer')
+      .not.toContain('1,840.50');
+    expect(texto).not.toContain('Método Pago');
+    expect(texto).not.toContain('Propinas Digitales Estimadas');
   });
 });

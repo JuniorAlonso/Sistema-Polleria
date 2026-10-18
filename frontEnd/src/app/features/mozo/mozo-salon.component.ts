@@ -16,6 +16,8 @@ export type MozoTab = 'MESAS' | 'TOMAR_COMANDA' | 'ALERTAS_COCINA' | 'HISTORIAL_
 
 export interface MesaSalon {
   id: number;
+  /** Número visible de la mesa en el salón (1, 2, 3...). Se usa en títulos y en la comanda. */
+  numero?: number;
   nombre: string;
   zona: 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP' | string;
   capacidad: number;
@@ -678,13 +680,20 @@ export interface AlertaPlatoListo {
                 <div>
                   <div class="flex justify-between items-center pb-4 border-b border-white/10">
                     <div>
-                      <h3 class="text-base font-extrabold text-white">Comanda Mesa #{{ selectedMesaForOrder }}</h3>
+                      <h3 class="text-base font-extrabold text-white">Comanda Mesa #{{ mesaParaComanda()?.numero ?? selectedMesaForOrder }}</h3>
                       <p class="text-xs text-slate-400">Mozo: {{ auth.currentUser()?.nombre || 'Yovana M.' }}</p>
                     </div>
                     <span class="px-2.5 py-1 rounded-full bg-polleria-crimson text-white text-xs font-bold">
                       {{ comandaItems.length }} items
                     </span>
                   </div>
+
+                  <!-- Comanda activa de la mesa: los platos se suman a la misma orden -->
+                  @if (mesaParaComanda()?.ordenId; as ordenId) {
+                    <div class="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-[11px] text-amber-200 leading-snug">
+                      Esta mesa ya tiene la comanda #{{ ordenId }}{{ comandaMesa()?.estado ? ' (' + etiquetaEstadoComanda(comandaMesa()!.estado) + ')' : '' }}. Los platos que agregues se suman a esa comanda.
+                    </div>
+                  }
 
                   <!-- Comanda Items List -->
                   <div class="py-4 space-y-3 overflow-y-auto max-h-[360px] custom-scrollbar">
@@ -728,7 +737,12 @@ export interface AlertaPlatoListo {
                     (click)="enviarComandaACocina()"
                     class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
                   >
-                    <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>Enviar a Cocina & Horno
+                    <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    @if (mesaParaComanda()?.ordenId; as ordenId) {
+                      <span>Agregar a la comanda #{{ ordenId }}</span>
+                    } @else {
+                      <span>Enviar a Cocina & Horno</span>
+                    }
                   </button>
                 </div>
 
@@ -750,13 +764,6 @@ export interface AlertaPlatoListo {
                 </h2>
                 <p class="text-xs text-slate-400">Notificaciones instantáneas de platos recién salidos del horno para servir a mesa.</p>
               </div>
-
-              <button 
-                (click)="simularNuevoAvisoCocina()"
-                class="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold border border-white/10 transition cursor-pointer"
-              >
-                + Simular Aviso de Cocina
-              </button>
             </div>
 
             <!-- Alerts List -->
@@ -807,15 +814,15 @@ export interface AlertaPlatoListo {
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
                 <span class="text-xs text-slate-400 font-medium">Mesas Atendidas Hoy</span>
-                <p class="font-display text-3xl font-black text-white mt-1">14</p>
+                <p class="font-display text-3xl font-black text-white mt-1">{{ mesasAtendidasHoy() }}</p>
               </div>
               <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
                 <span class="text-xs text-slate-400 font-medium">Total Cobrado en Turno</span>
-                <p class="font-display text-3xl font-black text-polleria-gold mt-1">S/. 1,840.50</p>
+                <p class="font-display text-3xl font-black text-polleria-gold mt-1">{{ totalCobradoTurno() | currencyPEN }}</p>
               </div>
               <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Propinas Digitales Estimadas</span>
-                <p class="font-display text-3xl font-black text-emerald-400 mt-1">S/. 92.00</p>
+                <span class="text-xs text-slate-400 font-medium">Comandas de Salón Activas</span>
+                <p class="font-display text-3xl font-black text-emerald-400 mt-1">{{ comandasActivasSalon() }}</p>
               </div>
             </div>
 
@@ -831,37 +838,25 @@ export interface AlertaPlatoListo {
                     <tr>
                       <th class="p-3">Mesa</th>
                       <th class="p-3">Comanda / Detalle</th>
-                      <th class="p-3">Método Pago</th>
-                      <th class="p-3">Monto</th>
+                      <th class="p-3">Total</th>
                       <th class="p-3">Hora</th>
                       <th class="p-3">Estado</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 01</td>
-                      <td class="p-3">1x Pollo Entero, 1x Chicha 1L</td>
-                      <td class="p-3 font-mono text-emerald-400">YAPE</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 89.00</td>
-                      <td class="p-3 text-slate-400">14:35</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 04</td>
-                      <td class="p-3">1/2 Pollo a la Brasa, 1x Salchipapa</td>
-                      <td class="p-3 font-mono text-sky-400">TARJETA VISA</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 65.00</td>
-                      <td class="p-3 text-slate-400">15:10</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 03</td>
-                      <td class="p-3">2x Combo Familiar, 1x Tequeños</td>
-                      <td class="p-3 font-mono text-amber-400">EFECTIVO</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 154.00</td>
-                      <td class="p-3 text-slate-400">15:45</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
+                    @for (o of historialSalon(); track o.id) {
+                      <tr class="hover:bg-white/5">
+                        <td class="p-3 font-bold text-white">Mesa {{ o.cliente.mesaNumero ?? '—' }}</td>
+                        <td class="p-3">#{{ getCodeNum(o.codigoSeguimiento) }} · {{ resumenItems(o) }}</td>
+                        <td class="p-3 font-display font-bold text-polleria-gold">{{ o.total | currencyPEN }}</td>
+                        <td class="p-3 text-slate-400">{{ horaDe(o.updatedAt) }}</td>
+                        <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cerrada</span></td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="5" class="p-6 text-center text-slate-500">Todavía no hay comandas cerradas en este turno.</td>
+                      </tr>
+                    }
                   </tbody>
                 </table>
               </div>
@@ -1055,6 +1050,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     const backendMesas = this.salonService.mesas();
     return backendMesas.map(bm => ({
       id: Number(bm.id),
+      numero: bm.numero,
       nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
       zona: bm.zona || 'SALON_PRINCIPAL',
       capacidad: bm.capacidad,
@@ -1094,9 +1090,24 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     return this.mesas().filter(m => m.zona === zone);
   });
 
+  // S4.6: historial del turno con los datos reales de /ordenes (sin filas ni totales inventados).
+  readonly historialSalon = computed(() =>
+    this.ordersService.orders().filter(o => o.tipo === 'SALON' && o.estado === 'COMPLETADO')
+  );
+  readonly mesasAtendidasHoy = computed(() => this.historialSalon().length);
+  readonly totalCobradoTurno = computed(() =>
+    this.historialSalon().reduce((acc, o) => acc + (o.total || 0), 0)
+  );
+  readonly comandasActivasSalon = computed(() =>
+    this.ordersService.orders().filter(o =>
+      o.tipo === 'SALON' && !['COMPLETADO', 'CANCELADO'].includes(o.estado)
+    )
+  );
+
   ngOnInit(): void {
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
+    this.ordersService.loadActiveOrders();
   }
 
   getActiveTabLabel(): string {
@@ -1322,9 +1333,42 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     return this.comandaItems.reduce((acc, i) => acc + (i.producto.precio * i.cantidad), 0);
   }
 
+  /** Mesa elegida en la pestaña Tomar Comanda (selectedMesaForOrder es un valor plano de ngModel). */
+  mesaParaComanda(): MesaSalon | undefined {
+    const mesaId = Number(this.selectedMesaForOrder);
+    return this.mesas().find(m => m.id === mesaId);
+  }
+
+  /** «1x Chaufa de Pollo, 2x Inca Kola» a partir de los ítems reales de la orden. */
+  resumenItems(o: Order): string {
+    if (!o?.items?.length) return '—';
+    return o.items.map(i => `${i.cantidad}x ${i.product?.nombre ?? 'Producto'}`).join(', ');
+  }
+
+  horaDe(iso: string): string {
+    if (!iso) return '—';
+    const fecha = new Date(iso);
+    if (Number.isNaN(fecha.getTime())) return '—';
+    return fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  getCodeNum(code: string): string {
+    return code ? code.replace('POL-', '') : '—';
+  }
+
+  /**
+   * S4.5: si la mesa elegida ya tiene comanda activa, los platos se agregan a ESA orden
+   * (`POST /ordenes/{id}/items`); si no, se abre la comanda de salón.
+   */
   enviarComandaACocina(): void {
     const mesaId = Number(this.selectedMesaForOrder);
     const mesa = this.mesas().find(m => m.id === mesaId);
+    if (!mesa) {
+      this.notify.showError('Seleccioná una mesa válida');
+      return;
+    }
+
+    if (this.comandaItems.length === 0) return;
 
     const itemsReq = this.comandaItems.map(item => ({
       productoId: item.producto.id,
@@ -1332,25 +1376,49 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       notas: item.notas
     }));
 
+    const alTerminar = (): void => {
+      // El backend ya dejó la mesa ocupada y con la comanda actualizada: recargamos el salón.
+      this.salonService.cargarMesas();
+      this.comandaItems = [];
+      this.activeTab.set('MESAS');
+    };
+
+    if (mesa.ordenId) {
+      this.ordersService.agregarItemsAOrden(mesa.ordenId, itemsReq).subscribe({
+        next: () => {
+          const platos = itemsReq.reduce((acc, i) => acc + i.cantidad, 0);
+          this.notify.showSuccess(`${platos} platos agregados a la comanda de ${mesa.nombre}`);
+          alTerminar();
+        },
+        error: (err) => {
+          const mensaje = err?.message || 'El servidor rechazó los platos nuevos';
+          this.notify.showError('No se pudieron agregar los platos', mensaje);
+        }
+      });
+      return;
+    }
+
+    const numeroMesa = mesa.numero ?? mesa.id;
     this.ordersService.createOrder({
       tipo: 'SALON',
+      mesaId,
       metodoPago: 'EFECTIVO_CONTRAENTREGA',
       cliente: {
         // La comanda de salón no tiene celular del cliente: no se inventa uno.
-        nombre: `Mesa #${mesaId}`,
+        nombre: `Mesa ${String(numeroMesa).padStart(2, '0')}`,
         celular: '',
-        mesaNumero: mesaId
+        mesaNumero: numeroMesa
       },
       items: itemsReq
     }).subscribe({
       next: (created) => {
-        this.notify.showSuccess(`Comanda creada en cocina para Mesa #${mesaId} (Orden #${created.codigoSeguimiento})`);
-        this.salonService.actualizarEstado(mesaId, 'OCUPADA').subscribe();
-        this.comandaItems = [];
-        this.activeTab.set('MESAS');
+        this.notify.showSuccess(`Comanda creada en cocina para ${mesa.nombre} (Orden #${created.codigoSeguimiento})`);
+        alTerminar();
       },
       error: (err) => {
-        this.notify.showError(`Error al enviar comanda: ${err?.error?.message || 'Compruebe conexión con orders-service'}`);
+        const mensaje = err?.message || err?.error?.error || err?.error?.message
+          || 'Compruebe conexión con orders-service';
+        this.notify.showError('Error al enviar comanda', mensaje);
       }
     });
   }
@@ -1364,32 +1432,33 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.notify.showSuccess(`Plato servido en ${alerta.mesa}`);
   }
 
-  simularNuevoAvisoCocina(): void {
-    this.alertas.unshift({
-      id: `ALT-${Date.now()}`,
-      mesa: 'Mesa 06',
-      plato: '1x Combo Familiar San Pollo',
-      cantidad: 1,
-      hora: new Date().toLocaleTimeString().slice(0, 5),
-      atendido: false
-    });
-    this.notify.showInfo('Nuevo Plato Listo', 'Mesa 06: Combo Familiar listo para servir.');
-  }
-
   cambiarEstadoMesa(estado: TableStatus): void {
     const m = this.selectedMesaModal();
-    if (m) {
-      this.salonService.actualizarEstado(m.id, estado).subscribe({
-        next: (upd) => {
-          m.estado = upd.estado;
-          this.cerrarModalMesa();
-        },
-        error: () => {
-          this.cerrarModalMesa();
-          this.salonService.cargarMesas();
-        }
-      });
+    if (!m) return;
+
+    if (estado === 'LIBRE' || estado === 'EN_LIMPIEZA') {
+      const comanda = this.comandaMesa();
+      const comandaActiva = comanda && !['COMPLETADO', 'CANCELADO'].includes(comanda.estado)
+        ? comanda.id
+        : undefined;
+      const ordenId = comandaActiva ?? m.ordenId;
+      if (ordenId) {
+        this.notify.showWarning('Comanda activa',
+          `Cobrá o cancelá la comanda #${this.getCodeNum(String(ordenId))} antes de pasar la mesa a ${estado}.`);
+        return;
+      }
     }
+
+    this.salonService.actualizarEstado(m.id, estado).subscribe({
+      next: (upd) => {
+        m.estado = upd.estado;
+        this.cerrarModalMesa();
+      },
+      error: () => {
+        this.cerrarModalMesa();
+        this.salonService.cargarMesas();
+      }
+    });
   }
 
   guardarPosicionMesaModal(): void {
@@ -1412,6 +1481,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       this.ordersService.updateOrderStatus(m.ordenId, 'COMPLETADO').subscribe({
         next: () => {
           this.salonService.cargarMesas();
+          this.ordersService.loadActiveOrders();
           this.cerrarModalMesa();
           this.notify.showSuccess(`Cuenta cobrada para ${m.nombre}. La comanda quedó cerrada.`);
         },
