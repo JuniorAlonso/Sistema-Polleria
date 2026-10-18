@@ -53,7 +53,7 @@ graph TD
 | Código | Tipo | Requerimiento Oficial | Implementación Técnica | Estado |
 | :--- | :---: | :--- | :--- | :---: |
 | **RF11** | RF | Visualización del estado de mesas, ocupación y vinculación a orden. | `MesaController` + `SalonService.mesas` + Cuadrícula matricial reactiva. | ✅ 100% |
-| **RF12** | RF | Registro de pedidos de salón en dispositivo móvil tras selección presencial. | Modal de Comanda rápida en `MozoSalonComponent` conectado a `POST /ordenes`. | ✅ 100% |
+| **RF12** | RF | Registro de pedidos de salón en dispositivo móvil tras selección presencial. | Modal de Comanda rápida en `MozoSalonComponent` conectado a `POST /ordenes` y `POST /ordenes/{id}/items` para la segunda ronda. | ✅ 100% |
 | **RF16** | RF | Cocina y admin actualizan estado de pedidos (`LISTO` cocina), validando transiciones. | `PATCH /ordenes/{id}/estado` en KDS Cocina activando evento automático. | ✅ 100% |
 | **RF33** | RF | Notificación en tiempo real al mozo con plato y mesa listos. | Evento WebSocket `/ws-polleria` + fallback de polling reactivo cada 6s. | ✅ 100% |
 | **RNF06** | RNF | Notificaciones con baja latencia (< 500 ms) hacia tablets de mozos. | STOMP over SockJS + banners visuales con sonido de alerta. | ✅ 100% |
@@ -82,6 +82,11 @@ Se implementó una clara distinción entre el perfil de **Administrador** y el d
 │   como mozo en salón.             │   en tiempo real para servir.      │
 └───────────────────────────────────┴────────────────────────────────────┘
 ```
+
+> **Flujo local completo desde `/admin`:** además del CRUD, el inspector de mesa permite *Tomar
+> comanda*, *Agregar platos* a la comanda activa (`POST /ordenes/{id}/items`) y *Cobrar comanda*
+> (solo cuando cocina la dejó `LISTO`). El alta manual con tipo `SALON` exige elegir la mesa y envía
+> su `id` real; ya no cae en la mesa 1.
 
 ---
 
@@ -114,9 +119,15 @@ stateDiagram-v2
 > **El cobro cierra la comanda.** La mesa no se libera sola: al cobrar, el mozo marca la orden de salón
 > como `ENTREGADO` (`PATCH /ordenes/{id}/estado`) y `OrdenService.actualizarEstado` deja la mesa en
 > `LIBRE`. Si la comanda sigue en `EN_PREPARACION`, el backend rechaza el cierre (la cocina debe
-> marcarla `LISTO` primero) y el mozo ve ese motivo en pantalla. Liberar la mesa sin cerrar la comanda
-> la deja mostrada como libre pero inutilizable: `OrdenService.crear` rechaza una segunda comanda
-> mientras la anterior siga activa (`ESTADOS_TERMINALES = ENTREGADO | CANCELADO`).
+> marcarla `LISTO` primero) y el mozo ve ese motivo en pantalla. La segunda ronda de platos se suma a
+> la MISMA comanda con `POST /ordenes/{id}/items`; si la comanda ya estaba `LISTO`, vuelve a
+> `EN_PREPARACION` para que cocina la prepare.
+>
+> **La mesa no se libera con comanda activa.** `MesaService.actualizarEstado` rechaza con `409` pasar
+> la mesa a `LIBRE` o `EN_LIMPIEZA` mientras exista una orden no terminal, salvo `forzar=true`. Las
+> ventanas del mozo y del admin avisan antes de disparar la petición: primero se cobra o se cancela.
+> Sin esta guarda, la mesa quedaba mostrada como libre pero `OrdenService.crear` la rechazaba para
+> siempre (`ESTADOS_TERMINALES = ENTREGADO | CANCELADO`).
 
 ---
 
@@ -233,9 +244,15 @@ CREATE INDEX idx_zonas_orden ON zonas_salon(orden);
 | `PATCH` o `PUT` | `/mesas/{id}/estado` | `ADMIN`, `MOZO` | Transición en la máquina de estados (`LIBRE`, `OCUPADA`, etc.) con bandera `forzar`. |
 | `DELETE` | `/mesas/{id}` | `ADMIN` | Baja de mesa (desactivación lógica para preservar el histórico de comandas). |
 | `GET` | `/mesas/{id}/orden-activa` | `ADMIN`, `MOZO` | Obtiene el detalle de la comanda abierta para facturación o precuenta. |
+| `POST` | `/ordenes/{id}/items` | `ADMIN`, `MOZO` | Segunda ronda: suma platos a la MISMA comanda de salón, recalcula el total y republica el evento de cocina. Una comanda `LISTO` vuelve a `EN_PREPARACION`; una terminal responde `409`. |
 | `GET` | `/zonas` | Público (sin `@PreAuthorize`) | Listado de zonas del salón persistidas en PostgreSQL (`ZonaSalon`). |
 | `GET` | `/zonas/{id}` | Público (sin `@PreAuthorize`) | Detalle de una zona específica. |
 | `PUT` | `/zonas/{id}/dimensiones` | `ADMIN`, `MOZO` (`hasAnyRole`) | Ajuste dinámico de cuadrícula matricial (filas y columnas) persistido en base de datos. |
+
+> **Alta de comanda de salón:** `POST /ordenes` con `tipo=SALON` exige personal autenticado
+> (`ADMIN`, `MOZO`, `COCINA`, `REPARTIDOR` o `CAJERO`) o `X-Internal-Key`; un anónimo o un `CLIENTE`
+> recibe `403`. `DELIVERY` y `RECOJO` siguen públicos para el checkout de invitados. La orden de salón
+> registra `clienteId` y `mozoId` con el usuario del token.
 
 #### Ejemplo Payload `PUT /mesas/{id}/estado`
 ```json
@@ -288,6 +305,7 @@ if (orden.getMesa() != null) {
 2. **Pruebas de Microservicio:** Peticiones HTTP a `GET /mesas` validadas con código 200 OK y tiempo de respuesta inferior a 45 ms.
 3. **Persistencia Dockerizada:** Contenedores `polleria-orders-service` y `polleria-postgres` validados en ejecución saludable tras el ajuste de DDL y security filters.
 4. **Resiliencia de Red:** Errores de desconexión transitoria capturados con RxJS `catchError` sin congelar el renderizado del navegador.
+5. **Flujo local completo (auditoría 2026-10):** `orders-service` 67 tests; specs Angular del adaptador/servicio de órdenes 21, mozo 12, admin 5 y cocina 3; build AOT y `tsc --noEmit` en 0. El recorrido manual está en `rest-tests/06-flujo-salon-local.http`.
 
 ---
 

@@ -1,0 +1,143 @@
+###############################################################################
+# SISTEMA POLLERÍA — FLUJO COMPLETO DE PEDIDO EN LOCAL (SALÓN)
+# Extensión: REST Client (humao.rest-client)
+#
+# Recorrido: login de mozo → comanda de salón en una mesa concreta → segunda ronda
+# → cocina (EN_PREPARACION / LISTO) → guarda de liberación (409) → cobro (ENTREGADO)
+# → mesa LIBRE. Al final, los negativos de seguridad.
+#
+# Requisitos: stack local (`docker compose -f polleria/docker-compose.local.yml up -d`)
+# y productos/mesas sembrados. Ajustá MESA_ID y PRODUCTO_ID a los ids reales.
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+
+@MOZO_EMAIL = mozo.polleria@yopmail.com
+@MOZO_PASSWORD = Password123!
+@MESA_ID = 1
+@PRODUCTO_ID = 1
+
+### 0.1 Login del mozo (guardá el token de la respuesta)
+# @name loginMozo
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "{{MOZO_EMAIL}}",
+  "password": "{{MOZO_PASSWORD}}"
+}
+
+@MOZO_TOKEN = {{loginMozo.response.body.token}}
+
+### 0.2 Plano de mesas: elegí una LIBRE y anotá su id
+GET {{ORDERS_URL}}/mesas
+Authorization: Bearer {{MOZO_TOKEN}}
+
+### 1. Crear la comanda de salón para la mesa elegida
+# Esperado: 201. La mesa queda OCUPADA y la orden registra clienteId y mozoId.
+# @name comanda
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{
+  "tipo": "SALON",
+  "mesaId": {{MESA_ID}},
+  "nombreCliente": "Mesa de prueba",
+  "items": [
+    { "productoId": {{PRODUCTO_ID}}, "cantidad": 2, "notas": "sin ají" }
+  ]
+}
+
+@ORDEN_ID = {{comanda.response.body.id}}
+
+### 2. Segunda ronda: los platos se suman a la MISMA comanda
+# Esperado: 200, items con la suma y total recalculado. No se crea otra comanda.
+POST {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/items
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{
+  "items": [
+    { "productoId": {{PRODUCTO_ID}}, "cantidad": 1, "notas": "bien dorado" }
+  ]
+}
+
+### 3. Cocina empieza la preparación
+# Esperado: 200. Estado EN_PREPARACION.
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### 4. Cocina marca la comanda LISTO
+# Esperado: 200. Dispara el aviso de plato listo al mozo.
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### 5. GUARDA: no se puede liberar la mesa con la comanda activa
+# Esperado: 409 con el id de la comanda en el mensaje. La mesa conserva su estado.
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{ "estado": "LIBRE" }
+
+### 6. Cobro: el mozo cierra la comanda
+# Esperado: 200. La orden pasa a ENTREGADO y el backend deja la mesa LIBRE.
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/estado
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### 7. Verificación: la mesa volvió a LIBRE y sin ordenActiva
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{MOZO_TOKEN}}
+
+### 8. La mesa ya acepta una comanda nueva
+# Esperado: 201 (la comanda anterior está cerrada).
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{
+  "tipo": "SALON",
+  "mesaId": {{MESA_ID}},
+  "nombreCliente": "Mesa de prueba 2",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 9. NEGATIVO: un anónimo no puede abrir una comanda de salón
+# Esperado: 403. No se crea la orden ni se ocupa la mesa.
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{
+  "tipo": "SALON",
+  "mesaId": {{MESA_ID}},
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 10. NEGATIVO: agregar platos a una comanda ya cerrada
+# Requiere una orden ENTREGADO/CANCELADO. Esperado: 409.
+POST {{ORDERS_URL}}/ordenes/{{ORDEN_ID}}/items
+Authorization: Bearer {{MOZO_TOKEN}}
+Content-Type: application/json
+
+{
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 11. NEGATIVO: una comanda de delivery no acepta la segunda ronda de salón
+# Requiere el id de una orden DELIVERY. Esperado: 400.
+# POST {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY_ID}}/items
+# Authorization: Bearer {{MOZO_TOKEN}}
+# Content-Type: application/json
+#
+# { "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ] }
