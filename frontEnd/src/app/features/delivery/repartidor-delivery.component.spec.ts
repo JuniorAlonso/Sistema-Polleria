@@ -238,4 +238,29 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
 
     expect(component.selectedOrderModal()?.id).toBe('2');
   });
+
+  it('comandas de SALON nunca aparecen en las bandejas del repartidor aunque estén en LISTO_COCINA', () => {
+    ordersService.orders.set([
+      orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA' }),
+      orden({ id: '11', tipo: 'DELIVERY', estado: 'LISTO_COCINA' })
+    ]);
+    fixture.detectChanges();
+
+    const disponibles = component.readyForPickupOrders().map(o => o.id);
+    expect(disponibles).not.toContain('10');
+    expect(disponibles).toContain('11');
+
+    const activas = component.filteredActiveDeliveryOrders().map(o => o.id);
+    expect(activas).not.toContain('10');
+    expect(activas).toContain('11');
+  });
+
+  it('si se intenta tomar un pedido de SALON, es rechazado y no dispara PATCH', () => {
+    const ordenSalon = orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA' });
+    component.tomarPedido(ordenSalon);
+    fixture.detectChanges();
+
+    const patchRequests = http.match(r => r.method === 'PATCH');
+    expect(patchRequests.length).withContext('no debe dispararse ninguna llamada PATCH').toBe(0);
+  });
 });

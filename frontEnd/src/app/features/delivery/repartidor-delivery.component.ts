@@ -567,7 +567,7 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   montoPagaCliente = 100;
 
   readonly deliveryOrders = computed(() =>
-    this.ordersService.orders().filter(o => (o.tipo || 'DELIVERY').toUpperCase() === 'DELIVERY')
+    this.ordersService.orders().filter(o => o.tipo === 'DELIVERY')
   );
 
   /** Identidad real del motorizado autenticado (claim `userId` del JWT). */
@@ -672,6 +672,10 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     const miId = this.miIdMotorizado();
     if (!miId) {
       this.notify.showError('No se pudo identificar tu usuario. Vuelve a iniciar sesión para tomar pedidos.');
+      return;
+    }
+    if (order.tipo !== 'DELIVERY') {
+      this.notify.showError('Esta orden pertenece a salón o recojo y no puede ser tomada para delivery.');
       return;
     }
     if (order.estado !== 'LISTO_COCINA') {

@@ -33,6 +33,8 @@ export interface MesaSalon {
   /** Mozo que tomó la comanda activa (para el chip «Tu comanda»). */
   mozoId?: number;
   ordenId?: string;
+  servidoEn?: string | null;
+  creadoEn?: string | null;
   items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
 }
 
@@ -402,51 +404,60 @@ export interface AlertaPlatoListo {
 
                 <!-- Barra de Personalización de Cuadrícula (Filas × Columnas) & Leyenda -->
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#121419] p-3 rounded-xl border border-white/5 text-xs">
-                  <div class="flex items-center gap-4 flex-wrap">
-                    <span class="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Personalizar Cuadrícula:</span>
-                    
-                    <!-- Ajuste de Filas -->
-                    <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                      <span class="text-slate-400">Filas:</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarFilas(-1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Quitar fila"
-                      >-</button>
-                      <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().filas }}</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarFilas(1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Agregar fila"
-                      >+</button>
-                    </div>
+                  @if (auth.isAdmin()) {
+                    <div class="flex items-center gap-4 flex-wrap">
+                      <span class="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Personalizar Cuadrícula:</span>
+                      
+                      <!-- Ajuste de Filas -->
+                      <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
+                        <span class="text-slate-400">Filas:</span>
+                        <button 
+                          type="button" 
+                          (click)="ajustarFilas(-1)" 
+                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                          title="Quitar fila"
+                        >-</button>
+                        <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().filas }}</span>
+                        <button 
+                          type="button" 
+                          (click)="ajustarFilas(1)" 
+                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                          title="Agregar fila"
+                        >+</button>
+                      </div>
 
-                    <!-- Ajuste de Columnas -->
-                    <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                      <span class="text-slate-400">Columnas:</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarColumnas(-1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Quitar columna"
-                      >-</button>
-                      <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().columnas }}</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarColumnas(1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Agregar columna"
-                      >+</button>
+                      <!-- Ajuste de Columnas -->
+                      <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
+                        <span class="text-slate-400">Columnas:</span>
+                        <button 
+                          type="button" 
+                          (click)="ajustarColumnas(-1)" 
+                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                          title="Quitar columna"
+                        >-</button>
+                        <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().columnas }}</span>
+                        <button 
+                          type="button" 
+                          (click)="ajustarColumnas(1)" 
+                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
+                          title="Agregar columna"
+                        >+</button>
+                      </div>
                     </div>
-                  </div>
+                  } @else {
+                    <div class="flex items-center gap-2 text-slate-400 text-[11px]">
+                      <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                      <span>Toca una mesa verde para iniciar comanda, o amarilla para cobrar y cerrar comanda.</span>
+                    </div>
+                  }
 
                   <!-- Leyenda de Estados para el Mozo -->
                   <div class="flex items-center gap-3 text-[11px] flex-wrap">
                     <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Libre</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Ocupada</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span> Cobrar</span>
+                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Ocupada (Cocina)</span>
+                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30"></span> Servida / Cobrar</span>
                     <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span> Limpieza</span>
                   </div>
                 </div>
@@ -481,14 +492,14 @@ export interface AlertaPlatoListo {
                         @if (getMesaEnCasilla(r, c); as mesa) {
                           <!-- CASILLA OCUPADA POR MESA -->
                           <div 
-                            draggable="true"
-                            (dragstart)="onDragStartMesa($event, mesa)"
+                            [attr.draggable]="auth.isAdmin() ? true : null"
+                            (dragstart)="auth.isAdmin() ? onDragStartMesa($event, mesa) : null"
                             (click)="onCasillaClick(r, c)"
                             class="h-28 rounded-2xl p-2.5 border-2 flex flex-col justify-between items-center transition-all cursor-pointer relative select-none group shadow-lg"
                             [ngClass]="{
                               'bg-emerald-950/80 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/20 hover:scale-[1.02]': mesa.estado === 'LIBRE',
-                              'bg-rose-950/80 border-rose-500 text-rose-300 ring-2 ring-rose-500/20 hover:scale-[1.02]': mesa.estado === 'OCUPADA',
-                              'bg-amber-950/80 border-amber-500 text-amber-300 ring-4 ring-amber-500/30 animate-pulse': mesa.estado === 'POR_COBRAR',
+                              'bg-amber-950/80 border-amber-500 text-amber-300 ring-2 ring-amber-500/40 hover:scale-[1.02] shadow-amber-500/10': esMesaParaCobrar(mesa),
+                              'bg-rose-950/80 border-rose-500 text-rose-300 ring-2 ring-rose-500/20 hover:scale-[1.02]': !esMesaParaCobrar(mesa) && mesa.estado === 'OCUPADA',
                               'bg-sky-950/80 border-sky-500 text-sky-300 ring-2 ring-sky-500/20 hover:scale-[1.02]': mesa.estado === 'EN_LIMPIEZA' || mesa.estado === 'LIMPIEZA',
                               'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
 
@@ -512,17 +523,28 @@ export interface AlertaPlatoListo {
                               </span>
                             </div>
 
-                            <!-- Nombre/Número de Mesa Central -->
+                            <!-- Nombre/Número de Mesa Central + Estado + Contador Servido -->
                             <div class="flex flex-col items-center my-auto">
                               <span class="font-display text-base font-black text-white tracking-tight leading-none group-hover:text-polleria-gold transition">
                                 {{ mesa.nombre }}
                               </span>
-                              <span class="text-[9px] font-bold uppercase tracking-wider opacity-80 mt-0.5">
-                                {{ mesa.estado }}
+                              <span class="text-[9px] font-bold uppercase tracking-wider mt-0.5"
+                                [ngClass]="esMesaParaCobrar(mesa) ? 'text-amber-300' : 'opacity-80'">
+                                {{ esMesaParaCobrar(mesa) ? 'POR COBRAR' : mesa.estado }}
                               </span>
+
+                              <!-- Contador de tiempo desde que se sirvió -->
+                              @if (mesa.servidoEn) {
+                                <div class="flex items-center gap-1 font-mono text-[9px] text-amber-300 bg-amber-900/70 border border-amber-500/40 px-1.5 py-0.5 rounded-md mt-1 shadow-xs" title="Tiempo transcurrido desde que se sirvió la comida">
+                                  <svg class="w-2.5 h-2.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                  </svg>
+                                  <span>{{ tiempoTranscurridoDesde(mesa.servidoEn) }}</span>
+                                </div>
+                              }
                             </div>
 
-                            <!-- Footer de Casilla: Total Consumo & Botón Reubicar -->
+                            <!-- Footer de Casilla: Total Consumo & Botón Reubicar (Solo Admin) -->
                             <div class="w-full flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
                               @if (mesa.totalConsumo && mesa.totalConsumo > 0) {
                                 <span class="font-mono font-bold text-polleria-gold">
@@ -531,24 +553,26 @@ export interface AlertaPlatoListo {
                               } @else {
                                 <span class="text-slate-400">Sin orden</span>
                               }
-                              <button 
-                                type="button"
-                                (click)="iniciarMoverMesa(mesa, $event)"
-                                class="p-1 rounded bg-white/10 hover:bg-polleria-gold hover:text-slate-950 text-slate-300 transition cursor-pointer"
-                                title="Reubicar a otra casilla"
-                              >
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
-                                </svg>
-                              </button>
+                              @if (auth.isAdmin()) {
+                                <button 
+                                  type="button"
+                                  (click)="iniciarMoverMesa(mesa, $event)"
+                                  class="p-1 rounded bg-white/10 hover:bg-polleria-gold hover:text-slate-950 text-slate-300 transition cursor-pointer"
+                                  title="Reubicar a otra casilla"
+                                >
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                                  </svg>
+                                </button>
+                              }
                             </div>
                           </div>
                         } @else {
                           <!-- CASILLA VACÍA -->
                           <div 
                             (click)="onCasillaClick(r, c)"
-                            (dragover)="onDragOverCasilla($event)"
-                            (drop)="onDropCasilla($event, r, c)"
+                            (dragover)="auth.isAdmin() ? onDragOverCasilla($event) : null"
+                            (drop)="auth.isAdmin() ? onDropCasilla($event, r, c) : null"
                             class="h-28 rounded-2xl border-2 border-dashed transition-all flex flex-col justify-between items-center p-2.5 cursor-pointer group"
                             [ngClass]="mesaEnMovimiento() ? 'border-polleria-gold/50 bg-polleria-gold/10 hover:border-polleria-gold hover:bg-polleria-gold/20' : 'border-white/10 bg-[#0d0e12] hover:border-white/30 hover:bg-white/5'"
                           >
@@ -595,8 +619,8 @@ export interface AlertaPlatoListo {
                     class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between group shadow-lg"
                     [ngClass]="{
                       'bg-[#102419] border-emerald-500/40 hover:border-emerald-400': m.estado === 'LIBRE',
-                      'bg-[#2d1217] border-rose-500/40 hover:border-rose-400': m.estado === 'OCUPADA',
-                      'bg-[#2d220f] border-amber-500/40 hover:border-amber-400': m.estado === 'POR_COBRAR',
+                      'bg-[#2d220f] border-amber-500/40 hover:border-amber-400': esMesaParaCobrar(m),
+                      'bg-[#2d1217] border-rose-500/40 hover:border-rose-400': !esMesaParaCobrar(m) && m.estado === 'OCUPADA',
                       'bg-[#131f33] border-sky-500/40 hover:border-sky-400': m.estado === 'RESERVADA',
                       'ring-4 ring-amber-400/70 animate-pulse motion-reduce:animate-none': m.platosListos
                     }"
@@ -616,35 +640,50 @@ export interface AlertaPlatoListo {
                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-full"
                           [ngClass]="{
                             'bg-emerald-500/20 text-emerald-300': m.estado === 'LIBRE',
-                            'bg-rose-500/20 text-rose-300': m.estado === 'OCUPADA',
-                            'bg-amber-500/20 text-amber-300': m.estado === 'POR_COBRAR',
+                            'bg-amber-500/20 text-amber-300': esMesaParaCobrar(m),
+                            'bg-rose-500/20 text-rose-300': !esMesaParaCobrar(m) && m.estado === 'OCUPADA',
                             'bg-sky-500/20 text-sky-300': m.estado === 'RESERVADA'
                           }"
                         >
-                          {{ m.estado }}
+                          {{ esMesaParaCobrar(m) ? 'POR COBRAR' : m.estado }}
                         </span>
                       </div>
 
                       <p class="text-xs text-slate-400 mt-1">Capacidad: {{ m.capacidad }} personas • {{ m.zona }}</p>
 
-                      @if (m.estado === 'OCUPADA' || m.estado === 'POR_COBRAR') {
-                        <div class="mt-4 pt-3 border-t border-white/10 space-y-1 text-xs">
+                      @if (m.estado === 'OCUPADA' || m.estado === 'POR_COBRAR' || m.servidoEn) {
+                        <div class="mt-4 pt-3 border-t border-white/10 space-y-1.5 text-xs">
                           <div class="flex justify-between text-slate-300">
                             <span>Comensales:</span>
                             <span class="font-bold text-white">{{ m.comensales }}</span>
                           </div>
-                          <div class="flex justify-between text-slate-300">
-                            <span>Tiempo en mesa:</span>
-                            <span class="font-mono text-amber-400">{{ m.tiempoMinutos }} min</span>
-                          </div>
+
+                          @if (m.servidoEn) {
+                            <div class="flex justify-between items-center text-amber-300 font-semibold bg-amber-500/10 p-1.5 rounded-lg border border-amber-500/20">
+                              <span class="flex items-center gap-1.5 text-[11px]">
+                                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                Comida servida:
+                              </span>
+                              <span class="font-mono text-[11px] text-amber-300 font-bold">Hace {{ tiempoTranscurridoDesde(m.servidoEn) }}</span>
+                            </div>
+                          } @else {
+                            <div class="flex justify-between text-slate-300">
+                              <span>Tiempo esperando:</span>
+                              <span class="font-mono text-amber-400">{{ m.tiempoMinutos }} min</span>
+                            </div>
+                          }
+
                           <div class="flex justify-between text-slate-300">
                             <span>Mozo:</span>
                             <span class="font-bold text-slate-200">{{ m.mozo || 'Yovana M.' }}</span>
                           </div>
                         </div>
                       } @else {
-                        <div class="mt-4 pt-3 border-t border-white/10 text-xs text-slate-500 flex items-center justify-center h-16">
-                          <span>Disponible para asignar</span>
+                        <div class="mt-4 pt-3 border-t border-white/10 text-xs text-slate-500 flex flex-col items-center justify-center h-16 gap-1">
+                          <span class="text-emerald-400 font-semibold">Disponible para asignar</span>
+                          <span class="text-[10px] text-slate-400">Toca para iniciar comanda</span>
                         </div>
                       }
                     </div>
@@ -921,142 +960,221 @@ export interface AlertaPlatoListo {
                 <button (click)="cerrarModalMesa()" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>
 
-              <!-- Estado de la Mesa -->
-              <div class="space-y-3 text-xs">
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Estado Actual:</span>
-                  <span class="font-bold uppercase" [ngClass]="{
-                    'text-emerald-400': selectedMesaModal()?.estado === 'LIBRE',
-                    'text-rose-400': selectedMesaModal()?.estado === 'OCUPADA',
-                    'text-amber-400': selectedMesaModal()?.estado === 'POR_COBRAR'
-                  }">
-                    {{ selectedMesaModal()?.estado }}
-                  </span>
+              <!-- Estado y Contenido de la Mesa -->
+              @if (selectedMesaModal()?.estado === 'LIBRE') {
+                <!-- VISTA MODAL PARA MESA LIBRE: INICIAR COMANDA -->
+                <div class="space-y-4 text-xs">
+                  <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <span class="text-xs font-bold text-white block">Mesa Libre & Lista</span>
+                        <span class="text-[11px] text-emerald-300">Capacidad para {{ selectedMesaModal()?.capacidad }} comensales</span>
+                      </div>
+                    </div>
+                    <span class="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] uppercase tracking-wider">
+                      Disponible
+                    </span>
+                  </div>
+
+                  <!-- BOTÓN HERO PARA INICIAR COMANDA -->
+                  <div class="p-5 rounded-2xl bg-gradient-to-br from-polleria-gold/15 via-white/5 to-transparent border border-polleria-gold/30 text-center space-y-3 shadow-lg">
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                      ¿Deseas sentar comensales en esta mesa? Podrás seleccionar productos de la carta y enviar el pedido directamente a la cocina y horno.
+                    </p>
+                    <button 
+                      type="button"
+                      (click)="iniciarComandaParaMesa(selectedMesaModal()!)"
+                      class="w-full py-3.5 px-4 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover active:scale-[0.98] text-white font-black text-xs sm:text-sm uppercase tracking-wider transition cursor-pointer shadow-lg shadow-polleria-crimson/25 flex items-center justify-center gap-2"
+                    >
+                      <svg class="w-5 h-5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                      </svg>
+                      <span>+ Iniciar Comanda (Tomar Pedido)</span>
+                    </button>
+                  </div>
+
+                  <!-- Opciones Secundarias -->
+                  <div class="pt-2 border-t border-white/10 flex items-center justify-between text-slate-400">
+                    <span class="text-[11px]">Otras operaciones:</span>
+                    <div class="flex items-center gap-2">
+                      <button 
+                        type="button"
+                        (click)="cambiarEstadoMesa('RESERVADA')"
+                        class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[11px] font-bold transition cursor-pointer"
+                      >
+                        Reservar
+                      </button>
+                      <button 
+                        type="button"
+                        (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
+                        class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[11px] font-bold transition cursor-pointer"
+                      >
+                        Limpieza
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              } @else {
+                <!-- VISTA MODAL PARA MESAS OCUPADAS / POR COBRAR / EN ATENCIÓN -->
+                <div class="space-y-3 text-xs">
+                  <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
+                    <span class="text-slate-300">Estado Actual:</span>
+                    <span class="font-bold uppercase" [ngClass]="{
+                      'text-amber-400': esMesaParaCobrar(selectedMesaModal()),
+                      'text-rose-400': !esMesaParaCobrar(selectedMesaModal()) && selectedMesaModal()?.estado === 'OCUPADA',
+                      'text-sky-400': selectedMesaModal()?.estado === 'EN_LIMPIEZA' || selectedMesaModal()?.estado === 'LIMPIEZA',
+                      'text-purple-400': selectedMesaModal()?.estado === 'RESERVADA'
+                    }">
+                      {{ esMesaParaCobrar(selectedMesaModal()) ? 'POR COBRAR' : selectedMesaModal()?.estado }}
+                    </span>
+                  </div>
 
-                <!-- Detalle de Consumo (comanda real de la orden activa) -->
-                <div class="p-3 rounded-xl bg-black/40 space-y-2 border border-white/5">
-                  <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
-
-                  @if (comandaMesa(); as comanda) {
-                    <div class="space-y-1 text-slate-400">
-                      @for (item of comanda.items; track $index) {
-                        <p class="flex justify-between">
-                          <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
-                          <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
-                        </p>
-                      }
-                      @if (comanda.items.length === 0) {
-                        <p class="text-slate-500">La comanda no tiene ítems registrados.</p>
-                      }
+                  <!-- Contador de tiempo servido en el modal -->
+                  @if (selectedMesaModal()?.servidoEn || comandaMesa()?.servidoEn; as servidoIso) {
+                    <div class="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-between text-xs">
+                      <span class="flex items-center gap-2 text-amber-200 font-medium">
+                        <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Comida servida en mesa:
+                      </span>
+                      <span class="font-mono font-bold text-amber-300">
+                        Hace {{ tiempoTranscurridoDesde(servidoIso) }} ({{ horaDe(servidoIso) }})
+                      </span>
                     </div>
-                    <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
-                      <span>Total a Cobrar:</span>
-                      <span>{{ comanda.total | currencyPEN }}</span>
-                    </div>
-                    <div class="flex justify-between text-[11px] text-slate-400">
-                      <span>Estado de la comanda:</span>
-                      <span class="font-bold" [ngClass]="{
-                        'text-amber-400': comanda.estado === 'EN_PREPARACION',
-                        'text-emerald-400': comanda.estado === 'LISTO_COCINA'
-                      }">{{ etiquetaEstadoComanda(comanda.estado) }}</span>
-                    </div>
-                  } @else if (cargandoComanda()) {
-                    <p class="text-slate-400 text-xs">Cargando comanda del servidor...</p>
-                  } @else if (errorComanda()) {
-                    <p class="text-rose-400 text-xs">{{ errorComanda() }}</p>
-                  } @else {
-                    <p class="text-slate-500 text-xs">Sin comanda activa</p>
                   }
-                </div>
 
-                <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
-                <div class="space-y-2 pt-2">
-                  <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
-                  <div class="grid grid-cols-2 gap-2">
+                  <!-- Detalle de Consumo (comanda real de la orden activa) -->
+                  <div class="p-3 rounded-xl bg-black/40 space-y-2 border border-white/5">
+                    <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
+
+                    @if (comandaMesa(); as comanda) {
+                      <div class="space-y-1 text-slate-400">
+                        @for (item of comanda.items; track $index) {
+                          <p class="flex justify-between">
+                            <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
+                            <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
+                          </p>
+                        }
+                        @if (comanda.items.length === 0) {
+                          <p class="text-slate-500">La comanda no tiene ítems registrados.</p>
+                        }
+                      </div>
+                      <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
+                        <span>Total a Cobrar:</span>
+                        <span>{{ comanda.total | currencyPEN }}</span>
+                      </div>
+                      <div class="flex justify-between text-[11px] text-slate-400">
+                        <span>Estado de la comanda:</span>
+                        <span class="font-bold" [ngClass]="{
+                          'text-amber-400': comanda.estado === 'EN_PREPARACION',
+                          'text-emerald-400': comanda.estado === 'LISTO_COCINA'
+                        }">{{ etiquetaEstadoComanda(comanda.estado) }}</span>
+                      </div>
+                    } @else if (cargandoComanda()) {
+                      <p class="text-slate-400 text-xs">Cargando comanda del servidor...</p>
+                    } @else if (errorComanda()) {
+                      <p class="text-rose-400 text-xs">{{ errorComanda() }}</p>
+                    } @else {
+                      <p class="text-slate-500 text-xs">Sin comanda activa</p>
+                    }
+                  </div>
+
+                  <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
+                  <div class="space-y-2 pt-2">
+                    <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button 
+                        (click)="cambiarEstadoMesa('OCUPADA')"
+                        class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                        <span>Ocupar Mesa</span>
+                      </button>
+                      <button 
+                        (click)="cambiarEstadoMesa('POR_COBRAR')"
+                        class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                        <span>Por Cobrar</span>
+                      </button>
+                      <button 
+                        (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
+                        class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+                        <span>En Limpieza</span>
+                      </button>
+                      <button 
+                        (click)="cambiarEstadoMesa('LIBRE')"
+                        class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span>Liberar Mesa</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Casilla en Cuadrícula de Salón (Solo Admin) -->
+                  @if (auth.isAdmin()) {
+                    <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
+                      <span class="text-[11px] font-bold text-slate-400 block">Casilla en Cuadrícula (Columna X, Fila Y):</span>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
+                          <span class="text-[10px] text-slate-400 font-bold">Col X:</span>
+                          <input 
+                            type="number" 
+                            [(ngModel)]="selectedMesaModal()!.posicionX" 
+                            class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
+                          />
+                        </div>
+                        <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
+                          <span class="text-[10px] text-slate-400 font-bold">Fila Y:</span>
+                          <input 
+                            type="number" 
+                            [(ngModel)]="selectedMesaModal()!.posicionY" 
+                            class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                      <button 
+                        (click)="guardarPosicionMesaModal()"
+                        class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span>Guardar Casilla en Cuadrícula</span>
+                      </button>
+                    </div>
+                  }
+
+                  <!-- Servir en mesa: marca persistida; el cobro sigue siendo el que libera la mesa -->
+                  @if (comandaMesa()?.estado === 'LISTO_COCINA' && !comandaMesa()?.servidoEn) {
                     <button 
-                      (click)="cambiarEstadoMesa('OCUPADA')"
-                      class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      (click)="servirMesaSeleccionada()"
+                      class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
                     >
-                      <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                      <span>Ocupar Mesa</span>
+                      Servir en mesa
                     </button>
+                  } @else if (comandaMesa()?.servidoEn) {
+                    <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
+                  }
+
+                  <!-- Cobro Inmediato -->
+                  <div class="pt-2 border-t border-white/10">
                     <button 
-                      (click)="cambiarEstadoMesa('POR_COBRAR')"
-                      class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                      (click)="cobrarMesaModal()"
+                      class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
                     >
-                      <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                      <span>Por Cobrar</span>
-                    </button>
-                    <button 
-                      (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
-                      class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-                      <span>En Limpieza</span>
-                    </button>
-                    <button 
-                      (click)="cambiarEstadoMesa('LIBRE')"
-                      class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                      <span>Liberar Mesa</span>
+                      <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Cerrar Comanda</span>
                     </button>
                   </div>
                 </div>
-
-                <!-- Casilla en Cuadrícula de Salón -->
-                <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
-                  <span class="text-[11px] font-bold text-slate-400 block">Casilla en Cuadrícula (Columna X, Fila Y):</span>
-                  <div class="grid grid-cols-2 gap-2">
-                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                      <span class="text-[10px] text-slate-400 font-bold">Col X:</span>
-                      <input 
-                        type="number" 
-                        [(ngModel)]="selectedMesaModal()!.posicionX" 
-                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                      />
-                    </div>
-                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                      <span class="text-[10px] text-slate-400 font-bold">Fila Y:</span>
-                      <input 
-                        type="number" 
-                        [(ngModel)]="selectedMesaModal()!.posicionY" 
-                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <button 
-                    (click)="guardarPosicionMesaModal()"
-                    class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                    <span>Guardar Casilla en Cuadrícula</span>
-                  </button>
-                </div>
-
-                <!-- Servir en mesa: marca persistida; el cobro sigue siendo el que libera la mesa -->
-                @if (comandaMesa()?.estado === 'LISTO_COCINA' && !comandaMesa()?.servidoEn) {
-                  <button 
-                    (click)="servirMesaSeleccionada()"
-                    class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
-                  >
-                    Servir en mesa
-                  </button>
-                } @else if (comandaMesa()?.servidoEn) {
-                  <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
-                }
-
-                <!-- Cobro Inmediato -->
-                <div class="pt-2 border-t border-white/10">
-                  <button 
-                    (click)="cobrarMesaModal()"
-                    class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
-                  >
-                    <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Cerrar Comanda</span>
-                  </button>
-                </div>
-              </div>
+              }
 
             </div>
           </div>
@@ -1097,6 +1215,9 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly isProcesandoMesa = signal<boolean>(false);
   readonly mensajeProcesandoMesa = signal<string>('Sincronizando con el servidor...');
 
+  private timerInterval: any = null;
+  readonly tiempoActual = signal<number>(Date.now());
+
   selectedMesaForOrder = 1;
   comandaItems: { producto: Product; cantidad: number; notas: string }[] = [];
 
@@ -1118,9 +1239,38 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' && !bm.ordenActiva.servidoEn : false,
       mozoId: bm.ordenActiva?.mozoId,
       mozo: bm.mozoAsignado || 'Mozo Salón',
-      ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
+      ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined,
+      servidoEn: bm.ordenActiva?.servidoEn ?? null,
+      creadoEn: bm.ordenActiva?.creadoEn ?? null
     }));
   });
+
+  esMesaParaCobrar(mesa: MesaSalon | null | undefined): boolean {
+    if (!mesa) return false;
+    return mesa.estado === 'POR_COBRAR' || !!mesa.servidoEn;
+  }
+
+  tiempoTranscurridoDesde(fechaIso?: string | null): string {
+    if (!fechaIso) return '';
+    const fecha = new Date(fechaIso);
+    const diffMs = this.tiempoActual() - fecha.getTime();
+    if (isNaN(diffMs) || diffMs < 0) return 'Recién servido';
+    const totalMinutos = Math.floor(diffMs / 60000);
+    if (totalMinutos < 1) return 'Recién servido';
+    const horas = Math.floor(totalMinutos / 60);
+    const minutos = totalMinutos % 60;
+    if (horas === 0) {
+      return `${minutos} min`;
+    }
+    return minutos > 0 ? `${horas}h ${minutos}m` : `${horas}h`;
+  }
+
+  iniciarComandaParaMesa(mesa: MesaSalon): void {
+    this.selectedMesaForOrder = mesa.id;
+    this.cerrarModalMesa();
+    this.activeTab.set('TOMAR_COMANDA');
+    this.notify.showInfo(`Mesa ${mesa.nombre} seleccionada`, 'Seleccioná los platos de la carta para registrar la comanda.');
+  }
 
   /**
    * La alerta se deriva del estado real de la mesa (LISTO y sin `servidoEn`), no de un log local:
@@ -1175,6 +1325,11 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
     this.ordersService.loadActiveOrders();
+    if (isPlatformBrowser(this.platformId)) {
+      this.timerInterval = setInterval(() => {
+        this.tiempoActual.set(Date.now());
+      }, 30000);
+    }
   }
 
   getActiveTabLabel(): string {
@@ -1261,6 +1416,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   ajustarFilas(delta: number): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la cuadrícula del salón.');
+      return;
+    }
     const z = this.currentZona();
     if (z) {
       this.isProcesandoMesa.set(true);
@@ -1271,6 +1430,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   ajustarColumnas(delta: number): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la cuadrícula del salón.');
+      return;
+    }
     const z = this.currentZona();
     if (z) {
       this.isProcesandoMesa.set(true);
@@ -1298,6 +1461,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   iniciarMoverMesa(mesa: MesaSalon, event?: Event): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden reubicar mesas en la cuadrícula.');
+      return;
+    }
     if (event) event.stopPropagation();
     if (this.mesaEnMovimiento()?.id === mesa.id) {
       this.mesaEnMovimiento.set(null);
@@ -1319,6 +1486,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     }
 
     if (this.mesaEnMovimiento()) {
+      if (!this.auth.isAdmin()) {
+        this.mesaEnMovimiento.set(null);
+        return;
+      }
       const enMovimiento = this.mesaEnMovimiento()!;
       this.isProcesandoMesa.set(true);
       this.mensajeProcesandoMesa.set(`Reubicando ${enMovimiento.nombre} a F${row}:C${col}...`);
@@ -1341,6 +1512,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   onDragStartMesa(event: DragEvent, mesa: MesaSalon): void {
+    if (!this.auth.isAdmin()) return;
     if (event.dataTransfer) {
       event.dataTransfer.setData('text/plain', String(mesa.id));
       this.mesaEnMovimiento.set(mesa);
@@ -1348,10 +1520,12 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   onDragOverCasilla(event: DragEvent): void {
+    if (!this.auth.isAdmin()) return;
     event.preventDefault();
   }
 
   onDropCasilla(event: DragEvent, row: number, col: number): void {
+    if (!this.auth.isAdmin()) return;
     event.preventDefault();
     if (this.getMesaEnCasilla(row, col)) {
       this.notify.showWarning(`La casilla ya está ocupada`);
@@ -1504,8 +1678,16 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.ordersService.marcarServido(alerta.ordenId).subscribe({
       next: () => {
         this.quitarAvisoDeCocina(alerta.ordenId!);
-        this.salonService.cargarMesas();
-        this.notify.showSuccess(`${alerta.mesa}: comanda servida, queda pendiente el cobro`);
+        const mesa = this.mesas().find(m => m.ordenId === alerta.ordenId);
+        if (mesa) {
+          this.salonService.actualizarEstado(mesa.id, 'POR_COBRAR').subscribe({
+            next: () => this.salonService.cargarMesas(),
+            error: () => this.salonService.cargarMesas()
+          });
+        } else {
+          this.salonService.cargarMesas();
+        }
+        this.notify.showSuccess(`${alerta.mesa}: comanda servida, mesa lista para cobrar`);
       },
       error: (err) => {
         this.notify.showError('No se pudo marcar la comanda como servida',
@@ -1518,7 +1700,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   servirMesaSeleccionada(): void {
     const m = this.selectedMesaModal();
     const ordenId = m?.ordenId;
-    if (!ordenId) {
+    if (!ordenId || !m) {
       this.notify.showWarning('Comanda no disponible',
         'La mesa no tiene una comanda activa para marcar como servida.');
       return;
@@ -1527,9 +1709,17 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     this.ordersService.marcarServido(ordenId).subscribe({
       next: () => {
         this.quitarAvisoDeCocina(ordenId);
-        this.salonService.cargarMesas();
-        this.cargarComandaMesa(ordenId);
-        this.notify.showSuccess(`${m?.nombre ?? 'Mesa'}: comanda servida, queda pendiente el cobro`);
+        this.salonService.actualizarEstado(m.id, 'POR_COBRAR').subscribe({
+          next: () => {
+            this.salonService.cargarMesas();
+            this.cargarComandaMesa(ordenId);
+          },
+          error: () => {
+            this.salonService.cargarMesas();
+            this.cargarComandaMesa(ordenId);
+          }
+        });
+        this.notify.showSuccess(`${m?.nombre ?? 'Mesa'}: comanda servida, mesa lista para cobrar`);
       },
       error: (err) => {
         this.notify.showError('No se pudo marcar la comanda como servida',
@@ -1579,6 +1769,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   guardarPosicionMesaModal(): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la posición de las mesas.');
+      return;
+    }
     const m = this.selectedMesaModal();
     if (m && m.posicionX !== undefined && m.posicionY !== undefined) {
       this.salonService.actualizarPosicion(m.id, m.posicionX, m.posicionY).subscribe();
@@ -1624,6 +1818,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
     this.mesaEnMovimiento.set(null);
     this.cerrarModalMesa();
   }
