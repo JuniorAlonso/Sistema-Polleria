@@ -7,6 +7,7 @@ import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { SalonService, ZonaSalonConfig } from '../../core/services/salon.service';
+import { leerUserIdDelToken } from '../../core/utils/jwt.util';
 import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
@@ -29,12 +30,19 @@ export interface MesaSalon {
   totalConsumo: number;
   mozo?: string;
   platosListos?: boolean;
+  /** Mozo que tomó la comanda activa (para el chip «Tu comanda»). */
+  mozoId?: number;
+  /** La comanda activa ya fue marcada como servida en mesa. */
+  servido?: boolean;
   ordenId?: string;
   items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
 }
 
 export interface AlertaPlatoListo {
   id: string;
+  /** Comanda a marcar como servida (POST /ordenes/{id}/servir). */
+  ordenId?: string;
+  mozoId?: number;
   mesa: string;
   plato: string;
   cantidad: number;
@@ -190,6 +198,7 @@ export interface AlertaPlatoListo {
             <button 
               (click)="activeTab.set('ALERTAS_COCINA')"
               class="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+              [ngClass]="alertasPendientes().length > 0 ? 'animate-pulse motion-reduce:animate-none' : ''"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
@@ -206,6 +215,38 @@ export interface AlertaPlatoListo {
           </div>
 
         </header>
+
+        <!-- Aviso fijo de comanda lista: guía la vista en todas las pestañas sin bloquear clicks -->
+        @if (alertaPrincipal(); as a) {
+          <div
+            role="status"
+            aria-live="polite"
+            class="sticky top-16 z-30 mx-4 sm:mx-6 mt-3 animate-slide-up motion-reduce:animate-none rounded-2xl border border-amber-500/50 bg-amber-500/15 px-4 py-3 text-amber-100 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="relative flex w-2.5 h-2.5 shrink-0">
+                <span class="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping motion-reduce:animate-none"></span>
+                <span class="relative inline-flex w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+              </span>
+              <div class="min-w-0">
+                <p class="text-sm font-bold text-white truncate">
+                  {{ a.mesa }} · Comanda lista para servir
+                  @if (esMiComanda(a)) {
+                    <span class="ml-2 align-middle px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/40 text-[10px] font-black uppercase tracking-wider">Tu comanda</span>
+                  }
+                </p>
+                <p class="text-[11px] text-amber-200/80">Entregala en mesa; el cobro es después, cuando el cliente se retire.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              (click)="servirAlerta(a)"
+              class="shrink-0 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer"
+            >
+              Servir en mesa
+            </button>
+          </div>
+        }
 
         <!-- ================= TAB 1: MAPA DE MESAS ================= -->
         @if (activeTab() === 'MESAS') {
@@ -454,7 +495,8 @@ export interface AlertaPlatoListo {
                               'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
 
                               'ring-4 ring-polleria-gold border-polleria-gold scale-[1.03] shadow-polleria-gold/30 z-20': selectedMesaModal()?.id === mesa.id,
-                              'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id
+                              'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id,
+                              'ring-4 ring-amber-400/70 animate-pulse motion-reduce:animate-none': mesa.platosListos
                             }"
                           >
                             <!-- Badge Alerta Plato Listo -->
@@ -557,7 +599,8 @@ export interface AlertaPlatoListo {
                       'bg-[#102419] border-emerald-500/40 hover:border-emerald-400': m.estado === 'LIBRE',
                       'bg-[#2d1217] border-rose-500/40 hover:border-rose-400': m.estado === 'OCUPADA',
                       'bg-[#2d220f] border-amber-500/40 hover:border-amber-400': m.estado === 'POR_COBRAR',
-                      'bg-[#131f33] border-sky-500/40 hover:border-sky-400': m.estado === 'RESERVADA'
+                      'bg-[#131f33] border-sky-500/40 hover:border-sky-400': m.estado === 'RESERVADA',
+                      'ring-4 ring-amber-400/70 animate-pulse motion-reduce:animate-none': m.platosListos
                     }"
                   >
                     <!-- Platos Listos Badge -->
@@ -768,10 +811,9 @@ export interface AlertaPlatoListo {
 
             <!-- Alerts List -->
             <div class="space-y-3">
-              @for (a of alertas; track a.id) {
+              @for (a of alertasPendientes(); track a.id) {
                 <div 
-                  class="p-4 rounded-2xl border transition duration-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg"
-                  [ngClass]="a.atendido ? 'bg-white/5 border-white/5 opacity-60' : 'bg-amber-500/10 border-amber-500/40'"
+                  class="p-4 rounded-2xl border transition duration-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg bg-amber-500/10 border-amber-500/40 animate-slide-up motion-reduce:animate-none"
                 >
                   <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
@@ -780,26 +822,29 @@ export interface AlertaPlatoListo {
                       </svg>
                     </div>
                     <div>
-                      <div class="flex items-center gap-2">
+                      <div class="flex items-center gap-2 flex-wrap">
                         <span class="font-display text-lg font-black text-white">{{ a.mesa }}</span>
-                        <span class="text-xs text-slate-400">• {{ a.hora }}</span>
+                        @if (a.hora) {
+                          <span class="text-xs text-slate-400">• {{ a.hora }}</span>
+                        }
+                        @if (esMiComanda(a)) {
+                          <span class="px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/40 text-[10px] font-black uppercase tracking-wider">Tu comanda</span>
+                        }
                       </div>
-                      <p class="text-sm font-bold text-amber-300">{{ a.cantidad }}x {{ a.plato }}</p>
+                      <p class="text-sm font-bold text-amber-300">{{ a.plato }}</p>
                     </div>
                   </div>
 
-                  <div>
-                    @if (!a.atendido) {
-                      <button 
-                        (click)="marcarPlatoServido(a)"
-                        class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
-                      >
-                        <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Marcar como Servido
-                      </button>
-                    } @else {
-                      <span class="text-xs text-emerald-400 font-bold">Servido en mesa</span>
-                    }
-                  </div>
+                  <button 
+                    (click)="servirAlerta(a)"
+                    class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
+                  >
+                    <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Servir en mesa
+                  </button>
+                </div>
+              } @empty {
+                <div class="p-6 rounded-2xl bg-white/5 border border-white/10 text-center text-xs text-slate-400">
+                  No hay platos listos pendientes de servir.
                 </div>
               }
             </div>
@@ -992,6 +1037,18 @@ export interface AlertaPlatoListo {
                   </button>
                 </div>
 
+                <!-- Servir en mesa: marca persistida; el cobro sigue siendo el que libera la mesa -->
+                @if (comandaMesa()?.estado === 'LISTO_COCINA' && !comandaMesa()?.servidoEn) {
+                  <button 
+                    (click)="servirMesaSeleccionada()"
+                    class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
+                  >
+                    Servir en mesa
+                  </button>
+                } @else if (comandaMesa()?.servidoEn) {
+                  <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
+                }
+
                 <!-- Cobro Inmediato -->
                 <div class="pt-2 border-t border-white/10">
                   <button 
@@ -1060,29 +1117,42 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       comensales: bm.ordenActiva ? bm.capacidad : 0,
       tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
       totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
-      platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' : false,
+      platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' && !bm.ordenActiva.servidoEn : false,
+      mozoId: bm.ordenActiva?.mozoId,
+      servido: bm.ordenActiva ? !!bm.ordenActiva.servidoEn : false,
       mozo: bm.mozoAsignado || 'Mozo Salón',
       ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
     }));
   });
 
-  // Alertas de Cocina recibidas en tiempo real
-  alertas: AlertaPlatoListo[] = [];
-
-  readonly alertasPendientes = computed(() => {
-    const list = [...this.alertas.filter(a => !a.atendido)];
-    this.salonService.alertasCocina().forEach(ac => {
-      list.unshift({
-        id: `ALT-LIVE-${ac.ordenId}`,
-        mesa: `Mesa ${ac.mesaNumero || ac.mesaId}`,
-        plato: ac.mensaje,
+  /**
+   * La alerta se deriva del estado real de la mesa (LISTO y sin `servidoEn`), no de un log local:
+   * al servir la comanda desaparece y no vuelve al recargar.
+   */
+  readonly alertasPendientes = computed<AlertaPlatoListo[]>(() =>
+    this.mesas()
+      .filter(m => !!m.ordenId && !!m.platosListos)
+      .map(m => ({
+        id: `MESA-${m.id}`,
+        ordenId: m.ordenId,
+        mozoId: m.mozoId,
+        mesa: m.nombre,
+        plato: 'Comanda lista para servir',
         cantidad: 1,
-        hora: ac.timestamp,
+        hora: '',
         atendido: false
-      });
-    });
-    return list;
-  });
+      }))
+  );
+
+  /** Alerta que alimenta el banner fijo visible en todas las pestañas. */
+  readonly alertaPrincipal = computed(() => this.alertasPendientes()[0] ?? null);
+
+  readonly miUserId = computed(() => leerUserIdDelToken(this.auth.token()));
+
+  esMiComanda(alerta: AlertaPlatoListo): boolean {
+    const userId = this.miUserId();
+    return !!userId && !!alerta.mozoId && alerta.mozoId === userId;
+  }
 
   readonly filteredMesas = computed(() => {
     const zone = this.selectedZone();
@@ -1423,14 +1493,64 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     });
   }
 
-  marcarPlatoServido(alerta: AlertaPlatoListo): void {
-    alerta.atendido = true;
-    const mesa = this.mesas().find(m => m.nombre === alerta.mesa);
-    if (mesa) {
-      mesa.platosListos = false;
+  /**
+   * S3.3: «Servir en mesa» se persiste con POST /ordenes/{id}/servir. La orden sigue en LISTO:
+   * la mesa se libera recién al cobrar.
+   */
+  servirAlerta(alerta: AlertaPlatoListo): void {
+    if (!alerta.ordenId) {
+      this.notify.showWarning('Comanda no disponible',
+        'La mesa no tiene una comanda activa para marcar como servida.');
+      return;
     }
-    this.notify.showSuccess(`Plato servido en ${alerta.mesa}`);
+
+    this.ordersService.marcarServido(alerta.ordenId).subscribe({
+      next: () => {
+        this.quitarAvisoDeCocina(alerta.ordenId!);
+        this.salonService.cargarMesas();
+        this.notify.showSuccess(`${alerta.mesa}: comanda servida, queda pendiente el cobro`);
+      },
+      error: (err) => {
+        this.notify.showError('No se pudo marcar la comanda como servida',
+          err?.message || 'Compruebe conexión con orders-service');
+      }
+    });
   }
+
+  /** Misma marca persistida, desde el inspector de mesa (modal). */
+  servirMesaSeleccionada(): void {
+    const m = this.selectedMesaModal();
+    const ordenId = m?.ordenId;
+    if (!ordenId) {
+      this.notify.showWarning('Comanda no disponible',
+        'La mesa no tiene una comanda activa para marcar como servida.');
+      return;
+    }
+
+    this.ordersService.marcarServido(ordenId).subscribe({
+      next: () => {
+        this.quitarAvisoDeCocina(ordenId);
+        this.salonService.cargarMesas();
+        this.cargarComandaMesa(ordenId);
+        this.notify.showSuccess(`${m?.nombre ?? 'Mesa'}: comanda servida, queda pendiente el cobro`);
+      },
+      error: (err) => {
+        this.notify.showError('No se pudo marcar la comanda como servida',
+          err?.message || 'Compruebe conexión con orders-service');
+      }
+    });
+  }
+
+  private quitarAvisoDeCocina(ordenId: string): void {
+    this.salonService.alertasCocina.update(prev =>
+      prev.filter(ac => String(ac.ordenId) !== String(ordenId))
+    );
+  }
+
+  /** userId del JWT (payload sin verificar firma: el backend ya la validó). */
+  /**
+   * El claim `userId` lo decodifica el util compartido (con su propio spec); acá solo se consume.
+   */
 
   cambiarEstadoMesa(estado: TableStatus): void {
     const m = this.selectedMesaModal();

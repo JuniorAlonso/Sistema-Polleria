@@ -7,6 +7,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { SalonService } from '../../core/services/salon.service';
 import { Product } from '../../core/models/product.model';
+import { TableStatus } from '../../core/models/table.model';
 
 /** Token de 3 partes: a SalonService solo le importa que exista para habilitar /mesas. */
 function tokenDeSesion(): string {
@@ -387,5 +388,159 @@ describe('MozoSalonComponent — comanda de salón e historial real', () => {
       .not.toContain('1,840.50');
     expect(texto).not.toContain('Método Pago');
     expect(texto).not.toContain('Propinas Digitales Estimadas');
+  });
+});
+
+/**
+ * S3.3 — «servir en mesa» es una marca persistida: la alerta se deriva del estado real de la mesa
+ * (LISTO y sin servidoEn), se sirve con POST /ordenes/{id}/servir y no vuelve al recargar.
+ */
+describe('MozoSalonComponent — servido persistido', () => {
+  let fixture: ComponentFixture<MozoSalonComponent>;
+  let component: MozoSalonComponent;
+  let http: HttpTestingController;
+  let notify: NotificationService;
+  let salon: SalonService;
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    TestBed.configureTestingModule({
+      imports: [MozoSalonComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])]
+    });
+
+    TestBed.inject(AuthService).token.set(tokenDeSesion());
+    fixture = TestBed.createComponent(MozoSalonComponent);
+    component = fixture.componentInstance;
+    http = TestBed.inject(HttpTestingController);
+    notify = TestBed.inject(NotificationService);
+    salon = TestBed.inject(SalonService);
+
+    spyOn(notify, 'showSuccess');
+    spyOn(notify, 'showError');
+    spyOn(notify, 'showInfo');
+    spyOn(notify, 'showWarning');
+
+    fixture.detectChanges();
+
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => {
+    fixture.destroy();
+    http.verify();
+  });
+
+  function mesaDelBackend(opts: { estadoOrden?: string; servidoEn?: string | null } = {}) {
+    return {
+      id: 3,
+      numero: 3,
+      capacidad: 4,
+      estado: 'OCUPADA' as TableStatus,
+      posicionX: 1,
+      posicionY: 1,
+      zona: 'SALON_PRINCIPAL',
+      ordenActiva: {
+        ordenId: 7,
+        mozoId: 7,
+        total: 45.5,
+        estadoOrden: opts.estadoOrden ?? 'LISTO',
+        tiempoEsperaMinutos: 5,
+        servidoEn: opts.servidoEn ?? null
+      }
+    };
+  }
+
+  function flushMesasReload(): void {
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+  }
+
+  it('la alerta se deriva del estado real de la mesa y desaparece al servirse', () => {
+    salon.mesas.set([mesaDelBackend()]);
+
+    expect(component.alertasPendientes().length).toBe(1);
+    expect(component.alertasPendientes()[0].ordenId).toBe('7');
+    expect(component.mesas()[0].platosListos).toBe(true);
+
+    salon.mesas.set([mesaDelBackend({ servidoEn: '2026-01-01T12:00:00Z' })]);
+
+    expect(component.alertasPendientes().length).toBe(0);
+    expect(component.mesas()[0].platosListos).toBe(false);
+    expect(component.mesas()[0].servido).toBe(true);
+  });
+
+  it('servir persiste la marca y recarga las mesas', () => {
+    salon.mesas.set([mesaDelBackend()]);
+
+    component.servirAlerta(component.alertasPendientes()[0]);
+
+    const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
+    post.flush(dtoOrden({ estado: 'LISTO' }));
+    flushMesasReload();
+
+    const exito = notify.showSuccess as jasmine.Spy;
+    expect(exito).toHaveBeenCalled();
+    expect(exito.calls.mostRecent().args.join(' ')).toContain('comanda servida');
+    expect((notify.showError as jasmine.Spy)).not.toHaveBeenCalled();
+  });
+
+  it('un rechazo del backend muestra el motivo y no recarga las mesas', () => {
+    salon.mesas.set([mesaDelBackend()]);
+
+    component.servirAlerta(component.alertasPendientes()[0]);
+
+    http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'))
+      .flush(
+        { error: 'La comanda #7 todavía no está lista (estado actual: EN_PREPARACION).' },
+        { status: 409, statusText: 'Conflict' }
+      );
+
+    http.expectNone(r => r.method === 'GET' && r.url.endsWith('/mesas'));
+    const error = notify.showError as jasmine.Spy;
+    expect(error).toHaveBeenCalled();
+    expect(error.calls.mostRecent().args.join(' ')).toContain('todavía no está lista');
+    expect(notify.showSuccess).not.toHaveBeenCalled();
+  });
+
+  it('la pestaña de avisos y el banner global ofrecen «Servir en mesa»', () => {
+    salon.mesas.set([mesaDelBackend()]);
+    fixture.detectChanges();
+
+    const banner = fixture.nativeElement.querySelector('[role="status"]') as HTMLElement;
+    expect(banner).withContext('el banner fijo debe verse en todas las pestañas').not.toBeNull();
+    expect(banner.textContent).toContain('Comanda lista para servir');
+    expect(banner.textContent).toContain('Tu comanda');
+    expect(banner.textContent).toContain('Servir en mesa');
+
+    component.activeTab.set('ALERTAS_COCINA');
+    fixture.detectChanges();
+
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Comanda lista para servir');
+    expect(texto).toContain('Servir en mesa');
+    expect(texto).withContext('la rama local de «servido» ya no existe').not.toContain('Marcar como Servido');
+
+    salon.mesas.set([]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('No hay platos listos pendientes de servir.');
+  });
+
+  it('servir desde el modal persiste y recarga la comanda y las mesas', () => {
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Servir en mesa');
+
+    component.servirMesaSeleccionada();
+
+    const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
+    post.flush(dtoOrden({ estado: 'LISTO' }));
+
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
+    flushMesasReload();
+
+    expect(notify.showSuccess).toHaveBeenCalled();
+    expect(notify.showError).not.toHaveBeenCalled();
   });
 });
