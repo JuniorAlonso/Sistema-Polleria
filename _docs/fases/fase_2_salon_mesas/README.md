@@ -312,7 +312,7 @@ if (orden.getMesa() != null) {
 2. **Pruebas de Microservicio:** Peticiones HTTP a `GET /mesas` validadas con código 200 OK y tiempo de respuesta inferior a 45 ms.
 3. **Persistencia Dockerizada:** Contenedores `polleria-orders-service` y `polleria-postgres` validados en ejecución saludable tras el ajuste de DDL y security filters.
 4. **Resiliencia de Red:** Errores de desconexión transitoria capturados con RxJS `catchError` sin congelar el renderizado del navegador.
-5. **Flujo local completo (auditoría 2026-10):** `orders-service` 77 tests; Angular 82 (adaptador/servicio de órdenes 28, mozo 17, admin 7, cocina 6); build AOT y `tsc --noEmit` en 0. El recorrido manual está en `rest-tests/06-flujo-salon-local.http` e incluye servir en mesa, guarda de liberación y cobro.
+5. **Flujo local completo (auditoría 2026-10):** `orders-service` 86 tests; Angular 87 (adaptador/servicio de órdenes 31, mozo 17, admin 8, cocina 7); build AOT y `tsc --noEmit` en 0. El recorrido manual está en `rest-tests/06-flujo-salon-local.http` e incluye servir en mesa, guarda de liberación y cobro. Las correcciones de la auditoría P1/P2 están en la sección 11.3.
 
 ---
 
@@ -333,4 +333,25 @@ Se resolvieron y validaron en código los siguientes puntos críticos de arquite
 * **Memory Leak Eliminado (A1):** `SalonService` y `MozoSalonComponent` implementan `OnDestroy` con liberación garantizada de timers `setInterval` y desuscripciones.
 * **Resiliencia en Red:** Manejo de señal `hasError` en `SalonService` y banner de reintento en el terminal del mozo ante desconexión del microservicio.
 * **Transparencia en Pasarela de Pagos (MP-FAIL, A2):** URLs dinámicas vía `window.location.origin` y banners de advertencia visual en `/checkout` y `/tracking?mock=true` cuando se activa el Tier 3 de contingencia.
+
+### 11.3 Auditoría de integridad, concurrencia y rendimiento (2026-10)
+
+Se corrigieron los hallazgos P1/P2 de la auditoría de la sesión:
+
+**Backend**
+* **Listados sin `open-in-view`:** `OrdenService.listar*` son `@Transactional(readOnly=true)` y las consultas usan `@EntityGraph(items, items.producto)`. `spring.jpa.open-in-view=false` queda fijado; `GET /ordenes` y `/mis-ordenes` se prueban con el perfil de pruebas.
+* **N+1 de `/mesas` eliminado:** `MesaService.listarTodas` hace una sola consulta `findByMesaIdInAndEstadoNotIn` y agrupa en memoria. Test: una consulta para N mesas.
+* **`forzar` solo ADMIN:** `MesaController` responde 403 a MOZO con `forzar=true`; la contingencia ya no puede recrear una mesa huérfana.
+* **Completados del día:** `findActivosYCompletadosHoy` fecha los `ENTREGADO` por `actualizadoEn`, no por `creadoEn`.
+* **Reglas de mesa/reparto:** SALON rechaza mesas `EN_LIMPIEZA`; `EN_CAMINO` exige `repartidorId`; SALON/RECOJO no guardan `repartidorId`.
+* **Concurrencia:** `marcarServido` y `agregarItems` toman bloqueo pesimista (`buscarConBloqueo`) para que dos peticiones simultáneas no se pisen.
+* **CORS:** se quitaron los `@CrossOrigin("*")` de `MesaController`/`ProductoController`; el filtro global fail-closed sigue siendo la única política.
+
+**Frontend**
+* **Error de carga visible:** `OrdersService.hasError` + banner de reintento en `/admin` y `/cocina`; un fallo ya no se muestra como “no hay pedidos”.
+* **Contrato sin datos inventados:** el adaptador no convierte un `productoId` inválido en el producto 1; `metodoPago` es opcional y la UI muestra “No registrado”.
+* **Alertas acotadas:** `SalonService.alertasCocina` retiene como máximo 20 eventos.
+* **Polling responsable:** admin, cocina y salón pausan el polling cuando la pestaña está oculta.
+
+> **Deuda documentada:** migraciones formales (se mantiene `ddl-auto=update`, con `servido_en`/`servido_por` nullable), unión discriminada de `mesaId`, unificación de `OrderStatus`, paginación de `/ordenes`, cliente STOMP y focus trap de modales.
 
