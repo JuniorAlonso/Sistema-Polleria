@@ -140,7 +140,6 @@ export class OrderAdapter {
       items: items,
       tipo: tipo,
       estado: estado,
-      metodoPago: 'TARJETA', // Se complementa si se consulta pago
       subtotal: Math.round(subtotal * 100) / 100,
       costoEnvio: Math.round(costoEnvio * 100) / 100,
       descuento: 0,
@@ -178,12 +177,13 @@ export class OrderAdapter {
     const mesaId = tipo === 'SALON' ? req.mesaId : undefined;
 
     const items = (req.items || []).map(it => {
-      // Extraer ID numérico si viene como 'prod-1' o '1'
+      // Extraer ID numérico si viene como 'prod-1' o '1'. Sin fallback: un id inválido no puede
+      // convertirse silenciosamente en el producto 1 (se enviaría el plato equivocado).
       const cleanId = String(it.productoId).replace('prod-', '');
-      const numericId = parseInt(cleanId, 10) || 1;
+      const numericId = Number(cleanId);
 
       return {
-        productoId: numericId,
+        productoId: Number.isFinite(numericId) && numericId > 0 ? numericId : 0,
         cantidad: it.cantidad || 1,
         notas: it.notas || undefined
       };

@@ -182,6 +182,19 @@ export interface MermaCierre {
         <!-- ================= TAB 1: KDS COMANDAS EN VIVO ================= -->
         @if (activeTab() === 'KDS') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-4">
+
+            @if (ordersService.hasError()) {
+              <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-3" role="alert">
+                <span>Sin conexión con el servicio de pedidos. Las comandas pueden estar desactualizadas.</span>
+                <button
+                  type="button"
+                  (click)="ordersService.loadActiveOrders()"
+                  class="px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-white font-bold transition text-[11px] cursor-pointer shrink-0"
+                >
+                  Reintentar
+                </button>
+              </div>
+            }
             
             <!-- Filters Toolbar -->
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3.5 rounded-2xl border border-white/10 shadow">
@@ -543,6 +556,8 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
     if (isPlatformBrowser(this.platformId)) {
       this.ordersService.loadActiveOrders();
       this.pollingSub = interval(2500).subscribe(() => {
+        // Pestaña oculta: no se consulta el backend hasta que el usuario vuelva.
+        if (typeof document !== 'undefined' && document.hidden) return;
         this.ordersService.loadActiveOrders();
       });
     }

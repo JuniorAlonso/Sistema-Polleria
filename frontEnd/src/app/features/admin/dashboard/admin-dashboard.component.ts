@@ -261,6 +261,19 @@ export type InsumoAlmacen = Insumo;
       <!-- ================= TAB 1: KANBAN PRODUCTION BOARD (ÓRDENES) ================= -->
       @if (activeTab() === 'ORDENES') {
         <main class="flex-1 p-4 sm:p-6 overflow-x-auto space-y-4">
+
+          @if (ordersService.hasError()) {
+            <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-3" role="alert">
+              <span>Sin conexión con el servicio de pedidos. Los pedidos pueden estar desactualizados.</span>
+              <button
+                type="button"
+                (click)="ordersService.loadActiveOrders()"
+                class="px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-white font-bold transition text-[11px] cursor-pointer shrink-0"
+              >
+                Reintentar
+              </button>
+            </div>
+          }
           
           <!-- Top Filter & Action Bar -->
           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3.5 rounded-2xl border border-white/10 shadow">
@@ -2150,7 +2163,7 @@ export type InsumoAlmacen = Insumo;
               }
               <div class="flex justify-between">
                 <span class="text-slate-400">Método de Pago:</span>
-                <span class="text-polleria-gold font-bold">{{ order.metodoPago }}</span>
+                <span class="text-polleria-gold font-bold">{{ order.metodoPago || 'No registrado' }}</span>
               </div>
               @if (order.tipo === 'DELIVERY') {
                 <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
@@ -2291,7 +2304,7 @@ export type InsumoAlmacen = Insumo;
               }
               <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
                 <span class="text-slate-400 font-semibold">Total / Pago:</span>
-                <span class="font-bold text-polleria-gold">{{ order.total | currencyPEN }} <span class="text-slate-400 font-normal">({{ order.metodoPago }})</span></span>
+                <span class="font-bold text-polleria-gold">{{ order.total | currencyPEN }} <span class="text-slate-400 font-normal">({{ order.metodoPago || 'No registrado' }})</span></span>
               </div>
             </div>
 
@@ -3614,6 +3627,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     // Polling cada 2.5 seg para mantener actualizado el dashboard en tiempo real
     if (isPlatformBrowser(this.platformId)) {
       this.pollingSub = interval(2500).subscribe(() => {
+        // Pestaña oculta: no se consulta el backend hasta que el usuario vuelva.
+        if (typeof document !== 'undefined' && document.hidden) return;
         this.ordersService.loadActiveOrders();
       });
     }

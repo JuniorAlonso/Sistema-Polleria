@@ -444,3 +444,44 @@ describe('OrdersService — marcarServido', () => {
     expect(capturado.mensaje).toContain('inválido');
   });
 });
+
+/**
+ * P1 de la auditoría — un fallo de carga no puede parecer “no hay pedidos”.
+ * `loadActiveOrders` intenta /ordenes y /ordenes/activos; si ambos fallan, `hasError` se enciende
+ * para que admin/cocina muestren el banner de reintento.
+ */
+describe('OrdersService — hasError', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('se enciende si fallan /ordenes y el fallback /ordenes/activos', () => {
+    service.loadActiveOrders();
+
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes'))
+      .flush({}, { status: 500, statusText: 'Server Error' });
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/activos'))
+      .flush({}, { status: 500, statusText: 'Server Error' });
+
+    expect(service.hasError()).withContext('la UI debe poder avisar del fallo').toBeTrue();
+  });
+
+  it('se apaga cuando una carga vuelve a funcionar', () => {
+    service.hasError.set(true);
+
+    service.loadActiveOrders();
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes')).flush([]);
+
+    expect(service.hasError()).toBeFalse();
+  });
+});

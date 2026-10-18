@@ -38,7 +38,8 @@ export interface Order {
   items: CartItem[];
   tipo: OrderType;
   estado: OrderStatus;
-  metodoPago: PaymentMethod;
+  /** Opcional: el listado de órdenes no trae el pago; no se inventa un método. */
+  metodoPago?: PaymentMethod;
   subtotal: number;
   costoEnvio: number;
   descuento: number;
@@ -62,6 +63,6 @@ export interface CreateOrderRequest {
     cantidad: number;
     notas?: string;
   }[];
-  metodoPago: PaymentMethod;
+  metodoPago?: PaymentMethod;
   notasGenerales?: string;
 }

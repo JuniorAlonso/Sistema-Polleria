@@ -32,8 +32,6 @@ export interface MesaSalon {
   platosListos?: boolean;
   /** Mozo que tomó la comanda activa (para el chip «Tu comanda»). */
   mozoId?: number;
-  /** La comanda activa ya fue marcada como servida en mesa. */
-  servido?: boolean;
   ordenId?: string;
   items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
 }
@@ -1119,7 +1117,6 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
       platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' && !bm.ordenActiva.servidoEn : false,
       mozoId: bm.ordenActiva?.mozoId,
-      servido: bm.ordenActiva ? !!bm.ordenActiva.servidoEn : false,
       mozo: bm.mozoAsignado || 'Mozo Salón',
       ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
     }));

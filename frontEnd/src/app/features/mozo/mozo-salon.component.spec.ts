@@ -467,7 +467,6 @@ describe('MozoSalonComponent — servido persistido', () => {
 
     expect(component.alertasPendientes().length).toBe(0);
     expect(component.mesas()[0].platosListos).toBe(false);
-    expect(component.mesas()[0].servido).toBe(true);
   });
 
   it('servir persiste la marca y recarga las mesas', () => {

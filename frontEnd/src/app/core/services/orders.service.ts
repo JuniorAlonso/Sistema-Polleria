@@ -20,6 +20,8 @@ export class OrdersService {
   readonly myOrders = signal<Order[]>([]);
   readonly currentTrackingOrder = signal<Order | null>(null);
   readonly isLoading = signal<boolean>(false);
+  /** true cuando fallan /ordenes y el fallback /ordenes/activos: la UI debe avisar, no fingir vacío. */
+  readonly hasError = signal<boolean>(false);
 
   // Computed Kitchen KDS orders (RF16 / KDS)
   readonly kitchenOrders = computed(() =>
@@ -311,6 +313,7 @@ export class OrdersService {
     this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes`).pipe(
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => {
+        this.hasError.set(false);
         if (list.length > 0) {
           const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
           const current = this.orders();
@@ -325,12 +328,17 @@ export class OrdersService {
         return this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/activos`).pipe(
           map(dtos => OrderAdapter.toOrderList(dtos)),
           tap(list => {
+            this.hasError.set(false);
             if (list.length > 0) {
               const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
               this.orders.set(sorted);
             }
           }),
-          catchError(() => of([]))
+          catchError(() => {
+            // Ambos endpoints fallaron: la UI tiene que mostrarlo en vez de parecer vacía.
+            this.hasError.set(true);
+            return of([]);
+          })
         );
       })
     ).subscribe();

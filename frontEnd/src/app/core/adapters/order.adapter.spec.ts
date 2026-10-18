@@ -75,6 +75,17 @@ describe('OrderAdapter.toBackendCrearRequest — sin datos inventados', () => {
 
     expect(req.mesaId).toBeUndefined();
   });
+
+  it('no convierte un producto inválido en el producto 1', () => {
+    const req = OrderAdapter.toBackendCrearRequest({
+      ...base,
+      items: [{ productoId: 'no-es-un-id', cantidad: 1 }]
+    });
+
+    expect(req.items[0].productoId)
+      .withContext('un id inválido debe llegar inválido, no como el plato 1')
+      .toBe(0);
+  });
 });
 
 /**

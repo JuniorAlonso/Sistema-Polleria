@@ -245,6 +245,10 @@ export class SalonService implements OnDestroy {
       if (!this.haySesion()) {
         return;
       }
+      // Pestaña oculta: no se consulta el backend hasta que el usuario vuelva.
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
       this.http.get<RestaurantTable[]>(`${this.API_URL}/mesas`).pipe(
         catchError(() => of([]))
       ).subscribe(nuevasMesas => {
@@ -264,7 +268,7 @@ export class SalonService implements OnDestroy {
                     timestamp: new Date().toLocaleTimeString().slice(0, 5)
                   },
                   ...a
-                ]);
+                ].slice(0, 20));
                 this.notify.showSuccess(`Mesa #${nm.numero}: Pedido listo para servir`);
               }
             }

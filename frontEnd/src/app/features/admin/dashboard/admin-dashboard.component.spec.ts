@@ -6,6 +6,7 @@ import { AdminDashboardComponent } from './admin-dashboard.component';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { SalonService } from '../../../core/services/salon.service';
+import { OrdersService } from '../../../core/services/orders.service';
 import { MesaSalon } from '../../../core/models/table.model';
 
 /** Token de 3 partes: los servicios solo comprueban que exista para habilitar /mesas. */
@@ -79,6 +80,7 @@ describe('AdminDashboardComponent — comanda de salón', () => {
   let http: HttpTestingController;
   let notify: NotificationService;
   let salon: SalonService;
+  let orders: OrdersService;
 
   beforeEach(() => {
     localStorage.clear();
@@ -95,6 +97,7 @@ describe('AdminDashboardComponent — comanda de salón', () => {
     http = TestBed.inject(HttpTestingController);
     notify = TestBed.inject(NotificationService);
     salon = TestBed.inject(SalonService);
+    orders = TestBed.inject(OrdersService);
 
     spyOn(notify, 'showSuccess');
     spyOn(notify, 'showError');
@@ -238,5 +241,13 @@ describe('AdminDashboardComponent — comanda de salón', () => {
 
     texto = fixture.nativeElement.textContent as string;
     expect(texto).toContain('Servida');
+  });
+
+  it('muestra el aviso cuando falla la carga de órdenes (P1)', () => {
+    orders.hasError.set(true);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent as string)
+      .toContain('Sin conexión con el servicio de pedidos');
   });
 });

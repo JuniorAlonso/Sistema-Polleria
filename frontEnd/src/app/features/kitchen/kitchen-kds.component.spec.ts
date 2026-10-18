@@ -148,4 +148,12 @@ describe('KitchenKdsComponent — comanda de salón', () => {
     expect(texto).toContain('hace');
     expect(texto).toContain('min');
   });
+
+  it('muestra el aviso cuando falla la carga de órdenes (P1)', () => {
+    orders.hasError.set(true);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent as string)
+      .toContain('Sin conexión con el servicio de pedidos');
+  });
 });
