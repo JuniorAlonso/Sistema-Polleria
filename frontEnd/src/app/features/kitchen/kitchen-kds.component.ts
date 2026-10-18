@@ -259,6 +259,11 @@ export interface MermaCierre {
                       <h3 class="font-bold text-sm text-slate-200 mt-1">
                         {{ order.cliente.nombre || 'Cliente San Pollo' }}
                       </h3>
+                      @if (order.tipo === 'SALON') {
+                        <p class="text-[11px] font-bold text-amber-300 mt-1">
+                          Mesa {{ order.cliente.mesaNumero ?? '—' }}
+                        </p>
+                      }
                       @if (order.cliente.direccion) {
                         <p class="text-[11px] text-slate-400 line-clamp-1"><svg class="w-3 h-3 inline mr-1 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>{{ order.cliente.direccion }}</p>
                       }
@@ -305,13 +310,13 @@ export interface MermaCierre {
                         (click)="cambiarEstadoOrden(order, 'LISTO_COCINA')"
                         class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer animate-pulse"
                       >
-                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Listo para Reparto / Empacado</span>
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>{{ order.tipo === 'SALON' ? 'Listo para servir en mesa' : 'Listo para Reparto / Empacado' }}</span></span>
                       </button>
                     } @else if (order.estado === 'LISTO_COCINA') {
                       <div class="flex items-center justify-center p-3 rounded-xl bg-purple-500/10 border border-purple-500/30">
                         <span class="text-xs text-purple-300 font-bold flex items-center gap-2">
                           <span class="w-2.5 h-2.5 rounded-full bg-purple-400 animate-ping"></span>
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Empacado y Listo — Esperando que el motorizado retire el pedido</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>{{ order.tipo === 'SALON' ? 'Comanda lista — el mozo ya puede servirla en mesa' : 'Empacado y listo — Esperando que el motorizado retire el pedido' }}</span>
                         </span>
                       </div>
                     }
@@ -326,7 +331,7 @@ export interface MermaCierre {
                     </svg>
                   </div>
                   <p class="text-xl font-bold text-slate-300">No hay comandas pendientes en cocina</p>
-                  <p class="text-xs text-slate-500 mt-1">Los nuevos pedidos de delivery aparecerán aquí automáticamente.</p>
+                  <p class="text-xs text-slate-500 mt-1">Las nuevas comandas de salón, recojo y delivery aparecerán aquí automáticamente.</p>
                 </div>
               }
             </div>
