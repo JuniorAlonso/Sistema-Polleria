@@ -1,6 +1,6 @@
 import { Component, inject, signal, computed, effect, untracked, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
 import { Subscription, interval, forkJoin } from 'rxjs';
 import { OrdersService } from '../../../core/services/orders.service';
@@ -20,7 +20,7 @@ import { Product } from '../../../core/models/product.model';
 import { MesaSalon, MesaEstado, SalonZona } from '../../../core/models/table.model';
 import { Insumo, RegistroMerma, MotivoMerma, InsumoCategoria } from '../../../core/models/inventory.model';
 import { CajaSesion, MovimientoCaja, BalanceDiario, TipoMovimiento } from '../../../core/models/finance.model';
-import { Resenia, ReporteReclamo, MotivoReclamo } from '../../../core/models/feedback.model';
+import { Resenia, ReporteIncidencia, ReporteReclamo, MotivoReclamo, EstadoReclamo } from '../../../core/models/feedback.model';
 import { IncidenteOperativo, IpBloqueada } from '../../../core/models/incident.model';
 import { EstadoNotificacion, TipoNotificacion } from '../../../core/models/notification-log.model';
 
@@ -40,7 +40,7 @@ export type InsumoAlmacen = Insumo;
 @Component({
   selector: 'app-admin-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, CurrencyPENPipe],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, RouterModule, CurrencyPENPipe],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
       
@@ -1711,9 +1711,7 @@ export type InsumoAlmacen = Insumo;
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Feedback, Reseñas & Reclamos</span>
-                <span class="text-[11px] font-normal text-emerald-400 px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
-                  Fase 4 - En Vivo
-                </span>
+                
               </h2>
               <p class="text-xs text-slate-400">Calificaciones (1-5 estrellas) y Libro de Reclamaciones con reembolso automático (:8085).</p>
             </div>
@@ -1731,72 +1729,170 @@ export type InsumoAlmacen = Insumo;
 
           <!-- Libro de Reclamaciones Activo -->
           <div class="space-y-4">
-            <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-              <span>Libro de Reclamaciones (RF28, RF29)</span>
-            </h3>
+            <div class="flex items-center justify-between">
+              <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
+                <span>Libro de Reclamaciones</span>
+                
+              </h3>
+              <span class="text-xs text-slate-400 font-mono">
+                Total: {{ reportesReclamos().length }} reclamos
+              </span>
+            </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              @for (rec of feedbackService.reportes(); track rec.id) {
-                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 space-y-3 flex flex-col justify-between">
-                  <div>
-                    <div class="flex justify-between items-start">
-                      <div>
-                        <div class="flex items-center gap-2">
-                          <span class="font-mono text-xs px-2 py-0.5 rounded bg-white/10 text-polleria-gold font-bold">
-                            REC-{{ rec.id }}
-                          </span>
-                          <span class="text-xs font-bold text-white">Orden #{{ rec.ordenId }}</span>
+            @if (reportesReclamos().length === 0) {
+              <div class="p-8 rounded-2xl bg-[#14161a] border border-white/10 text-center text-slate-400 space-y-2">
+                <p class="text-sm font-semibold text-slate-300">No hay reclamos registrados</p>
+                <p class="text-xs">Los reclamos enviados por los clientes aparecerán aquí automáticamente en tiempo real.</p>
+              </div>
+            } @else {
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                @for (rec of reportesReclamos(); track rec.id) {
+                  <div 
+                    class="p-5 rounded-2xl bg-[#14161a] border space-y-3 flex flex-col justify-between transition-all duration-300 hover:border-white/20 relative overflow-hidden"
+                    [ngClass]="rec.esNuevo ? 'border-emerald-500/50 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/30 animate-fade-in' : 'border-white/10'"
+                  >
+                    <!-- Header Card -->
+                    <div>
+                      <div class="flex justify-between items-start gap-2">
+                        <div>
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-mono text-xs px-2 py-0.5 rounded bg-white/10 text-polleria-gold font-bold">
+                              REC-{{ rec.id }}
+                            </span>
+                            <span class="text-xs font-bold text-white">Orden #{{ rec.ordenId }}</span>
+
+                            @if (rec.esNuevo) {
+                              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.4)]">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                NUEVO
+                              </span>
+                            }
+
+                            @if (rec.fotoEvidenciaUrl || rec.fotoUrl) {
+                              <button 
+                                type="button"
+                                (click)="abrirVisorFoto(rec.fotoEvidenciaUrl || rec.fotoUrl)"
+                                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-bold hover:bg-amber-500/30 transition cursor-pointer"
+                                title="Click para ver la foto de evidencia"
+                              >
+                                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                                <span>VER FOTO</span>
+                              </button>
+                            }
+                          </div>
+
+                          <!-- Subtítulo con Cliente Afectado -->
+                          @if (getClienteDeOrden(rec.ordenId); as cli) {
+                            <div class="mt-1 flex items-center gap-2 text-xs text-slate-300 font-medium">
+                              <span class="text-polleria-gold">👤</span>
+                              <strong class="text-white">{{ cli.nombre }}</strong>
+                              @if (cli.celular) {
+                                <span class="text-slate-400 font-mono text-[11px]">({{ cli.celular }})</span>
+                              }
+                              @if (cli.direccion) {
+                                <span class="text-slate-400 text-[11px] truncate max-w-[200px]" [title]="cli.direccion">• {{ cli.direccion }}</span>
+                              }
+                            </div>
+                          } @else {
+                            <div class="mt-1 text-[11px] text-slate-400 italic">
+                              👤 Cliente de Orden #{{ rec.ordenId }}
+                            </div>
+                          }
+                          
+                          <p class="text-xs text-rose-400 font-semibold mt-1">
+                            Motivo: <strong class="text-rose-300">{{ getMotivoLabel(rec.motivo) }}</strong>
+                          </p>
+
+                          <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span>{{ rec.creadoEn | date:'dd/MM/yyyy HH:mm' }}</span>
+                          </div>
                         </div>
-                        <p class="text-xs text-rose-400 font-semibold mt-1">Motivo: {{ rec.motivo.replace('_', ' ') }}</p>
+
+                        <span 
+                          class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0"
+                          [ngClass]="{
+                            'bg-amber-500/20 text-amber-300 border border-amber-500/30': rec.estado === 'PENDIENTE' || rec.estado === 'ABIERTO' || rec.estado === 'EN_REVISION',
+                            'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30': rec.estado === 'RESUELTO',
+                            'bg-rose-500/20 text-rose-400 border border-rose-500/30': rec.estado === 'RECHAZADO'
+                          }"
+                        >
+                          {{ rec.estado }}
+                        </span>
                       </div>
-                      <span 
-                        class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
-                        [ngClass]="{
-                          'bg-amber-500/20 text-amber-300': rec.estado === 'PENDIENTE' || rec.estado === 'EN_REVISION',
-                          'bg-emerald-500/20 text-emerald-400': rec.estado === 'RESUELTO',
-                          'bg-rose-500/20 text-rose-400': rec.estado === 'RECHAZADO'
-                        }"
-                      >
-                        {{ rec.estado }}
-                      </span>
+
+                      <p class="text-xs text-slate-300 leading-relaxed mt-2.5 bg-black/30 p-3 rounded-xl border border-white/5">
+                        "{{ rec.descripcion }}"
+                      </p>
+
+                      @if (rec.montoReclamado) {
+                        <p class="text-xs text-polleria-gold font-bold mt-2">
+                          Monto Reclamado: {{ rec.montoReclamado | currencyPEN }}
+                        </p>
+                      }
+
+                      <!-- Resumen de Resolución si está RESUELTO -->
+                      @if (rec.estado === 'RESUELTO') {
+                        <div class="mt-3 text-xs bg-emerald-500/10 border border-emerald-500/30 p-3 rounded-xl text-emerald-300 space-y-1">
+                          <div class="flex items-center justify-between font-bold text-emerald-400">
+                            <span class="flex items-center gap-1.5">
+                              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                              Reclamo Atendido
+                            </span>
+                            @if (rec.reembolsoProcedente && rec.montoReembolso) {
+                              <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                Reembolso: {{ rec.montoReembolso | currencyPEN }}
+                              </span>
+                            }
+                          </div>
+                          <p class="text-slate-300 text-[11px] italic">
+                            "{{ rec.respuestaAdmin || rec.resolucion || 'Reclamo resuelto satisfactoriamente.' }}"
+                          </p>
+                          @if (rec.resueltoEn) {
+                            <p class="text-[10px] text-slate-400 font-mono text-right pt-0.5">
+                              Resuelto el: {{ rec.resueltoEn | date:'dd/MM/yyyy HH:mm' }}
+                            </p>
+                          }
+                        </div>
+                      }
+
+                      <!-- Resumen de Rechazo si está RECHAZADO -->
+                      @if (rec.estado === 'RECHAZADO') {
+                        <div class="mt-3 text-xs bg-rose-500/10 border border-rose-500/30 p-3 rounded-xl text-rose-300 space-y-1">
+                          <div class="flex items-center gap-1.5 font-bold text-rose-400">
+                            <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                            <span>Reclamo No Procedente</span>
+                          </div>
+                          <p class="text-slate-300 text-[11px] italic">
+                            "{{ rec.respuestaAdmin || rec.resolucion || 'El reclamo no procede según las políticas de atención.' }}"
+                          </p>
+                        </div>
+                      }
                     </div>
 
-                    <p class="text-xs text-slate-300 leading-relaxed mt-2 bg-black/30 p-3 rounded-xl border border-white/5">
-                      "{{ rec.descripcion }}"
-                    </p>
-
-                    @if (rec.montoReclamado) {
-                      <p class="text-xs text-polleria-gold font-bold mt-2">
-                        Monto Reclamado: {{ rec.montoReclamado | currencyPEN }}
-                      </p>
-                    }
-
-                    @if (rec.resolucion) {
-                      <div class="mt-2 text-xs bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl text-emerald-300">
-                        <strong>Resolución:</strong> {{ rec.resolucion }}
+                    <!-- Botón Principal "Revisar y Atender" (Oculto si RESUELTO) -->
+                    @if (rec.estado !== 'RESUELTO') {
+                      <div class="pt-3 border-t border-white/10 flex justify-end">
+                        <button 
+                          type="button"
+                          (click)="abrirModalResolverReclamo(rec)"
+                          class="px-4 py-2 bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-rose-900/30 flex items-center gap-2 cursor-pointer active:scale-95"
+                        >
+                          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                          <span>Revisar y Atender</span>
+                        </button>
                       </div>
                     }
                   </div>
-
-                  @if (rec.estado !== 'RESUELTO' && rec.estado !== 'RECHAZADO') {
-                    <div class="pt-3 border-t border-white/10 flex justify-end">
-                      <button 
-                        (click)="abrirModalResolverReclamo(rec)"
-                        class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow"
-                      >
-                        Gestionar y Emitir Reembolso
-                      </button>
-                    </div>
-                  }
-                </div>
-              }
-            </div>
+                }
+              </div>
+            }
           </div>
 
           <!-- Reseñas y Calificaciones de la Experiencia -->
           <div class="space-y-4 pt-4 border-t border-white/10">
             <h3 class="font-display text-lg text-white font-bold flex items-center gap-2">
-              <span>Reseñas Recientes de Clientes (RF26, RF27)</span>
+              <span>Reseñas Recientes de Clientes</span>
             </h3>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2947,53 +3043,248 @@ export type InsumoAlmacen = Insumo;
         </div>
       }
 
-      <!-- ================= MODAL: GESTIONAR RECLAMO & REEMBOLSO (FASE 4) ================= -->
-      @if (showResolverReclamoModal && reclamoSeleccionado) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div class="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-2xl p-6 shadow-2xl space-y-4 text-slate-100 animate-scale-up">
-            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+      <!-- ================= MODAL: REVISAR Y ATENDER RECLAMO (FASE 4) ================= -->
+      @if (showResolverReclamoModal() && reclamoSeleccionado(); as reclamo) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div class="w-full max-w-2xl bg-[#14161a] border border-rose-500/30 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-slate-100 animate-scale-up max-h-[90vh] overflow-y-auto no-scrollbar">
+            
+            <!-- Modal Header -->
+            <div class="flex justify-between items-start border-b border-white/10 pb-4">
               <div>
-                <h3 class="font-display text-xl font-bold text-rose-400">Atención de Reclamo #{{ reclamoSeleccionado.id }}</h3>
-                <p class="text-xs text-slate-400">Orden asociada #{{ reclamoSeleccionado.ordenId }}</p>
+                <div class="flex items-center gap-2">
+                  <span class="px-2.5 py-0.5 rounded-lg bg-rose-500/20 text-rose-400 font-mono text-xs font-bold border border-rose-500/30">
+                    REC-{{ reclamo.id }}
+                  </span>
+                  <span class="text-xs font-bold text-slate-300">Orden asociada #{{ reclamo.ordenId }}</span>
+                  <span class="text-[11px] text-slate-500 font-mono">
+                    • {{ reclamo.creadoEn | date:'dd/MM/yyyy HH:mm' }}
+                  </span>
+                </div>
+                <h3 class="font-display text-2xl font-black text-white mt-1">
+                  Atención del Libro de Reclamaciones
+                </h3>
+                @if (getClienteDeOrden(reclamo.ordenId); as cli) {
+                  <p class="text-xs text-slate-300 mt-1 flex items-center gap-2">
+                    <span class="text-polleria-gold font-bold">👤 Cliente Afectado:</span>
+                    <strong class="text-white">{{ cli.nombre }}</strong>
+                    @if (cli.celular) {
+                      <span class="text-slate-400 font-mono">| Tel: {{ cli.celular }}</span>
+                    }
+                    @if (cli.direccion) {
+                      <span class="text-slate-400">| Dir: {{ cli.direccion }}</span>
+                    }
+                  </p>
+                }
               </div>
-              <button (click)="showResolverReclamoModal = false" class="text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+              <button 
+                type="button"
+                (click)="cerrarModalResolverReclamo()" 
+                class="p-2 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer" 
+                aria-label="Cerrar"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
             </div>
 
-            <div class="space-y-3 text-xs">
-              <div class="bg-black/40 p-3 rounded-xl border border-white/5 space-y-1">
-                <span class="text-slate-500 font-bold block">MOTIVO DECLARADO:</span>
-                <p class="text-slate-200">{{ reclamoSeleccionado.motivo }}</p>
-                <p class="text-slate-300 italic">"{{ reclamoSeleccionado.descripcion }}"</p>
-                @if (reclamoSeleccionado.montoReclamado) {
-                  <p class="text-polleria-gold font-bold pt-1">Monto Solicitado: {{ reclamoSeleccionado.montoReclamado | currencyPEN }}</p>
+            <!-- Detalle del Reclamo & Evidencia Expandida -->
+            <div class="space-y-4 text-xs">
+              <div class="bg-black/40 p-4 rounded-2xl border border-white/5 space-y-3">
+                <div class="flex justify-between items-center">
+                  <div>
+                    <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wider block">MOTIVO DECLARADO:</span>
+                    <p class="text-rose-400 font-bold text-sm mt-0.5">{{ getMotivoLabel(reclamo.motivo) }}</p>
+                  </div>
+                  @if (reclamo.montoReclamado) {
+                    <div class="text-right">
+                      <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wider block">MONTO SOLICITADO:</span>
+                      <p class="text-polleria-gold font-bold text-sm font-mono mt-0.5">
+                        {{ reclamo.montoReclamado | currencyPEN }}
+                      </p>
+                    </div>
+                  }
+                </div>
+
+                <div>
+                  <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wider block">DESCRIPCIÓN DEL CLIENTE:</span>
+                  <p class="text-slate-200 text-xs leading-relaxed mt-1 bg-black/30 p-3 rounded-xl border border-white/5 italic">
+                    "{{ reclamo.descripcion }}"
+                  </p>
+                </div>
+
+                <!-- Evidencia Fotográfica Expandida -->
+                @if (reclamo.fotoEvidenciaUrl || reclamo.fotoUrl) {
+                  <div>
+                    <div class="flex justify-between items-center mb-1.5">
+                      <span class="text-slate-400 font-bold uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                        Evidencia Fotográfica Adjunta:
+                      </span>
+                      <button 
+                        type="button"
+                        (click)="abrirVisorFoto(reclamo.fotoEvidenciaUrl || reclamo.fotoUrl)"
+                        class="text-[11px] text-polleria-gold hover:underline font-bold cursor-pointer"
+                      >
+                        Ampliar foto ↗
+                      </button>
+                    </div>
+                    <div class="rounded-2xl overflow-hidden border border-white/10 bg-black/60 max-h-72 flex items-center justify-center cursor-pointer" (click)="abrirVisorFoto(reclamo.fotoEvidenciaUrl || reclamo.fotoUrl)">
+                      <img 
+                        [src]="feedbackService.getFotoUrl(reclamo.fotoEvidenciaUrl || reclamo.fotoUrl)" 
+                        alt="Evidencia del reclamo" 
+                        class="w-full h-72 object-contain hover:scale-105 transition-transform duration-300"
+                      />
+                    </div>
+                  </div>
                 }
               </div>
 
-              <div>
-                <label class="block font-bold text-slate-300 mb-1">Resolución Administrativa:</label>
-                <textarea 
-                  [(ngModel)]="resolucionTexto"
-                  rows="2"
-                  class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
-                ></textarea>
-              </div>
+              <!-- Formulario Reactivo de Resolución -->
+              <form [formGroup]="resolucionForm" class="space-y-4 pt-1">
+                
+                <!-- Select Estado Final -->
+                <div>
+                  <label class="block font-bold text-slate-300 mb-1">
+                    Decisión Administrativa (Estado Final): <span class="text-rose-400">*</span>
+                  </label>
+                  <select 
+                    formControlName="estadoFinal"
+                    class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400 font-bold"
+                  >
+                    <option value="RESUELTO">RESUELTO (Reclamo Procedente / Aceptado)</option>
+                    <option value="RECHAZADO">RECHAZADO (Reclamo No Procedente)</option>
+                  </select>
+                </div>
 
-              <div class="flex items-center gap-2 p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
-                <input 
-                  type="checkbox" 
-                  id="reembolsoCheck" 
-                  [(ngModel)]="emitirReembolso" 
-                  class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
-                />
-                <label for="reembolsoCheck" class="text-xs text-rose-300 font-bold cursor-pointer">
-                  Emitir reembolso automático a pasarela / caja (RF29)
-                </label>
-              </div>
+                <!-- Textarea Respuesta Obligatoria -->
+                <div>
+                  <div class="flex justify-between items-center mb-1">
+                    <label class="block font-bold text-slate-300">
+                      Respuesta al Cliente (Obligatoria): <span class="text-rose-400">*</span>
+                    </label>
+                    <span class="text-[10px] text-slate-400 font-mono">Mínimo 5 caracteres</span>
+                  </div>
+                  <textarea 
+                    formControlName="respuestaAdmin"
+                    rows="3"
+                    placeholder="Detalla la resolución oficial y la respuesta que se notificará al cliente..."
+                    class="w-full p-3 rounded-xl bg-black/50 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-400 resize-none"
+                  ></textarea>
+                </div>
+
+                <!-- Toggle / Checkbox Reembolso -->
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between p-3.5 bg-rose-500/10 rounded-2xl border border-rose-500/20">
+                    <div>
+                      <span class="text-xs text-rose-300 font-bold block">¿Emitir Reembolso Automático?</span>
+                      <span class="text-[11px] text-slate-400">Ejecuta el reembolso de fondos hacia la pasarela de pagos / caja.</span>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        formControlName="emitirReembolso"
+                        class="sr-only peer"
+                      />
+                      <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-600"></div>
+                    </label>
+                  </div>
+
+                  <!-- Input Monto de Reembolso (Obligatorio si toggle activo) -->
+                  @if (resolucionForm.get('emitirReembolso')?.value) {
+                    <div class="p-3.5 bg-black/40 rounded-2xl border border-white/10 space-y-1.5 animate-fade-in">
+                      <label class="block font-bold text-slate-300">
+                        Monto a Reembolsar (S/): <span class="text-rose-400">*</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        formControlName="montoReembolso"
+                        step="0.50"
+                        min="0.10"
+                        placeholder="15.00"
+                        class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      />
+                      <p class="text-[10px] text-amber-300">
+                        Se enviará la solicitud de reembolso con Idempotency-Key a payments-service (:8083).
+                      </p>
+                    </div>
+                  }
+                </div>
+
+              </form>
             </div>
 
-            <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
-              <button (click)="showResolverReclamoModal = false" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
-              <button (click)="confirmarResolverReclamo()" class="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase cursor-pointer">Resolver y Notificar</button>
+            <!-- Footer con Botón "Confirmar Resolución" y Spinner -->
+            <div class="flex justify-end gap-3 pt-4 border-t border-white/10">
+              <button 
+                type="button"
+                (click)="cerrarModalResolverReclamo()" 
+                [disabled]="isResolviendoReclamo()"
+                class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer transition disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button"
+                (click)="confirmarResolverReclamo()" 
+                [disabled]="!isFormResolucionValido() || isResolviendoReclamo()"
+                class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase transition shadow-lg shadow-rose-900/30 flex items-center gap-2 cursor-pointer"
+              >
+                @if (isResolviendoReclamo()) {
+                  <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                  </svg>
+                  <span>Procesando...</span>
+                } @else {
+                  <span>Confirmar Resolución</span>
+                }
+              </button>
+            </div>
+
+          </div>
+        </div>
+      }
+
+      <!-- ================= MODAL: VISOR DE FOTO DE EVIDENCIA (LIGHTBOX) ================= -->
+      @if (visorFotoUrl(); as fotoUrl) {
+        <div 
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in cursor-zoom-out"
+          (click)="cerrarVisorFoto()"
+        >
+          <div 
+            class="relative max-w-4xl max-h-[90vh] bg-[#14161a] border border-white/20 rounded-3xl p-3 shadow-2xl flex flex-col items-center cursor-default"
+            (click)="$event.stopPropagation()"
+          >
+            <!-- Header Visor -->
+            <div class="w-full flex justify-between items-center px-4 py-2 border-b border-white/10 mb-2">
+              <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                Evidencia Fotográfica del Reclamo
+              </span>
+              <button 
+                type="button" 
+                (click)="cerrarVisorFoto()" 
+                class="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                title="Cerrar visor"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            <!-- Imagen -->
+            <div class="rounded-2xl overflow-hidden bg-black flex items-center justify-center">
+              <img 
+                [src]="fotoUrl" 
+                alt="Foto de evidencia ampliada" 
+                class="max-w-full max-h-[75vh] object-contain select-none"
+              />
+            </div>
+
+            <!-- Footer -->
+            <div class="w-full flex justify-between items-center px-4 pt-2 text-[11px] text-slate-400">
+              <span>Haz clic fuera de la imagen o en la cruz para cerrar</span>
+              <a [href]="fotoUrl" target="_blank" class="text-polleria-gold hover:underline font-bold">
+                Abrir en nueva pestaña ↗
+              </a>
             </div>
           </div>
         </div>
@@ -3460,11 +3751,40 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     monto: 0
   };
 
-  // Modal de Resolver Reclamo (Fase 4)
-  showResolverReclamoModal = false;
-  reclamoSeleccionado: ReporteReclamo | null = null;
-  resolucionTexto = '';
-  emitirReembolso = true;
+  // Modal de Resolver Reclamo y Formulario Reactivo (Fase 4)
+  readonly reportesReclamos = signal<ReporteIncidencia[]>([]);
+  readonly showResolverReclamoModal = signal<boolean>(false);
+  readonly reclamoSeleccionado = signal<ReporteIncidencia | null>(null);
+  readonly isResolviendoReclamo = signal<boolean>(false);
+  readonly visorFotoUrl = signal<string | null>(null);
+
+  private fb = inject(FormBuilder);
+  readonly resolucionForm = this.fb.group({
+    estadoFinal: ['RESUELTO' as EstadoReclamo, [Validators.required]],
+    respuestaAdmin: ['', [Validators.required, Validators.minLength(5)]],
+    emitirReembolso: [false],
+    montoReembolso: [15.00]
+  });
+
+  private readonly sincronizarReclamosEffect = effect(() => {
+    const list = this.feedbackService.reportes();
+    this.reportesReclamos.set(list);
+  });
+
+  getClienteDeOrden(ordenId: number): Order['cliente'] | null {
+    if (!ordenId) return null;
+    const orden = this.ordersService.orders().find(o => Number(o.id) === Number(ordenId));
+    return orden?.cliente || null;
+  }
+
+  abrirVisorFoto(url?: string): void {
+    if (!url) return;
+    this.visorFotoUrl.set(this.feedbackService.getFotoUrl(url));
+  }
+
+  cerrarVisorFoto(): void {
+    this.visorFotoUrl.set(null);
+  }
 
   // Modal de Documentar Incidente (Fase 6)
   showIncidenteModal = false;
@@ -4541,28 +4861,69 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   // ================= MÉTODOS DE FEEDBACK Y RECLAMOS (FASE 4) =================
 
-  abrirModalResolverReclamo(rec: ReporteReclamo): void {
-    this.reclamoSeleccionado = rec;
-    this.resolucionTexto = 'Se verificó la orden y se procede con la compensación al cliente.';
-    this.emitirReembolso = true;
-    this.showResolverReclamoModal = true;
+  abrirModalResolverReclamo(rec: ReporteIncidencia): void {
+    this.reclamoSeleccionado.set(rec);
+    this.resolucionForm.reset({
+      estadoFinal: 'RESUELTO',
+      respuestaAdmin: rec.respuestaAdmin || 'Se verificó la orden y se procede con la atención y solución correspondiente.',
+      emitirReembolso: rec.reembolsoProcedente ?? false,
+      montoReembolso: rec.montoReclamado || 15.00
+    });
+    this.showResolverReclamoModal.set(true);
+  }
+
+  cerrarModalResolverReclamo(): void {
+    this.showResolverReclamoModal.set(false);
+    this.reclamoSeleccionado.set(null);
+  }
+
+  isFormResolucionValido(): boolean {
+    if (this.resolucionForm.invalid) return false;
+    const vals = this.resolucionForm.value;
+    if (!vals.respuestaAdmin || vals.respuestaAdmin.trim().length < 5) return false;
+    if (vals.emitirReembolso && (!vals.montoReembolso || vals.montoReembolso <= 0)) return false;
+    return true;
   }
 
   confirmarResolverReclamo(): void {
-    if (!this.reclamoSeleccionado) return;
+    const rec = this.reclamoSeleccionado();
+    if (!rec || !this.isFormResolucionValido() || this.isResolviendoReclamo()) return;
+
+    const { estadoFinal, respuestaAdmin, emitirReembolso, montoReembolso } = this.resolucionForm.value;
+    this.isResolviendoReclamo.set(true);
+
     this.feedbackService.resolverReclamo(
-      this.reclamoSeleccionado.id,
-      this.resolucionTexto,
-      this.emitirReembolso
+      rec.id,
+      respuestaAdmin!.trim(),
+      !!emitirReembolso,
+      emitirReembolso ? Number(montoReembolso) : undefined,
+      (estadoFinal as EstadoReclamo) || 'RESUELTO'
     ).subscribe({
-      next: () => {
-        this.notify.showSuccess(`Reclamo #${this.reclamoSeleccionado?.id} resuelto.`);
-        this.showResolverReclamoModal = false;
+      next: (actualizado) => {
+        this.isResolviendoReclamo.set(false);
+        this.cerrarModalResolverReclamo();
+        this.reportesReclamos.update(prev => prev.map(r => r.id === rec.id ? actualizado : r));
+        this.notify.showSuccess(`Reclamo #${rec.id} ${actualizado.estado.toLowerCase()} con éxito.`);
       },
-      error: () => {
-        this.notify.showError(`No se pudo resolver el reclamo #${this.reclamoSeleccionado?.id}`);
+      error: (err) => {
+        this.isResolviendoReclamo.set(false);
+        this.notify.showError('No se pudo resolver el reclamo', err?.error?.message || 'Error en pasarela de pagos.');
       }
     });
+  }
+
+  getMotivoLabel(motivo?: string): string {
+    switch (motivo) {
+      case 'PEDIDO_INCOMPLETO': return 'Pedido Incompleto o Faltan Items';
+      case 'DEMORA_EXCESIVA': return 'Demora Excesiva en la Entrega';
+      case 'COMIDA_FRIA':
+      case 'PRODUCTO_FRIO': return 'Producto Frío o en Mal Estado';
+      case 'PRODUCTO_DANADO': return 'Producto Dañado en Transporte';
+      case 'CALIDAD_ALIMENTOS': return 'Calidad de Alimentos Insatisfactoria';
+      case 'COBRO_ERRONEO': return 'Cobro Erróneo / Error de Pago';
+      case 'MALA_ATENCION': return 'Mala Atención del Repartidor / Personal';
+      default: return (motivo || 'Otro Motivo').replace(/_/g, ' ');
+    }
   }
 
   // ================= MÉTODOS DE SOPORTE E INCIDENTES (FASE 6) =================

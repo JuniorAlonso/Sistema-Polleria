@@ -20,7 +20,7 @@ public class PaymentsClient {
         this.restClient = RestClient.create();
     }
 
-    public boolean emitirReembolsoPorOrden(Long ordenId, BigDecimal monto, String motivo, String bearerToken) {
+    public void emitirReembolsoPorOrden(Long ordenId, Long reporteId, BigDecimal monto, String motivo, String bearerToken) {
         try {
             Map<String, Object> body = Map.of(
                     "monto", monto != null ? monto : BigDecimal.ZERO,
@@ -29,7 +29,8 @@ public class PaymentsClient {
 
             var request = restClient.post()
                     .uri(paymentsServiceUrl + "/pagos/orden/" + ordenId + "/reembolso")
-                    .header("Content-Type", "application/json");
+                    .header("Content-Type", "application/json")
+                    .header("Idempotency-Key", "RECLAMO-" + ordenId + "-" + (reporteId != null ? reporteId : "0"));
 
             if (bearerToken != null && !bearerToken.isBlank()) {
                 request.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
@@ -39,11 +40,11 @@ public class PaymentsClient {
                     .retrieve()
                     .toBodilessEntity();
 
-            log.info("Reembolso emitido con éxito en payments-service para orden #{}, monto: S/ {}", ordenId, monto);
-            return true;
+            log.info("Reembolso emitido con éxito en payments-service para orden #{}, reporte #{}, monto: S/ {}",
+                    ordenId, reporteId, monto);
         } catch (Exception e) {
-            log.warn("Error al emitir reembolso en payments-service para orden #{}: {}", ordenId, e.getMessage());
-            return false;
+            log.error("Fallo crítico al emitir reembolso en payments-service para orden #{}: {}", ordenId, e.getMessage());
+            throw new IllegalStateException("Error al emitir el reembolso en la pasarela/servicio de pagos: " + e.getMessage(), e);
         }
     }
 }

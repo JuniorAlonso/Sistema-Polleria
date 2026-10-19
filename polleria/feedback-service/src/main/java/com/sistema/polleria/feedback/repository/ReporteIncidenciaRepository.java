@@ -19,5 +19,7 @@ public interface ReporteIncidenciaRepository extends JpaRepository<ReporteIncide
 
     List<ReporteIncidencia> findByEstadoAndMotivoOrderByCreadoEnDesc(EstadoReclamo estado, MotivoReclamo motivo);
 
+    java.util.Optional<ReporteIncidencia> findFirstByOrdenIdOrderByCreadoEnDesc(Long ordenId);
+
     List<ReporteIncidencia> findAllByOrderByCreadoEnDesc();
 }

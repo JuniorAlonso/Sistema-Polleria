@@ -36,10 +36,10 @@
               (`./uploads/evidencias`)
 ```
 
-| Componente | Tecnología | Rol |
-| :--- | :---: | :--- |
-| `feedback-service` | Spring Boot 3.4.5 (Java 21) | Módulo de calificaciones, reclamos y reembolsos |
-| PostgreSQL | Base `polleria` (Docker) / base dedicada en RDS | Tablas `resenias` y `reportes_incidencia` |
+| Componente           |                                  Tecnología                                   | Rol                                                                                                                        |
+| :------------------- | :---------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------- |
+| `feedback-service`   |                          Spring Boot 3.4.5 (Java 21)                          | Módulo de calificaciones, reclamos y reembolsos                                                                            |
+| PostgreSQL           |                Base `polleria` (Docker) / base dedicada en RDS                | Tablas `resenias` y `reportes_incidencia`                                                                                  |
 | `FileStorageService` | Sistema de archivos local (`storage.upload-dir`, def. `./uploads/evidencias`) | Guarda las fotos y las publica en `GET /feedback/evidencias/{fileName}`. **No hay integración con S3 ni con GCP Storage.** |
 
 ---
@@ -48,18 +48,19 @@
 
 Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases/REQUERIMIENTOS_DEL_SISTEMA.docx):
 
-| Código | Tipo | Descripción Oficial | Componente Responsable |
-| :--- | :---: | :--- | :--- |
-| **RF26** | RF | Los clientes califican (1 a 5 estrellas) y dejan reseñas de sus pedidos completados. | `feedback-service` |
-| **RF27** | RF | Los clientes reportan problemas de un pedido adjuntando descripción y evidencia fotográfica. | `feedback-service` + `FileStorageService` (almacenamiento local) |
-| **RF28** | RF | El administrador visualiza, responde y gestiona el estado de reseñas y reportes (`ABIERTO`, `EN_REVISION`, `RESUELTO`). | `feedback-service` + Frontend Admin |
-| **RF29** | RF | El administrador emite reembolsos asociados a reportes procedentes. | `feedback-service` → `payments-service` |
+| Código   | Tipo | Descripción Oficial                                                                                                     | Componente Responsable                                           |
+| :------- | :--: | :---------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------- |
+| **RF26** |  RF  | Los clientes califican (1 a 5 estrellas) y dejan reseñas de sus pedidos completados.                                    | `feedback-service`                                               |
+| **RF27** |  RF  | Los clientes reportan problemas de un pedido adjuntando descripción y evidencia fotográfica.                            | `feedback-service` + `FileStorageService` (almacenamiento local) |
+| **RF28** |  RF  | El administrador visualiza, responde y gestiona el estado de reseñas y reportes (`ABIERTO`, `EN_REVISION`, `RESUELTO`). | `feedback-service` + Frontend Admin                              |
+| **RF29** |  RF  | El administrador emite reembolsos asociados a reportes procedentes.                                                     | `feedback-service` → `payments-service`                          |
 
 ---
 
 ## 3. Entidades del Dominio
 
 ### 3.1 Reseña (`Resenia`)
+
 ```java
 @Entity
 @Table(name = "resenias")
@@ -85,6 +86,7 @@ public class Resenia {
 ```
 
 ### 3.2 Reporte de Incidencia (`ReporteIncidencia`)
+
 ```java
 @Entity
 @Table(name = "reportes_incidencia")
@@ -120,6 +122,7 @@ public class ReporteIncidencia {
 ```
 
 ### 3.3 Enumeraciones
+
 ```java
 public enum MotivoReclamo {
     PEDIDO_INCOMPLETO,
@@ -144,12 +147,15 @@ public enum EstadoReclamo {
 ### 4.1 Reseñas (Cliente)
 
 #### Crear Reseña (RF26)
+
 ```
 POST /feedback/resenias
 ```
+
 **Acceso:** 🔒 Autoridades `CLIENTE` o `ADMIN`.
 
 **Request Body:**
+
 ```json
 {
   "ordenId": 52,
@@ -159,12 +165,14 @@ POST /feedback/resenias
 ```
 
 **Validaciones reales:**
+
 - `ordenId` y `calificacion` son obligatorios; `calificacion` es un entero entre 1 y 5 (`@Min(1)`/`@Max(5)`). Un valor fuera de rango responde `400` con el detalle de la validación.
 - El cliente solo puede dejar UNA reseña por orden: el segundo intento lanza `IllegalStateException` y responde `409 CONFLICT`.
-- **No hay validación contra `orders-service`**: el servicio no verifica que la orden exista ni que esté `ENTREGADO`, y tampoco consulta `orders-service`. La integridad se apoya en `ordenId` y en el `clienteId` del token.
+- **Validación con `orders-service`**: el servicio consulta `orders-service` (`GET /ordenes/{id}`) usando `X-Internal-Key` para certificar que la orden existe, que pertenece al `clienteId` autenticado y que se encuentra en estado `ENTREGADO`. De no cumplirse, responde `404 Not Found` o `409 Conflict`.
 - `clienteId` no viaja en el body: se extrae de las credenciales del token (`Principal`).
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 15,
@@ -172,17 +180,47 @@ POST /feedback/resenias
   "clienteId": 7,
   "calificacion": 5,
   "comentario": "Pollo jugoso, papas crocantes y llegó caliente. ¡Excelente!",
+  "respuestaAdmin": null,
+  "respondidoEn": null,
+  "visible": true,
   "creadoEn": "2026-10-05T10:30:00"
 }
 ```
 
+#### Responder Reseña (Admin - RF28)
+
+```
+PATCH /feedback/resenias/admin/{id}/responder
+```
+
+**Acceso:** 🔒 Solo `ADMIN`
+
+**Request Body:**
+
+```json
+{
+  "respuestaAdmin": "Muchas gracias por tu reseña. Nos alegra que disfrutaras nuestro pollo a la brasa."
+}
+```
+
+#### Moderar Visibilidad de Reseña (Admin - RF28)
+
+```
+PATCH /feedback/resenias/admin/{id}/visibilidad?visible=false
+```
+
+**Acceso:** 🔒 Solo `ADMIN`
+
 #### Obtener Reseñas por Producto (Público)
+
 ```
 GET /feedback/resenias/producto/{productoId}
 ```
+
 **Acceso:** 🔓 Público
 
 **Response `200 OK`:**
+
 ```json
 {
   "productoId": 3,
@@ -222,6 +260,7 @@ POST /feedback/reportes/multipart  # multipart/form-data, con archivo
 > ⚠️ El nombre del campo del archivo es **`foto`**, no `evidencia`. Y `POST /feedback/reportes` recibe JSON (`ordenId`, `motivo`, `descripcion`, `fotoEvidenciaUrl`), no `multipart/form-data`.
 
 **Response `201 Created`:**
+
 ```json
 {
   "id": 8,
@@ -234,56 +273,105 @@ POST /feedback/reportes/multipart  # multipart/form-data, con archivo
 }
 ```
 
-La URL es una **ruta relativa servida por el propio `feedback-service`** (`GET /feedback/evidencias/{fileName}`), no un enlace a un bucket externo.
+#### Consultar Estado de Reclamo por Orden (Público - Seguimiento de Pedidos)
+
+```
+GET /feedback/reportes/orden/{ordenId}
+```
+
+**Acceso:** 🔓 Público (`permitAll()`)
+
+Permite a la pantalla de seguimiento del cliente (`order-tracking`) sincronizar en tiempo real el estado (`ABIERTO`, `EN_REVISION`, `RESUELTO`, `RECHAZADO`), la respuesta oficial de la administración y el monto de reembolso aprobado, sin requerir sesión activa ni depender únicamente del `localStorage`.
+
+**Response `200 OK`:**
+
+```json
+{
+  "id": 8,
+  "ordenId": 4,
+  "clienteId": 1,
+  "motivo": "PEDIDO_INCOMPLETO",
+  "descripcion": "Me faltaron las cremas y la porción de tequeños.",
+  "fotoEvidenciaUrl": "/feedback/evidencias/uuid-evidencia.jpg",
+  "estado": "RESUELTO",
+  "respuestaAdmin": "Se verificó la orden y se emitió el reembolso correspondiente.",
+  "resolucion": "Se verificó la orden y se emitió el reembolso correspondiente.",
+  "reembolsoProcedente": true,
+  "montoReembolso": 15.00,
+  "creadoEn": "2026-10-18T20:30:00",
+  "resueltoEn": "2026-10-18T21:05:00"
+}
+```
+
+---
 
 ### 4.3 Gestión de Reclamos (Admin)
 
 #### Dashboard de Reclamos (RF28)
+
 ```
 GET /feedback/admin/reportes
 ```
+
 **Acceso:** 🔒 Solo `ADMIN`
 
 **Query Params opcionales:** `?estado=ABIERTO&motivo=PEDIDO_INCOMPLETO` (ambos combinables). **No existe filtro por fecha.**
 
-**Response `200 OK`:** `ReporteResponse[]` completo, ordenado por `creadoEn` descendente. No hay paginación.
+**Response `200 OK`:** `ReporteResponse[]` completo, ordenado por `creadoEn` descendente.
+
+#### Cambiar Estado de Reclamo (Admin - RF28)
+
+```
+PATCH /feedback/admin/reportes/{id}/estado?estado=EN_REVISION
+```
+
+**Acceso:** 🔒 Solo `ADMIN`
+
+Permite mover reclamos entre `ABIERTO` y `EN_REVISION` sin alterar reembolsos ni fijar prematuramente la fecha de resolución.
 
 #### Resolver Reclamo (RF28, RF29)
+
 ```
 PATCH /feedback/admin/reportes/{id}/resolver
 ```
+
 **Acceso:** 🔒 Solo `ADMIN`
 
 **Request Body:**
+
 ```json
 {
   "estado": "RESUELTO",
   "respuestaAdmin": "Disculpas por el inconveniente. Se procede con reembolso parcial.",
   "reembolsoProcedente": true,
-  "montoReembolso": 15.00
+  "montoReembolso": 15.0
 }
 ```
 
 **Acciones automáticas si `reembolsoProcedente = true`:**
-1. Llama a `payments-service` → `POST /pagos/orden/{ordenId}/reembolso` con `{ monto, motivo }` y reenvía el `Bearer` del administrador (`PaymentsClient`). La ruta se resuelve **por `ordenId`**, no por `pagoId`, y un fallo del reembolso se registra como advertencia sin abortar la transacción.
-2. Actualiza el estado del reporte al valor recibido y registra `resueltoEn`.
+
+1. Llama a `payments-service` → `POST /pagos/orden/{ordenId}/reembolso` con `{ monto, motivo }` y reenvía el `Bearer` del administrador (`PaymentsClient`). La ruta se resuelve **por `ordenId`**, no por `pagoId`. Si la pasarela o el servicio de pagos falla, se aborta la transacción y se responde error para proteger la integridad.
+2. Actualiza el estado del reporte al valor recibido (`RESUELTO` o `RECHAZADO`), almacena la `respuestaAdmin` y registra la marca de tiempo en `resueltoEn`.
 
 ---
 
 ## 5. Flujo de Emisión de Reembolsos (RF29)
 
 ```
-Admin (Dashboard)         feedback-service          payments-service       Cliente
-       │                         │                         │                  │
-       ├── 1. Aprueba reclamo ──►│                         │                  │
-       │   (monto = S/ 15.00)   │                         │                  │
-       │                         ├── 2. POST /pagos/orden/{ordenId}/reembolso ►│                  │
-       │                         │      (monto, motivo, Bearer)   │                  │
-       │                         │                         ├── 3. Reversa     │
-       │                         │                         │   (Pasarela/Manual)
-       │                         │◄── 4. Reembolso OK ─────┤                  │
-       │                         │    (transaccionId)      │                  │
-       │◄── 5. Ticket RESUELTO ──┤                         │                  │
+Admin (Dashboard)         feedback-service          payments-service       Cliente (Seguimiento)
+       │                         │                         │                        │
+       ├── 1. Aprueba reclamo ──►│                         │                        │
+       │   (monto = S/ 15.00)   │                         │                        │
+       │                         ├── 2. POST /pagos/orden/{ordenId}/reembolso ►│    │
+       │                         │      (monto, motivo, Bearer)   │                 │
+       │                         │                         ├── 3. Reversa           │
+       │                         │                         │   (Pasarela/Manual)    │
+       │                         │◄── 4. Reembolso OK ─────┤                        │
+       │                         │    (transaccionId)      │                        │
+       │◄── 5. Ticket RESUELTO ──┤                                                  │
+                                 │                                                  │
+                                 │◄── 6. GET /feedback/reportes/orden/{id} ─────────┤
+                                 ├──── 7. Status RESUELTO + Detalle + Reembolso ───►│
 ```
 
 ---
@@ -313,42 +401,55 @@ spring.servlet.multipart.max-request-size=10MB
 
 ---
 
-## 7. Entregables para el Frontend (Angular 19)
+## 7. Entregables e Integración Frontend (Angular 19)
 
-1. **Modal Post-Entrega de Calificación:**
-   - Disparado automáticamente cuando la orden pasa a `ENTREGADO`.
-   - Selector interactivo de 1 a 5 estrellas con tags frecuentes ("Sabor increíble", "Llegó caliente", "Rápido").
+1. **Modal y Sección de Calificación Post-Entrega (`order-tracking`):**
+   - Habilitado cuando la orden se encuentra completada/entregada.
+   - Selector interactivo de 1 a 5 estrellas con validación de comentario obligatorio (mínimo 10 caracteres).
+   - Bloqueo de duplicados por orden y persistencia local + remota.
 
-2. **Formulario de Reclamo con Preview de Foto:**
-   - Carga de evidencia desde cámara del celular o galería.
-   - Validación de peso máximo (5 MB) y compresión en cliente.
+2. **Formulario de Reclamo y Evidencias (`order-tracking`):**
+   - Formulario con selector de motivo (`PEDIDO_INCOMPLETO`, `DEMORA_EXCESIVA`, `PRODUCTO_FRIO`, etc.).
+   - Adjunto obligatorio o recomendado de fotografía con validación de peso (máximo 5 MB) y previsualización.
+   - Envío mediante `POST /feedback/reportes/multipart`.
 
-3. **Panel de Gestión de Quejas y Calificaciones (Admin):**
-   - Bandeja de entrada tipo Help Desk con filtros por estado y motivo.
-   - Visualizador de fotos de platos dañados o faltantes.
-   - Botón directo con confirmación: `"Aprobar y Emitir Reembolso por Pasarela"`.
+3. **Sincronización en Vivo del Estado del Reclamo (`order-tracking`):**
+   - Sondeo reactivo mediante `GET /feedback/reportes/orden/{ordenId}`.
+   - Badge dinámico según estado: `Reclamo en curso (ABIERTO)`, `✓ Reclamo Atendido (RESUELTO)` o `Reclamo No Procedente (RECHAZADO)`.
+   - Visualización de la `Respuesta de la Administración` y ficha informativa de reembolso emitido.
+
+4. **Panel de Gestión de Reclamos y Libro de Reclamaciones (`admin-dashboard`):**
+   - Bandeja de reclamos con tarjeta por incidencia.
+   - **Ficha del Cliente Afectado:** subtítulo visible con nombre del cliente, teléfono y dirección de entrega asociados a la orden.
+   - **Visor de Evidencia Fotográfica (Lightbox):** modal interactivo con backdrop blur que amplía la foto sin navegar ni recargar la ruta `/admin`.
+   - **Modal de Resolución:** decisión administrativa (`RESUELTO` / `RECHAZADO`), respuesta obligatoria al cliente y switch de emisión de reembolso monetario directo a pasarela.
 
 ---
 
 ## 8. Guía de Pruebas para el Equipo
 
 ### 8.1 Pruebas Funcionales
-| Caso | Entrada | Resultado Esperado |
-| :--- | :--- | :--- |
-| Crear reseña válida | `POST /feedback/resenias` con `calificacion` 1-5 | `201` con la reseña registrada |
-| Calificación fuera de rango | `calificacion: 6` | `400` con el detalle de validación |
-| Reseña duplicada | Misma orden, mismo cliente | `409 Conflict` |
-| Reclamo con foto | `POST /feedback/reportes/multipart` con campo `foto` | `201` con `fotoEvidenciaUrl` servida por `/feedback/evidencias/{fileName}` |
-| Reclamo sin foto | `POST /feedback/reportes` (JSON) | `201` (la foto es opcional) |
-| Descripción demasiado corta | `descripcion` con 9 caracteres | `400` con el detalle de validación |
-| Resolver con reembolso | `PATCH /feedback/admin/reportes/{id}/resolver` con `reembolsoProcedente: true` | Estado actualizado + llamada a `POST /pagos/orden/{ordenId}/reembolso` |
-| Resolver sin reembolso | `PATCH …` con `reembolsoProcedente: false` | Estado actualizado sin llamada externa |
-| Descargar evidencia | `GET /feedback/evidencias/{fileName}` | `200` con los bytes del archivo; `404` si no existe |
+
+| Caso                        | Entrada                                                                        | Resultado Esperado                                                                  |
+| :-------------------------- | :----------------------------------------------------------------------------- | :---------------------------------------------------------------------------------- |
+| Crear reseña válida         | `POST /feedback/resenias` con `calificacion` 1-5                               | `201` con la reseña registrada                                                      |
+| Calificación fuera de rango | `calificacion: 6`                                                              | `400` con el detalle de validación                                                  |
+| Reseña duplicada            | Misma orden, mismo cliente                                                     | `409 Conflict`                                                                      |
+| Reclamo con foto            | `POST /feedback/reportes/multipart` con campo `foto`                           | `201` con `fotoEvidenciaUrl` servida por `/feedback/evidencias/{fileName}`          |
+| Reclamo sin foto            | `POST /feedback/reportes` (JSON)                                               | `201` (la foto es opcional)                                                         |
+| Consultar estado por orden  | `GET /feedback/reportes/orden/{ordenId}`                                       | `200` con estado, respuesta del admin y reembolso; `404` si no hay reclamo          |
+| Ampliar foto en admin       | Clic en "Ver foto" o miniatura de evidencia                                    | Abre lightbox modal sin redirigir ni salir de `/admin`                              |
+| Resolver con reembolso      | `PATCH /feedback/admin/reportes/{id}/resolver` con `reembolsoProcedente: true` | Estado `RESUELTO` + llamada a `POST /pagos/orden/{ordenId}/reembolso`               |
+| Resolver sin reembolso      | `PATCH …` con `reembolsoProcedente: false`                                     | Estado actualizado sin llamada externa                                              |
+| Descargar evidencia         | `GET /feedback/evidencias/{fileName}`                                          | `200` con los bytes del archivo; `404` si no existe                                 |
 
 ### 8.2 Criterios de Aceptación
-- [ ] Cliente puede calificar de 1 a 5 estrellas una orden entregada.
-- [ ] Cliente puede adjuntar foto de evidencia en un reclamo.
-- [ ] Admin visualiza bandeja de reclamos filtrable por estado y motivo.
-- [ ] Admin puede resolver un reclamo y emitir reembolso automático.
-- [ ] No se permite más de una reseña por orden por cliente.
-- [ ] Las evidencias quedan en el sistema de archivos del servicio y se sirven en `GET /feedback/evidencias/{fileName}`.
+
+- [x] Cliente puede calificar de 1 a 5 estrellas una orden entregada.
+- [x] Cliente puede adjuntar foto de evidencia en un reclamo.
+- [x] Cliente visualiza en tiempo real la resolución y la respuesta oficial de su reclamo.
+- [x] Admin visualiza bandeja de reclamos con identificación del cliente afectado (nombre, teléfono y dirección).
+- [x] Admin puede ampliar las fotos de evidencia en un modal lightbox sin errores de enrutamiento.
+- [x] Admin puede resolver un reclamo y emitir reembolso automático a pasarela de pagos.
+- [x] No se permite más de una reseña por orden por cliente.
+- [x] Las evidencias quedan en el sistema de archivos del servicio y se sirven en `GET /feedback/evidencias/{fileName}`.

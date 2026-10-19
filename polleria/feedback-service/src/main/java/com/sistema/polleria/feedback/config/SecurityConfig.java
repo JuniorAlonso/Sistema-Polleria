@@ -66,6 +66,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias/producto/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias").permitAll()
                         .requestMatchers(HttpMethod.GET, "/feedback/evidencias/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/feedback/reportes/orden/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers

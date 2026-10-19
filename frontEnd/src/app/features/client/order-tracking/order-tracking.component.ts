@@ -260,18 +260,158 @@ import { Subscription, interval } from 'rxjs';
                   </h3>
                   <p class="text-xs text-slate-400">¿Cómo estuvo tu pedido de San Pollo? Tu opinión nos ayuda a mejorar.</p>
                 </div>
-                <button 
-                  type="button"
-                  (click)="showReportModal.set(true)"
-                  class="text-xs text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
-                >
-                  ¿Tuviste un inconveniente? Reportar reclamo
-                </button>
+
+                @if (reclamoDeOrdenActual(); as reclamo) {
+                  @if (reclamo.estado === 'RESUELTO') {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-500/25 transition cursor-pointer"
+                    >
+                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      <span>✓ Reclamo Atendido (RESUELTO)</span>
+                    </button>
+                  } @else if (reclamo.estado === 'RECHAZADO') {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-500/15 border border-slate-500/30 text-slate-300 text-xs font-bold hover:bg-slate-500/25 transition cursor-pointer"
+                    >
+                      <span>Reclamo No Procedente (RECHAZADO)</span>
+                    </button>
+                  } @else {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold hover:bg-rose-500/25 transition cursor-pointer"
+                    >
+                      <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                      <span>Reclamo en curso ({{ reclamo.estado || 'ABIERTO' }})</span>
+                    </button>
+                  }
+                } @else {
+                  <button 
+                    type="button"
+                    (click)="abrirModalReclamo()"
+                    class="text-xs text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
+                  >
+                    ¿Tuviste un inconveniente? Reportar reclamo
+                  </button>
+                }
               </div>
 
-              @if (ratingSent()) {
-                <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center">
-                  <svg class="w-5 h-5 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> ¡Muchas gracias por tu calificación y reseña! Tu opinión ha sido registrada en el sistema.
+              <!-- Banner si este pedido ya tiene reclamo -->
+              @if (reclamoDeOrdenActual(); as reclamo) {
+                @if (reclamo.estado === 'RESUELTO') {
+                  <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2 font-bold text-emerald-300">
+                        <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        <span>Reclamo Resuelto para el {{ etiqueta(currentOrder()) }}</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                          RESUELTO
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-300">
+                        Motivo: <strong class="text-white">{{ getMotivoLabel(reclamo.motivo) }}</strong>
+                      </p>
+                      @if (reclamo.respuestaAdmin || reclamo.resolucion) {
+                        <p class="text-[11px] text-emerald-200 bg-black/40 p-2.5 rounded-xl border border-emerald-500/20 italic mt-1">
+                          "{{ reclamo.respuestaAdmin || reclamo.resolucion }}"
+                        </p>
+                      }
+                      @if (reclamo.reembolsoProcedente && reclamo.montoReembolso) {
+                        <p class="text-[11px] text-polleria-gold font-bold">
+                          ✓ Reembolso de S/ {{ reclamo.montoReembolso | number:'1.2-2' }} aprobado hacia tu método de pago original.
+                        </p>
+                      }
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-emerald-300 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver resolución completa
+                    </button>
+                  </div>
+                } @else if (reclamo.estado === 'RECHAZADO') {
+                  <div class="p-4 rounded-2xl bg-slate-800/80 border border-white/10 text-slate-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2 font-bold text-slate-200">
+                        <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        <span>Reclamo Atendido — No Procedente</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-rose-500/20 border border-rose-500/40 text-rose-300">
+                          RECHAZADO
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-400">
+                        Motivo: {{ getMotivoLabel(reclamo.motivo) }}
+                      </p>
+                      @if (reclamo.respuestaAdmin || reclamo.resolucion) {
+                        <p class="text-[11px] text-slate-300 bg-black/40 p-2 rounded-xl italic mt-1">
+                          "{{ reclamo.respuestaAdmin || reclamo.resolucion }}"
+                        </p>
+                      }
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-slate-400 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver detalles
+                    </button>
+                  </div>
+                } @else {
+                  <div class="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-0.5">
+                      <div class="flex items-center gap-2 font-bold text-rose-200">
+                        <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span>Reclamo registrado para el {{ etiqueta(currentOrder()) }}</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-rose-500/20 border border-rose-500/40">
+                          {{ reclamo.estado || 'ABIERTO' }}
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-300">
+                        Motivo: <strong class="text-white">{{ getMotivoLabel(reclamo.motivo) }}</strong> — "{{ reclamo.descripcion }}"
+                      </p>
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-rose-300 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver detalles del reclamo
+                    </button>
+                  </div>
+                }
+              }
+
+              <!-- Estado de la calificación específica de este pedido -->
+              @if (reseniaDeOrdenActual(); as resenia) {
+                <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs space-y-2 animate-fade-in">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 font-bold text-sm">
+                      <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                      <span>¡Calificación enviada para el {{ etiqueta(currentOrder()) }}!</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-amber-400 font-bold text-sm">
+                      @for (star of [1, 2, 3, 4, 5]; track star) {
+                        <span [ngClass]="(resenia.calificacion || 5) >= star ? 'text-amber-400' : 'text-slate-600'">★</span>
+                      }
+                      <span class="ml-1 text-xs text-slate-300 font-mono">({{ resenia.calificacion || 5 }}/5)</span>
+                    </div>
+                  </div>
+                  @if (resenia.comentario) {
+                    <p class="text-xs text-slate-300 bg-black/40 p-3 rounded-xl border border-white/5 italic">
+                      "{{ resenia.comentario }}"
+                    </p>
+                  }
+                  <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-emerald-500/20">
+                    <span>Tu reseña ya fue registrada para esta orden y no se puede duplicar.</span>
+                    @if (resenia.fecha) {
+                      <span class="font-mono text-[10px] text-emerald-400/80">{{ resenia.fecha }}</span>
+                    }
+                  </div>
                 </div>
               } @else {
                 <div class="space-y-3">
@@ -293,20 +433,43 @@ import { Subscription, interval } from 'rxjs';
                   </div>
 
                   <!-- Comment text -->
-                  <div class="flex gap-2">
-                    <input 
-                      type="text" 
-                      [(ngModel)]="reviewComment" 
-                      placeholder="Escribe un comentario breve sobre el sabor, temperatura o entrega..."
-                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                    />
-                    <button 
-                      type="button"
-                      (click)="enviarCalificacion()"
-                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition cursor-pointer shadow"
-                    >
-                      Enviar
-                    </button>
+                  <div class="space-y-1">
+                    <div class="flex gap-2">
+                      <input 
+                        type="text" 
+                        [(ngModel)]="reviewComment" 
+                        placeholder="Escribe tu opinión sobre el pedido (mínimo 10 caracteres)..."
+                        class="flex-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                      />
+                      <button 
+                        type="button"
+                        (click)="enviarCalificacion()"
+                        [disabled]="reviewComment.trim().length < 10 || isSubmittingRating()"
+                        class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition shadow disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
+                      >
+                        @if (isSubmittingRating()) {
+                          <svg class="animate-spin w-3.5 h-3.5 text-slate-950" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                          </svg>
+                          <span>Enviando...</span>
+                        } @else {
+                          <span>Enviar</span>
+                        }
+                      </button>
+                    </div>
+                    @if (reviewComment.trim().length < 10) {
+                      <div class="flex items-center gap-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl mt-1.5">
+                        <span class="text-amber-400">⚠️</span>
+                        <span>
+                          @if (reviewComment.length === 0) {
+                            Escribe una opinión sobre tu pedido (mínimo 10 caracteres) para habilitar el envío.
+                          } @else {
+                            Opinión muy corta: faltan {{ 10 - reviewComment.trim().length }} caracteres para habilitar el envío.
+                          }
+                        </span>
+                      </div>
+                    }
                   </div>
                 </div>
               }
@@ -493,71 +656,225 @@ import { Subscription, interval } from 'rxjs';
               </button>
             </div>
 
-            <!-- Form -->
-            <div class="space-y-4 text-xs">
-              <div>
-                <label class="block text-slate-300 font-bold mb-1">Motivo del Reclamo</label>
-                <select 
-                  [(ngModel)]="reportMotivo"
-                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+            @if (reclamoDeOrdenActual(); as reclamoExistente) {
+              <!-- Vista de Reclamo Ya Registrado para este Pedido -->
+              <div class="space-y-4">
+                <div 
+                  class="p-5 rounded-2xl text-xs space-y-3"
+                  [ngClass]="{
+                    'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300': reclamoExistente.estado === 'RESUELTO',
+                    'bg-slate-800/80 border border-white/10 text-slate-300': reclamoExistente.estado === 'RECHAZADO',
+                    'bg-rose-500/10 border border-rose-500/30 text-rose-300': reclamoExistente.estado !== 'RESUELTO' && reclamoExistente.estado !== 'RECHAZADO'
+                  }"
                 >
-                  <option value="PEDIDO_INCOMPLETO">Pedido Incompleto o Faltan Items</option>
-                  <option value="DEMORA_EXCESIVA">Demora Excesiva en la Entrega</option>
-                  <option value="PRODUCTO_FRIO">Producto Frío o en Mal Estado</option>
-                  <option value="COBRO_ERRONEO">Cobro Erróneo / Error de Pago</option>
-                  <option value="MALA_ATENCION">Mala Atención del Repartidor / Personal</option>
-                  <option value="OTRO">Otro Motivo</option>
-                </select>
-              </div>
+                  <div class="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span class="font-bold text-sm text-white">
+                      {{ reclamoExistente.estado === 'RESUELTO' ? 'Reclamo Resuelto' : (reclamoExistente.estado === 'RECHAZADO' ? 'Reclamo No Procedente' : 'Reclamo en Curso') }}
+                    </span>
+                    <span 
+                      class="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase"
+                      [ngClass]="{
+                        'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40': reclamoExistente.estado === 'RESUELTO',
+                        'bg-rose-500/20 text-rose-400 border border-rose-500/40': reclamoExistente.estado === 'RECHAZADO',
+                        'bg-amber-500/20 text-amber-300 border border-amber-500/40': reclamoExistente.estado !== 'RESUELTO' && reclamoExistente.estado !== 'RECHAZADO'
+                      }"
+                    >
+                      {{ reclamoExistente.estado || 'ABIERTO' }}
+                    </span>
+                  </div>
 
-              <div>
-                <label class="block text-slate-300 font-bold mb-1">Descripción detallada</label>
-                <textarea 
-                  [(ngModel)]="reportDescripcion"
-                  rows="3"
-                  placeholder="Detalla qué sucedió para proceder con la investigación o compensación..."
-                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                ></textarea>
-              </div>
+                  <div>
+                    <span class="text-slate-400 block text-[11px]">Motivo registrado:</span>
+                    <strong class="text-white text-xs">{{ getMotivoLabel(reclamoExistente.motivo) }}</strong>
+                  </div>
 
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-slate-300 font-bold mb-1">Monto solicitado (S/)</label>
-                  <input 
-                    type="number" 
-                    [(ngModel)]="reportMonto" 
-                    placeholder="0.00"
-                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  />
+                  <div>
+                    <span class="text-slate-400 block text-[11px]">Tu descripción:</span>
+                    <p class="text-xs text-slate-200 bg-black/40 p-3 rounded-xl border border-white/5 mt-1 italic">
+                      "{{ reclamoExistente.descripcion }}"
+                    </p>
+                  </div>
+
+                  <!-- Resolución de la Administración si ya está atendido -->
+                  @if (reclamoExistente.respuestaAdmin || reclamoExistente.resolucion) {
+                    <div class="pt-2 border-t border-white/10 space-y-1">
+                      <span class="text-emerald-400 font-bold block text-[11px]">Respuesta de la Administración:</span>
+                      <p class="text-xs text-white bg-black/50 p-3 rounded-xl border border-emerald-500/30">
+                        {{ reclamoExistente.respuestaAdmin || reclamoExistente.resolucion }}
+                      </p>
+                    </div>
+                  }
+
+                  <!-- Detalle de Reembolso si aplica -->
+                  @if (reclamoExistente.reembolsoProcedente && reclamoExistente.montoReembolso) {
+                    <div class="p-3 rounded-xl bg-polleria-gold/10 border border-polleria-gold/30 text-polleria-gold flex items-center justify-between">
+                      <span class="font-bold text-[11px]">Reembolso Aprobado:</span>
+                      <span class="font-mono font-bold text-sm">S/ {{ reclamoExistente.montoReembolso | number:'1.2-2' }}</span>
+                    </div>
+                  }
+
+                  @if (reclamoExistente.fecha) {
+                    <p class="text-[10px] text-slate-400 font-mono text-right pt-1">
+                      Registrado: {{ reclamoExistente.fecha }}
+                      @if (reclamoExistente.resueltoEn) {
+                        • Resuelto: {{ reclamoExistente.resueltoEn | date:'dd/MM/yyyy HH:mm' }}
+                      }
+                    </p>
+                  }
                 </div>
+
+                @if (reclamoExistente.estado === 'RESUELTO') {
+                  <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+                    <span class="text-base">✓</span>
+                    <span>Tu reclamo ha sido atendido satisfactoriamente por nuestro equipo de atención al cliente.</span>
+                  </div>
+                } @else if (reclamoExistente.estado === 'RECHAZADO') {
+                  <div class="p-3.5 rounded-xl bg-slate-800 border border-white/10 text-slate-300 text-xs flex items-center gap-2">
+                    <span class="text-base">ℹ️</span>
+                    <span>El reclamo fue revisado y concluido como no procedente. Para mayores consultas puedes comunicarte con el local.</span>
+                  </div>
+                } @else {
+                  <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+                    <span class="text-base">ℹ️</span>
+                    <span>Tu solicitud está en cola de revisión por administración. En breve verás la resolución aquí.</span>
+                  </div>
+                }
+
+                <button 
+                  type="button"
+                  (click)="showReportModal.set(false)"
+                  class="w-full py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase transition cursor-pointer"
+                >
+                  Entendido / Cerrar
+                </button>
+              </div>
+            } @else {
+              <!-- Form -->
+              <div class="space-y-4 text-xs">
                 <div>
-                  <label class="block text-slate-300 font-bold mb-1">URL Evidencia (Foto)</label>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="reportEvidenciaUrl" 
-                    placeholder="https://..."
-                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  />
+                  <label class="block text-slate-300 font-bold mb-1">Motivo del Reclamo</label>
+                  <select 
+                    [(ngModel)]="reportMotivo"
+                    class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  >
+                    <option value="PEDIDO_INCOMPLETO">Pedido Incompleto o Faltan Items</option>
+                    <option value="DEMORA_EXCESIVA">Demora Excesiva en la Entrega</option>
+                    <option value="PRODUCTO_FRIO">Producto Frío o en Mal Estado</option>
+                    <option value="COBRO_ERRONEO">Cobro Erróneo / Error de Pago</option>
+                    <option value="MALA_ATENCION">Mala Atención del Repartidor / Personal</option>
+                    <option value="OTRO">Otro Motivo</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div class="flex justify-between items-center mb-1">
+                    <label class="block text-slate-300 font-bold">Descripción detallada</label>
+                    <span 
+                      class="text-[10px] font-mono transition-colors"
+                      [ngClass]="{
+                        'text-rose-500 font-bold': reportDescripcion.length > 2000,
+                        'text-amber-400': reportDescripcion.trim().length < 10 && reportDescripcion.length > 0,
+                        'text-slate-400': reportDescripcion.trim().length >= 10 && reportDescripcion.length <= 2000
+                      }"
+                    >
+                      {{ reportDescripcion.length }} / 2000 caracteres
+                    </span>
+                  </div>
+                  <textarea 
+                    [(ngModel)]="reportDescripcion"
+                    rows="3"
+                    maxlength="2050"
+                    placeholder="Detalla qué sucedió con tu pedido (mínimo 10 caracteres)..."
+                    class="w-full px-4 py-2.5 rounded-xl bg-black/50 border text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 resize-none"
+                    [ngClass]="reportDescripcion.length > 2000 ? 'border-rose-500 focus:ring-rose-500' : 'border-white/10 focus:ring-rose-400'"
+                  ></textarea>
+                  @if (reportDescripcion.length > 0 && reportDescripcion.trim().length < 10) {
+                    <p class="text-[10px] text-amber-400 mt-0.5">La descripción debe tener al menos 10 caracteres.</p>
+                  }
+                </div>
+
+                <!-- Evidencia Fotográfica con Previsualización (Obligatoria) -->
+                <div>
+                  <label class="block text-slate-300 font-bold mb-1">
+                    Evidencia Fotográfica <span class="text-rose-400 font-bold">*</span>
+                  </label>
+                  @if (!evidenciaPreview()) {
+                    <label class="flex flex-col items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 cursor-pointer hover:bg-white/5 hover:border-rose-400/50 transition">
+                      <span class="text-rose-400 text-xl mb-1">📸</span>
+                      <span class="text-xs text-white font-medium">Adjuntar foto del pedido dañado/faltante</span>
+                      <span class="text-[10px] text-slate-400">JPG, PNG o WEBP (Máx 5MB) — Requerido para reclamos</span>
+                      <input type="file" accept="image/jpeg,image/png,image/webp" (change)="onEvidenciaFileSelected($event)" class="hidden">
+                    </label>
+                  } @else {
+                    <div class="relative rounded-2xl overflow-hidden border border-white/20 max-h-40 bg-black/40">
+                      <img [src]="evidenciaPreview()" alt="Previsualización evidencia" class="w-full h-40 object-cover">
+                      <button 
+                        type="button" 
+                        (click)="removerEvidencia()" 
+                        title="Eliminar y cambiar foto"
+                        class="absolute top-2 right-2 bg-slate-900/90 hover:bg-rose-600 text-white rounded-full p-1.5 shadow-xl transition cursor-pointer border border-white/20 flex items-center justify-center w-7 h-7"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  }
                 </div>
               </div>
-            </div>
 
-            <div class="flex gap-3 pt-2">
-              <button 
-                type="button"
-                (click)="showReportModal.set(false)"
-                class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase cursor-pointer transition"
-              >
-                Cancelar
-              </button>
-              <button 
-                type="button"
-                (click)="enviarReclamo()"
-                class="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase cursor-pointer transition shadow-lg shadow-rose-600/30"
-              >
-                Enviar Reclamo
-              </button>
-            </div>
+              <!-- Aviso dinámico de requisitos faltantes para habilitar el envío -->
+              @if (!isFormReclamoValido()) {
+                <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs space-y-1.5 animate-fade-in">
+                  <div class="font-bold flex items-center gap-1.5 text-amber-400">
+                    <span class="text-sm">⚠️</span>
+                    <span>Faltan requisitos para habilitar el envío:</span>
+                  </div>
+                  <ul class="list-disc list-inside space-y-1 text-[11px] text-slate-300 pl-1">
+                    @if (reportDescripcion.trim().length < 10) {
+                      <li class="text-amber-200">
+                        Descripción: ingresa al menos 10 caracteres (actualmente llevas {{ reportDescripcion.trim().length }}).
+                      </li>
+                    }
+                    @if (reportDescripcion.length > 2000) {
+                      <li class="text-rose-400 font-bold">
+                        Descripción: excede el límite máximo de 2000 caracteres (elimina {{ reportDescripcion.length - 2000 }} caracteres).
+                      </li>
+                    }
+                    @if (!selectedEvidenciaFile) {
+                      <li class="text-amber-200">
+                        Foto de evidencia: debes adjuntar una foto del pedido dañado o faltante (obligatorio).
+                      </li>
+                    }
+                  </ul>
+                </div>
+              }
+
+              <div class="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  (click)="showReportModal.set(false)"
+                  [disabled]="isSubmittingReport()"
+                  class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase cursor-pointer transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button"
+                  (click)="enviarReclamo()"
+                  [disabled]="!isFormReclamoValido() || isSubmittingReport()"
+                  class="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase transition shadow-lg shadow-rose-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  @if (isSubmittingReport()) {
+                    <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                    </svg>
+                    <span>Enviando...</span>
+                  } @else {
+                    <span>Enviar Reclamo</span>
+                  }
+                </button>
+              </div>
+            }
 
           </div>
         </div>
@@ -572,19 +889,35 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
-  private feedbackService = inject(FeedbackService);
+  readonly feedbackService = inject(FeedbackService);
 
   readonly currentOrder = signal<Order | null>(null);
   readonly showDetailsModal = signal<boolean>(false);
   readonly showReportModal = signal<boolean>(false);
-  readonly ratingSent = signal<boolean>(false);
   readonly selectedStars = signal<number>(5);
+
+  readonly reseniaDeOrdenActual = computed(() => {
+    const order = this.currentOrder();
+    if (!order) return null;
+    const orderId = Number(order.id);
+    return this.feedbackService.obtenerReseniaDeOrden(orderId);
+  });
+
+  readonly reclamoDeOrdenActual = computed(() => {
+    const order = this.currentOrder();
+    if (!order) return null;
+    const orderId = Number(order.id);
+    return this.feedbackService.obtenerReporteDeOrden(orderId);
+  });
 
   reviewComment = '';
   reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
   reportDescripcion = '';
   reportMonto = 0;
-  reportEvidenciaUrl = '';
+  selectedEvidenciaFile: File | null = null;
+  readonly evidenciaPreview = signal<string | null>(null);
+  readonly isSubmittingRating = signal<boolean>(false);
+  readonly isSubmittingReport = signal<boolean>(false);
 
   // Seguimiento sin cuenta
   readonly pasoSeguimiento = signal<'CELULAR' | 'CODIGO'>('CELULAR');
@@ -613,6 +946,9 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       if (refrescado && refrescado !== actual) {
         this.currentOrder.set(refrescado);
       }
+      if (actual?.id) {
+        this.feedbackService.consultarReporteDeOrden(Number(actual.id)).subscribe();
+      }
     });
   }
 
@@ -620,7 +956,13 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     // 1. Cargar los pedidos del cliente y refrescarlos para ver los cambios de estado
     this.ordersService.loadMyOrders();
     if (isPlatformBrowser(this.platformId)) {
-      this.refrescoSub = interval(15000).subscribe(() => this.ordersService.loadMyOrders());
+      this.refrescoSub = interval(15000).subscribe(() => {
+        this.ordersService.loadMyOrders();
+        const current = this.currentOrder();
+        if (current?.id) {
+          this.feedbackService.consultarReporteDeOrden(Number(current.id)).subscribe();
+        }
+      });
     }
 
     // 2. Comprobar parámetros de la URL (soporta códigos internos y retornos de Mercado Pago)
@@ -649,10 +991,33 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.refrescoSub?.unsubscribe();
+    this.removerEvidencia();
   }
 
   selectOrder(order: Order): void {
     this.currentOrder.set(order);
+    this.reviewComment = '';
+    this.selectedStars.set(5);
+    this.reportDescripcion = '';
+    this.removerEvidencia();
+    if (order?.id) {
+      this.feedbackService.consultarReporteDeOrden(Number(order.id)).subscribe();
+    }
+  }
+
+  abrirModalReclamo(): void {
+    this.showReportModal.set(true);
+  }
+
+  getMotivoLabel(motivo?: string): string {
+    switch (motivo) {
+      case 'PEDIDO_INCOMPLETO': return 'Pedido Incompleto o Faltan Items';
+      case 'DEMORA_EXCESIVA': return 'Demora Excesiva en la Entrega';
+      case 'PRODUCTO_FRIO': return 'Producto Frío o en Mal Estado';
+      case 'COBRO_ERRONEO': return 'Cobro Erróneo / Error de Pago';
+      case 'MALA_ATENCION': return 'Mala Atención del Repartidor / Personal';
+      default: return motivo || 'Otro Motivo';
+    }
   }
 
   // ================= SEGUIMIENTO SIN CUENTA =================
@@ -911,49 +1276,118 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     );
   }
 
+  onEvidenciaFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const validMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validMimes.includes(file.type)) {
+      this.notify.showWarning('Formato no permitido', 'Solo puedes adjuntar fotos en formato JPG, PNG o WEBP.');
+      input.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      this.notify.showWarning('Archivo muy pesado', 'La imagen no debe superar los 5 MB.');
+      input.value = '';
+      return;
+    }
+    this.selectedEvidenciaFile = file;
+    if (this.evidenciaPreview()) {
+      URL.revokeObjectURL(this.evidenciaPreview()!);
+    }
+    this.evidenciaPreview.set(URL.createObjectURL(file));
+  }
+
+  removerEvidencia(): void {
+    if (this.evidenciaPreview()) {
+      URL.revokeObjectURL(this.evidenciaPreview()!);
+    }
+    this.selectedEvidenciaFile = null;
+    this.evidenciaPreview.set(null);
+  }
+
+  isFormReclamoValido(): boolean {
+    const desc = this.reportDescripcion.trim();
+    return !!this.reportMotivo &&
+      desc.length >= 10 &&
+      desc.length <= 2000 &&
+      this.selectedEvidenciaFile !== null;
+  }
+
   enviarCalificacion(): void {
     const order = this.currentOrder();
-    if (!order) return;
+    if (!order || this.reviewComment.trim().length < 10 || this.isSubmittingRating()) return;
     const orderIdNum = Number(order.id) || 1;
+    const estrellas = this.selectedStars();
+    const comentario = this.reviewComment.trim();
+
+    this.isSubmittingRating.set(true);
     this.feedbackService.calificarPedido({
       ordenId: orderIdNum,
-      estrellas: this.selectedStars(),
-      comentario: this.reviewComment
+      estrellas,
+      comentario
     }).subscribe({
       next: () => {
-        this.ratingSent.set(true);
+        this.isSubmittingRating.set(false);
+        this.feedbackService.guardarReseniaLocal(orderIdNum, estrellas, comentario);
+        this.reviewComment = '';
         this.notify.showSuccess('¡Muchas gracias por calificar tu pedido!');
       },
-      error: () => {
-        this.ratingSent.set(true);
-        this.notify.showSuccess('Calificación registrada con éxito.');
+      error: (err) => {
+        this.isSubmittingRating.set(false);
+        if (err.status === 409) {
+          this.feedbackService.guardarReseniaLocal(orderIdNum, estrellas, comentario);
+          this.reviewComment = '';
+          this.notify.showInfo('Calificación ya registrada', 'Ya habías enviado una calificación para esta orden.');
+        } else {
+          this.notify.showError('No se pudo registrar la calificación', err.error?.message || 'Intente nuevamente más tarde.');
+        }
       }
     });
   }
 
   enviarReclamo(): void {
     const order = this.currentOrder();
-    if (!order) return;
-    if (!this.reportDescripcion.trim()) {
-      this.notify.showWarning('Por favor explica brevemente lo sucedido en la descripción.');
-      return;
-    }
+    if (!order || !this.isFormReclamoValido() || this.isSubmittingReport()) return;
+
+    this.isSubmittingReport.set(true);
     const orderIdNum = Number(order.id) || 1;
-    this.feedbackService.registrarReclamo({
-      ordenId: orderIdNum,
-      motivo: this.reportMotivo,
-      descripcion: this.reportDescripcion,
-      montoReclamado: this.reportMonto > 0 ? this.reportMonto : undefined,
-      evidenciaUrl: this.reportEvidenciaUrl || undefined
-    }).subscribe({
-      next: () => {
+    const motivo = this.reportMotivo;
+    const desc = this.reportDescripcion.trim();
+
+    this.feedbackService.crearReporteMultipart(
+      orderIdNum,
+      motivo,
+      desc,
+      this.selectedEvidenciaFile || undefined
+    ).subscribe({
+      next: (nuevo) => {
+        this.isSubmittingReport.set(false);
+        this.feedbackService.guardarReporteLocal(orderIdNum, {
+          id: nuevo.id,
+          motivo,
+          descripcion: desc,
+          estado: nuevo.estado
+        });
         this.showReportModal.set(false);
         this.reportDescripcion = '';
+        this.removerEvidencia();
         this.notify.showSuccess('Tu reclamo fue registrado en el libro de reclamaciones.');
       },
-      error: () => {
-        this.showReportModal.set(false);
-        this.notify.showSuccess('Reclamo registrado correctamente.');
+      error: (err) => {
+        this.isSubmittingReport.set(false);
+        if (err.status === 409) {
+          this.feedbackService.guardarReporteLocal(orderIdNum, {
+            motivo,
+            descripcion: desc,
+            estado: 'ABIERTO'
+          });
+          this.showReportModal.set(false);
+          this.removerEvidencia();
+          this.notify.showInfo('Reclamo ya registrado', 'Ya existe un reclamo en proceso para esta orden.');
+        } else {
+          this.notify.showError('No se pudo registrar el reclamo', err.error?.message || 'Error al procesar el reclamo.');
+        }
       }
     });
   }
