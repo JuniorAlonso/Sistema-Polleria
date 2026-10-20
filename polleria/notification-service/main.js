@@ -6,6 +6,9 @@ const { NotificacionService } = require('./src/notifications/service');
 const { crearAjustes } = require('./src/outbound/ajustes');
 const { crearGobernador } = require('./src/outbound/gobernador');
 const { crearApp } = require('./src/http/app');
+const { crearConversationStore } = require('./src/chatbot/conversation');
+const { crearBot } = require('./src/chatbot/chatbot');
+const { crearCatalogo } = require('./src/pedidos/catalogo');
 
 async function main() {
     const store = crearStore(config.databaseUrl);
@@ -14,9 +17,25 @@ async function main() {
         console.warn('⚠️ DATABASE_URL no definido: el historial se guardará solo en memoria');
     }
 
+    // Estado de conversación del bot (T3a): misma base que el historial y mismo
+    // fallback en memoria cuando no hay DATABASE_URL, así sobrevive al reinicio.
+    const conversacion = crearConversationStore(config.databaseUrl);
+    await conversacion.init();
+    if (!config.databaseUrl) {
+        console.warn('⚠️ DATABASE_URL no definido: el estado de conversación se guardará solo en memoria');
+    }
+
     // Ajustes anti-baneo en memoria (S8): arrancan con los defaults de entorno y el
     // panel (T5) los editará en caliente. Se pierden al reiniciar el proceso.
     const ajustes = crearAjustes(config.antiBaneo);
+
+    // Catálogo real de orders-service (T3a): el bot lee GET /productos con cache corto
+    // y, si el servicio no responde, avisa y ofrece el asesor en vez de inventar carta.
+    const catalogo = crearCatalogo({
+        baseUrl: config.ordersServiceUrl,
+        ttlMs: config.catalogoTtlMs
+    });
+    const bot = crearBot({ catalogo, ajustes, conversacion });
 
     // Gobernador anti-baneo (T4b): presupuesto por hora/día, ventana horaria y circuit
     // breaker. La cola lo consulta antes de cada envío y /status expone su estado.
@@ -48,8 +67,8 @@ async function main() {
         console.log(`🛡️ Anti-baneo: ${presupuestoHora}/hora, ${presupuestoDia}/día, ventana ${horaDesde}:00-${horaHasta}:00`);
     });
 
-    // El handler encola la respuesta del chatbot en la misma cola saliente (S2).
-    client.on('message', msg => handleMessage(msg, { service }));
+    // El handler encola la respuesta del bot en la misma cola saliente (S2).
+    client.on('message', msg => handleMessage(msg, { service, bot }));
     // arrancar() reintenta solo cuando Chromium no puede lanzarse (por ejemplo por un
     // SingletonLock heredado de un contenedor anterior) y deja el motivo en /status.
     arrancar();

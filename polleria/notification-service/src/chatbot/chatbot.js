@@ -1,111 +1,185 @@
-const { getMainMenu } = require('./menu');
+/**
+ * Motor conversacional del bot de pedidos (T3a, S1/S4/S12).
+ *
+ * El bot DEVUELVE el texto y nunca envía por su cuenta: el handler lo encola en la
+ * única cola saliente (T4). Este archivo resuelve el estado de cada conversación:
+ *
+ * - MENU: menú de 4 opciones; la 1 (o un mensaje que pide un pedido) inicia el flujo.
+ * - CONFIRMANDO_ICA: primer paso OBLIGATORIO antes de tomar cualquier pedido (S12).
+ * - CATALOGO: muestra la carta real de orders-service (T3a termina aquí, sin carrito).
+ * - ESPERANDO_CODIGO_PEDIDO: se conserva el flujo viejo de consulta de pedido.
+ *
+ * El estado se lee/escribe en un store persistido (misma base que el historial) y el
+ * dedup por `message.id` evita ejecutar dos veces la reentrega de un mensaje.
+ */
 
 const {
-    setState,
-    clearConversation
-} = require('./conversation');
+    getMainMenu,
+    PREGUNTA_ICA,
+    SOLO_ICA,
+    lineaContacto,
+    respuestaAsesor,
+    formatearCatalogo,
+    mensajeSinServicio,
+    mensajeSinProductos
+} = require('./menu');
+const { MemoryConversationStore } = require('./conversation');
+const { DedupMensajes } = require('./dedup');
+const { crearCatalogo } = require('../pedidos/catalogo');
+const { normalizarTelefono } = require('../notifications/phone');
 
+const ESTADO_MENU = 'MENU';
+const ESTADO_CONFIRMANDO_ICA = 'CONFIRMANDO_ICA';
+const ESTADO_CATALOGO = 'CATALOGO';
+const ESTADO_ESPERANDO_CODIGO = 'ESPERANDO_CODIGO_PEDIDO';
 
-/**
- * Resuelve la respuesta del bot y la DEVUELVE como texto; ya no envía por su cuenta
- * (S2). Quien la envía es el handler, encolándola en la misma cola que las
- * notificaciones, para que nada salga por un segundo camino.
- *
- * Devuelve el texto a enviar, o null si el mensaje no amerita respuesta.
- */
-async function processMessage(msg, userId, conversation) {
+const SALUDOS = ['hola', 'holi', 'buenas', 'menu', 'opciones'];
+const AFIRMATIVOS = ['si', 's', 'yes', 'claro', 'confirmo', 'correcto', 'soy de ica'];
+const NEGATIVOS = ['no', 'n', 'no soy de ica'];
 
-    const texto = (msg.body || msg.caption || '').toLowerCase().trim();
+function sinDiacriticos(texto) {
+    return String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
-    console.log(` Procesando conversación de: ${userId}`);
-    console.log(` Estado en chatbot: ${conversation.state}`);
+function textoDe(msg) {
+    return sinDiacriticos((msg.body || msg.caption || '').toLowerCase().trim());
+}
 
+/** Clave de conversación: el celular normalizado (S12:S1) y, si no, el `from` crudo. */
+function claveDeUsuario(from) {
+    return normalizarTelefono(from) || String(from || '');
+}
 
-    // ==========================================
-    // 1. ESTADO: ESPERANDO CÓDIGO DE PEDIDO
-    // ==========================================
+function idDeMensaje(msg) {
+    const id = msg && msg.id;
+    if (!id) return null;
+    if (typeof id === 'string') return id;
+    return id._serialized || id.id || null;
+}
 
-    if (conversation.state === 'ESPERANDO_CODIGO_PEDIDO') {
+/** Pide un pedido, pero no "consultar el estado de mi pedido". */
+function esIntentoDePedido(texto) {
+    if (/estado|consultar|seguimiento|ubicacion|horario|asesor/.test(texto)) return false;
+    return /(pedir|pedido|ordenar|orden|comprar|delivery)/.test(texto);
+}
 
-        const codigoPedido = (msg.body || msg.caption || '').trim();
+function esAfirmativo(texto) {
+    if (AFIRMATIVOS.includes(texto)) return true;
+    return AFIRMATIVOS.includes(texto.split(/\s+/)[0]);
+}
 
-        clearConversation(userId);
+function esNegativo(texto) {
+    if (NEGATIVOS.includes(texto)) return true;
+    return NEGATIVOS.includes(texto.split(/\s+/)[0]);
+}
 
-        return (
-            ` Recibí tu código de pedido: *${codigoPedido}*`
-        );
+class BotPedidos {
+    constructor({ catalogo, ajustes, conversacion, dedup, ahora } = {}) {
+        this.catalogo = catalogo || crearCatalogo();
+        this.ajustes = ajustes || null;
+        this.conversacion = conversacion || new MemoryConversationStore();
+        this.dedup = dedup || new DedupMensajes({ ahora });
     }
 
-
-    // ==========================================
-    // 2. SALUDO / MENÚ
-    // ==========================================
-
-    if (
-        [
-            'hola',
-            'holi',
-            'buenas',
-            'menu',
-            'menú',
-            'opciones'
-        ].includes(texto)
-    ) {
-
-        console.log('🚀 Menú listo para encolar');
-
-        return getMainMenu();
+    /** Devuelve el texto a enviar o null si el mensaje no amerita respuesta. */
+    async procesar(msg) {
+        const id = idDeMensaje(msg);
+        if (!this.dedup.registrar(id)) {
+            // Reentrega de WhatsApp: el mismo paso ya se ejecutó, no se repite.
+            return null;
+        }
+        const clave = claveDeUsuario(msg.from);
+        const guardado = await this.conversacion.get(clave);
+        const estado = guardado ? guardado.estado : ESTADO_MENU;
+        return this._resolver(msg, clave, estado);
     }
 
+    async _resolver(msg, clave, estado) {
+        const texto = textoDe(msg);
 
-    // ==========================================
-    // 3. OPCIONES DEL MENÚ
-    // ==========================================
+        if (estado === ESTADO_ESPERANDO_CODIGO) {
+            await this.conversacion.del(clave);
+            const codigo = (msg.body || msg.caption || '').trim();
+            return `Recibí tu código de pedido: *${codigo}*`;
+        }
 
-    switch (texto) {
+        if (estado === ESTADO_CONFIRMANDO_ICA) {
+            return this._resolverIca(texto, clave);
+        }
 
-        case '1':
+        if (estado === ESTADO_CATALOGO) {
+            const resultado = await this._cargarCatalogo();
+            return resultado.texto;
+        }
 
-            return (
-                '*NUESTRA CARTA*\n\n' +
-                '• 1/4 de Pollo + Papas + Ensalada: *S/ 18.00*\n' +
-                '• 1/2 Pollo + Papas + Ensalada: *S/ 34.00*\n' +
-                '• 1 Pollo Entero + Papas + Ensalada + Gaseosa 1.5L: *S/ 65.00*'
-            );
+        // Estado MENU
+        if (SALUDOS.includes(texto)) return getMainMenu();
 
+        if (texto === '1' || esIntentoDePedido(texto)) {
+            await this.conversacion.set(clave, ESTADO_CONFIRMANDO_ICA);
+            return PREGUNTA_ICA;
+        }
 
-        case '2':
+        if (texto === '2') {
+            await this.conversacion.set(clave, ESTADO_ESPERANDO_CODIGO);
+            return 'Para consultar tu pedido, por favor envíanos tu *Código de Pedido* 🔎 (Ejemplo: #102).';
+        }
 
-            setState(userId, 'ESPERANDO_CODIGO_PEDIDO');
-
-            return (
-                'Para consultar tu pedido, por favor envíanos tu *Código de Pedido* 🔎 (Ejemplo: #102).'
-            );
-
-
-        case '3':
-
+        if (texto === '3') {
             return (
                 '📍 *UBICACIÓN Y HORARIOS*\n\n' +
-                '• Dirección: Av. Principal 123, Lima\n' +
+                '• Dirección: Av. Principal 123, Ica\n' +
                 '• Atención: Lunes a Domingo de 12:00 PM a 10:30 PM'
             );
+        }
 
+        if (texto === '4') {
+            return respuestaAsesor(this.ajustes);
+        }
 
-        case '4':
+        return null;
+    }
 
-            return (
-                '👤 Un asesor de nuestro equipo te atenderá en unos momentos. Por favor, déjanos tu consulta.'
-            );
+    async _resolverIca(texto, clave) {
+        if (esAfirmativo(texto)) {
+            const resultado = await this._cargarCatalogo();
+            await this.conversacion.set(clave, resultado.ok ? ESTADO_CATALOGO : ESTADO_MENU);
+            return resultado.texto;
+        }
 
+        if (esNegativo(texto)) {
+            await this.conversacion.set(clave, ESTADO_MENU);
+            return `${SOLO_ICA}\n\n${lineaContacto(this.ajustes)}`;
+        }
 
-        default:
+        return PREGUNTA_ICA;
+    }
 
-            return null;
+    async _cargarCatalogo() {
+        try {
+            const productos = await this.catalogo.listar();
+            if (!productos.length) {
+                return { ok: false, texto: mensajeSinProductos(this.ajustes) };
+            }
+            return { ok: true, texto: formatearCatalogo(productos) };
+        } catch (error) {
+            // orders-service no respondió: no se inventa catálogo, se ofrece el asesor.
+            return { ok: false, texto: mensajeSinServicio(this.ajustes) };
+        }
     }
 }
 
+function crearBot(opciones) {
+    return new BotPedidos(opciones);
+}
 
 module.exports = {
-    processMessage
+    BotPedidos,
+    crearBot,
+    ESTADO_MENU,
+    ESTADO_CONFIRMANDO_ICA,
+    ESTADO_CATALOGO,
+    ESTADO_ESPERANDO_CODIGO,
+    claveDeUsuario,
+    idDeMensaje
 };

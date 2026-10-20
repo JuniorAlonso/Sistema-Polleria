@@ -169,6 +169,32 @@ Sobre la misma cola única de T4 se agrega un **gobernador** en memoria (`src/ou
 
 El orden de prioridad al pausar es: circuit breaker → ventana horaria → presupuesto. La configuración de T4b se edita en caliente con `ajustes.actualizar(...)` y se pierde al reiniciar el proceso (S8). El panel la administra por HTTP desde T5 (§4.7).
 
+### 3.5 Bot de pedidos por WhatsApp I: catálogo real, Ica y estado persistido (T3a, S1/S4/S12)
+
+El motor conversacional vive en `src/chatbot/` y **devuelve el texto**; el handler lo encola en la única cola saliente (§3.3). T3a cubre el primer tramo del pedido anónimo (S1); el carrito y el alta de la orden llegan en T3b.
+
+**Flujo**
+
+1. El menú (`getMainMenu`) conserva sus cuatro opciones. La **1 (Hacer un Pedido)** y cualquier mensaje que pida un pedido inician el flujo.
+2. **Primer paso obligatorio (S12):** el bot pregunta si el pedido es de **Ica** (`CONFIRMANDO_ICA`). Si la persona dice que no, informa que el delivery cubre solo Ica, **no avanza con el pedido** y ofrece el número del asesor.
+3. Si confirma que sí, el bot muestra la **carta real** leída de `orders-service` (`GET /productos`, público) y deja la conversación en `CATALOGO`. La carta ya no tiene precios escritos a mano.
+4. Las opciones 2 (código de pedido), 3 (ubicación/horarios) y 4 (asesor) siguen funcionando.
+
+**Catálogo con cache corto (T3a)**
+
+- `src/pedidos/catalogo.js` lee `GET /productos` con un cache en memoria (`ORDERS_CATALOGO_TTL_MS`, default 30 s) para no golpear el servicio en cada mensaje.
+- Si orders-service **falla o no responde** (error de red, timeout o respuesta no-2xx), el bot **no inventa catálogo**: avisa que no puede tomar el pedido en este momento y ofrece el asesor.
+
+**Estado de conversación persistido (T3a)**
+
+- `src/chatbot/conversation.js` reemplaza el `Map` en memoria por un store con la **misma base que el historial** (`DATABASE_URL`, tabla `conversation_state`) y el **mismo fallback en memoria** cuando no hay base. La clave es el celular normalizado del cliente (`src/notifications/phone.js`), así que el estado **sobrevive al reinicio** del servicio con Postgres.
+- **Dedup por `message.id`**: si WhatsApp reentrega el mismo mensaje, el bot no vuelve a ejecutar el paso (no responde de nuevo). El registro vive en memoria con vencimiento.
+
+**Número del asesor (S4/S11)**
+
+- El bot usa `numeroAsesor` y, si no hay, `numeroRespaldo` del store de ajustes en memoria (T5, §4.7).
+- Si no hay ninguno configurado, **no ofrece un número inexistente**: lo dice tal cual.
+
 ---
 
 ## 4. Endpoints REST
@@ -507,6 +533,10 @@ WHATSAPP_NUMERO_ASESOR=                   # Celular del admin que conecta WhatsA
 WHATSAPP_NUMERO_RESPALDO=                 # Celular de respaldo opcional (S11); vacío = sin respaldo (default: vacío)
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
+# Catálogo real del bot de pedidos (T3a)
+ORDERS_SERVICE_URL=http://localhost:8082  # Base de orders-service para GET /productos (default: http://localhost:8082)
+ORDERS_CATALOGO_TTL_MS=30000              # Cache en memoria del catálogo (default: 30000 ms)
+
 # Historial (RF32)
 DATABASE_URL=postgres://postgres:postgres123@localhost:5432/polleria
 
@@ -555,6 +585,11 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Una señal de rate-overlimit/bloqueo abre el breaker, aplica backoff exponencial acotado y `GET /status` expone la señal detectada; al vencer, un envío de prueba cierra el breaker.
 - [ ] Ningún trabajo se pierde durante una pausa (breaker, ventana o presupuesto).
 - [ ] Las respuestas del chatbot y las notificaciones salen por la misma cola (sin segundo camino).
+- [ ] El bot pide confirmar que el pedido es de Ica antes de continuar; si la persona no es de Ica, no toma el pedido y ofrece el asesor.
+- [ ] La carta que muestra el bot sale de `GET /productos` de orders-service (con cache corto) y, si el servicio no responde, no se inventa catálogo.
+- [ ] El estado de conversación sobrevive al reinicio del servicio (con `DATABASE_URL`) y funciona con el fallback en memoria cuando no hay base.
+- [ ] Un mensaje reentregado con el mismo `message.id` no ejecuta dos veces el mismo paso.
+- [ ] El bot ofrece `numeroAsesor` o, si no hay, `numeroRespaldo`; sin ninguno, lo dice sin inventar un número.
 - [ ] Ningún mensaje sale sin marcar visto / mostrar "escribiendo" cuando corresponde.
 - [ ] El historial registra TODOS los intentos con su estado final.
 - [ ] Un número inválido NO bloquea la cola para los siguientes mensajes.
@@ -584,9 +619,13 @@ src/outbound/limites.js         # Presupuesto por hora/día y ventana horaria (T
 src/outbound/gobernador.js      # Coordina límites + breaker; la cola lo consulta antes de enviar (T4b)
 src/http/app.js                 # Endpoints /api/notificaciones/* y página GET /qr
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
+src/pedidos/catalogo.js         # Catálogo real de orders-service con cache corto y fallo explícito (T3a)
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
-src/whatsapp/handler.js         # Enrutador de mensajes entrantes hacia el chatbot
-src/chatbot/                    # Chatbot de respuestas (menú, conversación, fuera del alcance de RF30-32)
+src/whatsapp/handler.js         # Enrutador de mensajes entrantes: encola la respuesta del bot (T3a)
+src/chatbot/chatbot.js          # Motor conversacional: menú, Ica, catálogo, estado y dedup (T3a)
+src/chatbot/conversation.js     # Estado de conversación persistido (misma base que el historial + fallback en memoria)
+src/chatbot/menu.js             # Textos y formato de la carta real (sin precios hardcodeados)
+src/chatbot/dedup.js            # Dedup de mensajes entrantes por message.id
 test/                           # Tests con node:test (`npm test`)
 Dockerfile                      # Imagen con Chromium para puppeteer
 ```

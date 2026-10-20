@@ -34,6 +34,11 @@ const config = {
     // Si no hay DATABASE_URL, el historial se guarda en memoria (se pierde al reiniciar)
     databaseUrl: process.env.DATABASE_URL || null,
 
+    // Catálogo real de orders-service (T3a): el bot lo lee con GET /productos y lo
+    // cachea un rato en memoria para no golpear el servicio en cada mensaje.
+    ordersServiceUrl: process.env.ORDERS_SERVICE_URL || 'http://localhost:8082',
+    catalogoTtlMs: numeroEnv('ORDERS_CATALOGO_TTL_MS', 30000),
+
     // Mismo secreto que auth-service: protege GET /historial (solo ADMIN)
     jwtSecret: process.env.JWT_SECRET || 'sanpollo-dev-secret-key-2026-super-segura-256bits-minimo',
 

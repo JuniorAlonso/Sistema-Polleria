@@ -9,7 +9,9 @@ const { NotificacionService } = require('../src/notifications/service');
 const { MemoryStore } = require('../src/notifications/store');
 const { crearApp } = require('../src/http/app');
 const handleMessage = require('../src/whatsapp/handler');
-const { processMessage } = require('../src/chatbot/chatbot');
+const { crearBot } = require('../src/chatbot/chatbot');
+const { MemoryConversationStore } = require('../src/chatbot/conversation');
+const { crearCatalogo } = require('../src/pedidos/catalogo');
 
 /**
  * T4 (S2/S8) — Anti-baneo I.
@@ -194,6 +196,20 @@ test('el chatbot ya no envía por su cuenta: devuelve el texto y el handler lo e
     const reloj = relojFalso();
     const { service, whatsapp } = servicioDePrueba({ reloj });
 
+    // T3a (S12): el bot devuelve el texto y, antes de mostrar la carta, confirma que el
+    // pedido es de Ica. El catálogo viene inyectado para no tocar la red en el test.
+    const bot = crearBot({
+        catalogo: crearCatalogo({
+            baseUrl: 'http://orders.test',
+            fetchImpl: async () => ({
+                ok: true, status: 200,
+                json: async () => ([{ id: 1, nombre: 'Pollo', precio: 18, disponible: true }])
+            })
+        }),
+        ajustes: ajustesBase(),
+        conversacion: new MemoryConversationStore()
+    });
+
     // Si el chatbot volviera a llamar a msg.reply, este test falla a propósito.
     const msg = {
         from: '51911111111@c.us',
@@ -201,10 +217,12 @@ test('el chatbot ya no envía por su cuenta: devuelve el texto y el handler lo e
         reply: async () => { throw new Error('el chatbot no debe enviar directo con msg.reply'); }
     };
 
-    const respuesta = await processMessage({ body: '1' }, 'otro@c.us', { state: 'MENU' });
+    const pregunta = await bot.procesar({ from: 'otro@c.us', id: 'chat-1', body: '1' });
+    assert.match(pregunta, /eres de ica/i);
+    const respuesta = await bot.procesar({ from: 'otro@c.us', id: 'chat-2', body: 'si' });
     assert.match(respuesta, /NUESTRA CARTA/, 'processMessage devuelve el texto en lugar de enviarlo');
 
-    await handleMessage(msg, { service });
+    await handleMessage(msg, { service, bot });
     await drenar(service);
 
     const envios = whatsapp.eventos.filter(e => e.tipo === 'enviar');

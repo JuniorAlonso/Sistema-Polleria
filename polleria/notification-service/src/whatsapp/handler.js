@@ -1,19 +1,18 @@
 console.log('🔥 HANDLER.JS CARGADO');
 
-const { getConversation } = require('./../chatbot/conversation');
-const { processMessage } = require('./../chatbot/chatbot');
-
 /**
  * Punto de entrada de cada mensaje entrante.
  *
- * El chatbot ya no envía por su cuenta: devuelve el texto y el handler lo encola en la
- * MISMA cola saliente que usan las notificaciones (S2). Así un pedido de 6-10 mensajes
- * sale espaciado y humanizado en vez de en una ráfaga.
+ * El bot ya no envía por su cuenta: devuelve el texto y el handler lo encola en la
+ * MISMA cola saliente que usan las notificaciones (S2). Ese contrato se conserva; lo
+ * que cambia en T3a es que el bot resuelve el estado persistido, el dedup por
+ * `message.id` y el catálogo real de orders-service (se inyecta desde `main.js`).
  *
  * @param msg     mensaje entrante de whatsapp-web.js
  * @param service NotificacionService (dueño de la única cola de salida)
+ * @param bot     BotPedidos (motor conversacional con estado persistido)
  */
-async function handleMessage(msg, { service }) {
+async function handleMessage(msg, { service, bot }) {
 
     // Ignorar estados de WhatsApp y grupos
     if (
@@ -23,22 +22,9 @@ async function handleMessage(msg, { service }) {
         return;
     }
 
-    const texto = (msg.body || msg.caption || '').toLowerCase().trim();
-
-    const userId = msg.from;
-
-    const conversation = getConversation(userId);
-
-    console.log(` Mensaje recibido de ${msg.from}: "${texto}"`);
-    console.log(` Estado actual: ${conversation.state}`);
-
     try {
 
-        const respuesta = await processMessage(
-            msg,
-            userId,
-            conversation
-        );
+        const respuesta = await bot.procesar(msg);
 
         if (!respuesta) {
             return;
