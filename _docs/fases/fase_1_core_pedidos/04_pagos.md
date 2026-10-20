@@ -280,7 +280,7 @@ POST /pagos/{id}/verificar
   pago aprobado de Mercado Pago (RF21): `NotificadorOrden` mueve la orden a `EN_PREPARACION`.
 - **Rechazar:** el pago pasa a `RECHAZADO` con `verificadoPor`, `verificadoEn` y `motivoRechazo`. La
   orden **no** avanza: queda impaga esperando un comprobante válido (el cliente puede reenviarlo, ver
-  la idempotencia de la sección 8). El aviso al cliente por WhatsApp es parte de T6d.
+  la idempotencia de la sección 8). Además, se avisa al cliente por WhatsApp → sección 10.
 - Sin token o con un rol distinto de `ADMIN`: **403/401** y el pago no cambia.
 - Rechazar sin motivo: **400** y el pago no cambia.
 
@@ -300,6 +300,32 @@ objeto del comprobante. El bucket **no** se hace público y a cualquier otro rol
   "comprobanteUrl": "http://localhost:9000/polleria-comprobantes/comprobantes/yape/...?X-Amz-Signature=..."
 }
 ```
+
+---
+
+### 10. Aviso al cliente cuando se rechaza el comprobante (T6d, S6/S13)
+
+El rechazo de la sección 9 no cancela el pedido: queda impago esperando un comprobante válido. Para que el
+cliente se entere, `PagoService` llama a
+`WhatsappNotificationClient.notificarComprobanteRechazado(ordenId, motivo)`, el **mismo** cliente HTTP que usa
+el pago aprobado de Mercado Pago. Ese cliente resuelve el contacto desde `GET /ordenes/{id}` (solo si la orden
+es `DELIVERY` y tiene teléfono) y llama al endpoint interno del notification-service:
+
+```
+POST /api/notificaciones/whatsapp/comprobante-rechazado
+{ "ordenId": 42, "numeroPedido": 3, "telefono": "51999888777", "nombreCliente": "...", "motivo": "..." }
+```
+
+El notification-service arma el mensaje con el número de pedido que ve el cliente y el motivo, y lo encola en
+su cola única (ver §4.3.3 de `_docs/fases/fase_3_notificaciones_whatsapp/README.md`).
+
+**Orden garantizado (`afterCommit`):** el aviso se encola **después de que la transacción del rechazo
+confirma**. Tres consecuencias, todas probadas en `AvisoRechazoComprobanteYapeTest`:
+
+1. Si el aviso falla (notification-service caído), el pago **igual** queda `RECHAZADO` y el admin recibe su
+   `200`: el aviso es *best-effort* y no puede revertir la transacción.
+2. Cuando el aviso sale, el rechazo **ya está comprometido** en la base (comprobado con una conexión nueva).
+3. Aprobar no dispara este aviso.
 
 ---
 

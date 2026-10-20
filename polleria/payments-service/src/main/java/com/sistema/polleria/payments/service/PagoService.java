@@ -18,6 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -173,6 +175,12 @@ public class PagoService {
      * la orden **no** avanza: queda impaga esperando un comprobante válido que el cliente puede
      * volver a mandar (ver la idempotencia de {@code registrarComprobante}).
      *
+     * <p><b>Orden del rechazo (T6d):</b> el aviso al cliente por WhatsApp se encola **después de
+     * que la transacción confirma** ({@link TransactionSynchronization#afterCommit()}), no antes.
+     * Así una caída del notification-service no puede revertir el rechazo ni romper la respuesta al
+     * admin: el pago ya quedó {@code RECHAZADO} y el aviso es best-effort. El aviso reutiliza
+     * {@link WhatsappNotificationClient}, el mismo cliente HTTP del pago aprobado de Mercado Pago.
+     *
      * <p>Toma el bloqueo pesimista del pago: dos administradores verificando a la vez no pueden
      * aplicar dos decisiones distintas.
      */
@@ -198,6 +206,8 @@ public class PagoService {
             pago.setVerificadoEn(LocalDateTime.now());
             pago.setDetalle("Comprobante de Yape rechazado por el administrador: " + motivo);
             pago = pagoRepository.save(pago);
+            // El aviso sale recién cuando la transacción confirma (ver afterCommit más abajo).
+            avisarRechazoTrasConfirmar(pago.getOrdenId(), motivo);
             log.info("Comprobante rechazado — pago id={} orden={} admin={}",
                     pago.getId(), pago.getOrdenId(), adminEmail);
             return PagoResponse.from(pago);
@@ -335,6 +345,38 @@ public class PagoService {
     private Pago buscar(Long id) {
         return pagoRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+    }
+
+    /**
+     * T6d (S6/S13) — Encola el aviso de rechazo al cliente **después de que la transacción
+     * confirma**. El orden importa: hasta que el commit no ocurre, el rechazo no está guardado, y
+     * el aviso no debe poder romperlo. Con {@code afterCommit}, si la transacción se revierte el
+     * aviso no sale, y si el aviso falla el rechazo ya está persistido.
+     *
+     * <p>El callback envuelve la llamada en try/catch por si el cliente HTTP lanza: una excepción
+     * dentro de {@code afterCommit} se propagaría al commit y convertiría una respuesta correcta en
+     * un 500. El aviso es best-effort y nunca condiciona la verificación.
+     */
+    private void avisarRechazoTrasConfirmar(Long ordenId, String motivo) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // Fuera de una transacción no hay nada que ordenar: el rechazo ya está persistido.
+            encolarAvisoRechazo(ordenId, motivo);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                encolarAvisoRechazo(ordenId, motivo);
+            }
+        });
+    }
+
+    private void encolarAvisoRechazo(Long ordenId, String motivo) {
+        try {
+            whatsappNotificationClient.notificarComprobanteRechazado(ordenId, motivo);
+        } catch (Exception e) {
+            log.warn("No se pudo encolar el aviso de rechazo para la orden {}: {}", ordenId, e.getMessage());
+        }
     }
 
     private void validarTransicion(EstadoPago actual, EstadoPago nuevo) {

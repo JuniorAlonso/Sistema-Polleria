@@ -86,6 +86,23 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
     return [saludo(nombreCliente), '', cuerpo, '', FIRMA].join('\n');
 }
 
+// T6d (S6): aviso al cliente cuando el administrador rechaza el comprobante de Yape. El
+// rechazo deja el pedido impago esperando un comprobante válido, así que el mensaje dice
+// qué pasó, el motivo del admin y cómo completar el pago.
+function mensajeComprobanteRechazado({ ordenId, numeroPedido, nombreCliente, motivo }) {
+    const numero = numeroVisible({ numeroPedido, ordenId });
+    return [
+        saludo(nombreCliente),
+        '',
+        `No pudimos validar el comprobante de Yape de tu pedido N.° ${numero}.`,
+        `Motivo: ${motivo}`,
+        '',
+        'Puedes enviar un comprobante nuevo por este mismo chat para completar el pago.',
+        '',
+        FIRMA
+    ].join('\n');
+}
+
 // Código para ver los pedidos sin iniciar sesión
 function mensajeCodigo({ codigo }) {
     return [
@@ -99,5 +116,6 @@ module.exports = {
     ESTADOS_DELIVERY,
     mensajePago,
     mensajeEstado,
+    mensajeComprobanteRechazado,
     mensajeCodigo
 };

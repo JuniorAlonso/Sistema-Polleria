@@ -315,6 +315,20 @@ ejecución, igual que la creación de la orden.
 credenciales por variables de entorno (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, defaults de desarrollo
 `minioadmin`/`minioadmin`). No cambia ningún servicio existente.
 
+### 3.9 Aviso al cliente cuando se rechaza el comprobante (T6d, S6/S13)
+
+El rechazo del comprobante (T6c, ver §9 de `_docs/fases/fase_1_core_pedidos/04_pagos.md`) deja el pedido
+**impago esperando un comprobante válido**: no lo cancela. Si el cliente no se entera, el pedido muere. Al
+rechazar, `payments-service` llama a este servicio con `POST /api/notificaciones/whatsapp/comprobante-rechazado`
+por medio del **mismo** `WhatsappNotificationClient` que ya usa para el pago aprobado (RF30). El aviso entra por
+la **cola única** (T4) y queda registrado en el historial (RF32) con tipo `COMPROBANTE_RECHAZADO`, igual que los
+demás.
+
+**Orden garantizado:** el aviso se encola **después de que la transacción del rechazo confirma** (`afterCommit`).
+Si la transacción se revirtiera, el aviso no sale; si el notification-service está caído, el rechazo ya quedó
+registrado y el pago sigue `RECHAZADO`, y la respuesta al admin no se rompe. El aviso es best-effort: nunca
+condiciona la verificación.
+
 ---
 
 ## 4. Endpoints REST
@@ -458,6 +472,48 @@ Flujo completo en `orders-service` (rutas públicas):
 | `POST /ordenes/seguimiento/verificar` `{ telefono, codigo }` | 5 intentos, vence a los 5 min. Devuelve un acceso temporal (`token`, 30 min). |
 | `GET /ordenes/seguimiento` header `X-Seguimiento-Token` | Pedidos de ese celular. |
 | `POST /ordenes/seguimiento/{id}/cancelar` header `X-Seguimiento-Token` | Cancela **solo** el pedido de ese celular (S5). Un pedido ajeno o inexistente responde `404`; token ausente, inválido o vencido → `400`. |
+
+### 4.3.3 Aviso de comprobante rechazado (T6d, S6/S13)
+
+```
+POST /api/notificaciones/whatsapp/comprobante-rechazado
+```
+
+**Llamado por:** `payments-service` al rechazar un comprobante de Yape (`WhatsappNotificationClient`), con el
+mismo cliente HTTP del pago aprobado (RF30). Lee el teléfono, el nombre y el número de pedido desde
+`GET /ordenes/{id}` de orders-service y solo avisa si la orden es `DELIVERY`.
+
+**Header:** `X-Internal-Key: <NOTIFICATION_API_KEY>`.
+
+**Request Body:**
+```json
+{
+  "ordenId": 52,
+  "numeroPedido": 3,
+  "telefono": "51999888777",
+  "nombreCliente": "María García",
+  "motivo": "El monto no coincide con el total del pedido"
+}
+```
+
+Campos obligatorios: `ordenId` (entero positivo), `telefono` y `motivo` (no puede venir vacío). Si falta
+alguno responde `400` y no encola nada.
+
+**Mensaje generado:**
+```
+Hola, María.
+
+No pudimos validar el comprobante de Yape de tu pedido N.° 3.
+Motivo: El monto no coincide con el total del pedido
+
+Puedes enviar un comprobante nuevo por este mismo chat para completar el pago.
+
+San Pollo de Ica
+```
+
+Usa el **número de pedido que ve el cliente** (`numeroPedido`), nunca el id interno, e incluye el motivo que
+dio el administrador. Se guarda en el historial con tipo `COMPROBANTE_RECHAZADO`, manteniendo el tono formal
+sin emojis del servicio.
 
 Además, `GET /ordenes/{id}` ahora solo responde al dueño del pedido, al personal o a otro microservicio con `X-Internal-Key` (variable `INTERNAL_API_KEY`, **sin valor por defecto**: si no está definida, la cabecera no autentica y la respuesta es `403`). A cualquier otro le responde 404.
 
@@ -706,6 +762,7 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 | Rate limit | 3 notificaciones simultáneas | Se procesan con 10s de separación |
 | Historial | `GET /api/notificaciones/historial?ordenId=52` | Registros con estado `ENVIADO` |
 | Número inválido | Teléfono sin formato correcto | Registro con estado `ERROR` (respuesta `422`) y detalle |
+| Comprobante rechazado | `POST /api/notificaciones/whatsapp/comprobante-rechazado` con `{ ordenId, telefono, motivo }` | Mensaje con el número de pedido y el motivo; registro `COMPROBANTE_RECHAZADO` en el historial |
 
 ### 8.3 Criterios de Aceptación
 - [ ] Mensaje de confirmación de pago llega al WhatsApp del cliente.
@@ -746,6 +803,9 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Si falla la subida a MinIO o el registro en `payments-service`, el bot lo dice y pide reenviar: nunca
   reporta un éxito que no ocurrió.
 - [ ] El bucket de MinIO se crea solo si falta y el servicio `minio` del compose expone API (9000) y consola (9001).
+- [ ] Al rechazar el comprobante, el cliente recibe por WhatsApp el número de pedido y el motivo, y el aviso
+  sale recién cuando el rechazo ya quedó guardado: si el notification-service falla, el pago igual queda
+  `RECHAZADO` y la respuesta al admin no se rompe.
 
 ---
 
@@ -758,7 +818,7 @@ src/config.js                   # Variables de entorno
 src/notifications/queue.js      # Cola FIFO con delay y jitter (RNF10), timers/azar inyectables
 src/notifications/service.js    # Registra EN_COLA → humaniza → envía → ENVIADO / ERROR, reintentos
 src/notifications/store.js      # NotificationLog en PostgreSQL o en memoria (RF32)
-src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
+src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31, T6d)
 src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
 src/outbound/ajustes.js         # Configuración en memoria (S8): anti-baneo + números de contacto, defaults de entorno
 src/outbound/humanizacion.js    # Duración del "escribiendo" proporcional al texto (S2)

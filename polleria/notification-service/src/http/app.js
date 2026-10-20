@@ -2,7 +2,7 @@ const express = require('express');
 const QRCode = require('qrcode');
 const config = require('../config');
 const { requiereRol, requiereClaveInterna } = require('./auth');
-const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeCodigo } = require('../notifications/messages');
+const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeComprobanteRechazado, mensajeCodigo } = require('../notifications/messages');
 const { ESTADOS_LOG } = require('../notifications/store');
 
 const ESTADO_WHATSAPP = {
@@ -128,6 +128,31 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
                 telefono,
                 tipo: `ESTADO_${estadoNuevo}`,
                 mensaje: mensajeEstado(req.body)
+            });
+            responderEncolado(res, log);
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    // T6d (S6/S13) — Aviso al cliente cuando el ADMIN rechaza el comprobante de Yape. El
+    // rechazo deja el pedido impago esperando un comprobante válido, así que el cliente tiene
+    // que enterarse para poder reenviarlo. Mismo patrón que el resto de los avisos internos:
+    // X-Internal-Key, la cola única (T4) y el registro en el historial (RF32).
+    router.post('/whatsapp/comprobante-rechazado', requiereClaveInterna, async (req, res, next) => {
+        try {
+            const { ordenId, numeroPedido, telefono, nombreCliente } = req.body;
+            const motivo = String(req.body.motivo || '').trim();
+
+            if (!esIdValido(ordenId) || !telefono || !motivo) {
+                return res.status(400).json({ error: 'Campos requeridos: ordenId, telefono, motivo' });
+            }
+
+            const log = await service.encolar({
+                ordenId: Number(ordenId),
+                telefono,
+                tipo: 'COMPROBANTE_RECHAZADO',
+                mensaje: mensajeComprobanteRechazado({ ordenId, numeroPedido, nombreCliente, motivo })
             });
             responderEncolado(res, log);
         } catch (error) {
