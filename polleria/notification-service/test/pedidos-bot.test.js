@@ -244,3 +244,30 @@ test('la opción 1 del menú inicia el pedido con la confirmación de Ica', asyn
     const { bot } = montar();
     assert.match(await bot.procesar(mensaje('1', 'y1')), /eres de ica/i);
 });
+
+/**
+ * T7 (S13) — El dueño pidió que, en vez de una bandeja de conversaciones, el bot ofrezca
+ * **llamar** a un asesor: el número del admin que conecta WhatsApp y, si ese faltara, el de
+ * respaldo. El comportamiento ya existía (nace de `lineaContacto` en T3a); estas pruebas lo fijan
+ * porque hasta ahora solo estaba cubierto por los caminos de «no es de Ica» y de servicio caído.
+ */
+test('la opción 4 del menú ofrece llamar al asesor con el número configurado', async () => {
+    const { bot } = montar();
+    const respuesta = await bot.procesar(mensaje('4', 'asesor-1'));
+
+    assert.match(respuesta, /asesor/i, 'dice que un asesor atiende');
+    assert.match(respuesta, /\+51 999 888 777/, 'da el número del asesor para llamarlo');
+});
+
+test('sin número de asesor, la opción 4 ofrece el de respaldo', async () => {
+    const { bot } = montar({ ajustes: ajustesCon({ numeroAsesor: null, numeroRespaldo: '987654321' }) });
+
+    assert.match(await bot.procesar(mensaje('4', 'asesor-2')), /\+51 987 654 321/,
+        'cae al número de respaldo cuando el del asesor no está configurado');
+});
+
+test('sin asesor ni respaldo no se inventa un número de contacto', async () => {
+    const { bot } = montar({ ajustes: ajustesCon({ numeroAsesor: null, numeroRespaldo: null }) });
+
+    assert.match(await bot.procesar(mensaje('4', 'asesor-3')), /no tenemos un número de asesor/i);
+});
