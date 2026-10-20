@@ -132,21 +132,38 @@ function formatearCarrito(carrito) {
     );
 }
 
-/** Confirmación final: número de pedido y total que devuelve orders-service. */
-function mensajePedidoCreado(pedido) {
+/**
+ * T6f: el dueño pidió que el cliente pague por Yape al número de la pollería y mande la captura
+ * para que un administrador la revise a mano. El número es configuración del panel y puede quedar
+ * vacío: si no hay número, no se inventa uno, solo se pide la captura.
+ */
+function lineaPagoYape(ajustes) {
+    // El bot recibe el store en memoria, no un objeto plano: se lee igual que `lineaContacto`.
+    const valores = ajustes && typeof ajustes.obtener === 'function' ? ajustes.obtener() : {};
+    const numero = valores.numeroYape;
+    if (!numero) {
+        return 'Para completar el pago, envíame la *captura* de tu Yape. 📸';
+    }
+    return 'Paga por *Yape* al *' + formatearTelefono(numero) + '* y envíame la *captura* por este chat '
+        + 'para que un administrador la revise. 📸';
+}
+
+/** Confirmación final: número de pedido, total y a qué Yape pagar. */
+function mensajePedidoCreado(pedido, ajustes) {
     const numero = numeroDePedido(pedido);
     return (
         '✅ *¡Pedido registrado!*\n\n' +
         `Tu pedido N.° *${numero}* quedó registrado por un total de *S/ ${formatearPrecio(pedido.total)}*.\n` +
-        'El equipo de San Pollo coordina el pago contigo por este chat.'
+        'El equipo de San Pollo coordina el pago contigo por este chat.\n\n' +
+        lineaPagoYape(ajustes)
     );
 }
 
-/** El pedido ya se creó (idempotencia de T3b): se recuerda y se pide el comprobante (T6b). */
-function mensajePedidoYaConfirmado(pedido) {
+/** El pedido ya se creó (idempotencia de T3b): se recuerda y se pide el comprobante (T6b/T6f). */
+function mensajePedidoYaConfirmado(pedido, ajustes) {
     return (
-        `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado. ` +
-        'Envíame la *imagen* de tu comprobante de Yape para que un administrador lo verifique. 📸'
+        `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado.\n\n` +
+        lineaPagoYape(ajustes)
     );
 }
 

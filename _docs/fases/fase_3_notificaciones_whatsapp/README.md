@@ -757,6 +757,7 @@ WHATSAPP_BREAKER_BASE_MS=60000            # Backoff base del circuit breaker al 
 WHATSAPP_BREAKER_MAX_MS=900000            # Tope del backoff exponencial (default: 900000 = 15 min)
 WHATSAPP_NUMERO_ASESOR=                   # Celular del admin que conecta WhatsApp; se normaliza a 51+9 dígitos (default: vacío)
 WHATSAPP_NUMERO_RESPALDO=                 # Celular de respaldo opcional (S11); vacío = sin respaldo (default: vacío)
+WHATSAPP_NUMERO_YAPE=                     # Yape de la pollería que el bot le indica al cliente (T6f; default: +51 934 421 442)
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Catálogo real del bot de pedidos (T3a)

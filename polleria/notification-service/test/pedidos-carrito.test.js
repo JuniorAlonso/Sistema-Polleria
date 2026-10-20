@@ -169,7 +169,11 @@ test('(c) confirmar con dirección crea una orden DELIVERY por WhatsApp con el t
     assert.match(final, /S\/ 54\.00/, 'usa el total devuelto por orders-service');
     assert.doesNotMatch(final, /S\/ 30\.00/, 'no muestra el subtotal como total final');
     assert.match(final, /coordina el pago/i, 'dice que el equipo coordina el pago');
-    assert.doesNotMatch(final, /yape/i, 'no promete el comprobante de Yape (T6)');
+    // T6f: el dueño pidió que el cliente pague por Yape a un número concreto y mande la captura
+    // para que el admin la revise. La aserción vieja («no promete el comprobante») era correcta en
+    // T3b, cuando la recepción todavía no existía; ahora se exige lo contrario, con el número.
+    assert.match(final, /934 421 442/, 'le dice a qué Yape pagar');
+    assert.match(final, /captura|comprobante/i, 'le pide la captura del pago');
     assert.strictEqual((await store.get(CELULAR)).estado, 'PEDIDO_CONFIRMADO');
 });
 

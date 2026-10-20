@@ -44,6 +44,7 @@ function ajustesDePrueba(encima = {}) {
         breakerMaxMs: 900000,
         numeroAsesor: null,
         numeroRespaldo: null,
+        numeroYape: '51934421442',
         ...encima
     });
 }
@@ -165,6 +166,11 @@ test('PATCH /ajustes con valores inválidos responde 400 y deja el store exactam
 test('los números de asesor y respaldo se guardan normalizados y el respaldo vacío es válido', async () => {
     await conApp({}, async ({ base, ajustes }) => {
         const guardar = await patchAjustes(base, { numeroAsesor: '999 888 777', numeroRespaldo: '987654321' });
+
+        // T6f: el número de Yape de la pollería también es configuración del admin y se normaliza.
+        // Se prueba con otro número para que el test no pueda pasar por el default del store.
+        const yape = await patchAjustes(base, { numeroYape: '987 654 321' });
+        assert.strictEqual(yape.body.numeroYape, '51987654321', 'guarda el número de Yape normalizado');
         assert.strictEqual(guardar.status, 200);
         assert.strictEqual(guardar.body.numeroAsesor, '51999888777');
         assert.strictEqual(guardar.body.numeroRespaldo, '51987654321');

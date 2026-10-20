@@ -30,7 +30,7 @@ const CAMPOS_NUMERICOS = [
 ];
 
 // Datos de contacto configurables (T5, S4/S11/S13): celular peruano o null si está vacío.
-const CAMPOS_TELEFONO = ['numeroAsesor', 'numeroRespaldo'];
+const CAMPOS_TELEFONO = ['numeroAsesor', 'numeroRespaldo', 'numeroYape'];
 
 const CAMPOS_AJUSTES = [...CAMPOS_NUMERICOS, ...CAMPOS_TELEFONO];
 

@@ -2178,6 +2178,12 @@ export type InsumoAlmacen = Insumo;
                       class="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs normal-case font-normal" />
                     <span class="text-[10px] text-slate-500 normal-case font-normal">Se usa si el número principal cae o queda bloqueado (S11). Puede quedar vacío.</span>
                   </label>
+                  <label class="flex flex-col gap-1 text-[11px] text-slate-400 font-bold uppercase">
+                    Yape de la pollería
+                    <input type="text" [(ngModel)]="ajustesForm.numeroYape" placeholder="+51 934 421 442"
+                      class="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs normal-case font-normal" />
+                    <span class="text-[10px] text-slate-500 normal-case font-normal">Número al que el cliente paga por Yape: el bot se lo indica al cerrar el pedido (T6f).</span>
+                  </label>
                 </div>
               </div>
             } @else if (whatsappService.ajustesCargando()) {
@@ -4266,7 +4272,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     breakerBaseMs: 60000,
     breakerMaxMs: 900000,
     numeroAsesor: '',
-    numeroRespaldo: ''
+    numeroRespaldo: '',
+    numeroYape: ''
   };
 
   /** Refleja en el formulario los ajustes vigentes cada vez que el servicio los carga o guarda. */
@@ -4287,7 +4294,8 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         breakerBaseMs: ajustes.breakerBaseMs,
         breakerMaxMs: ajustes.breakerMaxMs,
         numeroAsesor: ajustes.numeroAsesor ?? '',
-        numeroRespaldo: ajustes.numeroRespaldo ?? ''
+        numeroRespaldo: ajustes.numeroRespaldo ?? '',
+        numeroYape: ajustes.numeroYape ?? ''
       };
     });
   });
@@ -4389,6 +4397,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     }
     if (form.numeroAsesor !== (actuales?.numeroAsesor ?? '')) cambios.numeroAsesor = form.numeroAsesor;
     if (form.numeroRespaldo !== (actuales?.numeroRespaldo ?? '')) cambios.numeroRespaldo = form.numeroRespaldo;
+    if (form.numeroYape !== (actuales?.numeroYape ?? '')) cambios.numeroYape = form.numeroYape;
 
     // Sin cambios no se dispara un PATCH vacío.
     this.whatsappService.guardarAjustes(cambios);

@@ -98,7 +98,10 @@ config.antiBaneo = {
     // Datos de contacto configurables desde el panel (T5, S4/S11/S13): el número del
     // admin que conecta WhatsApp y el de respaldo (opcional). Se normalizan a 51+9 dígitos.
     numeroAsesor: telefonoEnv('WHATSAPP_NUMERO_ASESOR'),
-    numeroRespaldo: telefonoEnv('WHATSAPP_NUMERO_RESPALDO')
+    numeroRespaldo: telefonoEnv('WHATSAPP_NUMERO_RESPALDO'),
+    // T6f: número de Yape de la pollería. Es el valor del negocio y se puede cambiar desde el panel;
+    // el store lo guarda normalizado (51 + 9 dígitos) como el resto de los contactos.
+    numeroYape: telefonoEnv('WHATSAPP_NUMERO_YAPE') || '+51 934 421 442'
 };
 
 module.exports = config;

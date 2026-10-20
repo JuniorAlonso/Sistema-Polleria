@@ -166,7 +166,7 @@ class BotPedidos {
         if (estado === ESTADO_PEDIDO_CONFIRMADO) {
             // Idempotencia (T3b): el pedido ya se creó; se recuerda sin crear otro y se
             // pide la imagen del comprobante (T6b) si lo que llegó no es una imagen.
-            return mensajePedidoYaConfirmado(guardado.pedido);
+            return mensajePedidoYaConfirmado(guardado.pedido, this.ajustes);
         }
 
         // Estado MENU
@@ -356,7 +356,7 @@ class BotPedidos {
             const orden = await this.ordenes.crear(datos);
             const pedido = { id: orden.id, numeroCliente: orden.numeroCliente, total: orden.total };
             await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido });
-            return mensajePedidoCreado(pedido);
+            return mensajePedidoCreado(pedido, this.ajustes);
         } catch (error) {
             // Fallo explícito: no se inventa número de pedido y el carrito no se pierde.
             return this._falloPedido(clave, guardado);

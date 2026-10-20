@@ -24,6 +24,7 @@ export interface AjustesWhatsapp {
   numeroAsesor: string | null;
   /** Celular de respaldo opcional (S11); null = sin respaldo. */
   numeroRespaldo: string | null;
+  numeroYape: string | null;
 }
 
 export interface PresupuestoWhatsapp {

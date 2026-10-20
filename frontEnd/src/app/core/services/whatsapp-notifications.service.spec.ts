@@ -32,7 +32,8 @@ describe('WhatsappNotificationsService — ajustes anti-baneo', () => {
     breakerBaseMs: 60000,
     breakerMaxMs: 900000,
     numeroAsesor: '51999888777',
-    numeroRespaldo: null
+    numeroRespaldo: null,
+    numeroYape: '51934421442'
   };
 
   const gobernador: AjustesRespuesta['gobernador'] = {

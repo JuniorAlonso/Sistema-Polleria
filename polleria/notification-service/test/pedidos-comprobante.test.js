@@ -235,7 +235,7 @@ test('(b) un mensaje de texto con el pedido confirmado no sube ni registra y pid
 
     const respuesta = await bot.procesar(mensajeTexto('ya pagué, aquí va mi comprobante'));
 
-    assert.match(respuesta, /imagen/i, 'pide una imagen');
+    assert.match(respuesta, /captura|imagen/i, 'pide la captura o imagen del pago');
     assert.strictEqual(minio.llamadas.putObject.length, 0, 'no sube nada');
     assert.strictEqual(pagos.llamadas.length, 0, 'no registra nada');
     assert.match(respuesta, /ya está registrado/i, 'recuerda que el pedido ya existe');
@@ -250,7 +250,7 @@ test('(b2) un adjunto que no es imagen no se sube ni se registra y pide una imag
     const respuesta = await bot.procesar(mensaje);
 
     assert.strictEqual(rastreador.descargas, 1, 'descarga para poder revisar el tipo');
-    assert.match(respuesta, /imagen/i, 'pide una imagen');
+    assert.match(respuesta, /captura|imagen/i, 'pide la captura o imagen del pago');
     assert.strictEqual(minio.llamadas.putObject.length, 0);
     assert.strictEqual(pagos.llamadas.length, 0);
 });
