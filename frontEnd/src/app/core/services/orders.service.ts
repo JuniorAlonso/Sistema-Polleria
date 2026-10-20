@@ -22,6 +22,8 @@ export class OrdersService {
   readonly isLoading = signal<boolean>(false);
   /** true cuando fallan /ordenes y el fallback /ordenes/activos: la UI debe avisar, no fingir vacío. */
   readonly hasError = signal<boolean>(false);
+  /** S10 — pedidos que el backend ofrece al repartidor: DELIVERY LISTO sin repartidor, del más viejo al más nuevo. */
+  readonly pedidosDisponibles = signal<Order[]>([]);
 
   // Computed Kitchen KDS orders (RF16 / KDS)
   readonly kitchenOrders = computed(() =>
@@ -393,6 +395,47 @@ export class OrdersService {
       }),
       catchError(() => of([]))
     ).subscribe();
+  }
+
+  /**
+   * S10 — lista de pedidos disponibles para tomar (delivery LISTO y sin repartidor). La verdad la
+   * da el backend (`GET /ordenes/disponibles`, ordenado por antigüedad): no se filtra ni se
+   * completa localmente. El llamador decide qué hacer con el resultado; el error se propaga con
+   * el mensaje del backend.
+   */
+  listarDisponiblesParaEntrega(): Observable<Order[]> {
+    return this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/disponibles`).pipe(
+      map(dtos => OrderAdapter.toOrderList(dtos)),
+      tap(list => this.pedidosDisponibles.set(list)),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudieron cargar los pedidos disponibles'))))
+    );
+  }
+
+  /**
+   * S10 — el repartidor toma un pedido. El reclamo es atómico en el backend: asigna el repartidor
+   * del token y, si otro llegó primero (o el pedido dejó de estar LISTO), responde 409 con su
+   * mensaje, que se propaga tal cual. No cambia el estado del pedido.
+   *
+   * La lista compartida se actualiza recién con lo que responde el backend: nada de optimismo local.
+   */
+  reclamarPedido(orderId: string | number): Observable<Order> {
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
+
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/reclamo`, {}).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        // Lo que confirmó el backend es la verdad: el pedido aparece asignado y deja de ofrecerse.
+        const existia = this.orders().some(o => o.id === updated.id);
+        this.orders.update(prev => existia
+          ? prev.map(o => o.id === updated.id ? updated : o)
+          : [updated, ...prev]);
+        this.pedidosDisponibles.update(prev => prev.filter(o => o.id !== updated.id));
+      }),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo tomar el pedido'))))
+    );
   }
 
   /**

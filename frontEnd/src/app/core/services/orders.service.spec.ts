@@ -485,3 +485,115 @@ describe('OrdersService — hasError', () => {
     expect(service.hasError()).toBeFalse();
   });
 });
+
+/**
+ * S10 — el repartidor ve los pedidos disponibles y los toma con un reclamo atómico.
+ * La lista la provee el backend (no se filtra localmente) y un 409 conserva el mensaje del backend:
+ * nunca puede llegar al llamador como un éxito ni dejar el pedido asignado en la UI.
+ */
+describe('OrdersService — disponibles y reclamo (S10)', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  const dtoDisponible = (id: number, referencia = 'Portón azul') => ({
+    id,
+    tipo: 'DELIVERY' as const,
+    estado: 'LISTO',
+    total: 68.5,
+    direccionEntrega: 'Av. Ica 1',
+    referencia,
+    nombreCliente: 'Cliente',
+    telefonoCliente: '999888777',
+    items: [
+      { productoId: 1, productoNombre: 'Pollo a la Brasa', cantidad: 2, precioUnitario: 30, subtotal: 60 }
+    ],
+    creadoEn: '2026-01-01T00:00:00Z'
+  });
+
+  const ordenLocal = (id: string): Order => ({
+    id,
+    codigoSeguimiento: `POL-${id}`,
+    cliente: { nombre: 'Cliente', celular: '999888777', direccion: 'Av. Ica 1' },
+    items: [],
+    tipo: 'DELIVERY',
+    estado: 'LISTO_COCINA',
+    metodoPago: 'EFECTIVO_CONTRAENTREGA',
+    subtotal: 68.5,
+    costoEnvio: 0,
+    descuento: 0,
+    total: 68.5,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+
+    // El constructor dispara loadMyOrders(): se descarta esa carga inicial.
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('lista los disponibles en GET /ordenes/disponibles y respeta el orden del backend', () => {
+    let resultado: Order[] | null = null;
+    service.listarDisponiblesParaEntrega().subscribe(list => (resultado = list));
+
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/disponibles'))
+      .flush([dtoDisponible(11), dtoDisponible(12)]);
+
+    expect(resultado!.map(o => o.id)).withContext('el backend ordena por antigüedad: no se reordena').toEqual(['11', '12']);
+    expect(resultado![0].cliente.direccion).toBe('Av. Ica 1');
+    expect(resultado![0].cliente.referencia).toBe('Portón azul');
+    expect(service.pedidosDisponibles().map(o => o.id)).toEqual(['11', '12']);
+  });
+
+  it('reclama con POST /ordenes/{id}/reclamo y refleja la respuesta del backend', () => {
+    service.orders.set([ordenLocal('11')]);
+    service.pedidosDisponibles.set([ordenLocal('11')]);
+
+    let resultado: Order | null = null;
+    service.reclamarPedido('11').subscribe(o => (resultado = o));
+
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'));
+    req.flush({ ...dtoDisponible(11), repartidorId: 7 });
+
+    expect(resultado!.repartidorId).toBe(7);
+    expect(service.orders()[0].repartidorId)
+      .withContext('la lista compartida refleja lo que confirmó el backend')
+      .toBe(7);
+    expect(service.pedidosDisponibles().map(o => o.id))
+      .withContext('un pedido ya reclamado deja de ofrecerse')
+      .not.toContain('11');
+  });
+
+  it('propaga el 409 con el mensaje del backend y no reporta éxito', () => {
+    service.orders.set([ordenLocal('11')]);
+
+    let emitido: Order | null = null;
+    let mensaje = '';
+    service.reclamarPedido('11').subscribe({
+      next: o => (emitido = o),
+      error: (e: Error) => (mensaje = e.message)
+    });
+
+    http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'))
+      .flush({ error: 'El pedido #11 ya fue tomado por un repartidor.' }, { status: 409, statusText: 'Conflict' });
+
+    expect(emitido).withContext('un 409 no puede emitirse como resultado').toBeNull();
+    expect(mensaje).withContext('el mensaje es el del backend, tal cual').toBe('El pedido #11 ya fue tomado por un repartidor.');
+    expect(service.orders()[0].repartidorId).withContext('sin confirmación no se asigna el pedido').toBeUndefined();
+  });
+
+  it('con un id inválido no dispara el POST y falla con un mensaje claro', () => {
+    let mensaje = '';
+    service.reclamarPedido('no-es-un-id').subscribe({ error: (e: Error) => (mensaje = e.message) });
+
+    http.expectNone(r => r.method === 'POST' && r.url.includes('/reclamo'));
+    expect(mensaje).toContain('inválido');
+  });
+});

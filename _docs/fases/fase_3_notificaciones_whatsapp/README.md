@@ -400,6 +400,41 @@ Lo que **no** está implementado, dicho para que nadie lo suponga: una segunda s
 paralelo (dos números atendidos por el mismo servicio). Hoy el respaldo es un número para publicar y para
 que el bot lo ofrezca, no una segunda sesión; agregarla es una tarea aparte.
 
+### 3.12 Pantalla del repartidor: pedidos disponibles y reclamo atómico (T11b, S10)
+
+La pestaña **Entregas Activas** del módulo `/delivery` suma una sección **«Pedidos disponibles para
+entregar»**, visible **solo para el rol `REPARTIDOR`**. La lista la provee el backend
+(`GET /ordenes/disponibles`, delivery en `LISTO` y sin repartidor, ordenado por antigüedad) y cada fila
+muestra el número de pedido, la dirección, la referencia, el total y la **cantidad de ítems** (suma de
+unidades), con un botón **«Tomar pedido»**.
+
+**Tomar un pedido (reclamo atómico)**
+
+- El botón llama a `OrdersService.reclamarPedido(id)` → `POST /ordenes/{id}/reclamo`. El backend asigna
+  el repartidor del **token** y no cambia el estado del pedido; el reclamo es atómico (el segundo intento
+  recibe `409`). Sin identidad en el token no se envía nada.
+- La pantalla **no aplica optimismo local**: recién con la respuesta del backend el pedido deja de estar
+  disponible y aparece entre las entregas del repartidor. El refresco usa el **sondeo de 2.5 s que ya
+  tiene la pantalla**, no una infraestructura de tiempo real nueva.
+- Un `409` se muestra con el **mensaje del backend** y **siempre refresca**. Como un reintento del **mismo**
+  repartidor también da `409`, después del conflicto se consulta la verdad del pedido
+  (`GET /ordenes/{id}`): si quedó asignado a él, se muestra **como suyo** en vez de como un error.
+- Un pedido **ya asignado a mí** (sigue en `LISTO`) usa el mismo botón para iniciar la ruta
+  (`LISTO → EN_REPARTO`), que es el paso explícito del repartidor con el pedido ya en mano.
+
+**Métodos y contrato del frontend**
+
+- `OrdersService.listarDisponiblesParaEntrega()` (`GET /ordenes/disponibles`) y
+  `OrdersService.reclamarPedido(id)` (`POST /ordenes/{id}/reclamo`), agregados a
+  `frontEnd/src/app/core/services/orders.service.ts`. Reutilizan `OrderAdapter` y `mensajeError`, así que el
+  error del backend se propaga tal cual y no se inventa ningún mensaje de éxito.
+- `OrdersService.pedidosDisponibles` es la signal que guarda la lista; el componente la lee y la refresca
+  con el sondeo existente.
+
+**Pruebas**: `orders.service.spec.ts` cubre la ruta de la lista, el `POST` del reclamo y que un `409`
+propague el mensaje del backend sin reportar éxito; `repartidor-delivery.component.spec.ts` cubre que la
+sección sea solo para `REPARTIDOR`, los campos de la lista y el alta de un disponible.
+
 ## 4. Endpoints REST
 
 ### 4.1 Notificación de Pago Confirmado (RF30)
@@ -880,6 +915,10 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
   detalle con la imagen pedida en ese momento (sin cachear la URL de 300 s), exige motivo para rechazar
   (botón deshabilitado y explicado) y refleja únicamente el estado que responde el backend, mostrando su
   mensaje de error tal cual cuando falla.
+- [ ] La sección «Pedidos disponibles para entregar» del repartidor (solo `REPARTIDOR`) lista los pedidos
+  de `GET /ordenes/disponibles` con número, dirección, referencia, total y cantidad de ítems, y el botón
+  «Tomar pedido» usa `POST /ordenes/{id}/reclamo`; un `409` muestra el mensaje del backend y refresca, y si
+  el pedido quedó asignado al mismo repartidor se muestra como suyo en vez de como un error.
 
 ---
 

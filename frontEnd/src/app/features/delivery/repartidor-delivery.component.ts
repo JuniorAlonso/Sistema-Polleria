@@ -178,6 +178,59 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
               </div>
             }
 
+            <!-- S10 — Pedidos disponibles para entregar (solo REPARTIDOR) -->
+            @if (auth.isRepartidor()) {
+              <section class="rounded-2xl bg-[#14161a] border border-sky-500/30 shadow-xl overflow-hidden">
+                <div class="p-4 border-b border-white/10 flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2.5">
+                    <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    <h2 class="text-sm font-extrabold text-white uppercase tracking-wide">Pedidos disponibles para entregar</h2>
+                  </div>
+                  <span class="px-2.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold">
+                    {{ pedidosDisponibles().length }}
+                  </span>
+                </div>
+
+                @if (pedidosDisponibles().length === 0) {
+                  <p class="p-6 text-center text-xs text-slate-400">
+                    No hay pedidos listos esperando repartidor en este momento.
+                  </p>
+                } @else {
+                  <ul class="divide-y divide-white/5">
+                    @for (order of pedidosDisponibles(); track order.id) {
+                      <li class="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div class="flex flex-col gap-1 text-xs min-w-0">
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-mono text-base font-black text-white">#{{ getCodeNum(order.codigoSeguimiento) }}</span>
+                            <span class="font-display font-bold text-polleria-gold">{{ order.total | currencyPEN }}</span>
+                            <span class="px-2 py-0.5 rounded-full bg-white/5 text-slate-300 font-bold">
+                              {{ cantidadItems(order) }} {{ cantidadItems(order) === 1 ? 'ítem' : 'ítems' }}
+                            </span>
+                          </div>
+                          <span class="text-slate-300">
+                            <span class="text-slate-500 font-bold">Dirección:</span>
+                            {{ order.cliente.direccion || 'Ica' }}
+                          </span>
+                          @if (order.cliente.referencia) {
+                            <span class="text-slate-400 italic">Ref: {{ order.cliente.referencia }}</span>
+                          }
+                        </div>
+
+                        <button
+                          type="button"
+                          (click)="tomarPedido(order)"
+                          [disabled]="!miIdMotorizado()"
+                          class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg shrink-0"
+                        >
+                          Tomar pedido
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                }
+              </section>
+            }
+
             <!-- Filters Toolbar -->
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3.5 rounded-2xl border border-white/10 shadow">
               <div class="flex items-center gap-1.5 text-xs bg-black/40 p-1 rounded-xl border border-white/5">
@@ -573,6 +626,9 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   /** Identidad real del motorizado autenticado (claim `userId` del JWT). */
   readonly miIdMotorizado = computed(() => leerUserIdDelToken(this.auth.getAccessToken()));
 
+  /** S10 — pedidos que el backend ofrece al repartidor (delivery LISTO sin repartidor). */
+  readonly pedidosDisponibles = computed(() => this.ordersService.pedidosDisponibles());
+
   /**
    * S6.6 — Cola compartida: pedidos DELIVERY listos en cocina que todavía no tienen motorizado.
    * Un pedido ya asignado (a mí o a otro) no es un pedido disponible.
@@ -620,10 +676,20 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     if (isPlatformBrowser(this.platformId)) {
       this.ordersService.loadActiveOrders();
+      this.cargarDisponibles();
       this.pollingSub = interval(2500).subscribe(() => {
         this.ordersService.loadActiveOrders();
+        this.cargarDisponibles();
       });
     }
+  }
+
+  /** S10 — recarga la lista de disponibles con el mismo sondeo de la pantalla (sin tiempo real nuevo). */
+  private cargarDisponibles(): void {
+    this.ordersService.listarDisponiblesParaEntrega().subscribe({
+      next: () => undefined,
+      error: () => undefined
+    });
   }
 
   ngOnDestroy(): void {
@@ -635,6 +701,11 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   getCodeNum(code: string): string {
     // Sin código no se muestra un número de pedido plausible: se muestra un guion.
     return code ? code.replace('POL-', '') : '—';
+  }
+
+  /** Cantidad total de unidades del pedido (suma de cantidades, no líneas del carrito). */
+  cantidadItems(order: Order): number {
+    return (order.items || []).reduce((acc, it) => acc + (it.cantidad || 0), 0);
   }
 
   getActiveTabLabel(): string {
@@ -664,9 +735,14 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * S6.6 — El motorizado toma un pedido listo de la cola compartida y se auto-asigna con el
-   * `userId` de su token. Sin identidad no se envía nada: un `repartidorId` nulo dejaría el
-   * pedido sin dueño (el defecto que se está corrigiendo).
+   * S10 — el motorizado toma un pedido listo de la cola compartida.
+   *
+   * Un pedido **sin dueño** se reclama con `POST /ordenes/{id}/reclamo`: el backend asigna el
+   * repartidor del token de forma atómica (el segundo intento recibe 409) y **no cambia el estado**.
+   * Un pedido **ya asignado a mí** inicia la ruta (LISTO → EN_REPARTO), que es el paso explícito
+   * del repartidor con el pedido ya en mano.
+   *
+   * Si no hay identidad no se envía nada: un `repartidorId` nulo dejaría el pedido sin dueño.
    */
   tomarPedido(order: Order): void {
     const miId = this.miIdMotorizado();
@@ -683,15 +759,57 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
       return;
     }
     if (order.repartidorId != null && order.repartidorId !== miId) {
+      this.ordersService.loadActiveOrders();
+      this.cargarDisponibles();
       this.notify.showError(`La orden #${this.getCodeNum(order.codigoSeguimiento)} ya fue tomada por otro motorizado.`);
       return;
     }
-    this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO', miId).subscribe({
+
+    if (order.repartidorId === miId) {
+      // Ya es mío: corresponde iniciar la ruta. Comportamiento previo de este botón.
+      this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO', miId).subscribe({
+        next: () => {
+          this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)} e iniciaste el reparto`);
+        },
+        error: () => {
+          this.notify.showError(`Error al tomar la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+        }
+      });
+      return;
+    }
+
+    // Sin dueño: reclamo atómico. La pantalla se refresca con lo que responde el backend.
+    this.ordersService.reclamarPedido(order.id).subscribe({
       next: () => {
-        this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)} e iniciaste el reparto`);
+        this.cargarDisponibles();
+        this.ordersService.loadActiveOrders();
+        this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
       },
-      error: () => {
-        this.notify.showError(`Error al tomar la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+      error: (err: Error) => {
+        // El 409 puede ser que otro llegó primero, que el pedido dejó de estar LISTO, o un
+        // reintento del mismo repartidor. Se consulta la verdad y se refresca; si el pedido
+        // quedó asignado a él, se muestra como suyo en vez de como un error.
+        this.ordersService.obtenerOrden(order.id).subscribe({
+          next: actual => {
+            const esMio = actual.repartidorId != null && actual.repartidorId === miId;
+            if (esMio) {
+              this.ordersService.orders.update(prev =>
+                prev.some(o => o.id === actual.id)
+                  ? prev.map(o => o.id === actual.id ? actual : o)
+                  : [actual, ...prev]);
+              this.notify.showSuccess(`La orden #${this.getCodeNum(order.codigoSeguimiento)} ya está asignada a ti`);
+            } else {
+              this.notify.showError(err.message);
+            }
+            this.cargarDisponibles();
+            this.ordersService.loadActiveOrders();
+          },
+          error: () => {
+            this.notify.showError(err.message);
+            this.cargarDisponibles();
+            this.ordersService.loadActiveOrders();
+          }
+        });
       }
     });
   }
