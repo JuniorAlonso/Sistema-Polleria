@@ -30,7 +30,6 @@ import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -44,6 +43,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 class MesaForzarTest {
+
+    /**
+     * Rango exclusivo de números de mesa de esta clase. Antes el número era aleatorio (9400 + 0..399)
+     * y se superponía con MesaForzarTest (9500 + 0..399) y SalonRequierePersonalTest (9100 + 0..799):
+     * como la baja de mesas es lógica, la fila quedaba y la otra clase fallaba con «Ya existe la mesa
+     * número N». Era un flake que obligaba a repetir la suite entera.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger SIGUIENTE_MESA =
+            new java.util.concurrent.atomic.AtomicInteger(95000);
 
     private static final String SECRETO = "sanpollo-dev-secret-key-2026-super-segura-256bits-minimo";
     private static final String CLAVE_INTERNA = "X-Internal-Key";
@@ -74,7 +82,7 @@ class MesaForzarTest {
         Assumptions.assumeTrue(postgresDisponible(),
                 "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
 
-        int numero = 9500 + ThreadLocalRandom.current().nextInt(400);
+        int numero = SIGUIENTE_MESA.incrementAndGet();
         HttpHeaders cabeceras = new HttpHeaders();
         cabeceras.setContentType(MediaType.APPLICATION_JSON);
         cabeceras.set(CLAVE_INTERNA, CLAVE_INTERNA_VALOR);
