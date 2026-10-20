@@ -10,6 +10,8 @@ const { crearConversationStore } = require('./src/chatbot/conversation');
 const { crearBot } = require('./src/chatbot/chatbot');
 const { crearCatalogo } = require('./src/pedidos/catalogo');
 const { crearClienteOrdenes } = require('./src/pedidos/ordenes');
+const { crearAlmacenamiento } = require('./src/pedidos/almacenamiento');
+const { crearClientePagos } = require('./src/pedidos/pagos');
 
 async function main() {
     const store = crearStore(config.databaseUrl);
@@ -40,7 +42,23 @@ async function main() {
     // Alta del pedido anónimo (T3b): el bot crea el DELIVERY con POST /ordenes y usa el
     // total que devuelve orders-service (el envío lo suma Orden.recalcularTotal()).
     const ordenes = crearClienteOrdenes({ baseUrl: config.ordersServiceUrl });
-    const bot = crearBot({ catalogo, ajustes, conversacion, ordenes });
+
+    // Comprobante de Yape (T6b, S6/S7): el bot sube la imagen a MinIO y registra la
+    // evidencia en payments-service (POST /pagos/comprobante con X-Internal-Key).
+    const almacenamiento = crearAlmacenamiento({
+        endpoint: config.minio.endpoint,
+        port: config.minio.port,
+        useSSL: config.minio.useSSL,
+        accessKey: config.minio.accessKey,
+        secretKey: config.minio.secretKey,
+        bucket: config.minio.bucket
+    });
+    const pagos = crearClientePagos({
+        baseUrl: config.paymentsServiceUrl,
+        internalKey: config.internalKeyCompartida
+    });
+
+    const bot = crearBot({ catalogo, ajustes, conversacion, ordenes, almacenamiento, pagos });
 
     // Gobernador anti-baneo (T4b): presupuesto por hora/día, ventana horaria y circuit
     // breaker. La cola lo consulta antes de cada envío y /status expone su estado.

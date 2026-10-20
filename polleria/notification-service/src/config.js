@@ -39,6 +39,25 @@ const config = {
     ordersServiceUrl: process.env.ORDERS_SERVICE_URL || 'http://localhost:8082',
     catalogoTtlMs: numeroEnv('ORDERS_CATALOGO_TTL_MS', 30000),
 
+    // payments-service (T6b): el bot registra la evidencia del comprobante de Yape con
+    // POST /pagos/comprobante, autenticado con la clave interna compartida. Sin
+    // PAYMENTS_SERVICE_URL usa el puerto local y sin INTERNAL_API_KEY el servicio
+    // responde 401 y el bot avisa el fallo (nunca inventa un éxito).
+    paymentsServiceUrl: process.env.PAYMENTS_SERVICE_URL || 'http://localhost:8083',
+    internalKeyCompartida: process.env.INTERNAL_API_KEY || null,
+
+    // Almacenamiento de comprobantes en MinIO (T6b, S7). Defaults para local: MinIO
+    // levantado con docker-compose.local.yml (API 9000, consola 9001) y credenciales
+    // de desarrollo. En Docker el endpoint es `minio` (nombre del servicio del compose).
+    minio: {
+        endpoint: process.env.MINIO_ENDPOINT || 'localhost',
+        port: numeroEnv('MINIO_PORT', 9000),
+        useSSL: process.env.MINIO_USE_SSL === 'true',
+        accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
+        secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+        bucket: process.env.MINIO_BUCKET || 'polleria-comprobantes'
+    },
+
     // Mismo secreto que auth-service: protege GET /historial (solo ADMIN)
     jwtSecret: process.env.JWT_SECRET || 'sanpollo-dev-secret-key-2026-super-segura-256bits-minimo',
 

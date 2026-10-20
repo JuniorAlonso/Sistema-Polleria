@@ -128,6 +128,28 @@ gcloud run deploy auth-service \
 ```
 *(Repetir para `orders-service` y `payments-service` según el script `deploy-gcp-cloudrun.ps1`).*
 
+### 3.3. Almacenamiento de los comprobantes de Yape (MinIO, T6b/S7)
+
+El flujo de pago por Yape hecho por WhatsApp necesita un **bucket de objetos**: el
+`notification-service` sube la imagen del comprobante y `payments-service` guarda solo la clave
+(`comprobanteClave`). En local ese bucket es el servicio **MinIO** del compose
+(`polleria/docker-compose.local.yml`, API `:9000`, consola `:9001`, volumen `polleria_local_minio_data`).
+
+> ⚠️ **El despliegue todavía no provisiona el bucket.** `notification-service` no está en
+> `cloudbuild.yaml` ni en `deploy-gcp-cloudrun.ps1` (ver alcance en 3.2), así que esta ruta no
+despliega el servicio que sube el comprobante. Cuando se despliegue, el contenedor necesita:
+>
+> - `MINIO_ENDPOINT`, `MINIO_PORT`, `MINIO_USE_SSL`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+>   `MINIO_BUCKET` — apuntando a un bucket S3-compatible real (Cloud Storage con S3 interop o MinIO en
+>   una VM). Las credenciales van en **Secret Manager**, nunca en el repositorio.
+> - `PAYMENTS_SERVICE_URL` y `INTERNAL_API_KEY` — para registrar la evidencia con `X-Internal-Key`
+>   en `payments-service` (`POST /pagos/comprobante`).
+>
+> En Docker Compose, el endpoint de MinIO es `minio` (el nombre del servicio), no `localhost`, porque
+> cada contenedor tiene su propio loopback; `localhost:9000` solo aplica cuando el servicio se ejecuta
+> desde el host. Si no se provisiona el bucket, el bot avisa al cliente que no pudo guardar el
+> comprobante en vez de inventar un éxito.
+
 ---
 
 ## 4. Configuración del Frontend en Vercel

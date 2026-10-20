@@ -275,6 +275,46 @@ tampoco se pueden invertir las respuestas.
 - **Sin cambios de contrato**: el bot sigue devolviendo el texto y el handler lo encola en la única cola
   saliente (§3.3). El serializador es una instancia por proceso e inyectable en los tests.
 
+### 3.8 Comprobante de Yape: MinIO + `payments-service` (T6b, S6/S7)
+
+Con el pedido ya creado (T3b), el bot queda **esperando el comprobante de Yape**. Cuando llega una
+**imagen**, la descarga, la sube a **MinIO** y registra la evidencia en `payments-service`; si lo que llega
+no es una imagen, pide una imagen; si falla algo, lo dice y pide reenviar. La aprobación o el rechazo del
+comprobante por el `ADMIN` es **T6c** (fuera de este paso).
+
+**Flujo (todo sigue devolviendo texto y saliendo por la cola única, §3.3)**
+
+1. `msg.hasMedia` → el bot descarga con `msg.downloadMedia()` y comprueba que el mimetype sea de imagen.
+2. Con pedido confirmado y una imagen válida:
+   - sube el archivo a MinIO con la convención de clave
+     `comprobantes/yape/{ordenId}/{timestamp}-{messageId}.{ext}` (el bucket se crea si falta);
+   - registra la evidencia en `payments-service` con `POST /pagos/comprobante` y `X-Internal-Key`,
+     mandando `ordenId`, el celular del remitente (`telefono`) y la `comprobanteClave`; el servicio deja el
+     pago en `PENDIENTE_VERIFICACION` (T6a) y es idempotente por orden;
+   - responde que el comprobante quedó **recibido** y que un administrador lo va a verificar.
+3. **Sin pedido confirmado** en la conversación: el bot **no descarga** ni acepta nada y dice qué falta
+   (primero hay que completar el pedido).
+4. **No es imagen** (texto o adjunto que no es imagen): no sube ni registra y pide una imagen.
+5. **Falla la subida o el registro**: lo dice, **no inventa un éxito** y pide reenviar.
+
+El `ordenId` sale del **estado de conversación persistido** (el pedido creado en T3b); no se guarda ninguna
+copia nueva del comprobante. La serialización por conversación (T3c, §3.7) protege este paso de una doble
+ejecución, igual que la creación de la orden.
+
+**Módulos nuevos**
+
+- `src/pedidos/almacenamiento.js` (`AlmacenamientoComprobantes`): cliente MinIO oficial con el bucket
+  garantizado, clave con la convención acordada y **cliente y reloj inyectables** para los tests.
+- `src/pedidos/pagos.js` (`ClientePagos`): `POST /pagos/comprobante` con `X-Internal-Key`; `fetchImpl` y
+  timeout inyectables. Si `payments-service` falla, `registrarComprobante()` lanza y el bot avisa.
+
+**Servicio MinIO en el compose (S7)**
+
+`polleria/docker-compose.local.yml` agrega el servicio `minio` (imagen oficial) con la API en
+`http://localhost:9000`, la consola en `http://localhost:9001`, el volumen `polleria_local_minio_data` y las
+credenciales por variables de entorno (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, defaults de desarrollo
+`minioadmin`/`minioadmin`). No cambia ningún servicio existente.
+
 ---
 
 ## 4. Endpoints REST
@@ -618,6 +658,16 @@ ORDERS_SERVICE_URL=http://localhost:8082  # Base de orders-service para GET /pro
 ORDERS_CATALOGO_TTL_MS=30000              # Cache en memoria del catálogo (default: 30000 ms)
 # T3b (carrito y alta del pedido) REUTILIZA ORDERS_SERVICE_URL para POST /ordenes: no agrega variables nuevas.
 
+# Comprobante de Yape por WhatsApp (T6b, S6/S7)
+PAYMENTS_SERVICE_URL=http://localhost:8083  # Base de payments-service para POST /pagos/comprobante (default: http://localhost:8083)
+INTERNAL_API_KEY=<clave interna compartida>  # X-Internal-Key para /pagos/comprobante; debe coincidir con la de payments-service. Sin ella, el registro responde 401 y el bot avisa el fallo
+MINIO_ENDPOINT=localhost                   # Host de MinIO (default: localhost; en Docker, `minio`)
+MINIO_PORT=9000                            # Puerto de la API S3 (default: 9000)
+MINIO_USE_SSL=false                        # true para MinIO con TLS (default: false)
+MINIO_ACCESS_KEY=minioadmin                # Access key de MinIO (default de desarrollo: minioadmin; debe coincidir con MINIO_ROOT_USER)
+MINIO_SECRET_KEY=minioadmin                # Secret key de MinIO (default de desarrollo: minioadmin; debe coincidir con MINIO_ROOT_PASSWORD)
+MINIO_BUCKET=polleria-comprobantes         # Bucket de los comprobantes; se crea si falta (default: polleria-comprobantes)
+
 # Historial (RF32)
 DATABASE_URL=postgres://postgres:postgres123@localhost:5432/polleria
 
@@ -688,6 +738,14 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Los números de asesor y de respaldo se guardan normalizados; el respaldo vacío es válido.
 - [ ] La pestaña Notificaciones del panel carga y edita los ajustes, muestra el estado del gobernador y advierte
   que viven en memoria (S8).
+- [ ] Al llegar una **imagen** con un pedido confirmado, el bot la sube a MinIO con la clave
+  `comprobantes/yape/{ordenId}/{timestamp}-{messageId}.{ext}` y registra la evidencia en `payments-service`
+  (`POST /pagos/comprobante` con `X-Internal-Key`), dejando el pago en `PENDIENTE_VERIFICACION`.
+- [ ] Sin pedido confirmado el bot **no** acepta el comprobante y dice qué falta; si lo que llega no es una
+  imagen, pide una imagen sin subir ni registrar nada.
+- [ ] Si falla la subida a MinIO o el registro en `payments-service`, el bot lo dice y pide reenviar: nunca
+  reporta un éxito que no ocurrió.
+- [ ] El bucket de MinIO se crea solo si falta y el servicio `minio` del compose expone API (9000) y consola (9001).
 
 ---
 
@@ -711,6 +769,8 @@ src/http/app.js                 # Endpoints /api/notificaciones/* y página GET 
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/pedidos/catalogo.js         # Catálogo real de orders-service con cache corto y fallo explícito (T3a)
 src/pedidos/ordenes.js          # Alta del DELIVERY anónimo en orders-service (POST /ordenes) y total devuelto (T3b)
+src/pedidos/almacenamiento.js   # Subida del comprobante a MinIO: bucket, clave y cliente inyectables (T6b)
+src/pedidos/pagos.js            # Registro del comprobante en payments-service con X-Internal-Key (T6b)
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
 src/whatsapp/handler.js         # Enrutador de mensajes entrantes: encola la respuesta del bot (T3a); serializa por conversación (T3c)
 src/chatbot/chatbot.js          # Motor conversacional: menú, Ica, catálogo, carrito, alta, estado y dedup (T3a/T3b)

@@ -238,6 +238,32 @@ services:
       - polleria-network
 
   # ============================================================
+  # Fase 3 - Almacenamiento de comprobantes de Yape (S7)
+  # API S3: http://localhost:9000 · Consola: http://localhost:9001
+  # Las credenciales salen de variables de entorno (defaults de desarrollo local).
+  # ============================================================
+  minio:
+    image: minio/minio:latest
+    container_name: polleria-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - polleria_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - polleria-network
+
+  # ============================================================
   # Fase 3 - Notificaciones WhatsApp (:3001)
   # Primer arranque: `docker logs -f polleria-notification-service` y escanear el QR
   # ============================================================
@@ -255,11 +281,27 @@ services:
       NOTIFICATION_API_KEY: sanpollo-dev-notification-key
       WHATSAPP_RATE_LIMIT_MS: 10000
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
+      # Dentro de la red del compose los servicios se alcanzan por nombre, no por localhost.
+      # Sin estas dos URLs el bot de pedidos no puede leer la carta ni crear el pedido desde
+      # el contenedor (defaults de localhost solo sirven corriendo desde el host).
+      ORDERS_SERVICE_URL: http://orders-service:8082
+      PAYMENTS_SERVICE_URL: http://payments-service:8083
+      # Debe coincidir con el INTERNAL_API_KEY de orders-service y payments-service.
+      INTERNAL_API_KEY: sanpollo-dev-internal-key
+      # Almacenamiento de comprobantes de Yape (S7). Las credenciales son las del servicio minio.
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: polleria-comprobantes
     volumes:
       - polleria_whatsapp_session:/app/whatsapp-session
     shm_size: "1gb"
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     networks:
       - polleria-network
@@ -269,6 +311,8 @@ volumes:
     name: polleria_local_postgres_data
   polleria_whatsapp_session:
     name: polleria_local_whatsapp_session
+  polleria_minio_data:
+    name: polleria_local_minio_data
 
 networks:
   polleria-network:

@@ -46,6 +46,32 @@ const MENSAJE_PEDIDO_FALLIDO =
     'No pudimos registrar tu pedido en este momento: el sistema de pedidos no respondió.\n' +
     'Tu carrito sigue guardado. Escribe *confirmar* para reintentar.';
 
+// T6b: recepción del comprobante de Yape.
+const MENSAJE_PIDE_IMAGEN_COMPROBANTE =
+    '📸 Necesito una *imagen*: envía una foto o captura de tu comprobante de Yape, por favor.';
+
+const MENSAJE_COMPROBANTE_FALLO_SUBIDA =
+    'No pudimos guardar la imagen de tu comprobante en este momento.\n' +
+    'Vuelve a enviarla, por favor. 🙏';
+
+const MENSAJE_COMPROBANTE_FALLO_REGISTRO =
+    'Recibimos tu imagen, pero no pudimos registrar el comprobante en el sistema de pagos.\n' +
+    'Vuelve a enviarla, por favor. 🙏';
+
+function mensajeSinPedidoConfirmado() {
+    return (
+        'Todavía no tengo un *pedido confirmado* tuyo, así que no puedo recibir el comprobante.\n' +
+        'Primero completa tu pedido y, cuando te dé el número, envíame la imagen de tu Yape.'
+    );
+}
+
+function mensajeComprobanteRecibido(pedido) {
+    return (
+        `✅ Recibimos el comprobante de tu pedido N.° *${numeroDePedido(pedido)}*.\n` +
+        'Un administrador lo va a verificar y te avisamos por este chat.'
+    );
+}
+
 function formatearTelefono(numero) {
     const digitos = String(numero).replace(/\D/g, '');
     if (digitos.length === 11 && digitos.startsWith('51')) {
@@ -116,11 +142,11 @@ function mensajePedidoCreado(pedido) {
     );
 }
 
-/** El pedido ya se creó (idempotencia de T3b): se recuerda sin crear otro. */
+/** El pedido ya se creó (idempotencia de T3b): se recuerda y se pide el comprobante (T6b). */
 function mensajePedidoYaConfirmado(pedido) {
     return (
         `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado. ` +
-        'El equipo de San Pollo coordina el pago contigo por este chat.'
+        'Envíame la *imagen* de tu comprobante de Yape para que un administrador lo verifique. 📸'
     );
 }
 
@@ -153,6 +179,9 @@ module.exports = {
     PREGUNTA_REFERENCIA,
     CARRITO_VACIO,
     MENSAJE_PEDIDO_FALLIDO,
+    MENSAJE_PIDE_IMAGEN_COMPROBANTE,
+    MENSAJE_COMPROBANTE_FALLO_SUBIDA,
+    MENSAJE_COMPROBANTE_FALLO_REGISTRO,
     formatearTelefono,
     formatearPrecio,
     lineaContacto,
@@ -161,6 +190,8 @@ module.exports = {
     formatearCarrito,
     mensajePedidoCreado,
     mensajePedidoYaConfirmado,
+    mensajeSinPedidoConfirmado,
+    mensajeComprobanteRecibido,
     numeroDePedido,
     mensajeSinServicio,
     mensajeSinProductos

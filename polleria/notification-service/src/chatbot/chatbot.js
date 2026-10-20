@@ -32,6 +32,11 @@ const {
     mensajePedidoCreado,
     mensajePedidoYaConfirmado,
     MENSAJE_PEDIDO_FALLIDO,
+    MENSAJE_PIDE_IMAGEN_COMPROBANTE,
+    MENSAJE_COMPROBANTE_FALLO_SUBIDA,
+    MENSAJE_COMPROBANTE_FALLO_REGISTRO,
+    mensajeSinPedidoConfirmado,
+    mensajeComprobanteRecibido,
     lineaContacto,
     respuestaAsesor,
     mensajeSinServicio,
@@ -40,6 +45,7 @@ const {
 const { MemoryConversationStore } = require('./conversation');
 const { DedupMensajes } = require('./dedup');
 const { crearCatalogo } = require('../pedidos/catalogo');
+const { esImagen } = require('../pedidos/almacenamiento');
 const { normalizarTelefono } = require('../notifications/phone');
 
 const ESTADO_MENU = 'MENU';
@@ -98,7 +104,7 @@ function esNegativo(texto) {
 }
 
 class BotPedidos {
-    constructor({ catalogo, ajustes, conversacion, dedup, ordenes, ahora } = {}) {
+    constructor({ catalogo, ajustes, conversacion, dedup, ordenes, almacenamiento, pagos, ahora } = {}) {
         this.catalogo = catalogo || crearCatalogo();
         this.ajustes = ajustes || null;
         this.conversacion = conversacion || new MemoryConversationStore();
@@ -106,6 +112,11 @@ class BotPedidos {
         // Cliente de orders-service (T3b). Si no se inyecta, confirmar falla de forma
         // explícita en vez de inventar una orden.
         this.ordenes = ordenes || null;
+        // Comprobante de Yape (T6b): almacenamiento en MinIO y registro en payments-service.
+        // Inyectables (los tests usan dobles) y opcionales: sin ellos, el bot avisa que no
+        // pudo guardar el comprobante en vez de inventar un éxito.
+        this.almacenamiento = almacenamiento || null;
+        this.pagos = pagos || null;
     }
 
     /** Devuelve el texto a enviar o null si el mensaje no amerita respuesta. */
@@ -123,6 +134,12 @@ class BotPedidos {
     async _resolver(msg, clave, guardado) {
         const texto = textoDe(msg);
         const estado = guardado.estado || ESTADO_MENU;
+
+        // Recepción del comprobante de Yape (T6b): una imagen solo se procesa cuando la
+        // conversación tiene un pedido confirmado; cualquier otra cosa pide una imagen.
+        if (msg && msg.hasMedia) {
+            return this._resolverComprobante(msg, clave, guardado);
+        }
 
         if (estado === ESTADO_ESPERANDO_CODIGO) {
             await this.conversacion.del(clave);
@@ -147,7 +164,8 @@ class BotPedidos {
         }
 
         if (estado === ESTADO_PEDIDO_CONFIRMADO) {
-            // Idempotencia (T3b): el pedido ya se creó; se recuerda sin crear otro.
+            // Idempotencia (T3b): el pedido ya se creó; se recuerda sin crear otro y se
+            // pide la imagen del comprobante (T6b) si lo que llegó no es una imagen.
             return mensajePedidoYaConfirmado(guardado.pedido);
         }
 
@@ -348,6 +366,59 @@ class BotPedidos {
     async _falloPedido(clave, guardado) {
         await this.conversacion.set(clave, { ...guardado, estado: ESTADO_CATALOGO });
         return MENSAJE_PEDIDO_FALLIDO;
+    }
+
+    /**
+     * Comprobante de Yape (T6b): el `ordenId` sale del estado de conversación (el pedido de
+     * T3b). Sin pedido confirmado no se acepta nada y se dice qué falta. Con pedido: se
+     * descarga la imagen, se verifica que sea imagen, se sube a MinIO y se registra en
+     * payments-service. Cualquier fallo se dice y se pide reenviar: nunca un éxito falso.
+     */
+    async _resolverComprobante(msg, clave, guardado) {
+        const pedido = guardado && guardado.estado === ESTADO_PEDIDO_CONFIRMADO ? guardado.pedido : null;
+        if (!pedido || pedido.id === undefined || pedido.id === null) {
+            return mensajeSinPedidoConfirmado();
+        }
+
+        if (!this.almacenamiento || !this.pagos) {
+            return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
+        }
+
+        let media;
+        try {
+            media = await msg.downloadMedia();
+        } catch (error) {
+            return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
+        }
+
+        if (!media || !esImagen(media.mimetype)) {
+            return MENSAJE_PIDE_IMAGEN_COMPROBANTE;
+        }
+
+        let claveObjeto;
+        try {
+            claveObjeto = await this.almacenamiento.subir({
+                ordenId: pedido.id,
+                messageId: idDeMensaje(msg),
+                archivo: Buffer.from(String(media.data || ''), 'base64'),
+                contentType: media.mimetype,
+                nombreArchivo: media.filename
+            });
+        } catch (error) {
+            return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
+        }
+
+        try {
+            await this.pagos.registrarComprobante({
+                ordenId: pedido.id,
+                telefono: clave,
+                comprobanteClave: claveObjeto
+            });
+        } catch (error) {
+            return MENSAJE_COMPROBANTE_FALLO_REGISTRO;
+        }
+
+        return mensajeComprobanteRecibido(pedido);
     }
 
     async _mostrarCatalogo(clave, guardado) {
