@@ -5,7 +5,9 @@
  * editar en caliente; viven solo en el proceso y se pierden al reiniciar, que es
  * exactamente lo pedido. No hay persistencia: no escribir tablas ni archivos de estado.
  *
- * T4 solo expone el store y su uso. La API HTTP del panel es T5: no agregar rutas aquí.
+ * T4 expone el store y su uso (delay, jitter, humanización). T4b agrega el presupuesto
+ * por hora/día, la ventana horaria y el backoff del circuit breaker al mismo store. La
+ * API HTTP del panel es T5: no agregar rutas aquí.
  */
 
 const { antiBaneo: VALORES_POR_DEFECTO } = require('../config');
@@ -15,7 +17,13 @@ const CAMPOS_AJUSTES = [
     'jitterPct',
     'typingMinMs',
     'typingMaxMs',
-    'typingMsPorCaracter'
+    'typingMsPorCaracter',
+    'presupuestoHora',
+    'presupuestoDia',
+    'horaDesde',
+    'horaHasta',
+    'breakerBaseMs',
+    'breakerMaxMs'
 ];
 
 function validarNumericos(valores) {
@@ -30,6 +38,29 @@ function validarNumericos(valores) {
     }
     if (valores.typingMaxMs < valores.typingMinMs) {
         throw new RangeError('typingMaxMs no puede ser menor que typingMinMs');
+    }
+
+    // Presupuesto (T4b): al menos un envío por período; si no, la cola quedaría pausada siempre.
+    if (!Number.isInteger(valores.presupuestoHora) || valores.presupuestoHora < 1) {
+        throw new RangeError('presupuestoHora debe ser un entero mayor o igual a 1');
+    }
+    if (!Number.isInteger(valores.presupuestoDia) || valores.presupuestoDia < 1) {
+        throw new RangeError('presupuestoDia debe ser un entero mayor o igual a 1');
+    }
+
+    // Ventana horaria (T4b): horas del día 0-23.
+    for (const campo of ['horaDesde', 'horaHasta']) {
+        if (!Number.isInteger(valores[campo]) || valores[campo] < 0 || valores[campo] > 23) {
+            throw new RangeError(`${campo} debe ser una hora entera entre 0 y 23`);
+        }
+    }
+
+    // Circuit breaker (T4b): el tope no puede ser menor que la base.
+    if (valores.breakerBaseMs < 1) {
+        throw new RangeError('breakerBaseMs debe ser mayor o igual a 1');
+    }
+    if (valores.breakerMaxMs < valores.breakerBaseMs) {
+        throw new RangeError('breakerMaxMs no puede ser menor que breakerBaseMs');
     }
 }
 

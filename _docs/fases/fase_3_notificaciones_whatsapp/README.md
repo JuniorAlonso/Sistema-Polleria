@@ -145,6 +145,30 @@ La configuración vive **en memoria** (`src/outbound/ajustes.js`, S8): los defau
 
 El azar y los timers son inyectables (`azar`, `dormir`, `ahora` en `ColaEnvios`) para que los tests sean deterministas: el jitter no llama a `Math.random` ni espera con `setTimeout` real durante la suite.
 
+### 3.4 Anti-baneo II: presupuesto, ventana horaria y circuit breaker (T4b, S2/S8)
+
+Sobre la misma cola única de T4 se agrega un **gobernador** en memoria (`src/outbound/gobernador.js`) que la cola consulta antes de tomar cada trabajo. Si hay pausa, el trabajo **no se descarta**: queda encolado y la cola se reanuda sola cuando vence la espera. `GET /status` reporta si la cola está pausada y el motivo.
+
+**Presupuesto de envíos** (`src/outbound/limites.js`)
+
+- `WHATSAPP_PRESUPUESTO_HORA` (default 40) y `WHATSAPP_PRESUPUESTO_DIA` (default 500) limitan los mensajes **enviados con éxito** por hora y por día, en hora local del proceso.
+- Al agotarse, la cola se pausa hasta que empieza una hora o un día nuevos; los contadores se reinician solos. Motivos en `/status`: `presupuesto-hora`, `presupuesto-dia`.
+
+**Ventana horaria de envío**
+
+- `WHATSAPP_HORA_DESDE` (default 11) y `WHATSAPP_HORA_HASTA` (default 23) definen la ventana `[desde, hasta)`: por defecto se envía de 11:00 a 22:59, el horario de atención del negocio. Fuera de la ventana la cola **espera, no descarta**. Motivo en `/status`: `fuera-de-ventana`.
+- Si `horaDesde > horaHasta` la ventana cruza la medianoche; si son iguales queda abierta las 24 h.
+
+**Circuit breaker** (`src/outbound/breaker.js`)
+
+- La detección es **heurística**: no hay un código de error oficial de WhatsApp Web, así que se busca en el mensaje del error alguna de las señales conocidas (`PATRONES_BLOQUEO`): `rate-overlimit`, `too many requests`, `429` y `blocked`/`banned` (número bloqueado). Cada patrón tiene un nombre legible que se expone en `/status`, de modo que siempre se puede leer **por qué** se abrió. Un error que no coincide con ningún patrón no abre el breaker: se maneja con los reintentos normales.
+- Al abrirse, la cola global se pausa y se aplica un backoff exponencial acotado: `min(WHATSAPP_BREAKER_BASE_MS × 2^aperturas, WHATSAPP_BREAKER_MAX_MS)` (defaults: 60.000 ms y 15 min).
+- Al vencer el backoff el breaker pasa a **medio abierto** y deja pasar **un** envío de prueba; si sale bien, cierra y resetea el backoff. Si vuelve a fallar con una señal de bloqueo, reabre con el doble de espera, hasta el tope.
+- Un trabajo que cae por una señal de bloqueo se reencola **sin consumir** `WHATSAPP_MAX_INTENTOS`: la pausa del breaker lo frena y, cuando cierre, se reintenta. Ningún trabajo encolado se pierde.
+- Motivo en `/status`: `circuit-breaker`, con la señal detectada y el detalle del error original.
+
+El orden de prioridad al pausar es: circuit breaker → ventana horaria → presupuesto. La configuración de T4b se edita en caliente con `ajustes.actualizar(...)` (la API del panel es T5) y se pierde al reiniciar el proceso (S8).
+
 ---
 
 ## 4. Endpoints REST
@@ -325,10 +349,24 @@ GET /api/notificaciones/status
 ```
 
 ```json
-{ "status": "ok", "whatsapp": "connected", "colaPendiente": 0, "cola": { "enProceso": false, "ultimoEnvioEn": null } }
+{
+  "status": "ok",
+  "whatsapp": "connected",
+  "colaPendiente": 0,
+  "cola": { "enProceso": false, "ultimoEnvioEn": null, "pausada": false, "motivo": null },
+  "antiBaneo": {
+    "pausada": false,
+    "motivo": null,
+    "detalle": null,
+    "presupuestoHora": { "enviados": 3, "limite": 40 },
+    "presupuestoDia": { "enviados": 12, "limite": 500 },
+    "ventana": { "horaDesde": 11, "horaHasta": 23, "abierta": true },
+    "breaker": { "estado": "cerrado", "senal": null, "detalle": null, "aperturas": 0, "reintentoEn": 0 }
+  }
+}
 ```
 
-Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token). `colaPendiente` es el contrato original y no cambia; `cola` es información extra de lo que la cola está haciendo ahora (`enProceso` y el timestamp del último envío, `null` si todavía no envió nada).
+Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token). `colaPendiente` es el contrato original y no cambia; `cola` es información extra de lo que la cola está haciendo ahora (`enProceso`, el timestamp del último envío y, con el anti-baneo activo, `pausada`/`motivo`). `antiBaneo` es `null` cuando el servicio no tiene gobernador inyectado. `breaker.estado` puede ser `cerrado`, `abierto` o `medioAbierto`; `senal` conserva la última señal de bloqueo detectada para poder auditar por qué se abrió.
 
 ---
 
@@ -400,6 +438,12 @@ WHATSAPP_JITTER_PCT=20                    # Variación aleatoria ±% sobre el de
 WHATSAPP_TYPING_MIN_MS=1000               # Duración mínima del "escribiendo" (default: 1000)
 WHATSAPP_TYPING_MAX_MS=6000               # Duración máxima del "escribiendo" (default: 6000)
 WHATSAPP_TYPING_MS_POR_CARACTER=50        # ms de "escribiendo" por carácter, acotado por min/max (default: 50)
+WHATSAPP_PRESUPUESTO_HORA=40              # Máximo de mensajes por hora; al agotarse la cola se pausa (default: 40)
+WHATSAPP_PRESUPUESTO_DIA=500              # Máximo de mensajes por día; al agotarse la cola se pausa (default: 500)
+WHATSAPP_HORA_DESDE=11                    # Inicio de la ventana de envío en hora local, inclusive (default: 11)
+WHATSAPP_HORA_HASTA=23                    # Fin de la ventana de envío en hora local, exclusivo (default: 23)
+WHATSAPP_BREAKER_BASE_MS=60000            # Backoff base del circuit breaker al detectar bloqueo (default: 60000)
+WHATSAPP_BREAKER_MAX_MS=900000            # Tope del backoff exponencial (default: 900000 = 15 min)
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Historial (RF32)
@@ -445,6 +489,10 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Mensaje de confirmación de pago llega al WhatsApp del cliente.
 - [ ] Mensajes de tracking (`EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`) llegan correctamente.
 - [ ] La cola respeta el delay base (± jitter) entre envíos consecutivos.
+- [ ] Al agotarse el presupuesto por hora/día la cola se pausa y se reanuda en el período siguiente, sin descartar mensajes.
+- [ ] Fuera de la ventana horaria (11 a 23 por defecto) la cola espera y `GET /status` reporta `fuera-de-ventana`.
+- [ ] Una señal de rate-overlimit/bloqueo abre el breaker, aplica backoff exponencial acotado y `GET /status` expone la señal detectada; al vencer, un envío de prueba cierra el breaker.
+- [ ] Ningún trabajo se pierde durante una pausa (breaker, ventana o presupuesto).
 - [ ] Las respuestas del chatbot y las notificaciones salen por la misma cola (sin segundo camino).
 - [ ] Ningún mensaje sale sin marcar visto / mostrar "escribiendo" cuando corresponde.
 - [ ] El historial registra TODOS los intentos con su estado final.
@@ -465,6 +513,9 @@ src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
 src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
 src/outbound/ajustes.js         # Configuración anti-baneo en memoria (S8), defaults de entorno
 src/outbound/humanizacion.js    # Duración del "escribiendo" proporcional al texto (S2)
+src/outbound/breaker.js         # Detección heurística de bloqueo y circuit breaker (T4b)
+src/outbound/limites.js         # Presupuesto por hora/día y ventana horaria (T4b)
+src/outbound/gobernador.js      # Coordina límites + breaker; la cola lo consulta antes de enviar (T4b)
 src/http/app.js                 # Endpoints /api/notificaciones/* y página GET /qr
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión

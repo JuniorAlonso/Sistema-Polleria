@@ -15,20 +15,24 @@ const { duracionEscribiendo } = require('../outbound/humanizacion');
  * y, para la humanización, marcarVisto(chatId) y escribiendo(chatId, duracionMs).
  */
 class NotificacionService {
-    constructor({ store, whatsapp, intervaloMs, maxIntentos, ajustes, jitterPct, azar, dormir, ahora }) {
+    constructor({ store, whatsapp, intervaloMs, maxIntentos, ajustes, gobernador, jitterPct, azar, dormir, ahora }) {
         this.store = store;
         this.whatsapp = whatsapp;
         this.maxIntentos = maxIntentos;
         // Los ajustes viven en memoria (S8) y se leen en cada envío: editarlos en caliente
         // no exige reconstruir la cola.
         this.ajustes = ajustes || crearAjustes({ intervaloMs, jitterPct });
+        // El gobernador (T4b) es opcional: cuando no viene, la cola no aplica límites ni
+        // circuit breaker. main.js siempre lo inyecta; los tests de cola/humanización no.
+        this.gobernador = gobernador || null;
         this.cola = new ColaEnvios({
             intervaloMs: () => this.ajustes.obtener().intervaloMs,
             jitterPct: () => this.ajustes.obtener().jitterPct,
             procesar: trabajo => this._procesar(trabajo),
             azar,
             dormir,
-            ahora
+            ahora,
+            gobernador: this.gobernador
         });
     }
 
@@ -103,6 +107,11 @@ class NotificacionService {
         return this.cola.ultimoEnvioEn;
     }
 
+    // Estado anti-baneo para GET /status; null si no hay gobernador inyectado.
+    estadoAntiBaneo() {
+        return this.gobernador ? this.gobernador.estado() : null;
+    }
+
     // Best-effort: si marcar visto o el "escribiendo" fallan, el mensaje igual sale.
     async _humanizar(chatId, mensaje, marcarVisto) {
         if (marcarVisto && typeof this.whatsapp.marcarVisto === 'function') {
@@ -130,6 +139,8 @@ class NotificacionService {
                     intentos: intento,
                     errorDetalle: 'El número no está registrado en WhatsApp'
                 });
+                // El canal respondió: si el breaker estaba en prueba, se cierra.
+                if (this.gobernador) this.gobernador.registrarCanalVivo();
                 console.warn(`⚠️ ${logId || numero}: ${numero} no tiene WhatsApp`);
                 return;
             }
@@ -144,8 +155,20 @@ class NotificacionService {
                 errorDetalle: null,
                 enviadoEn: new Date()
             });
+            // Cuenta el presupuesto por hora/día y cierra el breaker.
+            if (this.gobernador) this.gobernador.registrarExito();
             console.log(`✅ ${logId || chatId} enviado a ${numero || chatId}`);
         } catch (error) {
+            // Señal de rate-overlimit/bloqueo: el gobernador abre el breaker y pausa la cola.
+            // El trabajo se reencola tal cual (sin consumir maxIntentos) para no perderlo.
+            const bloqueo = this.gobernador ? this.gobernador.registrarFallo(error) : false;
+            if (bloqueo) {
+                await this._marcar(logId, { intentos: intento, errorDetalle: error.message });
+                this.cola.add({ ...trabajo, intentos: intento });
+                console.warn(`🚧 ${logId || numero} pausado por posible bloqueo de WhatsApp, se reintentará: ${error.message}`);
+                return;
+            }
+
             if (intento < this.maxIntentos) {
                 await this._marcar(logId, { intentos: intento, errorDetalle: error.message });
                 this.cola.add({ ...trabajo, intentos: intento });

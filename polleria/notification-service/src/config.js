@@ -44,13 +44,26 @@ const config = {
 // Anti-baneo (S2/S8): punto de partida del store en memoria que se edita en caliente.
 // El delay base sigue siendo WHATSAPP_RATE_LIMIT_MS (RNF10); el jitter lo varía ± un
 // porcentaje en cada envío y el "escribiendo" dura lo proporcional al texto, acotado
-// entre el mínimo y el máximo. Todo esto vive solo en memoria del proceso.
+// entre el mínimo y el máximo. El presupuesto por hora/día, la ventana horaria y el
+// circuit breaker (T4b) también viven solo en memoria del proceso.
 config.antiBaneo = {
     intervaloMs: config.rateLimitMs,
     jitterPct: numeroEnv('WHATSAPP_JITTER_PCT', 20),
     typingMinMs: numeroEnv('WHATSAPP_TYPING_MIN_MS', 1000),
     typingMaxMs: numeroEnv('WHATSAPP_TYPING_MAX_MS', 6000),
-    typingMsPorCaracter: numeroEnv('WHATSAPP_TYPING_MS_POR_CARACTER', 50)
+    typingMsPorCaracter: numeroEnv('WHATSAPP_TYPING_MS_POR_CARACTER', 50),
+
+    // Presupuesto de envíos: al agotarse, la cola se pausa y se reanuda con la hora/día nuevos.
+    presupuestoHora: numeroEnv('WHATSAPP_PRESUPUESTO_HORA', 40),
+    presupuestoDia: numeroEnv('WHATSAPP_PRESUPUESTO_DIA', 500),
+
+    // Ventana horaria de atención: fuera de [horaDesde, horaHasta) la cola espera, no descarta.
+    horaDesde: numeroEnv('WHATSAPP_HORA_DESDE', 11),
+    horaHasta: numeroEnv('WHATSAPP_HORA_HASTA', 23),
+
+    // Circuit breaker: backoff exponencial acotado al detectar señales de bloqueo.
+    breakerBaseMs: numeroEnv('WHATSAPP_BREAKER_BASE_MS', 60000),
+    breakerMaxMs: numeroEnv('WHATSAPP_BREAKER_MAX_MS', 900000)
 };
 
 module.exports = config;

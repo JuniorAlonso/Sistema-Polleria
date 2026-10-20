@@ -4,6 +4,7 @@ const handleMessage = require('./src/whatsapp/handler');
 const { crearStore } = require('./src/notifications/store');
 const { NotificacionService } = require('./src/notifications/service');
 const { crearAjustes } = require('./src/outbound/ajustes');
+const { crearGobernador } = require('./src/outbound/gobernador');
 const { crearApp } = require('./src/http/app');
 
 async function main() {
@@ -17,10 +18,15 @@ async function main() {
     // panel (T5) los editará en caliente. Se pierden al reiniciar el proceso.
     const ajustes = crearAjustes(config.antiBaneo);
 
+    // Gobernador anti-baneo (T4b): presupuesto por hora/día, ventana horaria y circuit
+    // breaker. La cola lo consulta antes de cada envío y /status expone su estado.
+    const gobernador = crearGobernador({ ajustes });
+
     const service = new NotificacionService({
         store,
         whatsapp,
         ajustes,
+        gobernador,
         maxIntentos: config.maxIntentos
     });
 
@@ -37,8 +43,9 @@ async function main() {
         errorWhatsapp: whatsapp.ultimoError
     });
     app.listen(config.port, () => {
-        const { intervaloMs, jitterPct } = ajustes.obtener();
+        const { intervaloMs, jitterPct, presupuestoHora, presupuestoDia, horaDesde, horaHasta } = ajustes.obtener();
         console.log(`🚀 Notification service en puerto ${config.port} (delay base entre mensajes: ${intervaloMs} ms, jitter ±${jitterPct}%)`);
+        console.log(`🛡️ Anti-baneo: ${presupuestoHora}/hora, ${presupuestoDia}/día, ventana ${horaDesde}:00-${horaHasta}:00`);
     });
 
     // El handler encola la respuesta del chatbot en la misma cola saliente (S2).

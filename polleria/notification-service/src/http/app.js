@@ -205,15 +205,20 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
         // Público: solo el estado, sin el detalle del fallo de arranque (que expone
         // hostnames y rutas internas). El detalle viaja por /qr, que exige ADMIN.
         const estado = estadoWhatsapp();
+        const antiBaneo = typeof service.estadoAntiBaneo === 'function' ? service.estadoAntiBaneo() : null;
         res.json({
             status: 'ok',
             whatsapp: ESTADO_WHATSAPP[estado] || estado,
             colaPendiente: service.pendientes,
-            // Extra informativo, sin romper el contrato anterior: qué está haciendo la cola ahora.
+            // Extra informativo, sin romper el contrato anterior: qué está haciendo la cola
+            // ahora y, si el anti-baneo está activo, si está pausada y por qué.
             cola: {
                 enProceso: service.colaEnProceso,
-                ultimoEnvioEn: service.ultimoEnvioEn
-            }
+                ultimoEnvioEn: service.ultimoEnvioEn,
+                pausada: antiBaneo ? antiBaneo.pausada : false,
+                motivo: antiBaneo ? antiBaneo.motivo : null
+            },
+            antiBaneo
         });
     });
 
