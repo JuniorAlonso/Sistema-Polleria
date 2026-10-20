@@ -145,8 +145,9 @@ solo de cancelación, con la misma identidad temporal que usa el seguimiento:
 | Invitado con `X-Seguimiento-Token` | `POST /ordenes/seguimiento/{id}/cancelar`: cancela **su propio** pedido (el `telefonoCliente` canónico coincide con el celular del token) mientras no esté en estado terminal |
 
 Un pedido ajeno o inexistente responde `404` (misma convención anti-enumeración que
-`GET /ordenes/{id}`); un token ausente, inválido o vencido responde `400`; y un pedido ya `ENTREGADO`
-o `CANCELADO` responde `400` por la máquina de estados. La cancelación se delega en
+`GET /ordenes/{id}`); un token ausente, inválido o vencido responde `400`; un pedido ya `ENTREGADO` responde `400`
+por la máquina de estados; y volver a cancelar uno ya `CANCELADO` responde `200` sin cambios, porque la
+máquina corta cuando el estado destino es el mismo (idempotente). La cancelación se delega en
 `OrdenService.actualizarEstado(...)`, de modo que el log, la liberación de mesa y la notificación
 son exactamente los mismos que en una cancelación hecha por el personal.
 

@@ -138,8 +138,9 @@ public class SeguimientoService {
      * La cancelación delega en {@link OrdenService#actualizarEstado} para que el log, la liberación
      * de mesa y la notificación sean exactamente los mismos que en una cancelación del personal.
      * Un pedido ajeno o inexistente responde 404 (misma convención anti-enumeración que
-     * {@code GET /ordenes/{id}}), y un pedido ya terminal es rechazado por la máquina de estados
-     * (400), no por este método.
+     * {@code GET /ordenes/{id}}). Un pedido ya {@code ENTREGADO} es rechazado por la máquina de
+     * estados (400), no por este método; volver a cancelar uno ya {@code CANCELADO} responde 200 sin
+     * cambios, porque la máquina corta cuando el estado destino es el mismo.
      */
     @Transactional
     public OrdenResponse cancelarPedido(Long id, String token) {

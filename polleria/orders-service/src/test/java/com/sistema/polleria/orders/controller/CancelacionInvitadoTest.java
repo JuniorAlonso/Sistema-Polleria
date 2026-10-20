@@ -157,6 +157,71 @@ class CancelacionInvitadoTest {
                 "el pedido entregado debe quedar intacto tras el intento rechazado");
     }
 
+
+    @Test
+    void unAccesoDePersonalNoSirveComoTokenDeSeguimiento() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long ordenId = crearPedidoInvitado("922000106");
+
+        // El token de un mozo está firmado con el mismo secreto, pero no es un acceso de seguimiento:
+        // la ruta solo acepta el acceso temporal de celular verificado.
+        ResponseEntity<String> intento = cancelar(ordenId, tokenDePersonal(999L, "MOZO"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, intento.getStatusCode(),
+                "un token de personal no debe servir para cancelar como invitado: " + intento.getBody());
+        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenId),
+                "el pedido debe quedar intacto tras el intento rechazado");
+    }
+
+    @Test
+    void cancelarDosVecesQuedaCancelado() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long ordenId = crearPedidoInvitado("922000107");
+        String token = tokenDeSeguimiento("922000107");
+
+        assertEquals(HttpStatus.OK, cancelar(ordenId, token).getStatusCode());
+
+        // La máquina de estados corta cuando el estado destino es el mismo, así que la segunda
+        // cancelación es 200 sin efectos. Queda fijado porque la documentación decía 400: lo encontró
+        // la verificación independiente del commit.
+        assertEquals(HttpStatus.OK, cancelar(ordenId, token).getStatusCode(),
+                "volver a cancelar un pedido ya cancelado no debe fallar");
+        assertEquals(OrdenEstado.CANCELADO, estadoEnBaseDeDatos(ordenId));
+    }
+
+    @Test
+    void dosPedidosDelMismoCelularSeCancelanPorIdSinAfectarElOtro() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long primero = crearPedidoInvitado("922000108");
+        Long segundo = crearPedidoInvitado("922000108");
+        String token = tokenDeSeguimiento("922000108");
+
+        assertEquals(HttpStatus.OK, cancelar(primero, token).getStatusCode());
+        assertEquals(OrdenEstado.CANCELADO, estadoEnBaseDeDatos(primero));
+        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(segundo),
+                "el otro pedido del mismo celular no se toca: la cancelación es por id");
+    }
+
+    @Test
+    void unPedidoInexistenteConAccesoValidoResponde404() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        crearPedidoInvitado("922000109");
+        String token = tokenDeSeguimiento("922000109");
+
+        ResponseEntity<String> intento = cancelar(99999999L, token);
+
+        assertEquals(HttpStatus.NOT_FOUND, intento.getStatusCode(),
+                "un pedido inexistente debe responder 404, no 400 ni 500: " + intento.getBody());
+    }
+
     /** Alta anónima por el checkout público: el invitado no manda token, solo su celular. */
     private Long crearPedidoInvitado(String telefono) throws Exception {
         HttpHeaders cabeceras = new HttpHeaders();

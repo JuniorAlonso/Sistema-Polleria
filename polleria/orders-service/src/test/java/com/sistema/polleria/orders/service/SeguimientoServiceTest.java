@@ -1,7 +1,10 @@
 package com.sistema.polleria.orders.service;
 
+import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
+import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.CodigoSeguimiento;
 import com.sistema.polleria.orders.entity.Orden;
+import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.entity.OrdenTipo;
 import com.sistema.polleria.orders.exception.DemasiadasSolicitudesException;
 import com.sistema.polleria.orders.repository.CodigoSeguimientoRepository;
@@ -16,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -120,6 +124,38 @@ class SeguimientoServiceTest {
     @Test
     void accesoAlteradoEsRechazado() {
         assertThrows(IllegalArgumentException.class, () -> seguimientoService.listarPedidos("token.falso.123"));
+    }
+
+
+    /**
+     * T1 — La cancelación del invitado delega en el servicio de órdenes con el estado CANCELADO y sin
+     * usuario (es un acceso de seguimiento, no una sesión), y solo aplica al pedido de ese celular.
+     * Antes no tenía prueba unitaria: la cubría solo la integración.
+     */
+    @Test
+    void cancelarPedidoDelegaConEstadoCanceladoYRechazaElDeOtroCelular() {
+        when(codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc("938924552"))
+                .thenReturn(Optional.of(vigente("4827")));
+        String token = seguimientoService.verificarCodigo("938924552", "4827");
+
+        Orden propia = Orden.builder().id(7L).tipo(OrdenTipo.DELIVERY)
+                .telefonoCliente("51 938 924 552").items(new ArrayList<>()).build();
+        when(ordenRepository.findById(7L)).thenReturn(Optional.of(propia));
+        when(ordenService.actualizarEstado(eq(7L), any(), isNull())).thenReturn(OrdenResponse.from(propia));
+
+        seguimientoService.cancelarPedido(7L, token);
+
+        ArgumentCaptor<ActualizarEstadoRequest> capturado = ArgumentCaptor.forClass(ActualizarEstadoRequest.class);
+        verify(ordenService).actualizarEstado(eq(7L), capturado.capture(), isNull());
+        assertEquals(OrdenEstado.CANCELADO, capturado.getValue().getEstado(),
+                "reutiliza el flujo del personal en vez de implementar su propia cancelación");
+
+        Orden ajena = Orden.builder().id(8L).telefonoCliente("911222333").items(new ArrayList<>()).build();
+        when(ordenRepository.findById(8L)).thenReturn(Optional.of(ajena));
+
+        assertThrows(NoSuchElementException.class, () -> seguimientoService.cancelarPedido(8L, token),
+                "el pedido de otro celular responde 404");
+        verify(ordenService, never()).actualizarEstado(eq(8L), any(), any());
     }
 
     private CodigoSeguimiento vigente(String valor) {
