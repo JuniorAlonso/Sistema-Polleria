@@ -23,11 +23,11 @@
 | **RF10** | Carta y Productos | Acceso a la carta digital mediante escaneo de código QR en mesa. | `orders-service` (:8082) + `frontEnd` | `GET /productos` (público sin auth)<br>Entidad `Mesa.qrUrl` | Fase 1 | ✅ Implementado |
 | **RF11** | Gestión de Mesas | Mozo visualiza estado de mesas, registra su ocupación y las vincula a una orden. | `orders-service` (:8082) | `GET /mesas`, `PUT /mesas/{id}/estado`<br>`PUT /mesas/{id}/posicion`, `DELETE /mesas/{id}`<br>Entidad `Mesa`, `MesaEstado` | Fase 2 | ✅ Implementado |
 | **RF12** | Gestión de Mesas | Mozo registra pedidos de salón en dispositivo móvil tras selección presencial. | `frontEnd` (Comandera) + `orders-service` | `POST /ordenes` (`tipo: SALON`, `mesaId: X`)<br>`POST /ordenes/{id}/items` (segunda ronda)<br>`POST /ordenes/{id}/servir` (entrega en mesa)<br>Modal de Comanda rápida en tablet y en el inspector del admin | Fase 2 | ✅ Implementado |
-| **RF13** | Pedidos y Estados | Registrar pedidos para consumo en salón (mozo), delivery o recojo (cliente). | `orders-service` (:8082) | `POST /ordenes`<br>`OrdenTipo`: `SALON`, `DELIVERY`, `RECOJO` | Fase 1 | ✅ Implementado |
+| **RF13** | Pedidos y Estados | Registrar pedidos para consumo en salón (mozo), delivery o recojo (cliente). | `orders-service` (:8082) | `POST /ordenes`<br>`OrdenTipo`: `SALON`, `DELIVERY`, `RECOJO` | Fase 1 | ✅ Implementado · 🔁 Modificado (ver [§1.1](./requerimientos_whatsapp/requerimientos_pedidos_whatsapp.md)) |
 | **RF14** | Pedidos y Estados | Requerir registro de dirección y referencia de ubicación para pedidos de delivery. | `orders-service` (:8082) | DTO `CrearOrdenRequest`<br>Validación `direccionEntrega` y `referencia` | Fase 1 | ✅ Implementado |
 | **RF15** | Pedidos y Estados | Ciclo de vida de pedidos mediante máquina de estados robusta. | `orders-service` (:8082) | `OrdenEstado`: `RECIBIDO → EN_PREPARACION → LISTO → EN_CAMINO → ENTREGADO / CANCELADO` | Fase 1 | ✅ Implementado |
 | **RF16** | Pedidos y Estados | Personal de cocina y administración actualiza estado de pedidos validando transiciones. | `orders-service` (:8082) | `PATCH /ordenes/{id}/estado`<br>`OrdenStateMachineValidator` | Fase 1 | ✅ Implementado |
-| **RF17** | Pedidos y Estados | Clientes consultan el estado actual de su pedido (tracking). | `orders-service` (:8082) + `frontEnd` | `GET /ordenes/{id}`<br>Vista `/tracking` en Angular | Fase 1 | ✅ Implementado |
+| **RF17** | Pedidos y Estados | Clientes consultan el estado actual de su pedido (tracking). | `orders-service` (:8082) + `frontEnd` | `GET /ordenes/{id}`<br>Vista `/tracking` en Angular | Fase 1 | ✅ Implementado · 🔁 Modificado (ver [§1.1](./requerimientos_whatsapp/requerimientos_pedidos_whatsapp.md)) |
 | **RF18** | Pedidos y Estados | Asignación de repartidor a los pedidos de delivery. | `auth-service` (:8081) + `orders-service` (:8082) + `frontEnd` | `GET /auth/admin/repartidores` (roster real, solo ADMIN)<br>`PATCH /ordenes/{id}/estado`<br>Campo `repartidorId`<br>Modal de asignación en el panel (`/admin` → REPARTO) | Fase 1 | ✅ Implementado (Modal + roster real) |
 | **RF19** | Pagos y Finanzas | Métodos de pago: contraentrega, tarjeta o monederos digitales (Yape/Plin). | `payments-service` (:8083) | `MetodoPago`: `TARJETA`, `YAPE_PLIN`, `CONTRAENTREGA`<br>`POST /pagos` | Fase 1 + **Fase 5** | ✅ F1 (Mock) · 💳 F5 (Real MP) |
 | **RF20** | Pagos y Finanzas | Registro de transacciones con estado (aprobada, rechazada, pendiente, cancelada). | `payments-service` (:8083) | `EstadoPago`: `PENDIENTE`, `APROBADO`, `RECHAZADO`, `CANCELADO`, `REEMBOLSADO`, `REEMBOLSADO_PARCIAL`<br>`GET /pagos/{id}` | Fase 1 + **Fase 5** | ✅ F1 · 💳 F5 (Webhook IPN) |
@@ -45,6 +45,21 @@
 | **RF32** | Notificaciones | Registro y auditoría del estado de envíos de notificaciones (enviado, en cola, fallido). | `notification-service` (:3001) | Tabla `notification_log`<br>`GET /api/notificaciones/historial`<br>Estados: `EN_COLA`, `ENVIADO`, `ERROR` | **Fase 3** | ✅ Fase 3 |
 | **RF33** | Notificaciones | Notificación en tiempo real al dispositivo del mozo indicando plato listo en cocina. | `orders-service` (:8082) + WS STOMP | WebSocket Broker `/ws-polleria` (SockJS)<br>Topic `/topic/salon/pedidos-listos`<br>Trigger al pasar orden a `LISTO` | Fase 2 | ✅ Implementado |
 | **RF34** | Incidentes | Registro y documentación de incidentes técnicos u operativos (causa raíz y solución). | `incident-service` (:8088) | `POST /incidentes`<br>`PATCH /incidentes/{id}/resolver`<br>Entidad `Incidente` | **Fase 6** | 🏢 Fase 6 |
+| **RF35** | Notificaciones / Pedidos y Estados | Pedido de delivery por WhatsApp sin cuenta, identificado por el celular y con confirmación previa de que el pedido es de Ica. | `notification-service` (:3001) → `orders-service` (:8082) | `src/chatbot/chatbot.js`<br>`src/pedidos/catalogo.js`<br>`src/pedidos/ordenes.js`<br>`src/chatbot/serializador.js` | **Feature WhatsApp** | ✅ Implementado · 🆕 Nuevo |
+| **RF36** | Pagos y Finanzas | Pago por Yape desde WhatsApp: el cliente envía el comprobante, se guarda en MinIO y el administrador lo verifica. | `notification-service` → MinIO → `payments-service` (:8083) | `src/pedidos/almacenamiento.js`<br>`src/pedidos/pagos.js`<br>`POST /pagos/comprobante`<br>`POST /pagos/{id}/verificar`<br>`FirmadorComprobantes.java` | **Feature WhatsApp** | ✅ Implementado (backend T6a–T6c) · ⏳ Panel del admin pendiente (T6d) · 🆕 Nuevo |
+| **RF37** | Pedidos y Estados | Registro del canal de origen del pedido (`WEB`, `WHATSAPP`, `SALON`). | `orders-service` (:8082) + `frontEnd` | `CanalOrigen.java`<br>`OrdenService.java`<br>`order.adapter.ts` | **Feature WhatsApp** | ✅ Implementado · 🆕 Nuevo |
+| **RF38** | Pedidos y Estados | Cancelación del pedido propio por el cliente sin cuenta, con el celular verificado en el seguimiento. | `orders-service` (:8082) + `frontEnd` | `POST /ordenes/seguimiento/{id}/cancelar`<br>`SeguimientoService.cancelarPedido`<br>`order-tracking.component.ts` | **Feature WhatsApp** | ✅ Implementado · 🆕 Nuevo |
+
+### 1.1 Requerimientos oficiales modificados
+
+Estos RF del SRS oficial se conservan textualmente; la feature de pedidos por WhatsApp **amplía** su
+alcance. El detalle (qué cambia, por qué y su traza a commit, archivo y test) está en
+[`requerimientos_whatsapp/requerimientos_pedidos_whatsapp.md`](./requerimientos_whatsapp/requerimientos_pedidos_whatsapp.md).
+
+| RF | Modificación | Traza |
+| :---: | :--- | :--- |
+| **RF13** | Se agrega el **bot de WhatsApp** como tercer canal de alta (delivery anónimo sin login) y el **registro del canal de origen** del pedido (`WEB`/`WHATSAPP`/`SALON`). | `57ab828` (canal de origen) · `42197b5` (alta por WhatsApp) → RF35 / RF37 |
+| **RF17** | La consulta del estado se extiende al **cliente sin cuenta** (celular verificado por código de WhatsApp) y suma la **cancelación del pedido propio** desde el seguimiento. | `cee9204` → RF38 |
 
 ---
 
