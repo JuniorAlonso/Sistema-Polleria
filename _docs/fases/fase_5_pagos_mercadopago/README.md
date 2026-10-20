@@ -70,6 +70,24 @@ Alineada con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../Bases
 </dependency>
 ```
 
+### 3.1 SDK de MinIO (comprobantes de Yape — T6c, S7)
+
+```xml
+<!-- pom.xml de payments-service -->
+<dependency>
+    <groupId>io.minio</groupId>
+    <artifactId>minio</artifactId>
+    <version>8.5.17</version>
+</dependency>
+```
+
+`payments-service` **no sube ni descarga** el comprobante (eso es T6b, en el notification-service):
+el cliente MinIO existe solo para firmar la **URL presignada de vida corta** que ve el `ADMIN` al
+verificar un pago por Yape. El bucket queda privado y la clave del objeto no se expone a otros roles.
+La firma SigV4 es local (la región del cliente se fija en `us-east-1`, la de MinIO por defecto), así
+que no se necesita MinIO levantado para generar la URL. Si el SDK no se puede descargar de Maven
+Central, la tarea se reporta como bloqueo en vez de firmar SigV4 a mano.
+
 ---
 
 ## 4. Implementación del Gateway Mercado Pago
@@ -308,6 +326,13 @@ MERCADOPAGO_PENDING_URL=http://3.237.70.97/checkout/pending
 NOTIFICATION_URL=http://localhost:3001          # notifications WhatsApp (RF30)
 NOTIFICATION_API_KEY=                           # X-Internal-Key hacia notification-service
 INTERNAL_API_KEY=                              # X-Internal-Key hacia orders-service. Sin default: si falta, la llamada se rechaza. Debe coincidir con orders-service.
+MINIO_ENDPOINT=localhost                        # Debe ser alcanzable por el navegador del panel (localhost:9000 está mapeado por el compose); `minio` no resuelve desde el navegador
+MINIO_PORT=9000
+MINIO_USE_SSL=false
+MINIO_ACCESS_KEY=minioadmin                     # credenciales de desarrollo
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=polleria-comprobantes
+MINIO_URL_EXPIRACION_SEGUNDOS=300               # vida de la URL firmada que ve el ADMIN
 
 # Variables existentes de Fase 1 (se mantienen)
 DB_URL=jdbc:postgresql://localhost:5432/polleria
@@ -364,6 +389,11 @@ ORDERS_SERVICE_URL=http://localhost:8082
 | Reembolso | `POST /pagos/{id}/reembolso` como `ADMIN` | Reversa en MP + `REEMBOLSADO` o `REEMBOLSADO_PARCIAL` |
 | Contraentrega (F1) | `POST /pagos` con `CONTRAENTREGA` | Funciona igual que en Fase 1 (sin cambios) |
 | Mock fallback | `MERCADOPAGO_ACCESS_TOKEN` vacío | `TARJETA`/`YAPE_PLIN` usan los mocks de Fase 1 |
+| Verificación de Yape (T6c) | `POST /pagos/{id}/verificar` con `ADMIN` y `{ "aprobado": true }` | `200` con pago `APROBADO`, `verificadoPor`/`verificadoEn`, y la orden avanza a `EN_PREPARACION` |
+| Rechazo de Yape (T6c) | `POST /pagos/{id}/verificar` con `ADMIN` y `{ "aprobado": false, "motivoRechazo": "..." }` | `200` con pago `RECHAZADO`; la orden no avanza |
+| Rechazo sin motivo (T6c) | `{ "aprobado": false }` | `400` y el pago no cambia |
+| Verificación de otro rol (T6c) | `POST /pagos/{id}/verificar` con `CAJERO` o sin token | `403`/`401` y el pago no cambia |
+| URL firmada del comprobante (T6c) | `GET /pagos/orden/{ordenId}` con `ADMIN` | `comprobanteUrl` presignada (5 min); con otro rol, sin `comprobanteClave` ni `comprobanteUrl` |
 
 ### 9.3 Criterios de Aceptación
 - [ ] El botón de Checkout Pro redirige correctamente a Mercado Pago.

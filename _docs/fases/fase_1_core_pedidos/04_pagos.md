@@ -23,6 +23,11 @@
 | `estado` | `EstadoPago` (enum) | Not null |
 | `referenciaExterna` | `String` | Código de la pasarela (ej: `TXN-A1B2C3D4E5F6`, `MP-PREF-xxx`, `MP-PAY-xxx`) |
 | `detalle` | `String` | Descripción del resultado |
+| `checkoutUrl` | `String` | URL de redirección a checkout (Mercado Pago) |
+| `comprobanteClave` | `String` | Clave del objeto del comprobante de Yape en MinIO (T6a). Solo la ve un `ADMIN` |
+| `verificadoPor` | `String` | Email del admin que aprobó o rechazó el comprobante (T6c) |
+| `verificadoEn` | `LocalDateTime` | Momento de la verificación del comprobante (T6c) |
+| `motivoRechazo` | `String` | Motivo del rechazo del comprobante (T6c) |
 | `creadoEn` | `LocalDateTime` | Auto-generado |
 | `actualizadoEn` | `LocalDateTime` | Auto-actualizado |
 
@@ -33,8 +38,12 @@ CONTRAENTREGA, TARJETA, YAPE_PLIN
 
 ### EstadoPago (Enum)
 ```java
-PENDIENTE, APROBADO, RECHAZADO, CANCELADO
+PENDIENTE, APROBADO, RECHAZADO, CANCELADO, REEMBOLSADO, REEMBOLSADO_PARCIAL, PENDIENTE_VERIFICACION
 ```
+
+`PENDIENTE_VERIFICACION` es el estado del comprobante de Yape recibido por WhatsApp (S6): el
+archivo está en MinIO y el pago espera la decisión del administrador. No altera las transiciones de
+los estados anteriores.
 
 ---
 
@@ -205,6 +214,95 @@ PATCH /pagos/{id}/cancelar
 
 ---
 
+### 8. Registrar la Evidencia del Pago por Yape — interno (RF19, S6)
+
+```
+POST /pagos/comprobante
+```
+
+**Acceso:** 🔒 Interno — header `X-Internal-Key` (lo llama el `notification-service`, no lleva JWT).
+
+**Request Body:**
+```json
+{
+  "ordenId": 42,
+  "telefono": "987654321",
+  "monto": 45.50,
+  "comprobanteClave": "comprobantes/yape/42/1730000000000-ABC123.jpg"
+}
+```
+
+**Acción:** crea (o actualiza) el único pago de la orden con `metodoPago = YAPE_PLIN`, estado
+`PENDIENTE_VERIFICACION` y la referencia opaca al objeto del comprobante en MinIO. `payments-service`
+**no guarda la imagen**: el archivo lo sube el `notification-service` (T6b) y aquí solo vive la
+clave. La orden **no** avanza todavía.
+
+**Idempotencia:** mientras el pago esté en `PENDIENTE`, `PENDIENTE_VERIFICACION` o `RECHAZADO`, un
+registro nuevo reemplaza el comprobante anterior y reinicia la verificación
+(`verificadoPor`/`verificadoEn`/`motivoRechazo` vuelven a `null`). Un pago `APROBADO`, `CANCELADO` o
+reembolsado no se pisa nunca: la llamada responde el pago tal como está.
+
+> **Por qué `RECHAZADO` es reemplazable (T6c):** el índice único `uq_pagos_orden_id` permite un solo
+> pago por orden y el rechazo no cancela el pedido (queda impago esperando un comprobante válido).
+> Sin esta regla, un comprobante rechazado dejaría el pedido imposible de pagar por Yape.
+
+---
+
+### 9. Verificar el Comprobante de Yape — solo ADMIN (RF19, S6, S7)
+
+```
+POST /pagos/{id}/verificar
+```
+
+**Acceso:** 🔒 **Solo `ADMIN`**. El rol `CAJERO` no se toca: no puede verificar comprobantes.
+
+**Request Body:**
+```json
+{ "aprobado": true }
+```
+```json
+{ "aprobado": false, "motivoRechazo": "El monto no coincide con el total del pedido" }
+```
+
+| Campo | Tipo | Obligatorio | Validación |
+| :--- | :--- | :---: | :--- |
+| `aprobado` | `boolean` | ✅ | — |
+| `motivoRechazo` | `string` | Solo al rechazar | No puede estar vacío; máx. 300 caracteres |
+
+**Response `200 OK`:** `PagoResponse` con el estado resultante.
+
+**Reglas:**
+
+- Solo se puede verificar un pago en `PENDIENTE_VERIFICACION`. En cualquier otro estado responde
+  **409** y no cambia nada.
+- **Aprobar:** el pago pasa a `APROBADO`, se guardan `verificadoPor` (el email del admin autenticado),
+  `verificadoEn` y se limpia `motivoRechazo`. El pedido **avanza** por el mismo mecanismo que usa el
+  pago aprobado de Mercado Pago (RF21): `NotificadorOrden` mueve la orden a `EN_PREPARACION`.
+- **Rechazar:** el pago pasa a `RECHAZADO` con `verificadoPor`, `verificadoEn` y `motivoRechazo`. La
+  orden **no** avanza: queda impaga esperando un comprobante válido (el cliente puede reenviarlo, ver
+  la idempotencia de la sección 8). El aviso al cliente por WhatsApp es parte de T6d.
+- Sin token o con un rol distinto de `ADMIN`: **403/401** y el pago no cambia.
+- Rechazar sin motivo: **400** y el pago no cambia.
+
+**Ver la imagen del comprobante (URL firmada):**
+
+`GET /pagos/{id}` y `GET /pagos/orden/{ordenId}` incluyen el campo **`comprobanteUrl`** cuando quien
+consulta es `ADMIN`: es una URL presignada de MinIO, de vida corta (5 minutos por defecto), para el
+objeto del comprobante. El bucket **no** se hace público y a cualquier otro rol (`CLIENTE`, `MOZO`,
+`REPARTIDOR`) la respuesta se le entrega **sin** `comprobanteClave` ni `comprobanteUrl`.
+
+```json
+{
+  "id": 10,
+  "ordenId": 42,
+  "estado": "PENDIENTE_VERIFICACION",
+  "comprobanteClave": "comprobantes/yape/42/1730000000000-ABC123.jpg",
+  "comprobanteUrl": "http://localhost:9000/polleria-comprobantes/comprobantes/yape/...?X-Amz-Signature=..."
+}
+```
+
+---
+
 ## Flujos de Pago (Fase 1)
 
 ### Flujo Operativo: Pago Contraentrega (Efectivo)
@@ -235,4 +333,15 @@ JWT_SECRET=super-secret-key-32-characters-minimum
 
 # Comunicación inter-servicio
 ORDERS_SERVICE_URL=http://localhost:8082
+
+# MinIO — comprobantes de Yape (T6b/T6c). Mismos nombres y defaults que el notification-service
+MINIO_ENDPOINT=localhost           # Debe ser alcanzable por el navegador del panel: con el compose,
+                                   # localhost:9000 está mapeado. Un nombre interno de Docker (`minio`)
+                                   # no resuelve desde el navegador.
+MINIO_PORT=9000
+MINIO_USE_SSL=false
+MINIO_ACCESS_KEY=minioadmin        # credenciales de desarrollo
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=polleria-comprobantes
+MINIO_URL_EXPIRACION_SEGUNDOS=300  # vida de la URL firmada que ve el ADMIN
 ```

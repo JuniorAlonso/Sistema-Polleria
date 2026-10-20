@@ -53,6 +53,19 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Argumento inválido de la capa de servicio (p. ej. rechazar un comprobante sin motivo). La
+     * ruta HTTP ya lo rechaza con Bean Validation (400); este handler cubre la misma regla cuando
+     * el servicio se invoca directamente y evita el 500 genérico.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setTitle("Datos inválidos");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /**
      * Una ruta que no existe debe responder 404, nunca 500.
      */
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)

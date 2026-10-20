@@ -3,12 +3,15 @@ package com.sistema.polleria.payments.controller;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.dto.VerificarPagoRequest;
+import com.sistema.polleria.payments.service.FirmadorComprobantes;
 import com.sistema.polleria.payments.service.PagoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import com.sistema.polleria.payments.dto.PreferenceResponse;
@@ -23,6 +26,7 @@ public class PagoController {
 
     private final PagoService pagoService;
     private final MercadoPagoGateway mercadoPagoGateway;
+    private final FirmadorComprobantes firmadorComprobantes;
 
     /** Iniciar pago — CLIENTE, MOZO (para delivery/recojo online) */
     @PostMapping
@@ -64,25 +68,45 @@ public class PagoController {
         return pagoService.registrarComprobante(request);
     }
 
+    /**
+     * Verificación del comprobante de Yape (T6c, S6). **Exclusiva de ADMIN**: el rol {@code CAJERO}
+     * no se toca. Aprobar avanza la orden con el mismo mecanismo del pago aprobado de Mercado Pago;
+     * rechazar exige {@code motivoRechazo} y deja la orden impaga.
+     *
+     * <p>Solo se puede verificar un comprobante en {@code PENDIENTE_VERIFICACION} (si no, 409).
+     */
+    @PostMapping("/{id}/verificar")
+    @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
+    public PagoResponse verificar(
+            @PathVariable Long id,
+            @Valid @RequestBody VerificarPagoRequest request,
+            Principal principal,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        String adminEmail = principal != null ? principal.getName() : null;
+        return pagoService.verificar(id, request, adminEmail, authorization != null ? authorization : "");
+    }
+
     /** Detalle de un pago */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
-    public PagoResponse obtener(@PathVariable Long id) {
-        return pagoService.obtener(id);
+    public PagoResponse obtener(@PathVariable Long id, Authentication authentication) {
+        return conComprobanteSegunRol(pagoService.obtener(id), authentication);
     }
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
-    public PagoResponse porOrden(@PathVariable Long ordenId) {
-        return pagoService.obtenerPorOrden(ordenId);
+    public PagoResponse porOrden(@PathVariable Long ordenId, Authentication authentication) {
+        return conComprobanteSegunRol(pagoService.obtenerPorOrden(ordenId), authentication);
     }
 
     /** Mis pagos — historial del cliente autenticado */
     @GetMapping("/mis-pagos")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO')")
-    public List<PagoResponse> misPagos(Principal principal) {
-        return pagoService.misOrdenes(extractUserId(principal));
+    public List<PagoResponse> misPagos(Principal principal, Authentication authentication) {
+        return pagoService.misOrdenes(extractUserId(principal)).stream()
+                .map(pago -> conComprobanteSegunRol(pago, authentication))
+                .toList();
     }
 
     /** Todos los pagos — solo ADMIN / finanzas */
@@ -102,15 +126,18 @@ public class PagoController {
     public PagoResponse confirmar(
             @PathVariable Long id,
             @Valid @RequestBody ConfirmarPagoRequest req,
+            Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        return pagoService.confirmar(id, req, authorization != null ? authorization : "");
+        return soloAdminVeElComprobante(
+                pagoService.confirmar(id, req, authorization != null ? authorization : ""),
+                authentication);
     }
 
     /** Cancelar pago */
     @PatchMapping("/{id}/cancelar")
     @PreAuthorize("hasAnyAuthority('ADMIN','CLIENTE')")
-    public PagoResponse cancelar(@PathVariable Long id) {
-        return pagoService.cancelar(id);
+    public PagoResponse cancelar(@PathVariable Long id, Authentication authentication) {
+        return soloAdminVeElComprobante(pagoService.cancelar(id), authentication);
     }
 
     /** Reembolsar pago — solo ADMIN o microservicios autorizados */
@@ -136,6 +163,34 @@ public class PagoController {
     }
 
     // ─── util ────────────────────────────────────────────────────────
+
+    /**
+     * El comprobante de Yape solo lo puede ver un ADMIN (T6c, S7): para él se firma una URL de vida
+     * corta; cualquier otro rol recibe la respuesta sin la clave del objeto ni la URL, porque el
+     * bucket se mantiene privado. Los pagos sin comprobante no cambian.
+     */
+    private PagoResponse conComprobanteSegunRol(PagoResponse pago, Authentication authentication) {
+        if (!esAdmin(authentication) || pago.comprobanteClave() == null) {
+            return pago.sinComprobante();
+        }
+        return pago.conUrlComprobante(firmadorComprobantes.urlFirmada(pago.comprobanteClave()));
+    }
+
+    /**
+     * Igual que {@link #conComprobanteSegunRol} pero sin firmar URL: para las respuestas de cambio
+     * de estado solo hace falta que un rol distinto de {@code ADMIN} no reciba la clave del objeto.
+     */
+    private PagoResponse soloAdminVeElComprobante(PagoResponse pago, Authentication authentication) {
+        return esAdmin(authentication) ? pago : pago.sinComprobante();
+    }
+
+    private boolean esAdmin(Authentication authentication) {
+        if (authentication == null || authentication.getAuthorities() == null) {
+            return false;
+        }
+        return authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "ROLE_ADMIN".equals(a.getAuthority()));
+    }
 
     private Long extractUserId(Principal principal) {
         if (principal instanceof UsernamePasswordAuthenticationToken token) {

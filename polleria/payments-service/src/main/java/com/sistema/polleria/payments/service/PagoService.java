@@ -4,6 +4,7 @@ import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
+import com.sistema.polleria.payments.dto.VerificarPagoRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -43,11 +45,18 @@ public class PagoService {
     private static final long CLIENTE_ANONIMO = 0L;
 
     /**
-     * Estados en los que un comprobante nuevo todavía puede reemplazar al anterior. Aprobado,
-     * rechazado, cancelado o reembolsado ya tienen una decisión (o un cobro) y no se pisan.
+     * Estados en los que un comprobante nuevo todavía puede reemplazar al anterior.
+     *
+     * <p>{@code PENDIENTE} es el estado de la evidencia inicial; {@code PENDIENTE_VERIFICACION} es
+     * un reintento mientras el admin todavía no decidió. {@code RECHAZADO} se sumó en T6c: el
+     * índice único {@code uq_pagos_orden_id} impide un segundo pago para la misma orden, así que un
+     * comprobante rechazado que no se pudiera reemplazar dejaría el pedido imposible de pagar por
+     * Yape. Reemplazarlo no deshace la decisión del admin: reinicia la verificación con evidencia
+     * nueva. {@code APROBADO}, {@code CANCELADO} y los reembolsos no se pisan nunca: no se deshace
+     * un cobro.
      */
     private static final Set<EstadoPago> ESTADOS_VERIFICABLES =
-            EnumSet.of(EstadoPago.PENDIENTE, EstadoPago.PENDIENTE_VERIFICACION);
+            EnumSet.of(EstadoPago.PENDIENTE, EstadoPago.PENDIENTE_VERIFICACION, EstadoPago.RECHAZADO);
 
     @Transactional
     public PagoResponse iniciar(IniciarPagoRequest request, Long clienteId, String bearerToken) {
@@ -94,11 +103,16 @@ public class PagoService {
      * {@link EstadoPago#PENDIENTE_VERIFICACION} para que el admin lo verifique (T6c).
      *
      * <p>Criterio de idempotencia: mientras el pago siga en un estado verificable
-     * ({@code PENDIENTE} o {@code PENDIENTE_VERIFICACION}) un registro nuevo reemplaza el
-     * comprobante anterior y la orden conserva un único pago. Si el pago ya está aprobado,
-     * rechazado, cancelado o reembolsado, la llamada es un no-op idempotente: devuelve el pago
-     * tal como está y no pisa la decisión del admin. Un reintento del notification-service
-     * (T6b) siempre encuentra el mismo pago.
+     * ({@code PENDIENTE}, {@code PENDIENTE_VERIFICACION} o {@code RECHAZADO}) un registro nuevo
+     * reemplaza el comprobante anterior y la orden conserva un único pago. Si el pago ya está
+     * aprobado, cancelado o reembolsado, la llamada es un no-op idempotente: devuelve el pago tal
+     * como está y no pisa la decisión del admin. Un reintento del notification-service (T6b)
+     * siempre encuentra el mismo pago.
+     *
+     * <p>Que {@code RECHAZADO} sea reemplazable es la corrección de T6c sobre la idempotencia de
+     * T6a: el rechazo deja el pedido impago esperando un comprobante válido (L16) y el índice
+     * único {@code uq_pagos_orden_id} impide crear un segundo pago, así que sin esta regla el
+     * cliente no tendría forma de reintentar el Yape.
      *
      * <p>Solo se guarda la clave del objeto en el bucket; el archivo lo sube el
      * notification-service. No se notifica a orders-service: el pedido avanza al aprobar (T6c).
@@ -142,6 +156,64 @@ public class PagoService {
 
         log.info("Comprobante de Yape registrado — pago id={} orden={} nuevo={}",
                 pago.getId(), pago.getOrdenId(), esNuevo);
+        return PagoResponse.from(pago);
+    }
+
+    /**
+     * Verificación del comprobante de Yape por parte del administrador (T6c, S6). Es exclusiva del
+     * rol {@code ADMIN} (la autorización la aplica {@code PagoController} con {@code @PreAuthorize});
+     * aquí solo se aplica la decisión.
+     *
+     * <p><b>Aprobar</b>: el pago pasa a {@link EstadoPago#APROBADO} y el pedido avanza con el
+     * **mismo mecanismo** que usa el pago aprobado de Mercado Pago
+     * ({@code notificarOrdenAsync → NotificadorOrden.notificarPagoAprobado}, que mueve la orden a
+     * {@code EN_PREPARACION}). No se inventa otro camino.
+     *
+     * <p><b>Rechazar</b>: el pago pasa a {@link EstadoPago#RECHAZADO} con el motivo obligatorio y
+     * la orden **no** avanza: queda impaga esperando un comprobante válido que el cliente puede
+     * volver a mandar (ver la idempotencia de {@code registrarComprobante}).
+     *
+     * <p>Toma el bloqueo pesimista del pago: dos administradores verificando a la vez no pueden
+     * aplicar dos decisiones distintas.
+     */
+    @Transactional
+    public PagoResponse verificar(Long id, VerificarPagoRequest request, String adminEmail, String bearerToken) {
+        Pago pago = pagoRepository.buscarConBloqueo(id)
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+
+        if (pago.getEstado() != EstadoPago.PENDIENTE_VERIFICACION) {
+            throw new IllegalStateException(
+                    "Solo se puede verificar un comprobante PENDIENTE_VERIFICACION. Estado actual: "
+                            + pago.getEstado());
+        }
+
+        if (!Boolean.TRUE.equals(request.aprobado())) {
+            String motivo = request.motivoRechazo() != null ? request.motivoRechazo().trim() : "";
+            if (motivo.isEmpty()) {
+                throw new IllegalArgumentException("El motivo de rechazo es obligatorio");
+            }
+            pago.setEstado(EstadoPago.RECHAZADO);
+            pago.setMotivoRechazo(motivo);
+            pago.setVerificadoPor(adminEmail);
+            pago.setVerificadoEn(LocalDateTime.now());
+            pago.setDetalle("Comprobante de Yape rechazado por el administrador: " + motivo);
+            pago = pagoRepository.save(pago);
+            log.info("Comprobante rechazado — pago id={} orden={} admin={}",
+                    pago.getId(), pago.getOrdenId(), adminEmail);
+            return PagoResponse.from(pago);
+        }
+
+        pago.setEstado(EstadoPago.APROBADO);
+        pago.setMotivoRechazo(null);
+        pago.setVerificadoPor(adminEmail);
+        pago.setVerificadoEn(LocalDateTime.now());
+        pago.setDetalle("Comprobante de Yape verificado por el administrador");
+        pago = pagoRepository.save(pago);
+
+        // RF21: mismo camino que el pago aprobado de Mercado Pago (confirmar/iniciar).
+        notificarOrdenAsync(pago.getOrdenId(), bearerToken);
+        log.info("Comprobante aprobado — pago id={} orden={} admin={}",
+                pago.getId(), pago.getOrdenId(), adminEmail);
         return PagoResponse.from(pago);
     }
 

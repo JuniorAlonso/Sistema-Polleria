@@ -68,6 +68,19 @@
             <version>2.1.28</version>
         </dependency>
 
+        <!--
+            MinIO — solo para firmar URLs de vida corta de los comprobantes de Yape (T6c, S7).
+            La imagen la sube el notification-service (T6b); payments-service nunca la lee ni la
+            escribe, solo genera el enlace presignado que ve el ADMIN. La configuración se lee de
+            las mismas variables de entorno que usa el notification-service (MINIO_ENDPOINT,
+            MINIO_PORT, MINIO_USE_SSL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET).
+        -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.5.17</version>
+        </dependency>
+
         <!-- H2 — base de datos en memoria para desarrollo local (profile=local) -->
         <dependency>
             <groupId>com.h2database</groupId>
