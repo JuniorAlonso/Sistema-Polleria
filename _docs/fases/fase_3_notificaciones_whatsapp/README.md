@@ -272,6 +272,7 @@ Flujo completo en `orders-service` (rutas públicas):
 | `POST /ordenes/seguimiento/codigo` `{ telefono }` | Envía el código solo si ese celular tiene pedidos (responde igual en ambos casos). Máximo 1 cada 60 s. |
 | `POST /ordenes/seguimiento/verificar` `{ telefono, codigo }` | 5 intentos, vence a los 5 min. Devuelve un acceso temporal (`token`, 30 min). |
 | `GET /ordenes/seguimiento` header `X-Seguimiento-Token` | Pedidos de ese celular. |
+| `POST /ordenes/seguimiento/{id}/cancelar` header `X-Seguimiento-Token` | Cancela **solo** el pedido de ese celular (S5). Un pedido ajeno o inexistente responde `404`; token ausente, inválido o vencido → `400`. |
 
 Además, `GET /ordenes/{id}` ahora solo responde al dueño del pedido, al personal o a otro microservicio con `X-Internal-Key` (variable `INTERNAL_API_KEY`, **sin valor por defecto**: si no está definida, la cabecera no autentica y la respuesta es `403`). A cualquier otro le responde 404.
 

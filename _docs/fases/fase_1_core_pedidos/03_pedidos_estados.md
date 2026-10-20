@@ -115,6 +115,21 @@ Comprobado en vivo contra el stack levantado, con un token `CLIENTE` del dueño 
 `GET /ordenes/{id}` → `200` y `PATCH` a `EN_PREPARACION`, `LISTO` y `ENTREGADO` → `403`, con el
 estado del pedido intacto tras los tres intentos.
 
+**Cancelación del invitado (S5):** un pedido anónimo (`clienteId = 0`) no tiene dueño autenticado,
+así que `PATCH /ordenes/{id}/estado` le respondía `404` y el cliente que pidió sin cuenta no podía
+cancelar. El invitado que ya verificó su celular con el código de WhatsApp cancela por una ruta
+solo de cancelación, con la misma identidad temporal que usa el seguimiento:
+
+| Quién | Alcance |
+| :--- | :--- |
+| Invitado con `X-Seguimiento-Token` | `POST /ordenes/seguimiento/{id}/cancelar`: cancela **su propio** pedido (el `telefonoCliente` canónico coincide con el celular del token) mientras no esté en estado terminal |
+
+Un pedido ajeno o inexistente responde `404` (misma convención anti-enumeración que
+`GET /ordenes/{id}`); un token ausente, inválido o vencido responde `400`; y un pedido ya `ENTREGADO`
+o `CANCELADO` responde `400` por la máquina de estados. La cancelación se delega en
+`OrdenService.actualizarEstado(...)`, de modo que el log, la liberación de mesa y la notificación
+son exactamente los mismos que en una cancelación hecha por el personal.
+
 ---
 
 ## Endpoints

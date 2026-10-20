@@ -120,6 +120,38 @@ export class OrdersService {
     this.myOrders.set([]);
   }
 
+  /**
+   * S5: el invitado cancela su propio pedido con el mismo acceso de seguimiento (celular
+   * verificado por WhatsApp) que usa `loadMyOrders`. El backend reutiliza el flujo de cancelación
+   * del personal y solo acepta la petición si el celular del token coincide con el del pedido.
+   */
+  cancelarPedidoInvitado(orderId: string | number): Observable<Order> {
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
+
+    const seguimiento = this.leerSeguimiento();
+    if (!seguimiento) {
+      return throwError(() => new Error('Verifica tu celular para cancelar el pedido'));
+    }
+
+    return this.http.post<BackendOrdenResponse>(
+      `${this.API_URL}/ordenes/seguimiento/${cleanId}/cancelar`,
+      {},
+      { headers: { 'X-Seguimiento-Token': seguimiento.token } }
+    ).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.myOrders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+        if (this.currentTrackingOrder()?.id === updated.id) {
+          this.currentTrackingOrder.set(updated);
+        }
+      }),
+      catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo cancelar el pedido'))))
+    );
+  }
+
   private leerSeguimiento(): { token: string; telefono: string } | null {
     if (!isPlatformBrowser(this.platformId)) return null;
     try {

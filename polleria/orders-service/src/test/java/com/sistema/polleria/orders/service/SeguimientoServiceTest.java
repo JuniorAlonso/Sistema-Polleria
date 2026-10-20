@@ -34,12 +34,15 @@ class SeguimientoServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private OrdenService ordenService;
+
     private SeguimientoService seguimientoService;
 
     @BeforeEach
     void setUp() {
         seguimientoService = new SeguimientoService(codigoRepository, ordenRepository, notificationService,
-                "secreto-de-prueba-con-al-menos-32-caracteres");
+                ordenService, "secreto-de-prueba-con-al-menos-32-caracteres");
     }
 
     @Test

@@ -248,6 +248,21 @@ import { Subscription, interval } from 'rxjs';
               <span>VER DETALLES</span>
             </button>
 
+            <!-- Button 3: CANCELAR PEDIDO (S5, solo invitado sin sesión y pedido no terminal) -->
+            @if (puedeCancelarPedido()) {
+              <button
+                type="button"
+                (click)="cancelarPedido()"
+                [disabled]="cancelandoPedido()"
+                class="w-full sm:col-span-2 py-4 px-6 rounded-xl border-2 border-rose-500/60 bg-[#141618] hover:bg-rose-500/10 active:scale-98 text-rose-300 font-display text-lg sm:text-xl tracking-wider uppercase font-bold transition duration-200 shadow-lg flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg class="w-5 h-5 text-rose-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                <span>{{ cancelandoPedido() ? 'CANCELANDO...' : 'CANCELAR PEDIDO' }}</span>
+              </button>
+            }
+
           </div>
 
           <!-- ================= SECCIÓN DE CALIFICACIÓN Y FEEDBACK (FASE 4) ================= -->
@@ -910,6 +925,19 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     return this.feedbackService.obtenerReporteDeOrden(orderId);
   });
 
+  /**
+   * S5: solo el invitado (sin sesión) puede cancelar desde el seguimiento, y solo mientras el
+   * pedido no esté en un estado terminal. Con sesión la cancelación la gestiona el flujo del
+   * cliente autenticado.
+   */
+  readonly puedeCancelarPedido = computed(() => {
+    const order = this.currentOrder();
+    if (!order || this.auth.token()) return false;
+    return order.estado !== 'COMPLETADO' && order.estado !== 'CANCELADO';
+  });
+
+  readonly cancelandoPedido = signal<boolean>(false);
+
   reviewComment = '';
   reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
   reportDescripcion = '';
@@ -1068,6 +1096,29 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     this.currentOrder.set(null);
     this.codigoSeguimiento = '';
     this.pasoSeguimiento.set('CELULAR');
+  }
+
+  /**
+   * S5: el invitado cancela su pedido con el acceso de seguimiento y recarga la lista para ver el
+   * nuevo estado sin esperar al siguiente refresco automático.
+   */
+  cancelarPedido(): void {
+    const order = this.currentOrder();
+    if (!order || !this.puedeCancelarPedido() || this.cancelandoPedido()) return;
+    if (!confirm(`¿Seguro que quieres cancelar el pedido ${this.etiqueta(order)}?`)) return;
+
+    this.cancelandoPedido.set(true);
+    this.ordersService.cancelarPedidoInvitado(order.id).subscribe({
+      next: () => {
+        this.cancelandoPedido.set(false);
+        this.notify.showSuccess('Pedido cancelado');
+        this.ordersService.loadMyOrders();
+      },
+      error: err => {
+        this.cancelandoPedido.set(false);
+        this.notify.showError('No se pudo cancelar el pedido', err.message);
+      }
+    });
   }
 
   formatearCelular(celular: string): string {
