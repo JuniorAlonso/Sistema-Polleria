@@ -130,6 +130,21 @@ async function enqueueMessage(notification) {
 }
 ```
 
+### 3.3 Una sola cola para todo lo saliente (T4, S2)
+
+Hasta la fase 2 solo pasaban por la cola las notificaciones de pedido: las respuestas del chatbot se enviaban con `msg.reply` directo. Un pedido conversacional son 6-10 mensajes seguidos sin espaciado, justo el patrón que Meta bloquea. Ahora el chatbot **devuelve el texto** (`processMessage`) y el handler lo encola en la **misma** `ColaEnvios` que las notificaciones (`NotificacionService.encolarRespuesta`). No existe un segundo camino de salida.
+
+Antes de cada envío el servicio humaniza el saliente (`src/outbound/humanizacion.js`):
+
+- `marcarVisto(chatId)` (`sendSeen`) solo en respuestas a una conversación entrante.
+- `escribiendo(chatId, duracionMs)` (`sendStateTyping`), con duración proporcional al largo del texto y acotada entre `WHATSAPP_TYPING_MIN_MS` y `WHATSAPP_TYPING_MAX_MS`. Es best-effort: si falla, el mensaje igual se envía.
+
+El delay entre envíos consecutivos deja de ser exacto: es `WHATSAPP_RATE_LIMIT_MS` ± `WHATSAPP_JITTER_PCT` por ciento. Con `jitterPct = 0` vuelve a ser el delay fijo original (RNF10).
+
+La configuración vive **en memoria** (`src/outbound/ajustes.js`, S8): los defaults salen de variables de entorno y se pueden editar en caliente con `actualizar(cambios)`; se pierden al reiniciar el proceso y ese es el comportamiento pedido. T4 solo trae el store y su uso: la API HTTP del panel es T5 y el presupuesto/ventana/circuit breaker son T4b.
+
+El azar y los timers son inyectables (`azar`, `dormir`, `ahora` en `ColaEnvios`) para que los tests sean deterministas: el jitter no llama a `Math.random` ni espera con `setTimeout` real durante la suite.
+
 ---
 
 ## 4. Endpoints REST
@@ -310,10 +325,10 @@ GET /api/notificaciones/status
 ```
 
 ```json
-{ "status": "ok", "whatsapp": "connected", "colaPendiente": 0 }
+{ "status": "ok", "whatsapp": "connected", "colaPendiente": 0, "cola": { "enProceso": false, "ultimoEnvioEn": null } }
 ```
 
-Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token).
+Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token). `colaPendiente` es el contrato original y no cambia; `cola` es información extra de lo que la cola está haciendo ahora (`enProceso` y el timestamp del último envío, `null` si todavía no envió nada).
 
 ---
 
@@ -379,8 +394,12 @@ NODE_ENV=production                      # Declarado en el Dockerfile; el códig
 
 # Sesión de WhatsApp
 WHATSAPP_SESSION_PATH=./.wwebjs_auth      # Directorio de persistencia de sesión QR (NO subir a git)
-WHATSAPP_RATE_LIMIT_MS=10000              # Delay entre mensajes (default: 10000)
+WHATSAPP_RATE_LIMIT_MS=10000              # Delay base entre mensajes (default: 10000)
 WHATSAPP_MAX_INTENTOS=3                   # Reintentos ante fallos temporales
+WHATSAPP_JITTER_PCT=20                    # Variación aleatoria ±% sobre el delay base (default: 20; 0 = delay fijo)
+WHATSAPP_TYPING_MIN_MS=1000               # Duración mínima del "escribiendo" (default: 1000)
+WHATSAPP_TYPING_MAX_MS=6000               # Duración máxima del "escribiendo" (default: 6000)
+WHATSAPP_TYPING_MS_POR_CARACTER=50        # ms de "escribiendo" por carácter, acotado por min/max (default: 50)
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Historial (RF32)
@@ -425,7 +444,9 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 ### 8.3 Criterios de Aceptación
 - [ ] Mensaje de confirmación de pago llega al WhatsApp del cliente.
 - [ ] Mensajes de tracking (`EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`) llegan correctamente.
-- [ ] La cola respeta el delay de 10s entre envíos consecutivos.
+- [ ] La cola respeta el delay base (± jitter) entre envíos consecutivos.
+- [ ] Las respuestas del chatbot y las notificaciones salen por la misma cola (sin segundo camino).
+- [ ] Ningún mensaje sale sin marcar visto / mostrar "escribiendo" cuando corresponde.
 - [ ] El historial registra TODOS los intentos con su estado final.
 - [ ] Un número inválido NO bloquea la cola para los siguientes mensajes.
 
@@ -437,11 +458,13 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 main.js                         # Arranque: store → servicio → API → WhatsApp
 main-backup.js                  # Versión previa de arranque, conservada como respaldo (no se ejecuta)
 src/config.js                   # Variables de entorno
-src/notifications/queue.js      # Cola FIFO con delay (RNF10)
-src/notifications/service.js    # Registra EN_COLA → envía → ENVIADO / ERROR, reintentos
+src/notifications/queue.js      # Cola FIFO con delay y jitter (RNF10), timers/azar inyectables
+src/notifications/service.js    # Registra EN_COLA → humaniza → envía → ENVIADO / ERROR, reintentos
 src/notifications/store.js      # NotificationLog en PostgreSQL o en memoria (RF32)
 src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
 src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
+src/outbound/ajustes.js         # Configuración anti-baneo en memoria (S8), defaults de entorno
+src/outbound/humanizacion.js    # Duración del "escribiendo" proporcional al texto (S2)
 src/http/app.js                 # Endpoints /api/notificaciones/* y página GET /qr
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión

@@ -3,7 +3,17 @@ console.log('🔥 HANDLER.JS CARGADO');
 const { getConversation } = require('./../chatbot/conversation');
 const { processMessage } = require('./../chatbot/chatbot');
 
-async function handleMessage(msg) {
+/**
+ * Punto de entrada de cada mensaje entrante.
+ *
+ * El chatbot ya no envía por su cuenta: devuelve el texto y el handler lo encola en la
+ * MISMA cola saliente que usan las notificaciones (S2). Así un pedido de 6-10 mensajes
+ * sale espaciado y humanizado en vez de en una ráfaga.
+ *
+ * @param msg     mensaje entrante de whatsapp-web.js
+ * @param service NotificacionService (dueño de la única cola de salida)
+ */
+async function handleMessage(msg, { service }) {
 
     // Ignorar estados de WhatsApp y grupos
     if (
@@ -24,15 +34,23 @@ async function handleMessage(msg) {
 
     try {
 
-        const processed = await processMessage(
+        const respuesta = await processMessage(
             msg,
             userId,
             conversation
         );
 
-        if (processed) {
+        if (!respuesta) {
             return;
         }
+
+        // Único camino de salida: la cola compartida. Marcar visto porque es una
+        // conversación entrante real.
+        await service.encolarRespuesta({
+            chatId: msg.from,
+            mensaje: respuesta,
+            marcarVisto: true
+        });
 
     } catch (error) {
 

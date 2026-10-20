@@ -167,6 +167,16 @@ function arrancar() {
     return arranqueEnCurso;
 }
 
+// Evita que un `getChatById` colgado bloquee toda la cola: la humanización es
+// best-effort, así que un fallo aquí no debe impedir el envío del mensaje.
+async function obtenerChat(chatId, timeoutMs = 8000) {
+    const chatPromise = client.getChatById(chatId);
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout en getChatById')), timeoutMs)
+    );
+    return Promise.race([chatPromise, timeoutPromise]);
+}
+
 // Adaptador que usa el NotificacionService
 const whatsapp = {
     esperarListo(timeoutMs = 30000) {
@@ -214,6 +224,30 @@ const whatsapp = {
             setTimeout(() => reject(new Error(`Timeout (${timeoutMs / 1000}s) enviando mensaje a ${chatId}`)), timeoutMs)
         );
         return Promise.race([sendPromise, timeoutPromise]);
+    },
+
+    // Humanización (S2): marcar visto y mostrar "escribiendo" antes de responder.
+    // Son best-effort: si el chat no se puede resolver, el mensaje igual se envía.
+    async marcarVisto(chatId) {
+        try {
+            const chat = await obtenerChat(chatId);
+            await chat.sendSeen();
+        } catch (error) {
+            console.warn(`⚠️ No se pudo marcar como visto ${chatId}: ${error.message}`);
+        }
+    },
+
+    async escribiendo(chatId, duracionMs) {
+        if (!(duracionMs > 0)) return;
+        try {
+            const chat = await obtenerChat(chatId);
+            await chat.sendStateTyping();
+            // El indicador se mantiene hasta que se envía algo: se espera lo proporcional
+            // al largo del texto para que el bot no conteste instantáneamente.
+            await new Promise(resolve => setTimeout(resolve, duracionMs));
+        } catch (error) {
+            console.warn(`⚠️ No se pudo mostrar "escribiendo" en ${chatId}: ${error.message}`);
+        }
     },
 
     estado: () => estado,

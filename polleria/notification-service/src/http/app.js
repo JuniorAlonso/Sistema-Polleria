@@ -208,7 +208,12 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
         res.json({
             status: 'ok',
             whatsapp: ESTADO_WHATSAPP[estado] || estado,
-            colaPendiente: service.pendientes
+            colaPendiente: service.pendientes,
+            // Extra informativo, sin romper el contrato anterior: qué está haciendo la cola ahora.
+            cola: {
+                enProceso: service.colaEnProceso,
+                ultimoEnvioEn: service.ultimoEnvioEn
+            }
         });
     });
 

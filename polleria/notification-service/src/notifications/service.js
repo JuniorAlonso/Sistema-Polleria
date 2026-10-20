@@ -1,20 +1,34 @@
 const { ColaEnvios } = require('./queue');
 const { normalizarTelefono } = require('./phone');
+const { crearAjustes } = require('../outbound/ajustes');
+const { duracionEscribiendo } = require('../outbound/humanizacion');
 
 /**
  * Orquesta el envío: registra el log como EN_COLA, lo encola
  * y actualiza su estado final (ENVIADO / ERROR) cuando la cola lo procesa.
  *
+ * Una sola cola para TODO lo saliente (S2): las notificaciones de pedido y las
+ * respuestas del chatbot comparten `this.cola`, así que nunca salen dos mensajes a la
+ * vez ni sin espaciado. El chatbot ya no envía por su cuenta.
+ *
  * `whatsapp` debe exponer: esperarListo(), obtenerChatId(numero), enviar(chatId, mensaje)
+ * y, para la humanización, marcarVisto(chatId) y escribiendo(chatId, duracionMs).
  */
 class NotificacionService {
-    constructor({ store, whatsapp, intervaloMs, maxIntentos }) {
+    constructor({ store, whatsapp, intervaloMs, maxIntentos, ajustes, jitterPct, azar, dormir, ahora }) {
         this.store = store;
         this.whatsapp = whatsapp;
         this.maxIntentos = maxIntentos;
+        // Los ajustes viven en memoria (S8) y se leen en cada envío: editarlos en caliente
+        // no exige reconstruir la cola.
+        this.ajustes = ajustes || crearAjustes({ intervaloMs, jitterPct });
         this.cola = new ColaEnvios({
-            intervaloMs,
-            procesar: trabajo => this._procesar(trabajo)
+            intervaloMs: () => this.ajustes.obtener().intervaloMs,
+            jitterPct: () => this.ajustes.obtener().jitterPct,
+            procesar: trabajo => this._procesar(trabajo),
+            azar,
+            dormir,
+            ahora
         });
     }
 
@@ -40,8 +54,18 @@ class NotificacionService {
             });
         }
 
-        this.cola.add({ logId: log.id, numero, mensaje, intentos: 0 });
+        this.cola.add({ logId: log.id, numero, mensaje, intentos: 0, marcarVisto: false });
         return log;
+    }
+
+    /**
+     * Respuesta del chatbot: entra a la MISMA cola que las notificaciones (S2). No se
+     * registra en el historial RF32 porque no es una notificación de pedido y el chat ya
+     * existe, así que se usa el `chatId` recibido y no se normaliza ningún teléfono.
+     */
+    encolarRespuesta({ chatId, mensaje, marcarVisto = true }) {
+        this.cola.add({ logId: null, numero: chatId, chatId, mensaje, intentos: 0, marcarVisto });
+        return this.cola.pendientes;
     }
 
     // Al reiniciar el servicio, vuelve a encolar lo que quedó pendiente
@@ -60,7 +84,8 @@ class NotificacionService {
                 logId: log.id,
                 numero: log.destinatario,
                 mensaje: log.mensaje,
-                intentos: log.intentos
+                intentos: log.intentos,
+                marcarVisto: false
             });
         }
         return pendientes.filter(log => log.tipo !== 'CODIGO_SEGUIMIENTO').length;
@@ -70,42 +95,68 @@ class NotificacionService {
         return this.cola.pendientes;
     }
 
-    async _procesar({ logId, numero, mensaje, intentos }) {
-        const intento = intentos + 1;
+    get colaEnProceso() {
+        return this.cola.procesandoAhora;
+    }
+
+    get ultimoEnvioEn() {
+        return this.cola.ultimoEnvioEn;
+    }
+
+    // Best-effort: si marcar visto o el "escribiendo" fallan, el mensaje igual sale.
+    async _humanizar(chatId, mensaje, marcarVisto) {
+        if (marcarVisto && typeof this.whatsapp.marcarVisto === 'function') {
+            await this.whatsapp.marcarVisto(chatId);
+        }
+        if (typeof this.whatsapp.escribiendo === 'function') {
+            await this.whatsapp.escribiendo(chatId, duracionEscribiendo(mensaje, this.ajustes.obtener()));
+        }
+    }
+
+    async _marcar(logId, cambios) {
+        if (logId) return this.store.update(logId, cambios);
+    }
+
+    async _procesar(trabajo) {
+        const { logId, numero, mensaje, chatId: chatIdDirecto, marcarVisto } = trabajo;
+        const intento = (trabajo.intentos || 0) + 1;
 
         try {
             await this.whatsapp.esperarListo();
-            const chatId = await this.whatsapp.obtenerChatId(numero);
+            const chatId = chatIdDirecto || await this.whatsapp.obtenerChatId(numero);
             if (!chatId) {
-                await this.store.update(logId, {
+                await this._marcar(logId, {
                     estado: 'ERROR',
                     intentos: intento,
                     errorDetalle: 'El número no está registrado en WhatsApp'
                 });
-                console.warn(`⚠️ ${logId}: ${numero} no tiene WhatsApp`);
+                console.warn(`⚠️ ${logId || numero}: ${numero} no tiene WhatsApp`);
                 return;
             }
 
+            // Humanización antes del envío: marcar visto y "escribiendo" proporcional al texto.
+            await this._humanizar(chatId, mensaje, marcarVisto);
+
             await this.whatsapp.enviar(chatId, mensaje);
-            await this.store.update(logId, {
+            await this._marcar(logId, {
                 estado: 'ENVIADO',
                 intentos: intento,
                 errorDetalle: null,
                 enviadoEn: new Date()
             });
-            console.log(`✅ ${logId} enviado a ${numero}`);
+            console.log(`✅ ${logId || chatId} enviado a ${numero || chatId}`);
         } catch (error) {
             if (intento < this.maxIntentos) {
-                await this.store.update(logId, { intentos: intento, errorDetalle: error.message });
-                this.cola.add({ logId, numero, mensaje, intentos: intento });
-                console.warn(`🔁 ${logId} falló (intento ${intento}), se reintentará: ${error.message}`);
+                await this._marcar(logId, { intentos: intento, errorDetalle: error.message });
+                this.cola.add({ ...trabajo, intentos: intento });
+                console.warn(`🔁 ${logId || numero} falló (intento ${intento}), se reintentará: ${error.message}`);
             } else {
-                await this.store.update(logId, {
+                await this._marcar(logId, {
                     estado: 'ERROR',
                     intentos: intento,
                     errorDetalle: error.message
                 });
-                console.error(`❌ ${logId} falló definitivamente: ${error.message}`);
+                console.error(`❌ ${logId || numero} falló definitivamente: ${error.message}`);
             }
         }
     }

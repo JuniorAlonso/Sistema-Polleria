@@ -3,6 +3,7 @@ const { client, whatsapp, reiniciarSesion, arrancar } = require('./src/whatsapp/
 const handleMessage = require('./src/whatsapp/handler');
 const { crearStore } = require('./src/notifications/store');
 const { NotificacionService } = require('./src/notifications/service');
+const { crearAjustes } = require('./src/outbound/ajustes');
 const { crearApp } = require('./src/http/app');
 
 async function main() {
@@ -12,10 +13,14 @@ async function main() {
         console.warn('⚠️ DATABASE_URL no definido: el historial se guardará solo en memoria');
     }
 
+    // Ajustes anti-baneo en memoria (S8): arrancan con los defaults de entorno y el
+    // panel (T5) los editará en caliente. Se pierden al reiniciar el proceso.
+    const ajustes = crearAjustes(config.antiBaneo);
+
     const service = new NotificacionService({
         store,
         whatsapp,
-        intervaloMs: config.rateLimitMs,
+        ajustes,
         maxIntentos: config.maxIntentos
     });
 
@@ -32,10 +37,12 @@ async function main() {
         errorWhatsapp: whatsapp.ultimoError
     });
     app.listen(config.port, () => {
-        console.log(`🚀 Notification service en puerto ${config.port} (delay entre mensajes: ${config.rateLimitMs} ms)`);
+        const { intervaloMs, jitterPct } = ajustes.obtener();
+        console.log(`🚀 Notification service en puerto ${config.port} (delay base entre mensajes: ${intervaloMs} ms, jitter ±${jitterPct}%)`);
     });
 
-    client.on('message', handleMessage);
+    // El handler encola la respuesta del chatbot en la misma cola saliente (S2).
+    client.on('message', msg => handleMessage(msg, { service }));
     // arrancar() reintenta solo cuando Chromium no puede lanzarse (por ejemplo por un
     // SingletonLock heredado de un contenedor anterior) y deja el motivo en /status.
     arrancar();

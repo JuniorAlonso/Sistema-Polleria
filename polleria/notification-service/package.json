@@ -8,7 +8,8 @@
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:fast": "node --test --test-isolation=none"
   },
   "dependencies": {
     "dotenv": "^18.0.7",
