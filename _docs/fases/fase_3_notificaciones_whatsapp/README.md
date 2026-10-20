@@ -195,6 +195,65 @@ El motor conversacional vive en `src/chatbot/` y **devuelve el texto**; el handl
 - El bot usa `numeroAsesor` y, si no hay, `numeroRespaldo` del store de ajustes en memoria (T5, §4.7).
 - Si no hay ninguno configurado, **no ofrece un número inexistente**: lo dice tal cual.
 
+### 3.6 Bot de pedidos por WhatsApp II: carrito, resumen y alta del pedido (T3b, S1/S4)
+
+Sobre el motor de T3a, el bot arma el pedido completo y crea la orden anónima. Sigue
+**devolviendo el texto** (el handler lo encola, §3.3) y el celular que escribe es la única
+identidad (S1).
+
+**Flujo**
+
+1. Tras confirmar que es de Ica, el bot muestra la **carta real numerada** (`GET /productos` de
+   orders-service, con cache corto). El cliente responde con el **número** del producto.
+   - Agrega la línea; si repite el producto, **suma la cantidad**.
+   - `carrito` muestra el resumen; `quitar <número>` quita una línea del resumen.
+   - `nota <texto>` guarda una indicación del cliente (`observaciones`) y `mi nombre es <nombre>`
+     guarda el nombre (opcional) para el alta.
+2. `confirmar` inicia el cierre. Si falta, el bot **pide la dirección de entrega** y luego una
+   **referencia**. Sin dirección (que es lo que orders-service exige para `DELIVERY`) **no crea**
+   la orden: solo la pide.
+3. Con dirección, referencia y carrito, el bot crea el pedido con `POST /ordenes` de
+   orders-service (ruta pública, la misma del checkout web):
+
+   ```json
+   {
+     "tipo": "DELIVERY",
+     "canalOrigen": "WHATSAPP",
+     "direccionEntrega": "Av. Grau 123, Ica",
+     "referencia": "Portón azul frente al parque",
+     "telefonoCliente": "51999888777",
+     "nombreCliente": "Ana",
+     "observaciones": "sin cebolla",
+     "items": [{ "productoId": 1, "cantidad": 2 }]
+   }
+   ```
+
+   `telefonoCliente` es el celular del remitente **normalizado** (`src/notifications/phone.js`).
+   `nombreCliente` y `observaciones` solo se mandan si el cliente los dictó.
+
+**Total sin duplicar reglas (S12)**
+
+- El bot **no calcula el envío**. Antes de crear la orden muestra **solo el subtotal** de los ítems y
+  aclara que *el costo de envío se suma al confirmar el pedido*.
+- El mensaje final usa el **`total`** y el **`numeroCliente`** que devuelve orders-service; el envío
+  lo sumó `Orden.recalcularTotal()` del lado del servicio.
+
+**Idempotencia**
+
+- Al crear la orden la conversación pasa al estado final `PEDIDO_CONFIRMADO`, que **recuerda el pedido
+  creado**. Un segundo `confirmar` (o la reentrega del mismo `message.id`, que además corta el dedup de
+  T3a) responde con el mismo número **sin crear otra orden**.
+- El carrito vive en el **estado de conversación persistido** (§3.5), así que sobrevive a un reinicio
+  del servicio con `DATABASE_URL`.
+
+**Fallo explícito**
+
+- Si orders-service no responde al crear la orden, el bot lo **dice**, **no inventa número de pedido** y
+  **conserva el carrito** en estado `CATALOGO` para reintentar con `confirmar`.
+- El mensaje final informa el número de pedido y el total y dice que **el equipo coordina el pago por
+  este chat**. La recepción del comprobante de Yape por chat es la tarea siguiente (T6): el bot **no**
+  promete ese paso todavía.
+
 ---
 
 ## 4. Endpoints REST
@@ -534,8 +593,9 @@ WHATSAPP_NUMERO_RESPALDO=                 # Celular de respaldo opcional (S11); 
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Catálogo real del bot de pedidos (T3a)
-ORDERS_SERVICE_URL=http://localhost:8082  # Base de orders-service para GET /productos (default: http://localhost:8082)
+ORDERS_SERVICE_URL=http://localhost:8082  # Base de orders-service para GET /productos y POST /ordenes (default: http://localhost:8082)
 ORDERS_CATALOGO_TTL_MS=30000              # Cache en memoria del catálogo (default: 30000 ms)
+# T3b (carrito y alta del pedido) REUTILIZA ORDERS_SERVICE_URL para POST /ordenes: no agrega variables nuevas.
 
 # Historial (RF32)
 DATABASE_URL=postgres://postgres:postgres123@localhost:5432/polleria
@@ -590,6 +650,15 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] El estado de conversación sobrevive al reinicio del servicio (con `DATABASE_URL`) y funciona con el fallback en memoria cuando no hay base.
 - [ ] Un mensaje reentregado con el mismo `message.id` no ejecuta dos veces el mismo paso.
 - [ ] El bot ofrece `numeroAsesor` o, si no hay, `numeroRespaldo`; sin ninguno, lo dice sin inventar un número.
+- [ ] El bot arma el carrito por el número de la carta, suma la cantidad al repetir, permite quitar
+  y conserva el carrito entre mensajes (y tras un reinicio, con `DATABASE_URL`).
+- [ ] Antes de crear la orden el bot pide dirección y referencia; sin dirección no crea nada.
+- [ ] `confirmar` crea **una** orden `DELIVERY` con `canalOrigen: WHATSAPP`, el celular del remitente y los
+  ítems del carrito, y el mensaje final trae el **número y el total devueltos por orders-service**.
+- [ ] El resumen previo muestra solo el subtotal y aclara que el envío se suma al confirmar.
+- [ ] Confirmar dos veces (o la reentrega del mismo `message.id`) crea una sola orden.
+- [ ] Si orders-service falla al crear la orden, el bot lo dice, no hay número de pedido y el carrito
+  sigue disponible para reintentar.
 - [ ] Ningún mensaje sale sin marcar visto / mostrar "escribiendo" cuando corresponde.
 - [ ] El historial registra TODOS los intentos con su estado final.
 - [ ] Un número inválido NO bloquea la cola para los siguientes mensajes.
@@ -620,9 +689,10 @@ src/outbound/gobernador.js      # Coordina límites + breaker; la cola lo consul
 src/http/app.js                 # Endpoints /api/notificaciones/* y página GET /qr
 src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/pedidos/catalogo.js         # Catálogo real de orders-service con cache corto y fallo explícito (T3a)
+src/pedidos/ordenes.js          # Alta del DELIVERY anónimo en orders-service (POST /ordenes) y total devuelto (T3b)
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
 src/whatsapp/handler.js         # Enrutador de mensajes entrantes: encola la respuesta del bot (T3a)
-src/chatbot/chatbot.js          # Motor conversacional: menú, Ica, catálogo, estado y dedup (T3a)
+src/chatbot/chatbot.js          # Motor conversacional: menú, Ica, catálogo, carrito, alta, estado y dedup (T3a/T3b)
 src/chatbot/conversation.js     # Estado de conversación persistido (misma base que el historial + fallback en memoria)
 src/chatbot/menu.js             # Textos y formato de la carta real (sin precios hardcodeados)
 src/chatbot/dedup.js            # Dedup de mensajes entrantes por message.id

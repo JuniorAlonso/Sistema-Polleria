@@ -9,6 +9,7 @@ const { crearApp } = require('./src/http/app');
 const { crearConversationStore } = require('./src/chatbot/conversation');
 const { crearBot } = require('./src/chatbot/chatbot');
 const { crearCatalogo } = require('./src/pedidos/catalogo');
+const { crearClienteOrdenes } = require('./src/pedidos/ordenes');
 
 async function main() {
     const store = crearStore(config.databaseUrl);
@@ -35,7 +36,11 @@ async function main() {
         baseUrl: config.ordersServiceUrl,
         ttlMs: config.catalogoTtlMs
     });
-    const bot = crearBot({ catalogo, ajustes, conversacion });
+
+    // Alta del pedido anónimo (T3b): el bot crea el DELIVERY con POST /ordenes y usa el
+    // total que devuelve orders-service (el envío lo suma Orden.recalcularTotal()).
+    const ordenes = crearClienteOrdenes({ baseUrl: config.ordersServiceUrl });
+    const bot = crearBot({ catalogo, ajustes, conversacion, ordenes });
 
     // Gobernador anti-baneo (T4b): presupuesto por hora/día, ventana horaria y circuit
     // breaker. La cola lo consulta antes de cada envío y /status expone su estado.

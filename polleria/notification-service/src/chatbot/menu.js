@@ -1,10 +1,14 @@
 /**
- * Textos y formato del bot de pedidos (T3a, S12).
+ * Textos y formato del bot de pedidos (T3a/T3b, S1/S4/S12).
  *
  * La carta ya NO tiene precios escritos a mano: se arma con los productos reales que
  * devuelve orders-service. Los números de contacto salen del store de ajustes en
  * memoria (T5); si no hay ninguno configurado, se dice tal cual y no se inventa un
  * número inexistente.
+ *
+ * T3b agrega el carrito: la carta se numera para poder agregar productos por su número
+ * y el resumen muestra SOLO el subtotal. El bot no calcula el envío (S12): el total
+ * final sale de orders-service al crear la orden.
  */
 
 function getMainMenu() {
@@ -26,6 +30,21 @@ const PREGUNTA_ICA =
 const SOLO_ICA =
     'Lo sentimos: el delivery de San Pollo cubre solo *Ica*, ' +
     'así que no podemos tomar tu pedido por WhatsApp.';
+
+const PREGUNTA_DIRECCION =
+    '¿A qué *dirección* te llevamos tu pedido? ' +
+    'Indícame calle, número y distrito (por ejemplo: Av. Grau 123, Ica).';
+
+const PREGUNTA_REFERENCIA =
+    '¿Tienes alguna *referencia* para llegar? (frente a, al lado de, color de la fachada)\n' +
+    'Si no tienes, escribe *sin referencia*.';
+
+const CARRITO_VACIO =
+    '🛒 Tu carrito está vacío. Escribe *carta* para ver los productos y agrega uno con su número.';
+
+const MENSAJE_PEDIDO_FALLIDO =
+    'No pudimos registrar tu pedido en este momento: el sistema de pedidos no respondió.\n' +
+    'Tu carrito sigue guardado. Escribe *confirmar* para reintentar.';
 
 function formatearTelefono(numero) {
     const digitos = String(numero).replace(/\D/g, '');
@@ -56,13 +75,58 @@ function respuestaAsesor(ajustes) {
     return `👤 Un asesor de nuestro equipo te atenderá. ${lineaContacto(ajustes)}`;
 }
 
-/** Carta real de orders-service, sin precios hardcodeados. */
+/** Carta real de orders-service, numerada para poder agregar por número (T3b). */
 function formatearCatalogo(productos) {
-    const lineas = productos.map(p => {
+    const lineas = productos.map((p, i) => {
         const descripcion = p.descripcion ? ` — ${p.descripcion}` : '';
-        return `• ${p.nombre}${descripcion}: *S/ ${formatearPrecio(p.precio)}*`;
+        return `${i + 1}. ${p.nombre}${descripcion}: *S/ ${formatearPrecio(p.precio)}*`;
     });
-    return `*NUESTRA CARTA*\n\n${lineas.join('\n')}\n\n¿Qué te gustaría pedir?`;
+    return (
+        `*NUESTRA CARTA*\n\n${lineas.join('\n')}\n\n` +
+        'Responde con el *número* del producto para agregarlo a tu carrito.\n' +
+        'Escribe *carrito* para verlo o *confirmar* para terminar tu pedido.'
+    );
+}
+
+/** Resumen del carrito: SOLO el subtotal de los ítems, sin calcular el envío (S12). */
+function formatearCarrito(carrito) {
+    if (!carrito || !carrito.length) return CARRITO_VACIO;
+
+    const lineas = carrito.map((item, i) => {
+        const subtotal = Number(item.precio) * item.cantidad;
+        return `${i + 1}. ${item.nombre} x${item.cantidad} — S/ ${formatearPrecio(subtotal)}`;
+    });
+    const subtotal = carrito.reduce((acc, item) => acc + Number(item.precio) * item.cantidad, 0);
+
+    return (
+        `🛒 *TU CARRITO*\n\n${lineas.join('\n')}\n\n` +
+        `*Subtotal:* S/ ${formatearPrecio(subtotal)}\n` +
+        '_El costo de envío se suma al confirmar el pedido._\n\n' +
+        'Escribe *confirmar* para terminar, *quitar <número>* para quitar un producto o *carta* para ver la carta.'
+    );
+}
+
+/** Confirmación final: número de pedido y total que devuelve orders-service. */
+function mensajePedidoCreado(pedido) {
+    const numero = numeroDePedido(pedido);
+    return (
+        '✅ *¡Pedido registrado!*\n\n' +
+        `Tu pedido N.° *${numero}* quedó registrado por un total de *S/ ${formatearPrecio(pedido.total)}*.\n` +
+        'El equipo de San Pollo coordina el pago contigo por este chat.'
+    );
+}
+
+/** El pedido ya se creó (idempotencia de T3b): se recuerda sin crear otro. */
+function mensajePedidoYaConfirmado(pedido) {
+    return (
+        `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado. ` +
+        'El equipo de San Pollo coordina el pago contigo por este chat.'
+    );
+}
+
+function numeroDePedido(pedido) {
+    if (!pedido) return '';
+    return pedido.numeroCliente != null ? pedido.numeroCliente : pedido.id;
 }
 
 /** orders-service caído: no se inventa carta, se ofrece el contacto configurado. */
@@ -85,11 +149,19 @@ module.exports = {
     getMainMenu,
     PREGUNTA_ICA,
     SOLO_ICA,
+    PREGUNTA_DIRECCION,
+    PREGUNTA_REFERENCIA,
+    CARRITO_VACIO,
+    MENSAJE_PEDIDO_FALLIDO,
     formatearTelefono,
     formatearPrecio,
     lineaContacto,
     respuestaAsesor,
     formatearCatalogo,
+    formatearCarrito,
+    mensajePedidoCreado,
+    mensajePedidoYaConfirmado,
+    numeroDePedido,
     mensajeSinServicio,
     mensajeSinProductos
 };
