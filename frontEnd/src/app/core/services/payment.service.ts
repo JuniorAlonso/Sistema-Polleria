@@ -7,6 +7,35 @@ import { BackendPagoResponse } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
 import { environment } from '../../../environments/environment';
 
+/**
+ * T6e (S6/S7) — estados de un pago de Yape devueltos por `payments-service`.
+ * `PENDIENTE_VERIFICACION` no existe en `PaymentStatus` del modelo compartido: la verificación del
+ * comprobante es exclusiva del panel del `ADMIN`, así que su contrato vive en este servicio.
+ */
+export type EstadoPagoAdmin =
+  | 'PENDIENTE'
+  | 'PENDIENTE_VERIFICACION'
+  | 'APROBADO'
+  | 'RECHAZADO'
+  | 'CANCELADO';
+
+/**
+ * T6e — pago de una orden con la evidencia de Yape que el `ADMIN` necesita para decidir.
+ * `comprobanteUrl` es una URL firmada de MinIO de vida corta (300 s) que **solo** recibe un `ADMIN`;
+ * no se cachea, porque reusarla mostraría una imagen rota.
+ */
+export interface PagoOrdenAdmin {
+  id: number;
+  ordenId: number;
+  monto: number;
+  estado: EstadoPagoAdmin | string;
+  comprobanteUrl?: string | null;
+  motivoRechazo?: string | null;
+  detalle?: string | null;
+  creadoEn?: string;
+  actualizadoEn?: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -77,6 +106,56 @@ export class PaymentService {
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       catchError(() => of(null))
     );
+  }
+
+  /**
+   * T6e (S6/S7) — pago de una orden para que el `ADMIN` verifique el comprobante de Yape.
+   *
+   * Se pide **al abrir el detalle** y no se cachea: la URL del comprobante es una firma de vida
+   * corta (300 s), así que reusarla mostraría una imagen rota. El error del backend (por ejemplo el
+   * 404 de una orden sin pago) se propaga tal cual.
+   */
+  obtenerPagoParaVerificacion(ordenId: number | string): Observable<PagoOrdenAdmin> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    return this.http.get<PagoOrdenAdmin>(`${this.API_URL}/pagos/orden/${cleanId}`);
+  }
+
+  /**
+   * T6e (S6) — decisión del `ADMIN` sobre el comprobante de Yape.
+   *
+   * Rechazar exige motivo: sin motivo no se dispara ninguna llamada (el backend respondería 400 y el
+   * cliente no tendría nada que leer en su WhatsApp). Un error del backend se propaga con su mensaje
+   * y **sin** reportar éxito: el estado que se muestra es el que devuelve el backend, nunca uno local.
+   */
+  verificarComprobante(
+    pagoId: number | string,
+    aprobado: boolean,
+    motivoRechazo?: string
+  ): Observable<PagoOrdenAdmin> {
+    const motivo = (motivoRechazo ?? '').trim();
+    if (!aprobado && !motivo) {
+      return throwError(() => new Error('El motivo de rechazo es obligatorio'));
+    }
+
+    const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
+    const body = aprobado ? { aprobado: true } : { aprobado: false, motivoRechazo: motivo };
+
+    return this.http.post<PagoOrdenAdmin>(`${this.API_URL}/pagos/${cleanId}/verificar`, body).pipe(
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error)))
+      )
+    );
+  }
+
+  /** Mensaje del backend tal cual; solo hay un texto propio cuando no vino ninguno. */
+  private mensajeErrorVerificacion(error: HttpErrorResponse): string {
+    const cuerpo = error?.error;
+    const mensaje = typeof cuerpo === 'string'
+      ? cuerpo
+      : cuerpo?.error || cuerpo?.mensaje || cuerpo?.message;
+    return typeof mensaje === 'string' && mensaje.trim()
+      ? mensaje
+      : 'No se pudo verificar el comprobante de Yape.';
   }
 
   /**

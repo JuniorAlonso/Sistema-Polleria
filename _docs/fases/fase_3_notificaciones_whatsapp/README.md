@@ -329,6 +329,56 @@ Si la transacción se revirtiera, el aviso no sale; si el notification-service e
 registrado y el pago sigue `RECHAZADO`, y la respuesta al admin no se rompe. El aviso es best-effort: nunca
 condiciona la verificación.
 
+### 3.10 Panel: el ADMIN verifica el comprobante de Yape (T6e, S6/S7)
+
+La verificación del comprobante vive en la **pestaña de pedidos** del panel administrativo, como se decidió
+en L12, y es **exclusiva del `ADMIN`** (S6): el rol `CAJERO` no se toca y el backend, además, aplica
+`@PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")` en `POST /pagos/{id}/verificar` (T6c).
+
+**Cuándo aparece**
+
+- Al abrir el **detalle de un pedido**, el panel pide el pago con
+  `PaymentService.obtenerPagoParaVerificacion(ordenId)` → `GET /pagos/orden/{ordenId}`.
+- Solo se muestra el bloque si el pago llegó en `PENDIENTE_VERIFICACION` **y** el backend devolvió
+  `comprobanteUrl`. Un pedido sin comprobante pendiente (pago `APROBADO`, `RECHAZADO`, `CANCELADO`, otro
+  método de pago o directamente sin pago) no agrega nada a la pantalla: el `404` de una orden sin pago se
+  trata como “no hay nada que verificar”.
+- El bloque solo se renderiza para `ADMIN`; cualquier otro rol ve el detalle como antes.
+
+**La URL del comprobante no se cachea**
+
+- `comprobanteUrl` es una **URL firmada de MinIO de vida corta (300 s)** que solo recibe el `ADMIN`.
+- Se pide **al abrir el detalle** y se descarta al cerrarlo o al cambiar de pedido: guardarla y reusarla
+  mostraría una imagen rota. Por eso el estado del comprobante se reinicia en cada apertura.
+
+**Aprobar o rechazar**
+
+- **Aprobar** manda `{ aprobado: true }` y el backend avanza la orden con el mismo mecanismo del pago
+  aprobado de Mercado Pago (T6c); el cliente recibe su aviso por WhatsApp.
+- **Rechazar** exige un **motivo escrito**: sin motivo el botón queda **deshabilitado** y la pantalla dice
+  por qué. La validación es doble: el panel no llama al backend sin motivo
+  (`PaymentService.verificarComprobante` devuelve el error localmente) y el backend también respondería `400`
+  porque `motivoRechazo` es obligatorio (T6c).
+- El resultado **solo** refleja lo que responde el backend: se actualiza el estado del pago con la respuesta
+  de `POST /pagos/{id}/verificar` (nada de optimismo local). El backend **no devuelve el estado del pedido**
+  en ese contrato, así que la pantalla no lo inventa; la lista de pedidos se actualiza con el **sondeo** que
+  el panel ya hace.
+- Si el backend responde un error (por ejemplo `409` porque otro admin ya lo verificó), se muestra **su
+  mensaje tal cual** y no se marca ningún éxito.
+
+**Métodos y contrato del frontend**
+
+- `PaymentService.obtenerPagoParaVerificacion(ordenId)` (`GET /pagos/orden/{ordenId}`) y
+  `PaymentService.verificarComprobante(pagoId, aprobado, motivoRechazo?)` (`POST /pagos/{id}/verificar`),
+  agregados a `frontEnd/src/app/core/services/payment.service.ts`.
+- Los tipos `EstadoPagoAdmin` y `PagoOrdenAdmin` viven en el servicio: `PENDIENTE_VERIFICACION` no existe en
+  el `PaymentStatus` del modelo compartido y `comprobanteUrl` no se mapea en el adaptador actual, así que la
+  pantalla de verificación —exclusiva del `ADMIN`— usa su propio contrato en vez de tocar el modelo general.
+
+**Pruebas**: `frontEnd/src/app/core/services/payment.service.spec.ts` cubre la ruta de consulta y la URL del
+comprobante, `{ aprobado: true }`, el rechazo con motivo con el mensaje de error del backend propagado sin
+reportar éxito, y que **sin motivo no se dispara ninguna llamada**.
+
 ---
 
 ## 4. Endpoints REST
@@ -806,6 +856,10 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Al rechazar el comprobante, el cliente recibe por WhatsApp el número de pedido y el motivo, y el aviso
   sale recién cuando el rechazo ya quedó guardado: si el notification-service falla, el pago igual queda
   `RECHAZADO` y la respuesta al admin no se rompe.
+- [ ] La pestaña de pedidos del panel, **solo para `ADMIN`**, muestra el comprobante pendiente al abrir el
+  detalle con la imagen pedida en ese momento (sin cachear la URL de 300 s), exige motivo para rechazar
+  (botón deshabilitado y explicado) y refleja únicamente el estado que responde el backend, mostrando su
+  mensaje de error tal cual cuando falla.
 
 ---
 

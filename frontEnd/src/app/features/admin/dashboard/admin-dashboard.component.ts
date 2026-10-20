@@ -2,7 +2,7 @@ import { Component, inject, signal, computed, effect, untracked, OnInit, OnDestr
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
-import { Subscription, interval, forkJoin } from 'rxjs';
+import { Subscription, interval, forkJoin, tap, catchError, of } from 'rxjs';
 import { OrdersService } from '../../../core/services/orders.service';
 import { ProductsService } from '../../../core/services/products.service';
 import { AuthService } from '../../../core/services/auth.service';
@@ -15,6 +15,7 @@ import { RepartidoresService } from '../../../core/services/repartidores.service
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { AjustesWhatsapp, WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
+import { PaymentService, PagoOrdenAdmin } from '../../../core/services/payment.service';
 import { Order, OrderStatus, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { Product } from '../../../core/models/product.model';
 import { MesaSalon, MesaEstado, SalonZona } from '../../../core/models/table.model';
@@ -2491,6 +2492,108 @@ export type InsumoAlmacen = Insumo;
               <span class="font-display text-2xl font-black text-polleria-gold">{{ order.total | currencyPEN }}</span>
             </div>
 
+            <!-- T6e (S6/S7): verificación del comprobante de Yape. Solo el ADMIN la ve y la ejecuta. -->
+            @if (authService.isAdmin()) {
+              @if (comprobanteCargando()) {
+                <div class="bg-black/30 p-3.5 rounded-xl border border-white/5 text-xs text-slate-400">
+                  Buscando el comprobante de Yape de este pedido...
+                </div>
+              }
+
+              @if (comprobantePendiente(); as pago) {
+                <div class="bg-black/30 p-3.5 rounded-xl border border-polleria-gold/30 space-y-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Comprobante de Yape</span>
+                    <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      Pendiente de verificación
+                    </span>
+                  </div>
+
+                  @if (pago.comprobanteUrl) {
+                    <img
+                      [src]="pago.comprobanteUrl"
+                      alt="Comprobante de Yape del pedido #{{ getCodeNum(order.codigoSeguimiento) }}"
+                      class="w-full max-h-72 object-contain rounded-lg border border-white/10 bg-slate-950"
+                    />
+                    <p class="text-[10px] text-slate-500">
+                      La imagen se pide al abrir el detalle y su enlace vence en 300 s: no se reutiliza entre consultas.
+                    </p>
+                  }
+
+                  <div class="flex justify-between text-xs">
+                    <span class="text-slate-400">Monto registrado:</span>
+                    <strong class="text-polleria-gold font-mono">{{ pago.monto | currencyPEN }}</strong>
+                  </div>
+
+                  <div class="space-y-1.5">
+                    <label
+                      for="motivo-rechazo-comprobante"
+                      class="text-[11px] font-bold uppercase text-slate-400 tracking-wider"
+                    >
+                      Motivo de rechazo
+                    </label>
+                    <textarea
+                      id="motivo-rechazo-comprobante"
+                      rows="2"
+                      [ngModel]="motivoRechazo()"
+                      (ngModelChange)="motivoRechazo.set($event)"
+                      placeholder="Ej.: el monto no coincide con el total del pedido"
+                      class="w-full rounded-lg bg-slate-950 border border-white/10 text-xs text-slate-200 p-2 focus:border-polleria-gold focus:outline-none"
+                    ></textarea>
+                    <p class="text-[10px] text-slate-400">
+                      El rechazo exige un motivo: el cliente lo recibe por WhatsApp y puede enviar un comprobante nuevo.
+                    </p>
+                  </div>
+
+                  @if (errorVerificacion(); as error) {
+                    <div class="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs" role="alert">
+                      {{ error }}
+                    </div>
+                  }
+
+                  <div class="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      (click)="rechazarComprobante()"
+                      [disabled]="!puedeRechazarComprobante() || verificandoComprobante()"
+                      [attr.title]="puedeRechazarComprobante() ? 'Rechazar el comprobante' : 'Escribí el motivo de rechazo para habilitar el botón'"
+                      class="px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-rose-900/40 hover:bg-rose-700 text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Rechazar comprobante
+                    </button>
+                    <button
+                      type="button"
+                      (click)="aprobarComprobante()"
+                      [disabled]="verificandoComprobante()"
+                      class="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {{ verificandoComprobante() ? 'Verificando...' : 'Aprobar comprobante' }}
+                    </button>
+                  </div>
+
+                  @if (!puedeRechazarComprobante()) {
+                    <p class="text-[10px] text-slate-400 text-right">
+                      «Rechazar comprobante» está deshabilitado hasta que escribas el motivo.
+                    </p>
+                  }
+                </div>
+              }
+
+              @if (decisionVerificacion(); as decision) {
+                <div
+                  class="p-3 rounded-xl text-xs border"
+                  [ngClass]="decision.aprobado ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'"
+                  role="status"
+                >
+                  @if (decision.aprobado) {
+                    Comprobante aprobado. La orden avanzó y el cliente recibió el aviso por WhatsApp.
+                  } @else {
+                    Comprobante rechazado con el motivo indicado. El cliente recibió el aviso por WhatsApp.
+                  }
+                </div>
+              }
+            }
+
             <!-- Action Buttons -->
             <div class="flex flex-wrap justify-end gap-2 pt-2 border-t border-white/10">
               @if (order.estado !== 'COMPLETADO' && order.estado !== 'CANCELADO') {
@@ -3850,6 +3953,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly feedbackService = inject(FeedbackService);
   readonly securityAuditService = inject(SecurityAuditService);
   readonly whatsappService = inject(WhatsappNotificationsService);
+  readonly paymentService = inject(PaymentService);
   readonly repartidoresService = inject(RepartidoresService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
@@ -3878,6 +3982,103 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   // Modal de Detalle de Orden (Inspector)
   readonly selectedOrderForModal = signal<Order | null>(null);
+
+  // ── T6e (S6/S7) — verificación del comprobante de Yape, solo para ADMIN ──────────────
+  /** Pago de la orden abierta en el detalle. Se pide al abrir el modal y NO se reusa su URL firmada. */
+  readonly pagoDeOrden = signal<PagoOrdenAdmin | null>(null);
+  readonly comprobanteCargando = signal<boolean>(false);
+  readonly verificandoComprobante = signal<boolean>(false);
+  readonly motivoRechazo = signal<string>('');
+  readonly errorVerificacion = signal<string | null>(null);
+
+  /** Resultado de la decisión que acaba de responder el backend (sin optimismo local). */
+  readonly decisionVerificacion = signal<{ aprobado: boolean } | null>(null);
+
+  /** Solo hay algo que verificar si el backend confirmó que está pendiente y mandó la URL firmada. */
+  readonly comprobantePendiente = computed(() => {
+    const pago = this.pagoDeOrden();
+    return pago && pago.estado === 'PENDIENTE_VERIFICACION' && !!pago.comprobanteUrl ? pago : null;
+  });
+
+  /** Rechazar exige motivo: sin él el botón queda deshabilitado y se explica por qué. */
+  readonly puedeRechazarComprobante = computed(() => this.motivoRechazo().trim().length > 0);
+
+  /**
+   * La URL firmada del comprobante vive 300 s, así que se pide al abrir el detalle y se descarta al
+   * cerrarlo. El estado se reinicia con cada pedido: nada de reusar la imagen del anterior.
+   */
+  private readonly cargarComprobanteAlAbrirDetalle = effect(() => {
+    const order = this.selectedOrderForModal();
+    untracked(() => {
+      this.pagoDeOrden.set(null);
+      this.comprobanteCargando.set(false);
+      this.errorVerificacion.set(null);
+      this.motivoRechazo.set('');
+      this.verificandoComprobante.set(false);
+      this.decisionVerificacion.set(null);
+      if (order && this.authService.isAdmin()) {
+        this.cargarComprobanteDeOrden(order);
+      }
+    });
+  });
+
+  /** Pide el pago tal cual lo devuelve el backend. Un 404 (orden sin pago) deja todo en vacío. */
+  private cargarComprobanteDeOrden(order: Order): void {
+    // Solo el pedido abierto manda: una respuesta que llega tarde no pisa el detalle actual.
+    const esElPedidoAbierto = () => String(this.selectedOrderForModal()?.id) === String(order.id);
+
+    this.comprobanteCargando.set(true);
+    this.paymentService.obtenerPagoParaVerificacion(order.id).pipe(
+      tap(pago => {
+        if (esElPedidoAbierto()) {
+          this.pagoDeOrden.set(pago);
+          this.comprobanteCargando.set(false);
+        }
+      }),
+      catchError(() => {
+        // Sin pago no hay comprobante que verificar: no se muestra nada ni se inventa un estado.
+        if (esElPedidoAbierto()) {
+          this.comprobanteCargando.set(false);
+        }
+        return of(null);
+      })
+    ).subscribe();
+  }
+
+  /** Aprueba el comprobante y refleja el estado que devuelve el backend. */
+  aprobarComprobante(): void {
+    this.decidirComprobante(true);
+  }
+
+  /** Rechaza el comprobante con el motivo escrito; sin motivo no se llama al backend. */
+  rechazarComprobante(): void {
+    this.decidirComprobante(false, this.motivoRechazo());
+  }
+
+  private decidirComprobante(aprobado: boolean, motivo?: string): void {
+    const pago = this.comprobantePendiente();
+    if (!pago || this.verificandoComprobante()) return;
+    if (!aprobado && !this.puedeRechazarComprobante()) return;
+
+    this.verificandoComprobante.set(true);
+    this.errorVerificacion.set(null);
+    this.paymentService.verificarComprobante(pago.id, aprobado, motivo).pipe(
+      tap(actualizado => {
+        // Nada de optimismo local: se muestra el estado que respondió el backend.
+        this.pagoDeOrden.set(actualizado);
+        this.verificandoComprobante.set(false);
+        this.motivoRechazo.set('');
+        this.decisionVerificacion.set({ aprobado });
+      }),
+      catchError(err => {
+        this.verificandoComprobante.set(false);
+        this.errorVerificacion.set(
+          err?.message || 'No se pudo verificar el comprobante de Yape.'
+        );
+        return of(null);
+      })
+    ).subscribe();
+  }
 
   // Modal de Creación de Orden Manual
   showCreateOrderModal = false;
