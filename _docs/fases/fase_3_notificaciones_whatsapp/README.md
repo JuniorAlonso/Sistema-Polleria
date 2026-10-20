@@ -381,6 +381,25 @@ reportar éxito, y que **sin motivo no se dispara ninguna llamada**.
 
 ---
 
+### 3.11 Degradación cuando el canal cae o el número queda bloqueado (T9, S11)
+
+El número de WhatsApp es un punto único de fallo: si se cae la sesión o Meta bloquea el número, por ese
+canal no entran ni salen mensajes. El riesgo operativo se cubre así:
+
+1. **Número de respaldo configurable** desde el panel (`numeroRespaldo`) y por entorno
+   (`WHATSAPP_NUMERO_RESPALDO`). La línea de contacto del bot lo usa cuando el número del asesor no está
+   configurado (`lineaContacto`), y es el número que hay que publicar si el principal queda bloqueado.
+2. **Estado visible para quien atiende**: la pestaña de Notificaciones muestra el estado de la sesión
+   (`Conectado`, `Esperando QR`, `Desconectado`, `Error de sesión`, `No pudo iniciar`) y, desde T9, cuando
+   **no** está conectado aparece una alerta arriba del resumen con qué hacer: el chat no recibe ni envía,
+   los pedidos tienen que entrar por el checkout web y las consultas se atienden por teléfono.
+3. **Plan B**: el checkout web sigue funcionando igual, con la misma cuenta y el mismo pago, así que no
+   hay una segunda vía de pedidos que mantener en paralelo.
+
+Lo que **no** está implementado, dicho para que nadie lo suponga: una segunda sesión de WhatsApp en
+paralelo (dos números atendidos por el mismo servicio). Hoy el respaldo es un número para publicar y para
+que el bot lo ofrezca, no una segunda sesión; agregarla es una tarea aparte.
+
 ## 4. Endpoints REST
 
 ### 4.1 Notificación de Pago Confirmado (RF30)

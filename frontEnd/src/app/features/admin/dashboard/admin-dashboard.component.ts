@@ -1941,6 +1941,24 @@ export type InsumoAlmacen = Insumo;
           </div>
 
           <!-- Estado de la sesión y totales -->
+          <!-- T9 (S11): si el canal no está conectado, quien atiende tiene que verlo acá y saber qué hacer. -->
+          @if (whatsappService.status()?.whatsapp && whatsappService.status()?.whatsapp !== 'connected') {
+            <div class="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs space-y-1.5" role="alert">
+              <p class="font-bold uppercase tracking-wider">
+                ⚠️ El canal de WhatsApp no está conectado ({{ etiquetaSesionWhatsapp() }})
+              </p>
+              <p>
+                Mientras siga así <strong>no se pueden recibir ni enviar mensajes por el chat</strong>: los pedidos
+                nuevos tienen que entrar por el checkout web y las consultas atenderse por teléfono.
+              </p>
+              <p>
+                Si el número quedó bloqueado, publicá el número de respaldo
+                <strong>{{ whatsappService.ajustes()?.numeroRespaldo || 'sin respaldo configurado' }}</strong>
+                y volvé a vincular la sesión escaneando el QR.
+              </p>
+            </div>
+          }
+
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10">
               <p class="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Sesión WhatsApp</p>
