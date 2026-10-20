@@ -86,7 +86,7 @@ public class PagoService {
         try {
             pago = pagoRepository.saveAndFlush(pago);
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
+            throw new IllegalStateException(mensajeDeIntegridad(request.ordenId(), e));
         }
 
         if (result.estado() == EstadoPago.APROBADO) {
@@ -152,8 +152,9 @@ public class PagoService {
             pago = pagoRepository.saveAndFlush(pago);
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             // Carrera entre dos registros concurrentes de la misma orden: el índice único
-            // uq_pagos_orden_id deja un solo pago y el perdedor recibe 409.
-            throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
+            // uq_pagos_orden_id deja un solo pago y el perdedor recibe 409. Cualquier otra
+            // violación es otra cosa (por ejemplo un CHECK desactualizado) y se informa como tal.
+            throw new IllegalStateException(mensajeDeIntegridad(request.ordenId(), e));
         }
 
         log.info("Comprobante de Yape registrado — pago id={} orden={} nuevo={}",
@@ -229,6 +230,23 @@ public class PagoService {
 
     public PagoResponse obtener(Long id) {
         return PagoResponse.from(buscar(id));
+    }
+
+    /**
+     * Traduce una violación de integridad <b>sin mentir sobre la causa</b>. El índice único
+     * {@code uq_pagos_orden_id} significa «ya hay un pago para esa orden», pero un CHECK
+     * desactualizado —por ejemplo {@code pagos_estado_check} sin el estado nuevo— es un problema de
+     * esquema, y responder «ya existe un pago» manda a buscar el problema al lugar equivocado. Pasó
+     * exactamente eso con la primera evidencia real de Yape contra una base que ya existía.
+     */
+    private String mensajeDeIntegridad(Long ordenId, org.springframework.dao.DataIntegrityViolationException e) {
+        String detalle = String.valueOf(e.getMostSpecificCause().getMessage());
+        if (detalle.contains("uq_pagos_orden_id")) {
+            return "Ya existe un pago registrado para la orden " + ordenId;
+        }
+        log.error("Violación de integridad al guardar el pago de la orden {}: {}", ordenId, detalle);
+        String recorte = detalle.length() > 200 ? detalle.substring(0, 200) : detalle;
+        return "No se pudo guardar el pago: la base rechazó el estado. Detalle: " + recorte;
     }
 
     public PagoResponse obtenerPorOrden(Long ordenId) {
