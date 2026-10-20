@@ -254,6 +254,27 @@ identidad (S1).
   este chat**. La recepción del comprobante de Yape por chat es la tarea siguiente (T6): el bot **no**
   promete ese paso todavía.
 
+### 3.7 Serialización por conversación (T3c, S10/S14)
+
+El handler se invoca por cada evento de mensaje **sin esperar al anterior**. El dedup por `message.id`
+de §3.5 corta la reentrega del **mismo** mensaje, pero no dos mensajes distintos del mismo cliente: dos
+«confirmar» casi simultáneos podían leer el mismo estado y **abrir dos pedidos**. Lo mismo aplica al
+comprobante de Yape (T6), que tampoco se debe registrar dos veces.
+
+`src/chatbot/serializador.js` encadena las tareas de una **misma clave** (el celular normalizado de
+`src/notifications/phone.js`) para que se ejecuten **una por una y en orden de llegada**. Un mensaje que
+llega mientras el anterior se procesa **espera** (no se descarta ni corre en paralelo) y, al arrancar, ve
+el estado que dejó el anterior. El handler envuelve en esa cadena el par **procesar → encolar**, así que
+tampoco se pueden invertir las respuestas.
+
+- **Por clave, no global**: una conversación lenta no frena a otro cliente; cada celular tiene su propia
+  cadena.
+- **Limpieza**: terminada la cadena de una conversación, su entrada se elimina para no acumular clientes
+  que no vuelven a escribir. `tamanio` expone cuántas conversaciones hay vivas (observabilidad y tests).
+- **Un fallo no traba la conversación**: si una tarea falla, la siguiente de esa clave igual corre.
+- **Sin cambios de contrato**: el bot sigue devolviendo el texto y el handler lo encola en la única cola
+  saliente (§3.3). El serializador es una instancia por proceso e inyectable en los tests.
+
 ---
 
 ## 4. Endpoints REST
@@ -691,11 +712,12 @@ src/http/auth.js                # JWT ADMIN y X-Internal-Key
 src/pedidos/catalogo.js         # Catálogo real de orders-service con cache corto y fallo explícito (T3a)
 src/pedidos/ordenes.js          # Alta del DELIVERY anónimo en orders-service (POST /ordenes) y total devuelto (T3b)
 src/whatsapp/client.js          # Cliente whatsapp-web.js y reconexión
-src/whatsapp/handler.js         # Enrutador de mensajes entrantes: encola la respuesta del bot (T3a)
+src/whatsapp/handler.js         # Enrutador de mensajes entrantes: encola la respuesta del bot (T3a); serializa por conversación (T3c)
 src/chatbot/chatbot.js          # Motor conversacional: menú, Ica, catálogo, carrito, alta, estado y dedup (T3a/T3b)
 src/chatbot/conversation.js     # Estado de conversación persistido (misma base que el historial + fallback en memoria)
 src/chatbot/menu.js             # Textos y formato de la carta real (sin precios hardcodeados)
 src/chatbot/dedup.js            # Dedup de mensajes entrantes por message.id
+src/chatbot/serializador.js     # Serialización por conversación (T3c): un mensaje por vez y en orden de llegada
 test/                           # Tests con node:test (`npm test`)
 Dockerfile                      # Imagen con Chromium para puppeteer
 ```
