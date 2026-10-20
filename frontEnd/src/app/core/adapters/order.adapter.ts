@@ -4,8 +4,16 @@ import {
   BackendOrdenResponse,
   BackendOrdenTipo
 } from '../models/api-contracts.model';
-import { CreateOrderRequest, Order, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
+import { CreateOrderRequest, Order, OrderChannel, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
 import { CartItem } from '../models/product.model';
+
+/**
+ * Contrato de T2 (S1): el backend ya expone `canalOrigen` en la respuesta y lo acepta en el alta,
+ * pero `api-contracts.model.ts` todavía no declara el campo (no es parte del alcance de esta
+ * tarea). Se tipa localmente para mapearlo sin inventar el dato ni romper el contrato compartido.
+ */
+type DtoOrdenConCanal = BackendOrdenResponse & { canalOrigen?: string };
+type DtoCrearOrdenConCanal = BackendCrearOrdenRequest & { canalOrigen?: OrderChannel };
 
 export class OrderAdapter {
   /**
@@ -126,6 +134,10 @@ export class OrderAdapter {
     const subtotal = items.reduce((acc, it) => acc + it.subtotal, 0) || total;
     const costoEnvio = tipo === 'DELIVERY' ? Math.max(0, total - subtotal) : 0;
 
+    // Canal de origen (S1): se propaga tal cual llega del backend. Las órdenes creadas antes de
+    // esta columna no lo traen y quedan sin canal, no con un valor inventado.
+    const canalOrigen = (dto as DtoOrdenConCanal).canalOrigen as OrderChannel | undefined;
+
     return {
       id: String(dto.id),
       codigoSeguimiento: trackingCode,
@@ -140,6 +152,7 @@ export class OrderAdapter {
       items: items,
       tipo: tipo,
       estado: estado,
+      canalOrigen: canalOrigen,
       subtotal: Math.round(subtotal * 100) / 100,
       costoEnvio: Math.round(costoEnvio * 100) / 100,
       descuento: 0,
@@ -200,7 +213,10 @@ export class OrderAdapter {
       nombreCliente: req.cliente.nombre || undefined,
       telefonoCliente: req.cliente.celular || undefined,
       observaciones: req.notasGenerales || undefined,
+      // Canal de origen (S1): el checkout web no lo manda y el backend deriva WEB/SALON. El bot
+      // de WhatsApp mandará WHATSAPP explícito cuando construya este request.
+      canalOrigen: req.canalOrigen,
       items: items
-    };
+    } as DtoCrearOrdenConCanal;
   }
 }

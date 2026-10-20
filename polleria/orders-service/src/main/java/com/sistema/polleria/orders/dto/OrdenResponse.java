@@ -14,6 +14,7 @@ public class OrdenResponse {
     private Long id;
     private Integer numeroCliente;
     private OrdenTipo tipo;
+    private CanalOrigen canalOrigen;
     private OrdenEstado estado;
     private Long clienteId;
     private Long mozoId;
@@ -58,6 +59,7 @@ public class OrdenResponse {
                 .id(o.getId())
                 .numeroCliente(o.getNumeroCliente())
                 .tipo(o.getTipo())
+                .canalOrigen(o.getCanalOrigen())
                 .estado(o.getEstado())
                 .clienteId(o.getClienteId())
                 .mozoId(o.getMozoId())

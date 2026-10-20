@@ -24,6 +24,15 @@ public class Orden {
     @Column(nullable = false, length = 15)
     private OrdenTipo tipo;
 
+    /**
+     * Canal por el que entró el pedido (S1). Queda nullable a propósito: las filas creadas antes
+     * de esta columna no tienen canal y no se pueden romper; el alta nueva siempre lo resuelve.
+     * Hibernate corre con ddl-auto=update, así que la columna se agrega sola.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 10)
+    private CanalOrigen canalOrigen;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     @Builder.Default

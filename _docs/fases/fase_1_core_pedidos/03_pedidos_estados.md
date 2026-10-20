@@ -14,6 +14,7 @@
 | `id` | `Long` | PK, auto-increment |
 | `tipo` | `OrdenTipo` (enum) | Not null |
 | `estado` | `OrdenEstado` (enum) | Not null, default `RECIBIDO` |
+| `canalOrigen` | `CanalOrigen` (enum) | Nullable, max 10. Canal por el que entró el pedido (S1) |
 | `clienteId` | `Long` | ID del usuario (del JWT) |
 | `mozoId` | `Long` | ID del mozo que tomó el pedido |
 | `repartidorId` | `Long` | ID del repartidor asignado |
@@ -48,6 +49,25 @@ SALON, DELIVERY, RECOJO
 ```java
 RECIBIDO, EN_PREPARACION, LISTO, EN_CAMINO, ENTREGADO, CANCELADO
 ```
+
+### CanalOrigen (Enum)
+```java
+WEB, WHATSAPP, SALON
+```
+
+Registra **por qué canal entró** el pedido (S1), para medir y auditar los pedidos de WhatsApp. La
+columna es **nullable** a propósito: las filas creadas antes de esta columna no tienen canal y no
+se rompen (`ddl-auto=update` agrega la columna solo). El alta nueva siempre lo resuelve:
+
+| Caso | Canal resultante |
+| :--- | :--- |
+| El request manda `canalOrigen` | El que mandó (debe ser `WEB`, `WHATSAPP` o `SALON`) |
+| Sin `canalOrigen` y `tipo = SALON` | `SALON` |
+| Sin `canalOrigen` y cualquier otro tipo | `WEB` |
+
+Ese default (decisión de L5) es lo que mantiene compatible al checkout web actual, que no manda el
+campo; el bot de WhatsApp manda `WHATSAPP` explícito. Un canal desconocido (p. ej. `TELEGRAM`)
+responde `400` por deserialización y **no** crea pedido.
 
 ---
 
@@ -185,6 +205,7 @@ POST /ordenes
 | Campo | Tipo | Obligatorio | Validación |
 | :--- | :--- | :---: | :--- |
 | `tipo` | `string` | ✅ | Enum: `SALON`, `DELIVERY`, `RECOJO` |
+| `canalOrigen` | `string` | ❌ | Enum: `WEB`, `WHATSAPP`, `SALON`. Sin él se deriva `SALON` para salón y `WEB` para el resto |
 | `mesaId` | `number` | Solo SALON | Obligatorio si `tipo = SALON` |
 | `direccionEntrega` | `string` | Solo DELIVERY | Obligatorio si `tipo = DELIVERY` |
 | `referencia` | `string` | ❌ | — |
@@ -201,6 +222,7 @@ POST /ordenes
 {
   "id": 42,
   "tipo": "DELIVERY",
+  "canalOrigen": "WEB",
   "estado": "RECIBIDO",
   "clienteId": 7,
   "mozoId": null,

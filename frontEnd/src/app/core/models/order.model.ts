@@ -21,6 +21,12 @@ export type OrderStatus =
 
 export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA';
 
+/**
+ * Canal por el que entró el pedido (S1). Sirve para medir y auditar los pedidos de WhatsApp:
+ * un pedido de WhatsApp es `DELIVERY`, igual que uno del checkout web, y solo el canal los distingue.
+ */
+export type OrderChannel = 'WEB' | 'WHATSAPP' | 'SALON';
+
 export interface OrderCustomerInfo {
   nombre: string;
   celular: string;
@@ -38,6 +44,8 @@ export interface Order {
   items: CartItem[];
   tipo: OrderType;
   estado: OrderStatus;
+  /** Canal de origen del pedido (S1). Opcional: las órdenes viejas no tienen canal. */
+  canalOrigen?: OrderChannel;
   /** Opcional: el listado de órdenes no trae el pago; no se inventa un método. */
   metodoPago?: PaymentMethod;
   subtotal: number;
@@ -64,5 +72,7 @@ export interface CreateOrderRequest {
     notas?: string;
   }[];
   metodoPago?: PaymentMethod;
+  /** Canal de origen (S1). El checkout web no lo manda y el backend deriva WEB o SALON. */
+  canalOrigen?: OrderChannel;
   notasGenerales?: string;
 }

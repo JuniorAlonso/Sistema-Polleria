@@ -39,6 +39,7 @@ public class OrdenService {
 
         Orden orden = Orden.builder()
                 .tipo(request.getTipo())
+                .canalOrigen(resolverCanalOrigen(request))
                 .clienteId(usuarioId)
                 // En salón el usuario autenticado es el mozo que toma la comanda: se registra
                 // también en mozoId para que la ventana del mozo y el admin lo muestren.
@@ -136,6 +137,19 @@ public class OrdenService {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
         }
         return OrdenResponse.from(orden);
+    }
+
+    /**
+     * Resuelve el canal del pedido (S1, decisión de L5). Si el request lo trae explícito se
+     * respeta; si no, se deriva del tipo: {@code SALON} para las comandas de salón y {@code WEB}
+     * para todo lo demás. Ese default es lo que mantiene compatible al checkout web actual, que
+     * no manda el campo, y quien toma pedidos por WhatsApp manda {@code WHATSAPP} explícito.
+     */
+    private CanalOrigen resolverCanalOrigen(CrearOrdenRequest request) {
+        if (request.getCanalOrigen() != null) {
+            return request.getCanalOrigen();
+        }
+        return request.getTipo() == OrdenTipo.SALON ? CanalOrigen.SALON : CanalOrigen.WEB;
     }
 
     /** Ítem de comanda validando que el producto exista y esté disponible. */
