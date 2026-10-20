@@ -410,6 +410,23 @@ PATCH /api/notificaciones/ajustes
 - `numeroAsesor` (el del admin que conecta WhatsApp desde su panel) y `numeroRespaldo` (opcional, S11/S13) se normalizan a `51 + 9 dígitos` con `src/notifications/phone.js`. El respaldo vacío, `null` o ausente queda en `null`.
 - No hay persistencia (S8): todo vive en memoria del proceso y se pierde al reiniciar, que es lo pedido.
 
+### 4.8 Pantalla del panel: «Anti-baneo y contactos» (T5b)
+
+La pestaña **Notificaciones** del panel administrativo consume estos endpoints a través de
+`WhatsappNotificationsService.obtenerAjustes()` / `actualizarAjustes(cambios)` (el token ADMIN lo agrega
+`authTokenInterceptor`, igual que en el resto del panel):
+
+- Carga `GET /api/notificaciones/ajustes` al abrir la pestaña y muestra los valores vigentes junto con el
+  estado del gobernador: si está pausado y por qué, el presupuesto consumido de hora y de día, si la ventana
+  horaria está abierta y el estado del breaker (hoy invisible desde la UI).
+- El formulario permite editar todos los campos numéricos y los dos teléfonos. El `PATCH` manda **solo los
+  campos que cambiaron** y refresca lo que devuelve el backend.
+- El respaldo es opcional: dejarlo vacío lo guarda como `null` sin tocar al asesor.
+- Un rechazo del backend se muestra **tal cual** (el mensaje de `{ error }`); la pantalla no inventa valores
+  ni simula un guardado exitoso.
+- La propia pantalla advierte con un aviso visible que los ajustes viven **en memoria** y se pierden al
+  reiniciar el servicio (S8), para que nadie los crea persistentes.
+
 ---
 
 ## 5. Esquema de Datos (Trazabilidad de Envíos)
@@ -544,6 +561,8 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] `GET /api/notificaciones/ajustes` responde `401` sin token, `403` a un no-ADMIN y `200` a `ADMIN` con los ajustes vigentes y el estado del gobernador.
 - [ ] `PATCH /api/notificaciones/ajustes` aplica el cambio en caliente (visible en el `GET` y en `/status`) y devuelve `400` con el store intacto ante un valor inválido.
 - [ ] Los números de asesor y de respaldo se guardan normalizados; el respaldo vacío es válido.
+- [ ] La pestaña Notificaciones del panel carga y edita los ajustes, muestra el estado del gobernador y advierte
+  que viven en memoria (S8).
 
 ---
 
