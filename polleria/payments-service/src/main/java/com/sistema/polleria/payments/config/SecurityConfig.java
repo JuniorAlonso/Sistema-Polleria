@@ -5,13 +5,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -31,6 +34,14 @@ public class SecurityConfig {
 
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
+
+    /**
+     * Clave compartida entre microservicios. En despliegue la resuelve la variable de entorno
+     * {@code INTERNAL_API_KEY} (relaxed binding) y no tiene valor por defecto: sin ella, el
+     * endpoint interno queda cerrado.
+     */
+    @Value("${internal.api-key:}")
+    private String internalApiKey;
 
     /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
     static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
@@ -57,6 +68,7 @@ public class SecurityConfig {
     }
 
     @Bean
+    @Order(2)
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
             .csrf(AbstractHttpConfigurer::disable)
@@ -73,6 +85,33 @@ public class SecurityConfig {
                 .contentTypeOptions(contentType -> {})
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .build();
+    }
+
+    /**
+     * Cadena exclusiva del endpoint interno de registro de comprobantes (T6a).
+     *
+     * El notification-service no tiene JWT de usuario: se autentica con {@code X-Internal-Key}.
+     * Esta cadena se separa de la general por dos motivos: exige la autoridad {@code INTERNAL}
+     * (no ADMIN, para no dar acceso a todos los pagos ni a los reembolsos) y responde
+     * {@code 401} cuando falta la clave o es inválida, en lugar del {@code 403} que usa el resto
+     * del servicio. La general no cambia.
+     */
+    @Bean
+    @Order(1)
+    public SecurityFilterChain cadenaInterna(HttpSecurity http) throws Exception {
+        return http
+            .securityMatcher("/pagos/comprobante")
+            .csrf(AbstractHttpConfigurer::disable)
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .anyRequest().hasAnyAuthority(ClaveInternaFilter.AUTORIDAD, "ROLE_" + ClaveInternaFilter.AUTORIDAD)
+            )
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
+            )
+            .addFilterBefore(new ClaveInternaFilter(internalApiKey),
+                    UsernamePasswordAuthenticationFilter.class)
             .build();
     }
 

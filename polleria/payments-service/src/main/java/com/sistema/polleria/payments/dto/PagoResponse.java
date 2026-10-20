@@ -18,7 +18,8 @@ public record PagoResponse(
     String detalle,
     LocalDateTime creadoEn,
     LocalDateTime actualizadoEn,
-    String checkoutUrl
+    String checkoutUrl,
+    String comprobanteClave
 ) {
     public PagoResponse(
         Long id,
@@ -32,7 +33,7 @@ public record PagoResponse(
         LocalDateTime creadoEn,
         LocalDateTime actualizadoEn
     ) {
-        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn, null);
+        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn, null, null);
     }
 
     public static PagoResponse from(Pago p) {
@@ -47,7 +48,8 @@ public record PagoResponse(
             p.getDetalle(),
             p.getCreadoEn(),
             p.getActualizadoEn(),
-            p.getCheckoutUrl()
+            p.getCheckoutUrl(),
+            p.getComprobanteClave()
         );
     }
 }

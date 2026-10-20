@@ -36,7 +36,7 @@ public class Pago {
     private MetodoPago metodoPago;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private EstadoPago estado = EstadoPago.PENDIENTE;
 
     /** Referencia externa de la pasarela (código de transacción, código Yape, etc.) */
@@ -50,6 +50,26 @@ public class Pago {
     /** URL de redirección a checkout (p.ej. Checkout Pro de Mercado Pago) */
     @Column(name = "checkout_url", length = 500)
     private String checkoutUrl;
+
+    /**
+     * Referencia opaca al comprobante de Yape en el bucket (la clave del objeto), no el archivo.
+     * payments-service no guarda la imagen: la sube el notification-service (T6b) y el admin la
+     * verifica (T6c). Nullable: los pagos que ya existen no se rompen.
+     */
+    @Column(name = "comprobante_clave", length = 300)
+    private String comprobanteClave;
+
+    /** Administrador que aprobó o rechazó el comprobante (T6c). Nullable. */
+    @Column(name = "verificado_por", length = 100)
+    private String verificadoPor;
+
+    /** Momento de la verificación del comprobante (T6c). Nullable. */
+    @Column(name = "verificado_en")
+    private LocalDateTime verificadoEn;
+
+    /** Motivo por el que el administrador rechazó el comprobante (T6c). Nullable. */
+    @Column(name = "motivo_rechazo", length = 300)
+    private String motivoRechazo;
 
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();

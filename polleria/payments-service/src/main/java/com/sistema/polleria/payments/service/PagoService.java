@@ -3,7 +3,9 @@ package com.sistema.polleria.payments.service;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
+import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
 import com.sistema.polleria.payments.gateway.GatewayResult;
 import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
@@ -17,8 +19,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -30,6 +34,20 @@ public class PagoService {
     private final MercadoPagoGateway mercadoPagoGateway;
     private final NotificadorOrden notificadorOrden;
     private final WhatsappNotificationClient whatsappNotificationClient;
+
+    /**
+     * Id del cliente para los pedidos anónimos de WhatsApp (S1): no hay cuenta y
+     * {@code Pago.clienteId} es NOT NULL. Mismo centinela que usa el propio servicio cuando
+     * no puede resolver un usuario autenticado.
+     */
+    private static final long CLIENTE_ANONIMO = 0L;
+
+    /**
+     * Estados en los que un comprobante nuevo todavía puede reemplazar al anterior. Aprobado,
+     * rechazado, cancelado o reembolsado ya tienen una decisión (o un cobro) y no se pisan.
+     */
+    private static final Set<EstadoPago> ESTADOS_VERIFICABLES =
+            EnumSet.of(EstadoPago.PENDIENTE, EstadoPago.PENDIENTE_VERIFICACION);
 
     @Transactional
     public PagoResponse iniciar(IniciarPagoRequest request, Long clienteId, String bearerToken) {
@@ -68,6 +86,62 @@ public class PagoService {
         log.info("Pago iniciado — id={} orden={} método={} estado={} checkoutUrl={}",
                 pago.getId(), pago.getOrdenId(), pago.getMetodoPago(), pago.getEstado(), pago.getCheckoutUrl());
 
+        return PagoResponse.from(pago);
+    }
+
+    /**
+     * Registra la evidencia de un pago por Yape hecho por WhatsApp (T6a, S6) y lo deja en
+     * {@link EstadoPago#PENDIENTE_VERIFICACION} para que el admin lo verifique (T6c).
+     *
+     * <p>Criterio de idempotencia: mientras el pago siga en un estado verificable
+     * ({@code PENDIENTE} o {@code PENDIENTE_VERIFICACION}) un registro nuevo reemplaza el
+     * comprobante anterior y la orden conserva un único pago. Si el pago ya está aprobado,
+     * rechazado, cancelado o reembolsado, la llamada es un no-op idempotente: devuelve el pago
+     * tal como está y no pisa la decisión del admin. Un reintento del notification-service
+     * (T6b) siempre encuentra el mismo pago.
+     *
+     * <p>Solo se guarda la clave del objeto en el bucket; el archivo lo sube el
+     * notification-service. No se notifica a orders-service: el pedido avanza al aprobar (T6c).
+     */
+    @Transactional
+    public PagoResponse registrarComprobante(RegistrarComprobanteRequest request) {
+        Pago existente = pagoRepository.findByOrdenId(request.ordenId()).orElse(null);
+
+        if (existente != null && !ESTADOS_VERIFICABLES.contains(existente.getEstado())) {
+            log.info("Comprobante ignorado: la orden {} ya tiene un pago en estado {}",
+                    request.ordenId(), existente.getEstado());
+            return PagoResponse.from(existente);
+        }
+
+        boolean esNuevo = existente == null;
+        Pago pago = esNuevo ? new Pago() : existente;
+        if (esNuevo) {
+            pago.setOrdenId(request.ordenId());
+            pago.setClienteId(CLIENTE_ANONIMO);
+            pago.setMonto(request.monto() != null ? request.monto() : BigDecimal.ZERO);
+        } else if (request.monto() != null) {
+            pago.setMonto(request.monto());
+        }
+
+        pago.setMetodoPago(MetodoPago.YAPE_PLIN);
+        pago.setEstado(EstadoPago.PENDIENTE_VERIFICACION);
+        pago.setComprobanteClave(request.comprobanteClave());
+        pago.setDetalle("Comprobante de Yape recibido por WhatsApp, pendiente de verificación del admin");
+        // Un comprobante nuevo reinicia la verificación: la decisión anterior ya no aplica.
+        pago.setVerificadoPor(null);
+        pago.setVerificadoEn(null);
+        pago.setMotivoRechazo(null);
+
+        try {
+            pago = pagoRepository.saveAndFlush(pago);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Carrera entre dos registros concurrentes de la misma orden: el índice único
+            // uq_pagos_orden_id deja un solo pago y el perdedor recibe 409.
+            throw new IllegalStateException("Ya existe un pago registrado para la orden " + request.ordenId());
+        }
+
+        log.info("Comprobante de Yape registrado — pago id={} orden={} nuevo={}",
+                pago.getId(), pago.getOrdenId(), esNuevo);
         return PagoResponse.from(pago);
     }
 

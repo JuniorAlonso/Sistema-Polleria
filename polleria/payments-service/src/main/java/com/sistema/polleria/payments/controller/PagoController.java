@@ -51,6 +51,19 @@ public class PagoController {
 
 
 
+    /**
+     * Registro interno de la evidencia de un pago por Yape hecho por WhatsApp (T6a, S6).
+     *
+     * No lleva JWT: lo llama el notification-service con {@code X-Internal-Key} (ver
+     * {@code SecurityConfig#cadenaInterna}). Solo guarda la referencia opaca al comprobante;
+     * el archivo lo sube el notification-service (T6b) y lo verifica el admin (T6c).
+     */
+    @PostMapping("/comprobante")
+    public PagoResponse registrarComprobante(
+            @Valid @RequestBody com.sistema.polleria.payments.dto.RegistrarComprobanteRequest request) {
+        return pagoService.registrarComprobante(request);
+    }
+
     /** Detalle de un pago */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
