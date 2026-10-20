@@ -141,7 +141,7 @@ Antes de cada envío el servicio humaniza el saliente (`src/outbound/humanizacio
 
 El delay entre envíos consecutivos deja de ser exacto: es `WHATSAPP_RATE_LIMIT_MS` ± `WHATSAPP_JITTER_PCT` por ciento. Con `jitterPct = 0` vuelve a ser el delay fijo original (RNF10).
 
-La configuración vive **en memoria** (`src/outbound/ajustes.js`, S8): los defaults salen de variables de entorno y se pueden editar en caliente con `actualizar(cambios)`; se pierden al reiniciar el proceso y ese es el comportamiento pedido. T4 solo trae el store y su uso: la API HTTP del panel es T5 y el presupuesto/ventana/circuit breaker son T4b.
+La configuración vive **en memoria** (`src/outbound/ajustes.js`, S8): los defaults salen de variables de entorno y se pueden editar en caliente con `actualizar(cambios)`; se pierden al reiniciar el proceso y ese es el comportamiento pedido. T4 trajo el store y su uso; T5 lo expone por HTTP al panel (`GET`/`PATCH /api/notificaciones/ajustes`, §4.7) y el presupuesto/ventana/circuit breaker son T4b.
 
 El azar y los timers son inyectables (`azar`, `dormir`, `ahora` en `ColaEnvios`) para que los tests sean deterministas: el jitter no llama a `Math.random` ni espera con `setTimeout` real durante la suite.
 
@@ -167,7 +167,7 @@ Sobre la misma cola única de T4 se agrega un **gobernador** en memoria (`src/ou
 - Un trabajo que cae por una señal de bloqueo se reencola **sin consumir** `WHATSAPP_MAX_INTENTOS`: la pausa del breaker lo frena y, cuando cierre, se reintenta. Ningún trabajo encolado se pierde.
 - Motivo en `/status`: `circuit-breaker`, con la señal detectada y el detalle del error original.
 
-El orden de prioridad al pausar es: circuit breaker → ventana horaria → presupuesto. La configuración de T4b se edita en caliente con `ajustes.actualizar(...)` (la API del panel es T5) y se pierde al reiniciar el proceso (S8).
+El orden de prioridad al pausar es: circuit breaker → ventana horaria → presupuesto. La configuración de T4b se edita en caliente con `ajustes.actualizar(...)` y se pierde al reiniciar el proceso (S8). El panel la administra por HTTP desde T5 (§4.7).
 
 ---
 
@@ -337,7 +337,7 @@ Solo responde si la petición viene de `127.0.0.1`/`::1` o si se incluye `?clave
 
 | Código | Cuándo |
 | :--- | :--- |
-| `400` | Faltan campos obligatorios, `ordenId` no es entero positivo, `montoTotal` no es mayor que cero, `estadoNuevo` no es un estado de delivery, o los filtros de `/historial` son inválidos. |
+| `400` | Faltan campos obligatorios, `ordenId` no es entero positivo, `montoTotal` no es mayor que cero, `estadoNuevo` no es un estado de delivery, los filtros de `/historial` son inválidos, o el `PATCH /ajustes` trae un valor inválido (el store queda intacto). |
 | `401` | Falta o es incorrecta la `X-Internal-Key` (o el token en `/historial` y `/qr`). |
 | `403` | El token de `/historial` o `/qr` no es de un `ADMIN`; la página `GET /qr` se abrió desde fuera del servidor sin `?clave=`. |
 | `422` | El teléfono no es normalizable: el envío no entra a la cola, se registra en el historial con estado `ERROR` y la cola no se bloquea. |
@@ -367,6 +367,48 @@ GET /api/notificaciones/status
 ```
 
 Valores de `whatsapp`: `starting`, `waiting_qr`, `connected`, `disconnected`, `auth_failure`. Es público (no exige token). `colaPendiente` es el contrato original y no cambia; `cola` es información extra de lo que la cola está haciendo ahora (`enProceso`, el timestamp del último envío y, con el anti-baneo activo, `pausada`/`motivo`). `antiBaneo` es `null` cuando el servicio no tiene gobernador inyectado. `breaker.estado` puede ser `cerrado`, `abierto` o `medioAbierto`; `senal` conserva la última señal de bloqueo detectada para poder auditar por qué se abrió.
+
+### 4.7 Configuración administrable desde el panel (T5, S4/S8/S11)
+
+```
+GET   /api/notificaciones/ajustes
+PATCH /api/notificaciones/ajustes
+```
+
+**Acceso:** 🔒 Solo `ADMIN` (Bearer del token de auth-service). `GET`/`PATCH` sin token → `401`; con un token que no es `ADMIN` → `403`.
+
+**GET** devuelve el store en memoria vigente y el estado del gobernador anti-baneo:
+
+```json
+{
+  "ajustes": {
+    "intervaloMs": 10000, "jitterPct": 20, "typingMinMs": 1000, "typingMaxMs": 6000,
+    "typingMsPorCaracter": 50, "presupuestoHora": 40, "presupuestoDia": 500,
+    "horaDesde": 11, "horaHasta": 23, "breakerBaseMs": 60000, "breakerMaxMs": 900000,
+    "numeroAsesor": "51999888777", "numeroRespaldo": null
+  },
+  "gobernador": {
+    "pausada": false, "motivo": null, "detalle": null,
+    "presupuestoHora": { "enviados": 3, "limite": 40 },
+    "presupuestoDia": { "enviados": 12, "limite": 500 },
+    "ventana": { "horaDesde": 11, "horaHasta": 23, "abierta": true },
+    "breaker": { "estado": "cerrado", "senal": null, "detalle": null, "aperturas": 0, "reintentoEn": 0 }
+  }
+}
+```
+
+`gobernador` es el mismo objeto que `/status` publica como `antiBaneo` (y es `null` si el servicio se construyó sin gobernador). Es lo que consume la pantalla del panel para mostrar la pausa, el presupuesto consumido, la ventana horaria y el breaker.
+
+**PATCH** aplica cambios parciales en caliente y devuelve la configuración resultante **completa** (misma forma que `ajustes` en el `GET`):
+
+```json
+{ "presupuestoHora": 20, "numeroAsesor": "999 888 777", "numeroRespaldo": "" }
+```
+
+- Los campos ausentes conservan su valor vigente; los desconocidos se ignoran.
+- Valores inválidos (por ejemplo `jitterPct > 100`, `typingMaxMs < typingMinMs`, una hora fuera de 0-23 o un teléfono con formato incorrecto) responden **`400`** con el motivo y **el store queda intacto**: la validación del store corre antes de aplicar nada.
+- `numeroAsesor` (el del admin que conecta WhatsApp desde su panel) y `numeroRespaldo` (opcional, S11/S13) se normalizan a `51 + 9 dígitos` con `src/notifications/phone.js`. El respaldo vacío, `null` o ausente queda en `null`.
+- No hay persistencia (S8): todo vive en memoria del proceso y se pierde al reiniciar, que es lo pedido.
 
 ---
 
@@ -444,6 +486,8 @@ WHATSAPP_HORA_DESDE=11                    # Inicio de la ventana de envío en ho
 WHATSAPP_HORA_HASTA=23                    # Fin de la ventana de envío en hora local, exclusivo (default: 23)
 WHATSAPP_BREAKER_BASE_MS=60000            # Backoff base del circuit breaker al detectar bloqueo (default: 60000)
 WHATSAPP_BREAKER_MAX_MS=900000            # Tope del backoff exponencial (default: 900000 = 15 min)
+WHATSAPP_NUMERO_ASESOR=                   # Celular del admin que conecta WhatsApp; se normaliza a 51+9 dígitos (default: vacío)
+WHATSAPP_NUMERO_RESPALDO=                 # Celular de respaldo opcional (S11); vacío = sin respaldo (default: vacío)
 PUPPETEER_EXECUTABLE_PATH=                # Opcional: Chrome del servidor (si no hay /usr/bin/google-chrome-stable)
 
 # Historial (RF32)
@@ -497,6 +541,9 @@ WHATSAPP_TIEMPO_ESTIMADO=35-45 min        # Solo payments-service
 - [ ] Ningún mensaje sale sin marcar visto / mostrar "escribiendo" cuando corresponde.
 - [ ] El historial registra TODOS los intentos con su estado final.
 - [ ] Un número inválido NO bloquea la cola para los siguientes mensajes.
+- [ ] `GET /api/notificaciones/ajustes` responde `401` sin token, `403` a un no-ADMIN y `200` a `ADMIN` con los ajustes vigentes y el estado del gobernador.
+- [ ] `PATCH /api/notificaciones/ajustes` aplica el cambio en caliente (visible en el `GET` y en `/status`) y devuelve `400` con el store intacto ante un valor inválido.
+- [ ] Los números de asesor y de respaldo se guardan normalizados; el respaldo vacío es válido.
 
 ---
 
@@ -511,7 +558,7 @@ src/notifications/service.js    # Registra EN_COLA → humaniza → envía → E
 src/notifications/store.js      # NotificationLog en PostgreSQL o en memoria (RF32)
 src/notifications/messages.js   # Plantillas de mensajes (RF30, RF31)
 src/notifications/phone.js      # Normalización de teléfonos peruanos (51 + 9 dígitos)
-src/outbound/ajustes.js         # Configuración anti-baneo en memoria (S8), defaults de entorno
+src/outbound/ajustes.js         # Configuración en memoria (S8): anti-baneo + números de contacto, defaults de entorno
 src/outbound/humanizacion.js    # Duración del "escribiendo" proporcional al texto (S2)
 src/outbound/breaker.js         # Detección heurística de bloqueo y circuit breaker (T4b)
 src/outbound/limites.js         # Presupuesto por hora/día y ventana horaria (T4b)

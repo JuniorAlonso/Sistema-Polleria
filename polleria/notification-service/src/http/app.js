@@ -79,7 +79,7 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
         if (origenPermitido(origen)) {
             res.setHeader('Access-Control-Allow-Origin', origen);
             res.setHeader('Vary', 'Origin');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
             res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Internal-Key');
         }
         if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -154,6 +154,45 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
             });
             responderEncolado(res, log);
         } catch (error) {
+            next(error);
+        }
+    });
+
+    // T5 (S4/S8/S11) — Configuración administrable desde el panel. Solo ADMIN: es la
+    // pantalla del administrador la que edita el anti-baneo y los números de contacto.
+    // El store vive en memoria (S8): lo que se cambie aquí se pierde al reiniciar.
+    const ajustesDelServicio = () => {
+        if (!service || !service.ajustes || typeof service.ajustes.obtener !== 'function') {
+            throw new Error('El servicio de notificaciones no expone ajustes en memoria');
+        }
+        return service.ajustes;
+    };
+
+    router.get('/ajustes', requiereRol('ADMIN'), (req, res, next) => {
+        try {
+            res.json({
+                ajustes: ajustesDelServicio().obtener(),
+                // Mismo estado que publica /status como `antiBaneo`: pausa, presupuesto
+                // consumido, ventana horaria y breaker.
+                gobernador: typeof service.estadoAntiBaneo === 'function' ? service.estadoAntiBaneo() : null
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    router.patch('/ajustes', requiereRol('ADMIN'), (req, res, next) => {
+        try {
+            const cambios = req.body;
+            if (cambios === null || typeof cambios !== 'object' || Array.isArray(cambios)) {
+                return res.status(400).json({ error: 'El cuerpo debe ser un objeto con los ajustes a cambiar' });
+            }
+            // `actualizar()` valida y lanza RangeError sin aplicar nada: el store queda intacto.
+            res.json(ajustesDelServicio().actualizar(cambios));
+        } catch (error) {
+            if (error instanceof RangeError) {
+                return res.status(400).json({ error: error.message });
+            }
             next(error);
         }
     });

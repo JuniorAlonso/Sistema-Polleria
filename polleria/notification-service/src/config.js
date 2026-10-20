@@ -2,6 +2,7 @@ const path = require('path');
 require('dotenv').config({ quiet: true });
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 const fs = require('fs');
+const { normalizarTelefono } = require('./notifications/phone');
 
 // Chrome instalado en el servidor Linux de despliegue; en Windows/macOS puppeteer usa el suyo
 const CHROME_LINUX = '/usr/bin/google-chrome-stable';
@@ -12,6 +13,11 @@ function numeroEnv(nombre, porDefecto) {
     if (bruto === undefined || bruto === '') return porDefecto;
     const valor = Number(bruto);
     return Number.isFinite(valor) ? valor : porDefecto;
+}
+
+// Teléfono de contacto configurable (T5, S4/S11): vacío o con formato inválido queda en null.
+function telefonoEnv(nombre) {
+    return normalizarTelefono(process.env[nombre]) || null;
 }
 
 const config = {
@@ -63,7 +69,12 @@ config.antiBaneo = {
 
     // Circuit breaker: backoff exponencial acotado al detectar señales de bloqueo.
     breakerBaseMs: numeroEnv('WHATSAPP_BREAKER_BASE_MS', 60000),
-    breakerMaxMs: numeroEnv('WHATSAPP_BREAKER_MAX_MS', 900000)
+    breakerMaxMs: numeroEnv('WHATSAPP_BREAKER_MAX_MS', 900000),
+
+    // Datos de contacto configurables desde el panel (T5, S4/S11/S13): el número del
+    // admin que conecta WhatsApp y el de respaldo (opcional). Se normalizan a 51+9 dígitos.
+    numeroAsesor: telefonoEnv('WHATSAPP_NUMERO_ASESOR'),
+    numeroRespaldo: telefonoEnv('WHATSAPP_NUMERO_RESPALDO')
 };
 
 module.exports = config;

@@ -125,9 +125,12 @@ test('los ajustes anti-baneo viven en memoria: defaults, edición en caliente y 
         intervaloMs: 5000, jitterPct: 10, typingMinMs: 1000, typingMaxMs: 4000, typingMsPorCaracter: 40,
         presupuestoHora: 30, presupuestoDia: 200, horaDesde: 11, horaHasta: 23, breakerBaseMs: 60000, breakerMaxMs: 900000
     });
+    // T5 suma al MISMO store los números de contacto (S4/S11); la forma exacta de `obtener()`
+    // cambia de contrato y sigue siendo un `deepStrictEqual` estricto, no una aserción débil.
     assert.deepStrictEqual(ajustes.obtener(), {
         intervaloMs: 5000, jitterPct: 10, typingMinMs: 1000, typingMaxMs: 4000, typingMsPorCaracter: 40,
-        presupuestoHora: 30, presupuestoDia: 200, horaDesde: 11, horaHasta: 23, breakerBaseMs: 60000, breakerMaxMs: 900000
+        presupuestoHora: 30, presupuestoDia: 200, horaDesde: 11, horaHasta: 23, breakerBaseMs: 60000, breakerMaxMs: 900000,
+        numeroAsesor: null, numeroRespaldo: null
     });
 
     // Edición en caliente (la usará el panel en T5) y descarte del cambio inválido.

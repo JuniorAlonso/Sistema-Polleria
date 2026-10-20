@@ -6,13 +6,16 @@
  * exactamente lo pedido. No hay persistencia: no escribir tablas ni archivos de estado.
  *
  * T4 expone el store y su uso (delay, jitter, humanización). T4b agrega el presupuesto
- * por hora/día, la ventana horaria y el backoff del circuit breaker al mismo store. La
- * API HTTP del panel es T5: no agregar rutas aquí.
+ * por hora/día, la ventana horaria y el backoff del circuit breaker al mismo store. T5
+ * expone este store por HTTP para el panel (`src/http/app.js`): los números de contacto
+ * del asesor y de respaldo (S4/S11) viven en el mismo store y se normalizan con
+ * `src/notifications/phone.js`.
  */
 
 const { antiBaneo: VALORES_POR_DEFECTO } = require('../config');
+const { normalizarTelefono } = require('../notifications/phone');
 
-const CAMPOS_AJUSTES = [
+const CAMPOS_NUMERICOS = [
     'intervaloMs',
     'jitterPct',
     'typingMinMs',
@@ -26,8 +29,13 @@ const CAMPOS_AJUSTES = [
     'breakerMaxMs'
 ];
 
+// Datos de contacto configurables (T5, S4/S11/S13): celular peruano o null si está vacío.
+const CAMPOS_TELEFONO = ['numeroAsesor', 'numeroRespaldo'];
+
+const CAMPOS_AJUSTES = [...CAMPOS_NUMERICOS, ...CAMPOS_TELEFONO];
+
 function validarNumericos(valores) {
-    for (const campo of CAMPOS_AJUSTES) {
+    for (const campo of CAMPOS_NUMERICOS) {
         const valor = valores[campo];
         if (typeof valor !== 'number' || !Number.isFinite(valor) || valor < 0) {
             throw new RangeError(`${campo} debe ser un número mayor o igual a 0`);
@@ -64,6 +72,22 @@ function validarNumericos(valores) {
     }
 }
 
+/** Normaliza los teléfonos del store: vacío o ausente → null; formato inválido → RangeError. */
+function normalizarTelefonos(valores) {
+    for (const campo of CAMPOS_TELEFONO) {
+        const bruto = valores[campo];
+        if (bruto === undefined || bruto === null || String(bruto).trim() === '') {
+            valores[campo] = null;
+            continue;
+        }
+        const numero = normalizarTelefono(bruto);
+        if (!numero) {
+            throw new RangeError(`${campo} debe ser un celular peruano válido (51 + 9 dígitos)`);
+        }
+        valores[campo] = numero;
+    }
+}
+
 /** Toma solo los campos conocidos y definidos; el resto se queda con la base. */
 function fusionar(parciales, base) {
     const valores = {};
@@ -71,6 +95,7 @@ function fusionar(parciales, base) {
         valores[campo] = parciales?.[campo] === undefined ? base[campo] : parciales[campo];
     }
     validarNumericos(valores);
+    normalizarTelefonos(valores);
     return valores;
 }
 
@@ -99,6 +124,7 @@ function crearAjustes(defaults) {
 
 module.exports = {
     CAMPOS_AJUSTES,
+    CAMPOS_TELEFONO,
     AjustesAntiBaneo,
     crearAjustes
 };
