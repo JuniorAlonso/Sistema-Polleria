@@ -52,6 +52,16 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
     @Query("SELECT o FROM Orden o WHERE o.estado IN ('RECIBIDO', 'EN_PREPARACION') ORDER BY o.creadoEn ASC")
     List<Orden> findParaCocina();
 
+    /**
+     * S10: pedidos de delivery listos y todavía sin repartidor, del más viejo al más nuevo. Es la
+     * lista que el repartidor ve para tomar un pedido; el reclamo después es atómico. Un pedido ya
+     * tomado (con repartidorId positivo) deja de ofrecerse aunque siga en LISTO.
+     */
+    @EntityGraph(attributePaths = {"items", "items.producto"})
+    @Query("SELECT o FROM Orden o WHERE o.tipo = 'DELIVERY' AND o.estado = 'LISTO' " +
+           "AND (o.repartidorId IS NULL OR o.repartidorId = 0) ORDER BY o.creadoEn ASC")
+    List<Orden> findDisponiblesParaEntrega();
+
     List<Orden> findByRepartidorIdAndEstado(Long repartidorId, OrdenEstado estado);
 
     List<Orden> findByMesaIdAndEstadoNotIn(Long mesaId, List<OrdenEstado> estados);

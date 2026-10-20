@@ -108,6 +108,32 @@ public class OrdenController {
         return ResponseEntity.ok(ordenService.listarParaCocina());
     }
 
+    /**
+     * S10 — el repartidor ve los pedidos que puede tomar: delivery en LISTO y todavía sin
+     * repartidor. Ni los de salón, ni los de recojo, ni los que la cocina no terminó.
+     */
+    @GetMapping("/disponibles")
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR')")
+    public ResponseEntity<List<OrdenResponse>> listarDisponiblesParaEntrega() {
+        return ResponseEntity.ok(ordenService.listarDisponiblesParaEntrega());
+    }
+
+    /**
+     * S10 — el repartidor toma el pedido. El reclamo es atómico: dos intentos simultáneos se
+     * serializan con bloqueo pesimista y el que pierde recibe 409, así que un pedido nunca se
+     * reparte dos veces. No cambia el estado: el repartidor lo pasa a EN_CAMINO con
+     * {@code PATCH /ordenes/{id}/estado}, que ya exige tener repartidor asignado.
+     */
+    @PostMapping("/{id}/reclamo")
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR')")
+    public ResponseEntity<OrdenResponse> reclamarParaEntrega(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                ordenService.reclamarParaEntrega(id, extraerUserId(authentication)));
+    }
+
     @GetMapping("/activos")
     @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
     public ResponseEntity<List<OrdenResponse>> listarActivos() {

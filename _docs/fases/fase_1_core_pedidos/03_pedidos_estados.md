@@ -381,6 +381,53 @@ PATCH /ordenes/{id}/estado
 
 ---
 
+### 8. Listar Pedidos Disponibles para Entrega (RF18)
+
+```
+GET /ordenes/disponibles
+```
+
+**Acceso:** 🔒 Solo `ADMIN`, `REPARTIDOR`
+
+Retorna los pedidos que el repartidor puede tomar: de tipo `DELIVERY`, en estado `LISTO` y sin
+`repartidorId`. Ordenados del más viejo al más nuevo. No aparecen los pedidos de salón, ni los de
+recojo, ni los delivery que la cocina todavía no terminó, ni los que ya tomó otro repartidor.
+
+**Response `200 OK`:** `OrdenResponse[]`
+
+---
+
+### 9. Tomar un Pedido para Entrega — Reclamo Atómico (RF18)
+
+```
+POST /ordenes/{id}/reclamo
+```
+
+**Acceso:** 🔒 Solo `ADMIN`, `REPARTIDOR`
+
+Asigna el pedido al repartidor autenticado (`repartidorId` = `userId` del JWT). No recibe cuerpo.
+
+**Response `200 OK`:** `OrdenResponse` con `repartidorId` asignado y **el estado sin cambios**
+(sigue en `LISTO`). Pasar a `EN_CAMINO` sigue siendo un `PATCH /ordenes/{id}/estado` aparte, que
+ya exige tener repartidor asignado.
+
+**Errores:**
+| Código | Cuándo |
+| :--- | :--- |
+| `404` | El pedido no existe |
+| `409` | El pedido ya fue tomado por un repartidor (`"El pedido #N ya fue tomado por un repartidor."`) |
+| `409` | No es `DELIVERY` (`"Solo los pedidos de delivery se pueden tomar para entrega…"`) |
+| `409` | Es `DELIVERY` pero no está `LISTO` (`"El pedido #N todavía no está listo para entregar…"`) |
+| `403` | Un rol que no reparte (`CLIENTE`, `MOZO`, `COCINA`, `CAJERO`) intenta tomarlo |
+
+**Reclamo atómico (S10):** el reparto de un pedido no puede duplicarse. El servicio toma la fila
+con bloqueo pesimista (`buscarConBloqueo`) más el `@Version` de la entidad, así que si dos
+repartidores reclaman a la vez uno recibe `200` y el otro `409`; en la base queda un único
+`repartidorId`. Lo prueba `ReclamoPedidoConcurrenteTest` (seis reclamos simultáneos, exactamente
+un ganador).
+
+---
+
 ## Uso desde el Frontend
 
 ```typescript

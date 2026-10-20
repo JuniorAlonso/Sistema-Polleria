@@ -196,6 +196,15 @@ public class OrdenService {
         return ordenRepository.findParaCocina().stream().map(OrdenResponse::from).toList();
     }
 
+    /**
+     * S10: pedidos de delivery listos que todavía no tomó ningún repartidor, del más viejo al más
+     * nuevo. Un pedido ya tomado no aparece aunque siga en LISTO.
+     */
+    @Transactional(readOnly = true)
+    public List<OrdenResponse> listarDisponiblesParaEntrega() {
+        return ordenRepository.findDisponiblesParaEntrega().stream().map(OrdenResponse::from).toList();
+    }
+
     @Transactional(readOnly = true)
     public List<OrdenResponse> listarPorCliente(Long clienteId) {
         return ordenRepository.findByClienteIdOrderByCreadoEnDesc(clienteId)
@@ -291,6 +300,50 @@ public class OrdenService {
         if (orden.getMesa() != null) {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
         }
+        return OrdenResponse.from(orden);
+    }
+
+    /**
+     * S10 — reclamo atómico del pedido por parte del repartidor.
+     *
+     * El bloqueo pesimista sobre la fila es lo que garantiza que un pedido no se reparta dos
+     * veces: si dos repartidores reclaman a la vez, el segundo espera a que el primero confirme y
+     * después ve el {@code repartidorId} ya asignado, así que recibe 409 en vez de pisarlo (el
+     * {@code @Version} de la entidad es la segunda red por si la escritura no pasara por el lock).
+     *
+     * No cambia el estado: pasar a {@code EN_CAMINO} sigue siendo la acción explícita y separada
+     * del repartidor, y esa transición ya exige que haya {@code repartidorId} — justo lo que este
+     * reclamo provee.
+     */
+    @Transactional
+    public OrdenResponse reclamarParaEntrega(Long id, Long repartidorId) {
+        if (repartidorId == null || repartidorId <= 0) {
+            throw new IllegalArgumentException("No se pudo identificar al repartidor que toma el pedido.");
+        }
+
+        Orden orden = buscarOFallarConBloqueo(id);
+
+        if (orden.getTipo() != OrdenTipo.DELIVERY) {
+            throw new ConflictoDeEstadoException(
+                    "Solo los pedidos de delivery se pueden tomar para entrega; el pedido #" + id
+                    + " es de tipo " + orden.getTipo() + ".");
+        }
+
+        if (orden.getEstado() != OrdenEstado.LISTO) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " todavía no está listo para entregar (estado actual: "
+                    + orden.getEstado() + ").");
+        }
+
+        if (orden.getRepartidorId() != null && orden.getRepartidorId() > 0) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " ya fue tomado por un repartidor.");
+        }
+
+        orden.setRepartidorId(repartidorId);
+        ordenRepository.save(orden);
+        log.info("Pedido #{} tomado por el repartidor {} para entrega (sigue en {})",
+                id, repartidorId, orden.getEstado());
         return OrdenResponse.from(orden);
     }
 
