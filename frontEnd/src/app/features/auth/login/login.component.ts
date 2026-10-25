@@ -194,6 +194,8 @@ export class LoginComponent {
       this.router.navigate(['/mozo']);
     } else if (rol === 'REPARTIDOR') {
       this.router.navigate(['/delivery']);
+    } else if (rol === 'CAJERO') {
+      this.router.navigate(['/cajero']);
     } else {
       this.router.navigate(['/menu']);
     }

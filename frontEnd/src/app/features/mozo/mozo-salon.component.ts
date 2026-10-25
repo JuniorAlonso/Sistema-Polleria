@@ -1789,7 +1789,8 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     if (!m) return;
 
     if (m.ordenId) {
-      this.ordersService.updateOrderStatus(m.ordenId, 'COMPLETADO').subscribe({
+      const estadoActual = this.comandaMesa()?.estado;
+      this.ordersService.completarOrdenSalon(m.ordenId, estadoActual).subscribe({
         next: () => {
           this.salonService.cargarMesas();
           this.ordersService.loadActiveOrders();

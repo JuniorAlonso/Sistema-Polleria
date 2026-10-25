@@ -126,6 +126,7 @@ export class NavbarComponent {
     if (rol === 'CHEF') return '/cocina';
     if (rol === 'MOZO') return '/mozo';
     if (rol === 'REPARTIDOR') return '/delivery';
+    if (rol === 'CAJERO') return '/cajero';
     return '/admin';
   }
 }

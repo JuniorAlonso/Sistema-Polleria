@@ -30,12 +30,31 @@ export const staffGuard: CanActivateFn = (route, state) => {
     return false;
   }
 
-  // Si es personal de Cocina intentando entrar a /admin
+  // Si es personal intentando entrar a /admin sin ser ADMIN
   if (user.rol === 'CHEF' && state.url.startsWith('/admin')) {
     router.navigate(['/cocina']);
     return false;
   }
+  if (user.rol === 'MOZO' && state.url.startsWith('/admin')) {
+    router.navigate(['/mozo']);
+    return false;
+  }
+  if (user.rol === 'REPARTIDOR' && state.url.startsWith('/admin')) {
+    router.navigate(['/delivery']);
+    return false;
+  }
+  if (user.rol === 'CAJERO' && state.url.startsWith('/admin')) {
+    router.navigate(['/cajero']);
+    return false;
+  }
 
-  // Si es Admin, Mozo, Chef o Repartidor en su ruta correspondiente
+  // Si intentan entrar a /cajero sin ser CAJERO o ADMIN
+  if (state.url.startsWith('/cajero') && user.rol !== 'CAJERO' && user.rol !== 'ADMIN') {
+    notify.showError('Solo el personal de caja o administración puede acceder al módulo de caja.');
+    router.navigate(['/admin']);
+    return false;
+  }
+
+  // Si es Admin, Mozo, Chef, Repartidor o Cajero en su ruta correspondiente
   return true;
 };

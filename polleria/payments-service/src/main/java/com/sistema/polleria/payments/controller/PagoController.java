@@ -28,10 +28,13 @@ public class PagoController {
     private final MercadoPagoGateway mercadoPagoGateway;
     private final FirmadorComprobantes firmadorComprobantes;
 
-    /** Iniciar pago — CLIENTE, MOZO (para delivery/recojo online) */
+    /**
+     * Iniciar pago — CLIENTE, MOZO, CAJERO (para delivery/recojo online y cobro en
+     * caja)
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
     public PagoResponse iniciar(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal,
@@ -41,10 +44,13 @@ public class PagoController {
         return pagoService.iniciar(request, clienteId, authorization != null ? authorization : "");
     }
 
-    /** Crear Preferencia de Mercado Pago (Checkout Pro) — requiere usuario autenticado */
+    /**
+     * Crear Preferencia de Mercado Pago (Checkout Pro) — requiere usuario
+     * autenticado
+     */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
     public PreferenceResponse crearPreferenciaMercadoPago(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal) {
@@ -53,14 +59,16 @@ public class PagoController {
         return mercadoPagoGateway.crearPreferencia(request, clienteId);
     }
 
-
-
     /**
-     * Registro interno de la evidencia de un pago por Yape hecho por WhatsApp (T6a, S6).
+     * Registro interno de la evidencia de un pago por Yape hecho por WhatsApp (T6a,
+     * S6).
      *
-     * No lleva JWT: lo llama el notification-service con {@code X-Internal-Key} (ver
-     * {@code SecurityConfig#cadenaInterna}). Solo guarda la referencia opaca al comprobante;
-     * el archivo lo sube el notification-service (T6b) y lo verifica el admin (T6c).
+     * No lleva JWT: lo llama el notification-service con {@code X-Internal-Key}
+     * (ver
+     * {@code SecurityConfig#cadenaInterna}). Solo guarda la referencia opaca al
+     * comprobante;
+     * el archivo lo sube el notification-service (T6b) y lo verifica el admin
+     * (T6c).
      */
     @PostMapping("/comprobante")
     public PagoResponse registrarComprobante(
@@ -69,11 +77,15 @@ public class PagoController {
     }
 
     /**
-     * Verificación del comprobante de Yape (T6c, S6). **Exclusiva de ADMIN**: el rol {@code CAJERO}
-     * no se toca. Aprobar avanza la orden con el mismo mecanismo del pago aprobado de Mercado Pago;
+     * Verificación del comprobante de Yape (T6c, S6). **Exclusiva de ADMIN**: el
+     * rol {@code CAJERO}
+     * no se toca. Aprobar avanza la orden con el mismo mecanismo del pago aprobado
+     * de Mercado Pago;
      * rechazar exige {@code motivoRechazo} y deja la orden impaga.
      *
-     * <p>Solo se puede verificar un comprobante en {@code PENDIENTE_VERIFICACION} (si no, 409).
+     * <p>
+     * Solo se puede verificar un comprobante en {@code PENDIENTE_VERIFICACION} (si
+     * no, 409).
      */
     @PostMapping("/{id}/verificar")
     @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
@@ -88,16 +100,16 @@ public class PagoController {
 
     /** Detalle de un pago */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
-    public PagoResponse obtener(@PathVariable Long id, Authentication authentication) {
-        return conComprobanteSegunRol(pagoService.obtener(id), authentication);
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
+    public PagoResponse obtener(@PathVariable Long id) {
+        return pagoService.obtener(id);
     }
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
-    public PagoResponse porOrden(@PathVariable Long ordenId, Authentication authentication) {
-        return conComprobanteSegunRol(pagoService.obtenerPorOrden(ordenId), authentication);
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
+    public PagoResponse porOrden(@PathVariable Long ordenId) {
+        return pagoService.obtenerPorOrden(ordenId);
     }
 
     /** Mis pagos — historial del cliente autenticado */
@@ -109,9 +121,9 @@ public class PagoController {
                 .toList();
     }
 
-    /** Todos los pagos — solo ADMIN / finanzas */
+    /** Todos los pagos — ADMIN / CAJERO / finanzas */
     @GetMapping
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
     public List<PagoResponse> todos() {
         return pagoService.todos();
     }
@@ -122,7 +134,7 @@ public class PagoController {
      * y debe validar un HMAC-secret propio de la pasarela (implementación futura).
      */
     @PatchMapping("/{id}/confirmar")
-    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse confirmar(
             @PathVariable Long id,
             @Valid @RequestBody ConfirmarPagoRequest req,
@@ -165,8 +177,10 @@ public class PagoController {
     // ─── util ────────────────────────────────────────────────────────
 
     /**
-     * El comprobante de Yape solo lo puede ver un ADMIN (T6c, S7): para él se firma una URL de vida
-     * corta; cualquier otro rol recibe la respuesta sin la clave del objeto ni la URL, porque el
+     * El comprobante de Yape solo lo puede ver un ADMIN (T6c, S7): para él se firma
+     * una URL de vida
+     * corta; cualquier otro rol recibe la respuesta sin la clave del objeto ni la
+     * URL, porque el
      * bucket se mantiene privado. Los pagos sin comprobante no cambian.
      */
     private PagoResponse conComprobanteSegunRol(PagoResponse pago, Authentication authentication) {
@@ -177,8 +191,10 @@ public class PagoController {
     }
 
     /**
-     * Igual que {@link #conComprobanteSegunRol} pero sin firmar URL: para las respuestas de cambio
-     * de estado solo hace falta que un rol distinto de {@code ADMIN} no reciba la clave del objeto.
+     * Igual que {@link #conComprobanteSegunRol} pero sin firmar URL: para las
+     * respuestas de cambio
+     * de estado solo hace falta que un rol distinto de {@code ADMIN} no reciba la
+     * clave del objeto.
      */
     private PagoResponse soloAdminVeElComprobante(PagoResponse pago, Authentication authentication) {
         return esAdmin(authentication) ? pago : pago.sinComprobante();
@@ -195,8 +211,10 @@ public class PagoController {
     private Long extractUserId(Principal principal) {
         if (principal instanceof UsernamePasswordAuthenticationToken token) {
             Object creds = token.getCredentials();
-            if (creds instanceof Long id) return id;
-            if (creds instanceof Integer id) return id.longValue();
+            if (creds instanceof Long id)
+                return id;
+            if (creds instanceof Integer id)
+                return id.longValue();
         }
         return 0L;
     }
