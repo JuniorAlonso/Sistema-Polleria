@@ -101,15 +101,15 @@ public class PagoController {
     /** Detalle de un pago */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
-    public PagoResponse obtener(@PathVariable Long id) {
-        return pagoService.obtener(id);
+    public PagoResponse obtener(@PathVariable Long id, Authentication authentication) {
+        return conComprobanteSegunRol(pagoService.obtener(id), authentication);
     }
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
-    public PagoResponse porOrden(@PathVariable Long ordenId) {
-        return pagoService.obtenerPorOrden(ordenId);
+    public PagoResponse porOrden(@PathVariable Long ordenId, Authentication authentication) {
+        return conComprobanteSegunRol(pagoService.obtenerPorOrden(ordenId), authentication);
     }
 
     /** Mis pagos — historial del cliente autenticado */

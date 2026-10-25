@@ -145,7 +145,7 @@ export interface BackendActualizarEstadoRequest {
 // --- 1.4 Pagos (:8083) ---
 export type BackendMetodoPago = 'CONTRAENTREGA' | 'TARJETA' | 'YAPE_PLIN';
 
-export type BackendEstadoPago = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
+export type BackendEstadoPago = 'PENDIENTE' | 'PENDIENTE_VERIFICACION' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
 
 export interface BackendIniciarPagoRequest {
   ordenId: number;
@@ -166,4 +166,7 @@ export interface BackendPagoResponse {
   detalle?: string;
   creadoEn: string;
   actualizadoEn?: string;
+  checkoutUrl?: string;
+  comprobanteClave?: string;
+  comprobanteUrl?: string;
 }

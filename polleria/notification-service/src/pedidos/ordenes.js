@@ -14,9 +14,10 @@
 const URL_POR_DEFECTO = 'http://localhost:8082';
 
 class ClienteOrdenes {
-    constructor({ baseUrl = URL_POR_DEFECTO, timeoutMs = 5000, fetchImpl } = {}) {
+    constructor({ baseUrl = URL_POR_DEFECTO, timeoutMs = 5000, internalKey, fetchImpl } = {}) {
         this.baseUrl = String(baseUrl || URL_POR_DEFECTO).replace(/\/+$/, '');
         this.timeoutMs = timeoutMs;
+        this.internalKey = internalKey || null;
         this.fetchImpl = fetchImpl || globalThis.fetch;
     }
 
@@ -39,6 +40,33 @@ class ClienteOrdenes {
                 throw new Error('orders-service devolvió una orden inválida');
             }
             return orden;
+        } finally {
+            clearTimeout(temporizador);
+        }
+    }
+
+    /** Consulta la orden por ID usando X-Internal-Key. Devuelve null si no existe (404). */
+    async obtener(id) {
+        const idLimpio = String(id || '').replace(/\D/g, '');
+        if (!idLimpio) return null;
+        const controlador = new AbortController();
+        const temporizador = setTimeout(() => controlador.abort(), this.timeoutMs);
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.internalKey) {
+                headers['X-Internal-Key'] = this.internalKey;
+            }
+            const res = await this.fetchImpl(`${this.baseUrl}/ordenes/${idLimpio}`, {
+                method: 'GET',
+                headers,
+                signal: controlador.signal
+            });
+            if (res && res.status === 404) return null;
+            if (!res || res.ok === false) {
+                throw new Error(`orders-service respondió ${res ? res.status : 'sin respuesta'}`);
+            }
+            const orden = await res.json();
+            return orden && typeof orden === 'object' ? orden : null;
         } finally {
             clearTimeout(temporizador);
         }

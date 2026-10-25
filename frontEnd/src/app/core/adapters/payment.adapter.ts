@@ -36,6 +36,7 @@ export class PaymentAdapter {
   static toPaymentStatus(backendEstado: BackendEstadoPago | string): PaymentStatus {
     if (!backendEstado) return 'PENDIENTE';
     const e = backendEstado.toUpperCase();
+    if (e === 'PENDIENTE_VERIFICACION') return 'PENDIENTE_VERIFICACION';
     if (e === 'APROBADO') return 'APROBADO';
     if (e === 'RECHAZADO') return 'RECHAZADO';
     if (e === 'CANCELADO') return 'CANCELADO';
@@ -53,7 +54,7 @@ export class PaymentAdapter {
       monto: typeof dto.monto === 'number' ? dto.monto : parseFloat(String(dto.monto)) || 0,
       estado: this.toPaymentStatus(dto.estado),
       numeroOperacion: dto.referenciaExterna || undefined,
-      comprobanteUrl: undefined,
+      comprobanteUrl: dto.comprobanteUrl || undefined,
       fechaTransaccion: dto.creadoEn || new Date().toISOString()
     };
   }

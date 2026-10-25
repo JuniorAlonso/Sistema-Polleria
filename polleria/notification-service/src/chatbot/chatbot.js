@@ -37,6 +37,7 @@ const {
     MENSAJE_COMPROBANTE_FALLO_REGISTRO,
     mensajeSinPedidoConfirmado,
     mensajeComprobanteRecibido,
+    numeroDePedido,
     lineaContacto,
     respuestaAsesor,
     mensajeSinServicio,
@@ -56,6 +57,7 @@ const ESTADO_CATALOGO = 'CATALOGO';
 const ESTADO_ESPERANDO_DIRECCION = 'ESPERANDO_DIRECCION';
 const ESTADO_ESPERANDO_REFERENCIA = 'ESPERANDO_REFERENCIA';
 const ESTADO_PEDIDO_CONFIRMADO = 'PEDIDO_CONFIRMADO';
+const ESTADO_COMPROBANTE_RECIBIDO = 'COMPROBANTE_RECIBIDO';
 const ESTADO_ESPERANDO_CODIGO = 'ESPERANDO_CODIGO_PEDIDO';
 
 const SALUDOS = ['hola', 'holi', 'buenas', 'menu', 'opciones'];
@@ -64,6 +66,33 @@ const NEGATIVOS = ['no', 'n', 'no soy de ica'];
 const CONFIRMAR = ['confirmar', 'confirmo', 'finalizar', 'finalizo', 'terminar', 'termino', 'pagar'];
 const VER_CARRITO = ['carrito', 'ver carrito', 'mi carrito'];
 const VER_CARTA = ['carta', 'menu', 'catalogo', 'la carta', 'ver carta'];
+const AGRADECIMIENTOS = ['ok', 'okok', 'oki', 'okey', 'gracias', 'muchas gracias', 'gracia', 'listo', 'perfecto', 'vale', 'dale', 'chevere', 'genial'];
+
+function esMensajeAgradecimiento(texto) {
+    if (!texto) return false;
+    const limpio = String(texto || '').toLowerCase().replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!limpio) return false;
+    if (AGRADECIMIENTOS.includes(limpio)) return true;
+    return AGRADECIMIENTOS.some(p => limpio === p || limpio.startsWith(p + ' ') || limpio.endsWith(' ' + p) || limpio.includes(' ' + p + ' '));
+}
+
+const CANCELACIONES = ['cancelar', 'cancela', 'cancelar pedido', 'salir', 'reiniciar', 'abortar', 'anular', 'volver'];
+
+function esCancelacion(texto) {
+    if (!texto) return false;
+    const limpio = String(texto || '').toLowerCase().replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!limpio) return false;
+    if (CANCELACIONES.includes(limpio)) return true;
+    return CANCELACIONES.some(c => limpio === c || limpio.startsWith(c + ' ') || limpio.endsWith(' ' + c));
+}
+
+function esSaludo(texto) {
+    if (!texto) return false;
+    const limpio = String(texto || '').toLowerCase().replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!limpio) return false;
+    if (SALUDOS.includes(limpio)) return true;
+    return SALUDOS.some(s => limpio === s || limpio.startsWith(s + ' ') || limpio.endsWith(' ' + s));
+}
 
 function sinDiacriticos(texto) {
     return String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -75,6 +104,15 @@ function textoDe(msg) {
 
 function textoCrudo(msg) {
     return String(msg.body || msg.caption || '').trim();
+}
+
+function sanitizarTexto(texto, maxLen = 200) {
+    if (!texto) return '';
+    return String(texto)
+        .replace(/<[^>]*>?/gm, '')
+        .replace(/[\r\n\t]+/g, ' ')
+        .trim()
+        .slice(0, maxLen);
 }
 
 /** Clave de conversación: el celular normalizado (S12:S1) y, si no, el `from` crudo. */
@@ -115,13 +153,19 @@ function esIntentoDePedido(texto) {
 }
 
 function esAfirmativo(texto) {
-    if (AFIRMATIVOS.includes(texto)) return true;
-    return AFIRMATIVOS.includes(texto.split(/\s+/)[0]);
+    if (!texto) return false;
+    const limpio = String(texto || '').replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (AFIRMATIVOS.includes(limpio)) return true;
+    const primeraPalabra = limpio.split(/\s+/)[0];
+    return AFIRMATIVOS.includes(primeraPalabra) || AFIRMATIVOS.some(a => limpio === a || limpio.startsWith(a + ' '));
 }
 
 function esNegativo(texto) {
-    if (NEGATIVOS.includes(texto)) return true;
-    return NEGATIVOS.includes(texto.split(/\s+/)[0]);
+    if (!texto) return false;
+    const limpio = String(texto || '').replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (NEGATIVOS.includes(limpio)) return true;
+    const primeraPalabra = limpio.split(/\s+/)[0];
+    return NEGATIVOS.includes(primeraPalabra) || NEGATIVOS.some(n => limpio === n || limpio.startsWith(n + ' '));
 }
 
 class BotPedidos {
@@ -159,17 +203,46 @@ class BotPedidos {
         const texto = textoDe(msg);
         const estado = guardado.estado || ESTADO_MENU;
 
-        // Recepción del comprobante de Yape (T6b): una imagen solo se procesa cuando la
-        // conversación tiene un pedido confirmado; cualquier otra cosa pide una imagen.
+        // Recepción del comprobante de Yape (T6b) y tipos multimedia especiales
         if (esMensajeConMedia(msg)) {
+            const tipo = String((msg && msg.type) || '').toLowerCase();
+            if (tipo === 'ptt' || tipo === 'audio') {
+                return '🎙️ Por el momento no puedo procesar notas de voz. Por favor escribe tu mensaje en texto o responde con las opciones del menú. 🍗';
+            }
+            if (tipo === 'location') {
+                return '📍 Recibí tu ubicación. Por favor escribe también la dirección exacta en texto (calle, número y referencia) para que nuestro repartidor pueda llegar con precisión.';
+            }
+            if (tipo === 'vcard' || tipo === 'multi_vcard') {
+                return '👤 Recibí una tarjeta de contacto. Si deseas asistencia directa, puedes escribir *4* para comunicarte con nuestro equipo.';
+            }
+            if (tipo === 'sticker') {
+                if (estado === ESTADO_PEDIDO_CONFIRMADO) {
+                    return '📸 Por favor envía una *foto o captura real* de tu transferencia por Yape (un sticker no es válido como comprobante).';
+                }
+                return '🍗 ¡Gracias por tu sticker! Escribe *hola* para ver el menú o haz tu pedido enviando el número del producto.';
+            }
+
             logger.info(`Mensaje de "${clave}" detectado como media (hasMedia=${Boolean(msg && msg.hasMedia)}, type="${msg && msg.type}"). Derivando a receptor de comprobantes.`);
             return this._resolverComprobante(msg, clave, guardado);
+        }
+
+        // Cancelación en cualquier estado que no sea MENU
+        if (esCancelacion(texto) && estado !== ESTADO_MENU) {
+            await this.conversacion.del(clave);
+            return '❌ Operación cancelada. Escribe *hola* o *menu* cuando desees iniciar un nuevo pedido o consultar algo. 🍗';
+        }
+
+        // Volver al menú principal desde estados previos a confirmación
+        if ((['menu', 'inicio', 'volver al menu', 'ver menu'].includes(texto) || esSaludo(texto)) &&
+            [ESTADO_CONFIRMANDO_ICA, ESTADO_ESPERANDO_DIRECCION, ESTADO_ESPERANDO_REFERENCIA, ESTADO_ESPERANDO_CODIGO].includes(estado)) {
+            await this.conversacion.set(clave, { estado: ESTADO_MENU });
+            return getMainMenu();
         }
 
         if (estado === ESTADO_ESPERANDO_CODIGO) {
             await this.conversacion.del(clave);
             const codigo = textoCrudo(msg);
-            return `Recibí tu código de pedido: *${codigo}*`;
+            return this._consultarPedido(clave, codigo);
         }
 
         if (estado === ESTADO_ESPERANDO_DIRECCION) {
@@ -188,14 +261,34 @@ class BotPedidos {
             return this._resolverCatalogo(msg, texto, clave, guardado);
         }
 
+        if (estado === ESTADO_COMPROBANTE_RECIBIDO || (estado === ESTADO_PEDIDO_CONFIRMADO && guardado.comprobanteRecibido)) {
+            if (esMensajeAgradecimiento(texto)) {
+                return '¡Con gusto! Te avisaremos por este chat tan pronto tu pedido sea confirmado por el administrador. 🍗';
+            }
+            return (
+                `✅ Ya recibimos el comprobante de tu pedido N.° *${numeroDePedido(guardado.pedido)}*.\n\n` +
+                'Un administrador lo está revisando y te confirmaremos en cuanto sea validado por este chat. ⏳'
+            );
+        }
+
         if (estado === ESTADO_PEDIDO_CONFIRMADO) {
+            if (guardado.motivoRechazo) {
+                return (
+                    `⚠️ Tu comprobante anterior no pudo ser validado: *${guardado.motivoRechazo}*.\n\n` +
+                    `Por favor envíanos una nueva foto o captura clara de tu transferencia por *Yape* para tu pedido N.° *${numeroDePedido(guardado.pedido)}*. 📸`
+                );
+            }
             // Idempotencia (T3b): el pedido ya se creó; se recuerda sin crear otro y se
             // pide la imagen del comprobante (T6b) si lo que llegó no es una imagen.
             return mensajePedidoYaConfirmado(guardado.pedido, this.ajustes);
         }
 
         // Estado MENU
-        if (SALUDOS.includes(texto)) return getMainMenu();
+        if (esSaludo(texto)) return getMainMenu();
+
+        if (esMensajeAgradecimiento(texto)) {
+            return '¡A ti! Que disfrutes tu pedido. Si necesitas algo más o deseas hacer un nuevo pedido, escribe *hola* para ver el menú. 🍗';
+        }
 
         if (texto === '1' || esIntentoDePedido(texto)) {
             await this.conversacion.set(clave, { estado: ESTADO_CONFIRMANDO_ICA });
@@ -246,8 +339,9 @@ class BotPedidos {
     }
 
     async _resolverDireccion(msg, clave, guardado) {
-        const direccion = textoCrudo(msg);
-        if (!direccion) return PREGUNTA_DIRECCION;
+        const crudo = textoCrudo(msg).replace(/^(?:mi direccion es|direccion)\s*:?\s*/i, '');
+        const direccion = sanitizarTexto(crudo, 250);
+        if (!direccion || direccion.length < 3) return PREGUNTA_DIRECCION;
 
         const nuevo = { ...guardado, direccion };
         if (!nuevo.referencia) {
@@ -258,7 +352,8 @@ class BotPedidos {
     }
 
     async _resolverReferencia(msg, clave, guardado) {
-        const referencia = textoCrudo(msg);
+        const crudo = textoCrudo(msg).replace(/^(?:mi referencia es|referencia)\s*:?\s*/i, '');
+        const referencia = sanitizarTexto(crudo, 180);
         if (!referencia) return PREGUNTA_REFERENCIA;
 
         // "sin referencia" y equivalentes quedan como texto explícito, no como dato faltante.
@@ -275,6 +370,12 @@ class BotPedidos {
             return this._mostrarCatalogo(clave, guardado);
         }
 
+        if (['vaciar', 'vaciar carrito', 'limpiar carrito', 'borrar todo'].includes(texto)) {
+            const nuevo = { ...guardado, carrito: [] };
+            await this.conversacion.set(clave, nuevo);
+            return '🛒 Se vació tu carrito. Puedes volver a agregar productos de la carta enviando su número.';
+        }
+
         const quitar = texto.match(/^(?:quitar|borrar|eliminar)\s+(\d+)$/);
         if (quitar) {
             return this._quitarDelCarrito(clave, guardado, Number(quitar[1]));
@@ -282,22 +383,50 @@ class BotPedidos {
 
         // Nombre y notas se capturan del texto original para no perder mayúsculas.
         const crudo = sinDiacriticos(textoCrudo(msg));
-        const nota = crudo.match(/^(?:nota|notas|observacion|observaciones)\s*:?\s*(.+)$/i);
+        const nota = crudo.match(/^(?:nota|notas|observacion|observaciones)\s*:?\s*([\s\S]+)$/i);
         if (nota) {
-            const nuevo = { ...guardado, observaciones: nota[1].trim() };
+            const observaciones = sanitizarTexto(nota[1], 250);
+            const nuevo = { ...guardado, observaciones };
             await this.conversacion.set(clave, nuevo);
             return '📝 Anoté tu indicación. ' + formatearCarrito(nuevo.carrito);
         }
 
-        const nombre = crudo.match(/^(?:mi nombre es|nombre)\s*:?\s*(.+)$/i);
+        const nombre = crudo.match(/^(?:mi nombre es|nombre)\s*:?\s*([\s\S]+)$/i);
         if (nombre) {
-            const nuevo = { ...guardado, nombre: nombre[1].trim() };
+            const nombreCliente = sanitizarTexto(nombre[1], 90);
+            const nuevo = { ...guardado, nombre: nombreCliente };
             await this.conversacion.set(clave, nuevo);
             return `Gracias, ${nuevo.nombre}. ` + formatearCarrito(nuevo.carrito);
         }
 
         if (CONFIRMAR.includes(texto)) {
             return this._confirmar(clave, guardado);
+        }
+
+        // Cantidad con producto: "2 de 1", "2 del 1", "2 x 1", "2x 1"
+        const patronCantidad = texto.match(/^(\d+)\s*(?:de|del|x|\*)\s*(\d+)$/i);
+        if (patronCantidad) {
+            const numA = Number(patronCantidad[1]);
+            const numB = Number(patronCantidad[2]);
+            const catalogo = guardado.catalogo || [];
+            let cantidad = 1;
+            let productoNum = numA;
+            if (numB >= 1 && numB <= catalogo.length) {
+                cantidad = numA;
+                productoNum = numB;
+            } else if (numA >= 1 && numA <= catalogo.length) {
+                cantidad = numB;
+                productoNum = numA;
+            }
+            if (cantidad > 50) {
+                return (
+                    '⚠️ Para pedidos mayores a 50 unidades, por favor comunícate directamente con un asesor escribiendo *4* en el menú.\n\n' +
+                    lineaContacto(this.ajustes)
+                );
+            }
+            if (cantidad > 0) {
+                return this._agregarAlCarrito(clave, guardado, productoNum, cantidad);
+            }
         }
 
         if (/^\d+$/.test(texto)) {
@@ -311,7 +440,8 @@ class BotPedidos {
         return this._mostrarCatalogo(clave, guardado);
     }
 
-    async _agregarAlCarrito(clave, guardado, numero) {
+    async _agregarAlCarrito(clave, guardado, numero, cantidad = 1) {
+        const cant = Number.isInteger(cantidad) && cantidad > 0 ? cantidad : 1;
         const catalogo = guardado.catalogo || [];
         const producto = catalogo[numero - 1];
         if (!producto) {
@@ -321,18 +451,88 @@ class BotPedidos {
         const carrito = (guardado.carrito || []).map(i => ({ ...i }));
         const existente = carrito.find(i => i.productoId === producto.id);
         if (existente) {
-            existente.cantidad += 1;
+            existente.cantidad += cant;
         } else {
             carrito.push({
                 productoId: producto.id,
                 nombre: producto.nombre,
                 precio: producto.precio,
-                cantidad: 1
+                cantidad: cant
             });
         }
 
         await this.conversacion.set(clave, { ...guardado, carrito });
-        return `✅ Agregué *${producto.nombre}* a tu carrito.\n\n${formatearCarrito(carrito)}`;
+        const prefijo = cant > 1 ? `${cant}x ` : '';
+        return `✅ Agregué *${prefijo}${producto.nombre}* a tu carrito.\n\n${formatearCarrito(carrito)}`;
+    }
+
+    async _consultarPedido(clave, codigo) {
+        const id = String(codigo || '').replace(/\D/g, '');
+        if (!id) {
+            return (
+                'No pude identificar el número de pedido en tu mensaje.\n' +
+                'Por favor escribe *2* en el menú y envíanos tu código numérico (ejemplo: *#102* o *102*).'
+            );
+        }
+
+        if (!this.ordenes || typeof this.ordenes.obtener !== 'function') {
+            return `Recibí tu código de pedido: *${codigo}*`;
+        }
+
+        try {
+            logger.info(`Consultando estado de pedido #${id} para ${clave}...`);
+            const orden = await this.ordenes.obtener(id);
+            if (!orden) {
+                return (
+                    `🔍 No encontramos ningún pedido con el número *#${id}*.\n\n` +
+                    'Por favor verifica el número o comunícate con un asesor escribiendo *4* en el menú.\n\n' +
+                    lineaContacto(this.ajustes)
+                );
+            }
+
+            // PRIVACIDAD: Si la orden tiene un teléfono de cliente registrado y no coincide
+            // con el remitente de este chat, no revelamos los datos de entrega de otro cliente.
+            const telOrdenNorm = normalizarTelefono(orden.telefonoCliente || '');
+            const telRemitenteNorm = normalizarTelefono(clave);
+            if (telOrdenNorm && telRemitenteNorm && telOrdenNorm !== telRemitenteNorm) {
+                logger.warn(`Consulta denegada por privacidad: ${clave} intentó ver orden #${id} perteneciente a ${telOrdenNorm}`);
+                return (
+                    `🔍 No encontramos ningún pedido con el número *#${id}* asociado a tu número de WhatsApp.\n\n` +
+                    'Por favor verifica el código de tu pedido o escribe *4* para comunicarte con un asesor.'
+                );
+            }
+
+            const estadosMap = {
+                PENDIENTE: '⏳ Pendiente de validación de pago',
+                EN_PREPARACION: '🍳 En preparación en cocina',
+                EN_CAMINO: '🛵 En camino a tu dirección',
+                ENTREGADO: '✅ Entregado. ¡Esperamos que lo disfrutes!',
+                CANCELADO: '❌ Cancelado'
+            };
+            const estadoTexto = estadosMap[orden.estado] || orden.estado || 'En proceso';
+            const numPedido = orden.numeroCliente != null ? orden.numeroCliente : orden.id;
+
+            let resumenItems = '';
+            if (Array.isArray(orden.items) && orden.items.length > 0) {
+                resumenItems = '\n*Detalle del pedido:*\n' + orden.items.map(i => `• ${i.cantidad}x ${i.productoNombre}`).join('\n') + '\n';
+            }
+
+            return (
+                `🍗 *ESTADO DE TU PEDIDO N.° ${numPedido}*\n\n` +
+                `• *Estado:* ${estadoTexto}\n` +
+                (orden.total ? `• *Total:* S/ ${Number(orden.total).toFixed(2)}\n` : '') +
+                (orden.direccionEntrega ? `• *Dirección:* ${orden.direccionEntrega}\n` : '') +
+                resumenItems +
+                '\nSi necesitas asistencia con tu entrega, escribe *4* para comunicarte con un asesor.'
+            );
+        } catch (error) {
+            logger.error(`Error al consultar orden #${id} en orders-service: ${error.message || error}`);
+            return (
+                'En este momento no pudimos consultar el sistema de pedidos. ' +
+                'Por favor intenta nuevamente en unos minutos o llámanos para asistirte.\n\n' +
+                lineaContacto(this.ajustes)
+            );
+        }
     }
 
     async _quitarDelCarrito(clave, guardado, numero) {
@@ -397,7 +597,135 @@ class BotPedidos {
         return MENSAJE_PEDIDO_FALLIDO;
     }
 
-    async _descargarMediaConReintento(msg, maxIntentos = 3, esperaMs = 150) {
+    async _descargarMediaDirectoPuppeteer(msg) {
+        if (!msg || !msg.client || !msg.client.pupPage || msg.client.pupPage.isClosed()) {
+            return null;
+        }
+        const idMsg = String(msg.id?._serialized || msg.id?.id || msg.id || '');
+        const partes = idMsg.split('_');
+        const stanzaId = partes[partes.length - 1];
+        const remitente = String(msg.from || '');
+
+        logger.info(`Intentando extracción directa de media por Puppeteer para stanzaId=${stanzaId}, remitente=${remitente}...`);
+
+        try {
+            const res = await msg.client.pupPage.evaluate(async (stanzaId, idMsg, remitente) => {
+                const collections = window.require('WAWebCollections') || {};
+                const Msg = collections.Msg;
+                const Chat = collections.Chat;
+
+                let targetMsg = null;
+
+                // 1. Buscar en Chats activos (cada chat mantiene chat.msgs)
+                if (Chat) {
+                    const chats = (typeof Chat.getModelsArray === 'function' ? Chat.getModelsArray() : null) || Chat._models || Chat.models || [];
+                    if (Array.isArray(chats)) {
+                        for (const c of chats) {
+                            const msgs = (c.msgs && typeof c.msgs.getModelsArray === 'function' ? c.msgs.getModelsArray() : null) || c.msgs?._models || c.msgs?.models || [];
+                            if (Array.isArray(msgs)) {
+                                targetMsg = msgs.find(m => {
+                                    if (!m || !m.id) return false;
+                                    const idStr = m.id._serialized || m.id.id || m.id.$1 || '';
+                                    return idStr === idMsg || m.id.id === stanzaId || idStr.endsWith(stanzaId);
+                                });
+                                if (targetMsg) break;
+                            }
+                        }
+                    }
+                }
+
+                // 2. Si no se encontró en Chats, buscar en Msg global
+                if (!targetMsg && Msg) {
+                    if (typeof Msg.get === 'function') {
+                        targetMsg = Msg.get(idMsg) || (remitente.includes('@lid') ? Msg.get(idMsg.replace(/@lid/g, '@c.us')) : null);
+                    }
+                    if (!targetMsg) {
+                        const lista = Msg._models || (typeof Msg.getModelsArray === 'function' ? Msg.getModelsArray() : null) || Msg.models || [];
+                        if (Array.isArray(lista)) {
+                            targetMsg = lista.find(m => {
+                                if (!m || !m.id) return false;
+                                const idStr = m.id._serialized || m.id.id || m.id.$1 || '';
+                                return idStr === idMsg || m.id.id === stanzaId || idStr.endsWith(stanzaId);
+                            });
+                        }
+                    }
+                }
+
+                // 3. Si encontramos el modelo pero no ha descargado, intentar downloadMedia interno
+                if (targetMsg && typeof targetMsg.downloadMedia === 'function') {
+                    try {
+                        await targetMsg.downloadMedia({
+                            downloadEvenIfExpensive: true,
+                            rmrReason: 1,
+                            isUserInitiated: true,
+                        });
+                    } catch (_) {}
+                }
+
+                // 4. Extracción del blob desde cache o forceToBlob
+                let blob = null;
+                if (targetMsg) {
+                    const filehash = targetMsg.mediaObject?.filehash || targetMsg.mediaData?.filehash;
+                    if (filehash) {
+                        try {
+                            blob = window.require('WAWebMediaInMemoryBlobCache')?.InMemoryMediaBlobCache?.get(filehash);
+                        } catch (_) {}
+                    }
+                    if (!blob && targetMsg.mediaObject?.mediaBlob && typeof targetMsg.mediaObject.mediaBlob.forceToBlob === 'function') {
+                        try { blob = targetMsg.mediaObject.mediaBlob.forceToBlob(); } catch (_) {}
+                    }
+                    if (!blob && targetMsg.mediaData?.mediaBlob && typeof targetMsg.mediaData.mediaBlob.forceToBlob === 'function') {
+                        try { blob = targetMsg.mediaData.mediaBlob.forceToBlob(); } catch (_) {}
+                    }
+                }
+
+                // 5. Fallback DOM: si aún no hay blob, buscar cualquier elemento <img> con blob en el chat
+                if (!blob) {
+                    const imgs = Array.from(document.querySelectorAll(`[data-id*="${stanzaId}"] img[src^="blob:"], img[src^="blob:"]`));
+                    if (imgs.length > 0) {
+                        const targetImg = imgs[imgs.length - 1];
+                        if (targetImg && targetImg.src) {
+                            try {
+                                const resp = await fetch(targetImg.src);
+                                blob = await resp.blob();
+                            } catch (_) {}
+                        }
+                    }
+                }
+
+                if (!blob) return null;
+
+                // 6. Convertir blob a base64 usando FileReader
+                const base64Data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const res = String(reader.result || '');
+                        const idx = res.indexOf(',');
+                        resolve(idx !== -1 ? res.slice(idx + 1) : res);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+
+                return {
+                    mimetype: targetMsg?.mimetype || targetMsg?.mediaData?.mimetype || blob.type || 'image/jpeg',
+                    data: base64Data,
+                    filename: targetMsg?.filename || targetMsg?.mediaData?.filename || 'comprobante.jpg',
+                    filesize: targetMsg?.size || targetMsg?.mediaData?.size || blob.size
+                };
+            }, stanzaId, idMsg, remitente);
+
+            if (res && res.data) {
+                logger.success(`Extracción directa por Puppeteer exitosa para mensaje ${stanzaId} (${res.data.length} chars base64, mime=${res.mimetype})`);
+                return res;
+            }
+        } catch (pupErr) {
+            logger.warn(`Extracción directa por Puppeteer falló para ${stanzaId}: ${pupErr.message}`);
+        }
+        return null;
+    }
+
+    async _descargarMediaConReintento(msg, maxIntentos = 4, esperaMs = 500) {
         if (!msg || typeof msg.downloadMedia !== 'function') {
             logger.warn(`downloadMedia no es una función en msg (tipo: ${msg && msg.type})`);
             return null;
@@ -406,7 +734,41 @@ class BotPedidos {
         for (let intento = 1; intento <= maxIntentos; intento += 1) {
             try {
                 logger.info(`Descargando archivo adjunto (intento ${intento}/${maxIntentos}) para mensaje id=${idDeMensaje(msg)}...`);
-                const media = await msg.downloadMedia();
+                let media = await msg.downloadMedia();
+
+                // Fallback 1: Si downloadMedia() arrojó vacío o null pero existe pupPage, probar extracción directa por Puppeteer
+                if ((!media || !media.data) && msg.client && msg.client.pupPage) {
+                    try {
+                        media = await this._descargarMediaDirectoPuppeteer(msg);
+                    } catch (pupErr) {
+                        logger.debug(`Fallback Puppeteer no disponible en intento ${intento}: ${pupErr.message}`);
+                    }
+                }
+
+                // Fallback 2: si aún está vacío o null pero existe downloadMediaStream(), probar extracción por streaming
+                if ((!media || !media.data) && typeof msg.downloadMediaStream === 'function') {
+                    try {
+                        const streamResult = await msg.downloadMediaStream();
+                        if (streamResult && streamResult.stream) {
+                            const chunks = [];
+                            for await (const chunk of streamResult.stream) {
+                                chunks.push(chunk);
+                            }
+                            const buffer = Buffer.concat(chunks);
+                            if (buffer.length > 0) {
+                                media = {
+                                    mimetype: streamResult.mimetype || msg.mimetype || 'image/jpeg',
+                                    data: buffer.toString('base64'),
+                                    filename: streamResult.filename || msg.filename || 'comprobante.jpg',
+                                    filesize: streamResult.filesize || buffer.length
+                                };
+                            }
+                        }
+                    } catch (streamErr) {
+                        logger.debug(`Fallback downloadMediaStream no disponible en intento ${intento}: ${streamErr.message}`);
+                    }
+                }
+
                 if (media && media.data) {
                     const tamBytes = Math.round(media.data.length * 0.75);
                     logger.success(`Media descargada exitosamente en intento ${intento}: mimetype="${media.mimetype}", filename="${media.filename || 'sin nombre'}", tamaño: ~${tamBytes} bytes (${media.data.length} caracteres base64)`);
@@ -423,8 +785,9 @@ class BotPedidos {
                 logger.warn(`Intento ${intento}/${maxIntentos} falló en downloadMedia(): ${error.message || error}`);
             }
             if (intento < maxIntentos) {
-                logger.info(`Esperando ${esperaMs * intento}ms antes del reintento ${intento + 1}...`);
-                await this.dormir(esperaMs * intento);
+                const pausa = esperaMs * intento;
+                logger.info(`Esperando ${pausa}ms antes del reintento ${intento + 1}...`);
+                await this.dormir(pausa);
             }
         }
         if (ultimoError) throw ultimoError;
@@ -438,7 +801,7 @@ class BotPedidos {
      * payments-service. Cualquier fallo se dice y se pide reenviar: nunca un éxito falso.
      */
     async _resolverComprobante(msg, clave, guardado) {
-        const pedido = guardado && guardado.estado === ESTADO_PEDIDO_CONFIRMADO ? guardado.pedido : null;
+        const pedido = guardado && (guardado.estado === ESTADO_PEDIDO_CONFIRMADO || guardado.estado === ESTADO_COMPROBANTE_RECIBIDO) ? guardado.pedido : null;
         if (!pedido || pedido.id === undefined || pedido.id === null) {
             logger.warn(`Comprobante recibido de "${clave}", pero NO hay un pedido confirmado en curso. Estado actual: "${guardado ? guardado.estado : 'sin estado'}", pedido: ${JSON.stringify(pedido)}. Se avisará al cliente que primero debe confirmar un pedido.`);
             return mensajeSinPedidoConfirmado();
@@ -512,6 +875,12 @@ class BotPedidos {
         }
 
         logger.success(`Comprobante orden #${pedido.id}: comprobante verificado y registrado. Notificando al cliente.`);
+        await this.conversacion.set(clave, {
+            ...guardado,
+            estado: ESTADO_COMPROBANTE_RECIBIDO,
+            comprobanteRecibido: true,
+            pedido
+        });
         return mensajeComprobanteRecibido(pedido);
     }
 
@@ -556,6 +925,7 @@ module.exports = {
     ESTADO_ESPERANDO_DIRECCION,
     ESTADO_ESPERANDO_REFERENCIA,
     ESTADO_PEDIDO_CONFIRMADO,
+    ESTADO_COMPROBANTE_RECIBIDO,
     ESTADO_ESPERANDO_CODIGO,
     claveDeUsuario,
     idDeMensaje

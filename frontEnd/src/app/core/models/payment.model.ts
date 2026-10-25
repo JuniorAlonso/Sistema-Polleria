@@ -1,6 +1,6 @@
 import { PaymentMethod } from './order.model';
 
-export type PaymentStatus = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
+export type PaymentStatus = 'PENDIENTE' | 'PENDIENTE_VERIFICACION' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
 
 export interface PaymentTransaction {
   id: string;

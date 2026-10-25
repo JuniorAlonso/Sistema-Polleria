@@ -4,6 +4,9 @@ const config = require('../config');
 const { requiereRol, requiereClaveInterna } = require('./auth');
 const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeComprobanteRechazado, mensajeCodigo } = require('../notifications/messages');
 const { ESTADOS_LOG } = require('../notifications/store');
+const { claveDeUsuario, ESTADO_PEDIDO_CONFIRMADO } = require('../chatbot/chatbot');
+const { crearLogger } = require('../logger');
+const logger = crearLogger('HttpApp');
 
 const ESTADO_WHATSAPP = {
     CONECTADO: 'connected',
@@ -69,7 +72,7 @@ img{border:8px solid #fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1
  * @param ultimoQr  función que devuelve el último QR de WhatsApp (o null)
  * @param errorWhatsapp función que devuelve el motivo del último fallo de arranque (o null)
  */
-function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null, reiniciarWhatsapp = async () => {} }) {
+function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null, reiniciarWhatsapp = async () => {} }) {
     const app = express();
     app.use(express.json());
 
@@ -95,6 +98,16 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
 
             if (!esIdValido(ordenId) || !telefono || !(Number(montoTotal) > 0)) {
                 return res.status(400).json({ error: 'Campos requeridos: ordenId, telefono, montoTotal (> 0)' });
+            }
+
+            if (conversacion && telefono) {
+                const clave = claveDeUsuario(telefono);
+                try {
+                    await conversacion.del(clave);
+                    logger.info(`Conversación de ${clave} liberada tras confirmación de pago para orden #${ordenId}`);
+                } catch (e) {
+                    logger.warn(`No se pudo limpiar conversación de ${clave}: ${e.message}`);
+                }
             }
 
             const log = await service.encolar({
@@ -123,6 +136,13 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
                 });
             }
 
+            if (conversacion && telefono && (estadoNuevo === 'EN_PREPARACION' || estadoNuevo === 'EN_CAMINO' || estadoNuevo === 'ENTREGADO')) {
+                const clave = claveDeUsuario(telefono);
+                try {
+                    await conversacion.del(clave);
+                } catch (e) {}
+            }
+
             const log = await service.encolar({
                 ordenId: Number(ordenId),
                 telefono,
@@ -146,6 +166,22 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
 
             if (!esIdValido(ordenId) || !telefono || !motivo) {
                 return res.status(400).json({ error: 'Campos requeridos: ordenId, telefono, motivo' });
+            }
+
+            if (conversacion && telefono) {
+                const clave = claveDeUsuario(telefono);
+                try {
+                    const actual = await conversacion.get(clave);
+                    if (actual && actual.pedido) {
+                        await conversacion.set(clave, {
+                            ...actual,
+                            estado: ESTADO_PEDIDO_CONFIRMADO,
+                            comprobanteRecibido: false,
+                            motivoRechazo: motivo
+                        });
+                        logger.info(`Conversación de ${clave} reseteada a PEDIDO_CONFIRMADO para reenvío de comprobante (motivo: "${motivo}")`);
+                    }
+                } catch (e) {}
             }
 
             const log = await service.encolar({

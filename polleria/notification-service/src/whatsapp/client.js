@@ -64,13 +64,145 @@ client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => {
+/**
+ * Inyecta un parche en el contexto del navegador para window.WWebJS.resolveMediaBlob.
+ * Resuelve mensajes enviados por contactos con identificadores `@lid` (Linked ID)
+ * y previene que errores minificados de IndexedDB o WhatsApp Web (`r`) aborten Puppeteer.
+ */
+async function inyectarParcheMediaBlob() {
+    try {
+        if (!client.pupPage || client.pupPage.isClosed()) return;
+        await client.pupPage.evaluate(() => {
+            if (!window.WWebJS) window.WWebJS = {};
+
+            window.WWebJS.resolveMediaBlob = async (msgId) => {
+                try {
+                    const collections = window.require('WAWebCollections') || {};
+                    const Msg = collections.Msg;
+                    const Chat = collections.Chat;
+
+                    const partes = String(msgId || '').split('_');
+                    const stanzaId = partes.length > 1 ? partes[partes.length - 1] : msgId;
+
+                    // 1. Búsqueda directa por msgId tal cual
+                    let msg = null;
+                    if (Msg && typeof Msg.get === 'function') {
+                        msg = Msg.get(msgId);
+                    }
+
+                    // 2. Si msgId incluye @lid, probar resolución con @c.us en el store global
+                    if (!msg && Msg && typeof Msg.get === 'function' && String(msgId).includes('@lid')) {
+                        msg = Msg.get(String(msgId).replace(/@lid/g, '@c.us'));
+                    }
+
+                    // 3. Buscar en Chats activos (cada chat mantiene su propia colección chat.msgs con mensajes recientes)
+                    if (!msg && Chat) {
+                        const chats = (typeof Chat.getModelsArray === 'function' ? Chat.getModelsArray() : null) || Chat._models || Chat.models || [];
+                        if (Array.isArray(chats)) {
+                            for (const c of chats) {
+                                const msgs = (c.msgs && typeof c.msgs.getModelsArray === 'function' ? c.msgs.getModelsArray() : null) || c.msgs?._models || c.msgs?.models || [];
+                                if (Array.isArray(msgs)) {
+                                    msg = msgs.find(m => {
+                                        if (!m || !m.id) return false;
+                                        const idStr = m.id._serialized || m.id.id || m.id.$1 || '';
+                                        return idStr === msgId || m.id.id === stanzaId || idStr.endsWith(stanzaId);
+                                    });
+                                    if (msg) break;
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. Buscar en la colección global Msg (_models)
+                    if (!msg && Msg) {
+                        const lista = Msg._models || (typeof Msg.getModelsArray === 'function' ? Msg.getModelsArray() : null) || Msg.models || [];
+                        if (Array.isArray(lista)) {
+                            msg = lista.find(m => {
+                                if (!m || !m.id) return false;
+                                const idStr = m.id._serialized || m.id.id || m.id.$1 || '';
+                                return idStr === msgId || m.id.id === stanzaId || idStr.endsWith(stanzaId);
+                            });
+                        }
+                    }
+
+                    // 5. Fallback seguro a Msg.getMessagesById con try/catch
+                    if (!msg && Msg && typeof Msg.getMessagesById === 'function') {
+                        try {
+                            const res = await Msg.getMessagesById([msgId]);
+                            msg = res?.messages?.[0] || null;
+                        } catch (_) {}
+                    }
+
+                    // 6. Intentar downloadMedia interno si el modelo existe
+                    if (msg && typeof msg.downloadMedia === 'function') {
+                        try {
+                            await msg.downloadMedia({
+                                downloadEvenIfExpensive: true,
+                                rmrReason: 1,
+                                isUserInitiated: true,
+                            });
+                        } catch (_) {}
+                    }
+
+                    // 7. Extraer blob desde InMemoryMediaBlobCache o forceToBlob
+                    let blob = null;
+                    if (msg) {
+                        try {
+                            const filehash = msg.mediaObject?.filehash || msg.mediaData?.filehash;
+                            if (filehash) {
+                                blob = window.require('WAWebMediaInMemoryBlobCache')?.InMemoryMediaBlobCache?.get(filehash);
+                            }
+                        } catch (_) {}
+
+                        if (!blob && msg.mediaObject?.mediaBlob && typeof msg.mediaObject.mediaBlob.forceToBlob === 'function') {
+                            try { blob = msg.mediaObject.mediaBlob.forceToBlob(); } catch (_) {}
+                        }
+                        if (!blob && msg.mediaData?.mediaBlob && typeof msg.mediaData.mediaBlob.forceToBlob === 'function') {
+                            try { blob = msg.mediaData.mediaBlob.forceToBlob(); } catch (_) {}
+                        }
+                    }
+
+                    // 8. Fallback DOM: si aún no hay blob, buscar cualquier elemento <img> con blob en el chat
+                    if (!blob) {
+                        const imgs = Array.from(document.querySelectorAll(`[data-id*="${stanzaId}"] img[src^="blob:"], img[src^="blob:"]`));
+                        if (imgs.length > 0) {
+                            const targetImg = imgs[imgs.length - 1];
+                            if (targetImg && targetImg.src) {
+                                try {
+                                    const resp = await fetch(targetImg.src);
+                                    blob = await resp.blob();
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    if (!blob) return null;
+
+                    return {
+                        blob,
+                        mimetype: msg?.mimetype || msg?.mediaData?.mimetype || blob.type || 'image/jpeg',
+                        filename: msg?.filename || msg?.mediaData?.filename || 'comprobante.jpg',
+                        filesize: msg?.size || msg?.mediaData?.size || blob.size,
+                    };
+                } catch (_) {
+                    return null;
+                }
+            };
+        });
+        console.log('🛡️ [WhatsApp] Parche resiliente resolveMediaBlob aplicado en el navegador (soporte @lid, búsqueda en Chat/Msg y fallback DOM).');
+    } catch (err) {
+        console.warn('⚠️ No se pudo inyectar el parche de resolveMediaBlob:', err.message);
+    }
+}
+
+client.on('ready', async () => {
     cancelarWatchdog();
     estado = 'CONECTADO';
     ultimoQr = null;
     ultimoQrTimestamp = null;
     ultimoError = null;
     console.log('✅ ¡El servicio de WhatsApp de la Pollería está LISTO!');
+    await inyectarParcheMediaBlob();
 });
 
 client.on('loading_screen', (porcentaje, mensaje) => {
@@ -262,9 +394,13 @@ const whatsapp = {
     async marcarVisto(chatId) {
         try {
             const chat = await obtenerChat(chatId);
-            await chat.sendSeen();
+            if (chat && typeof chat.sendSeen === 'function') {
+                await chat.sendSeen().catch(() => {});
+            }
         } catch (error) {
-            console.warn(`⚠️ No se pudo marcar como visto ${chatId}: ${error.message}`);
+            if (!String(chatId || '').endsWith('@lid')) {
+                console.warn(`⚠️ No se pudo marcar como visto ${chatId}: ${error.message}`);
+            }
         }
     },
 
@@ -272,12 +408,16 @@ const whatsapp = {
         if (!(duracionMs > 0)) return;
         try {
             const chat = await obtenerChat(chatId);
-            await chat.sendStateTyping();
-            // El indicador se mantiene hasta que se envía algo: se espera lo proporcional
-            // al largo del texto para que el bot no conteste instantáneamente.
-            await new Promise(resolve => setTimeout(resolve, duracionMs));
+            if (chat && typeof chat.sendStateTyping === 'function') {
+                await chat.sendStateTyping().catch(() => {});
+            }
         } catch (error) {
-            console.warn(`⚠️ No se pudo mostrar "escribiendo" en ${chatId}: ${error.message}`);
+            if (!String(chatId || '').endsWith('@lid')) {
+                console.warn(`⚠️ No se pudo mostrar "escribiendo" en ${chatId}: ${error.message}`);
+            }
+        } finally {
+            // El bot mantiene el retardo de humanización independientemente del soporte de sendStateTyping
+            await new Promise(resolve => setTimeout(resolve, duracionMs));
         }
     },
 

@@ -12,7 +12,6 @@ import { FinanceService } from '../../../core/services/finance.service';
 import { FeedbackService } from '../../../core/services/feedback.service';
 import { SecurityAuditService } from '../../../core/services/security-audit.service';
 import { RepartidoresService } from '../../../core/services/repartidores.service';
-import { PaymentService } from '../../../core/services/payment.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { AjustesWhatsapp, WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
@@ -170,6 +169,11 @@ export type InsumoAlmacen = Insumo;
               </svg>
               <span>WhatsApp</span>
             </div>
+            @if (comprobantesWhatsappPendientes().length > 0) {
+              <span class="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] animate-pulse">
+                {{ comprobantesWhatsappPendientes().length }}
+              </span>
+            }
           </button>
 
           <button 
@@ -2054,6 +2058,113 @@ export type InsumoAlmacen = Insumo;
               </div>
             }
           }
+
+          <!-- ================= VALIDACIÓN DE COMPROBANTES YAPE (WHATSAPP) ================= -->
+          <div class="bg-[#14161a] rounded-2xl border border-white/10 shadow-xl p-5 space-y-4">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+              <div>
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                  <span class="p-1.5 rounded-lg bg-polleria-gold/15 text-polleria-gold">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </span>
+                  <span>Validación de Comprobantes Yape (WhatsApp)</span>
+                  @if (comprobantesWhatsappPendientes().length > 0) {
+                    <span class="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+                      {{ comprobantesWhatsappPendientes().length }} por confirmar
+                    </span>
+                  } @else {
+                    <span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      Al día
+                    </span>
+                  }
+                </h3>
+                <p class="text-xs text-slate-400 mt-1">
+                  Revisa y confirma la captura de pago enviada por el cliente desde WhatsApp para pasar el pedido a cocina o rechazarlo si el comprobante no es válido.
+                </p>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  (click)="refrescarComprobantesWhatsapp()"
+                  class="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Refrescar</span>
+                </button>
+              </div>
+            </div>
+
+            @if (comprobantesWhatsappPendientes().length === 0) {
+              <div class="p-6 rounded-xl bg-black/20 border border-white/5 flex flex-col items-center justify-center text-center space-y-2">
+                <div class="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <p class="text-sm font-semibold text-slate-300">No hay comprobantes pendientes de validación</p>
+                <p class="text-xs text-slate-500 max-w-md">
+                  Cuando un cliente envíe su captura de Yape por WhatsApp, aparecerá aquí automáticamente para que el administrador la verifique y apruebe el pedido.
+                </p>
+              </div>
+            } @else {
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                @for (orden of comprobantesWhatsappPendientes(); track orden.id) {
+                  <div class="bg-black/30 rounded-xl border border-white/10 hover:border-polleria-gold/40 transition-all p-4 flex flex-col justify-between space-y-3 shadow-lg">
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-mono font-bold text-sm text-polleria-gold">
+                          #{{ orden.id }}
+                        </span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                          [ngClass]="tieneCapturaPendiente(orden) ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-700/50 text-slate-300 border border-white/10'">
+                          {{ tieneCapturaPendiente(orden) ? '📸 Captura por Validar' : '⏳ Esperando Captura' }}
+                        </span>
+                      </div>
+
+                      <div class="text-xs space-y-1">
+                        <div class="flex items-center justify-between text-slate-300">
+                          <span class="text-slate-400">Cliente:</span>
+                          <span class="font-semibold text-white truncate max-w-[150px]">{{ orden.cliente.nombre || 'Cliente' }}</span>
+                        </div>
+                        <div class="flex items-center justify-between text-slate-300">
+                          <span class="text-slate-400">Celular:</span>
+                          <a [href]="'https://wa.me/51' + orden.cliente.celular" target="_blank" class="font-mono text-emerald-400 hover:underline flex items-center gap-1">
+                            <span>{{ orden.cliente.celular }}</span>
+                            <span class="text-[10px]">↗</span>
+                          </a>
+                        </div>
+                        <div class="flex items-center justify-between text-slate-300">
+                          <span class="text-slate-400">Monto total:</span>
+                          <span class="font-mono font-bold text-white text-sm">{{ orden.total | currencyPEN }}</span>
+                        </div>
+                      </div>
+
+                      <div class="p-2 rounded-lg bg-black/40 border border-white/5 text-[11px] text-slate-400 line-clamp-2">
+                        {{ obtenerResumenPlatos(orden) }}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      (click)="abrirVerificacionWhatsapp(orden)"
+                      class="w-full py-2 px-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      <span>Revisar Captura Yape</span>
+                    </button>
+                  </div>
+                }
+              </div>
+            }
+          </div>
 
           <!-- T5b (S4/S8/S11) — Anti-baneo y contactos configurables desde el panel -->
           <div class="bg-[#14161a] rounded-2xl border border-white/10 shadow-xl p-5 space-y-5">
@@ -4030,6 +4141,213 @@ export type InsumoAlmacen = Insumo;
         </div>
       }
 
+      <!-- ================= MODAL DE VALIDACIÓN DE COMPROBANTE WHATSAPP ================= -->
+      @if (ordenParaVerificarWhatsapp(); as orden) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div class="bg-[#14161a] border border-white/10 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl max-h-[92vh] flex flex-col">
+            
+            <!-- Modal Header -->
+            <div class="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between bg-black/30">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-polleria-gold/15 text-polleria-gold flex items-center justify-center font-bold">
+                  #{{ orden.id }}
+                </div>
+                <div>
+                  <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Validación de Captura Yape</span>
+                    <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      WhatsApp
+                    </span>
+                  </h3>
+                  <p class="text-xs text-slate-400">Cliente: {{ orden.cliente.nombre }} ({{ orden.cliente.celular }})</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                (click)="cerrarVerificacionWhatsapp()"
+                class="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/10 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- Modal Content Body -->
+            <div class="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 text-xs">
+              
+              <!-- Comparativa de montos -->
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div class="p-3 rounded-xl bg-black/40 border border-white/10">
+                  <p class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Total del Pedido</p>
+                  <p class="mt-1 text-lg font-bold font-mono text-polleria-gold">{{ orden.total | currencyPEN }}</p>
+                </div>
+                <div class="p-3 rounded-xl bg-black/40 border border-white/10">
+                  <p class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Monto Registrado</p>
+                  <p class="mt-1 text-lg font-bold font-mono text-white">
+                    {{ (comprobanteWhatsappData()?.monto ?? orden.total) | currencyPEN }}
+                  </p>
+                </div>
+                <div class="p-3 rounded-xl bg-black/40 border border-white/10 col-span-2 sm:col-span-1">
+                  <p class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Estado del Pago</p>
+                  <p class="mt-1 font-bold text-amber-300">
+                    {{ comprobanteWhatsappData()?.estado || 'PENDIENTE_VERIFICACION' }}
+                  </p>
+                </div>
+              </div>
+
+              <!-- Imagen de la Captura del Yape -->
+              <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <label class="text-[11px] uppercase tracking-wider font-bold text-slate-300">
+                    Captura del Comprobante (Enviada por WhatsApp)
+                  </label>
+                  @if (comprobanteWhatsappData()?.comprobanteUrl; as url) {
+                    <a [href]="url" target="_blank" class="text-polleria-gold hover:underline flex items-center gap-1 font-semibold text-[11px]">
+                      Abrir en pestaña nueva ↗
+                    </a>
+                  }
+                </div>
+
+                @if (cargandoComprobanteWhatsapp()) {
+                  <div class="h-64 rounded-xl bg-black/50 border border-white/10 flex flex-col items-center justify-center gap-2">
+                    <div class="w-7 h-7 border-2 border-polleria-gold border-t-transparent rounded-full animate-spin"></div>
+                    <span class="text-slate-400">Cargando comprobante desde MinIO...</span>
+                  </div>
+                } @else {
+                  @if (comprobanteWhatsappData()?.comprobanteUrl; as imgUrl) {
+                    <div class="bg-black/80 rounded-xl border border-white/10 p-2 flex items-center justify-center max-h-80 overflow-hidden">
+                      <img
+                        [src]="imgUrl"
+                        alt="Captura Yape orden #{{ orden.id }}"
+                        class="max-h-76 w-auto object-contain rounded-lg shadow-md"
+                      />
+                    </div>
+                    <p class="text-[10px] text-slate-500">
+                      * El enlace de la captura es firmado y vence en 300 segundos por seguridad.
+                    </p>
+                  } @else {
+                    <div class="p-6 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center space-y-2">
+                      <p class="text-amber-200 font-semibold">No hay imagen de captura disponible o aún no se ha subido</p>
+                      <p class="text-slate-400 text-[11px]">
+                        El cliente puede estar en proceso de adjuntar la captura al chat de WhatsApp.
+                      </p>
+                    </div>
+                  }
+                }
+              </div>
+
+              <!-- Motivo de Rechazo (si aplica) -->
+              <div class="p-4 rounded-xl bg-black/30 border border-white/10 space-y-2.5">
+                <div class="flex items-center justify-between">
+                  <label for="motivoRechazoWhatsappInput" class="text-[11px] uppercase tracking-wider font-bold text-slate-300">
+                    Motivo de Rechazo (Opcional si apruebas, Obligatorio si rechazas)
+                  </label>
+                  <span class="text-[10px] text-slate-500">Se enviará como mensaje de WhatsApp al cliente</span>
+                </div>
+
+                <!-- Chips de motivos comunes -->
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    (click)="motivoRechazoWhatsapp.set('El monto transferido no coincide con el total de la orden.')"
+                    class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition"
+                  >
+                    Monto no coincide
+                  </button>
+                  <button
+                    type="button"
+                    (click)="motivoRechazoWhatsapp.set('La captura está borrosa o ilegible. Por favor envía una captura clara.')"
+                    class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition"
+                  >
+                    Captura borrosa
+                  </button>
+                  <button
+                    type="button"
+                    (click)="motivoRechazoWhatsapp.set('La captura está cortada y no se aprecia el número de operación ni la fecha.')"
+                    class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition"
+                  >
+                    Captura cortada
+                  </button>
+                  <button
+                    type="button"
+                    (click)="motivoRechazoWhatsapp.set('El comprobante corresponde a una fecha u operación ya registrada anteriormente.')"
+                    class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition"
+                  >
+                    Comprobante duplicado
+                  </button>
+                </div>
+
+                <textarea
+                  id="motivoRechazoWhatsappInput"
+                  rows="2"
+                  [ngModel]="motivoRechazoWhatsapp()"
+                  (ngModelChange)="motivoRechazoWhatsapp.set($event)"
+                  placeholder="Escribe el motivo del rechazo para que el cliente lo reciba por WhatsApp..."
+                  class="w-full rounded-xl bg-black/40 border border-white/10 p-2.5 text-slate-200 text-xs focus:border-polleria-gold focus:outline-none"
+                ></textarea>
+              </div>
+
+              @if (errorVerifWhatsapp()) {
+                <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+                  {{ errorVerifWhatsapp() }}
+                </div>
+              }
+
+              @if (feedbackVerifWhatsapp(); as fb) {
+                <div class="p-3 rounded-xl border text-xs"
+                  [ngClass]="fb.aprobado ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/15 border-rose-500/30 text-rose-300'">
+                  {{ fb.aprobado ? '✓ Comprobante aprobado con éxito. La orden #' + fb.ordenId + ' pasó a preparación y el cliente fue notificado por WhatsApp.' : '✕ Comprobante rechazado. Se notificó al cliente el motivo por WhatsApp.' }}
+                </div>
+              }
+
+            </div>
+
+            <!-- Modal Footer Actions -->
+            <div class="p-4 border-t border-white/10 bg-black/30 flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                (click)="cerrarVerificacionWhatsapp()"
+                class="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-semibold text-xs transition cursor-pointer"
+              >
+                Cerrar
+              </button>
+
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  (click)="rechazarComprobanteWhatsapp()"
+                  [disabled]="verificandoWhatsapp() || !motivoRechazoWhatsapp().trim()"
+                  class="px-4 py-2.5 rounded-xl bg-rose-900/40 hover:bg-rose-800 border border-rose-500/40 text-rose-200 font-bold text-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  @if (verificandoWhatsapp()) {
+                    <span class="w-3.5 h-3.5 border-2 border-rose-300 border-t-transparent rounded-full animate-spin"></span>
+                  } @else {
+                    <span>✕</span>
+                  }
+                  <span>Rechazar Comprobante</span>
+                </button>
+
+                <button
+                  type="button"
+                  (click)="aprobarComprobanteWhatsapp()"
+                  [disabled]="verificandoWhatsapp()"
+                  class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-lg shadow-emerald-950"
+                >
+                  @if (verificandoWhatsapp()) {
+                    <span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Confirmando...</span>
+                  } @else {
+                    <span>✓</span>
+                    <span>Aprobar y Pasar a Cocina</span>
+                  }
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      }
+
       </div> <!-- Cierre Main Content Wrapper -->
     </div> <!-- Cierre Root Container -->
   `
@@ -4046,7 +4364,6 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly whatsappService = inject(WhatsappNotificationsService);
   readonly paymentService = inject(PaymentService);
   readonly repartidoresService = inject(RepartidoresService);
-  readonly paymentService = inject(PaymentService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -4172,6 +4489,160 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.verificandoComprobante.set(false);
         this.errorVerificacion.set(
           err?.message || 'No se pudo verificar el comprobante de Yape.'
+        );
+        return of(null);
+      })
+    ).subscribe();
+  }
+
+  // ── Validación de comprobantes Yape dentro del módulo WhatsApp ───────────
+  readonly ordenParaVerificarWhatsapp = signal<Order | null>(null);
+  readonly comprobanteWhatsappData = signal<PagoOrdenAdmin | null>(null);
+  readonly cargandoComprobanteWhatsapp = signal<boolean>(false);
+  readonly verificandoWhatsapp = signal<boolean>(false);
+  readonly motivoRechazoWhatsapp = signal<string>('');
+  readonly errorVerifWhatsapp = signal<string | null>(null);
+  readonly feedbackVerifWhatsapp = signal<{ aprobado: boolean; ordenId: string } | null>(null);
+
+  readonly comprobantesWhatsappPendientes = computed(() => {
+    const orders = this.ordersService.orders();
+    const pagosMap = this.paymentService.pagosPorOrdenMap();
+
+    return orders.filter(o => {
+      // 1. Verificación directa: el pago en payments-service está en PENDIENTE_VERIFICACION
+      const pago = pagosMap.get(String(o.id));
+      if (pago?.estado === 'PENDIENTE_VERIFICACION') {
+        return true;
+      }
+
+      // 2. Órdenes con canal WHATSAPP o con pago YAPE que están en estado pendiente
+      const esWhatsapp = o.canalOrigen === 'WHATSAPP';
+      const esPagoYape = pago?.metodo === 'YAPE' || o.metodoPago === 'YAPE';
+      const enEstadoPendiente = ['PENDIENTE_PAGO', 'RECIBIDO'].includes(o.estado);
+
+      return (esWhatsapp || esPagoYape) && enEstadoPendiente && pago?.estado !== 'APROBADO' && o.estado !== 'CANCELADO' && o.estado !== 'COMPLETADO';
+    });
+  });
+
+  tieneCapturaPendiente(orden: Order): boolean {
+    const pago = this.paymentService.pagosPorOrdenMap().get(String(orden.id));
+    return pago?.estado === 'PENDIENTE_VERIFICACION' || !!pago?.comprobanteUrl;
+  }
+
+  obtenerResumenPlatos(orden: Order): string {
+    if (!orden.items || orden.items.length === 0) return 'Sin productos especificados';
+    return orden.items.map(i => `${i.cantidad}x ${i.product?.nombre || 'Producto'}`).join(', ');
+  }
+
+  refrescarComprobantesWhatsapp(): void {
+    this.ordersService.loadActiveOrders();
+    this.paymentService.cargarPagos().subscribe();
+    this.notify.showInfo('Actualizando comprobantes y pedidos...');
+  }
+
+  abrirVerificacionWhatsapp(orden: Order): void {
+    this.ordenParaVerificarWhatsapp.set(orden);
+    this.comprobanteWhatsappData.set(null);
+    this.cargandoComprobanteWhatsapp.set(true);
+    this.motivoRechazoWhatsapp.set('');
+    this.errorVerifWhatsapp.set(null);
+    this.feedbackVerifWhatsapp.set(null);
+
+    this.paymentService.obtenerPagoParaVerificacion(orden.id).pipe(
+      tap(pago => {
+        this.comprobanteWhatsappData.set(pago);
+        this.cargandoComprobanteWhatsapp.set(false);
+      }),
+      catchError(err => {
+        this.cargandoComprobanteWhatsapp.set(false);
+        this.errorVerifWhatsapp.set(
+          err?.message || 'No se encontró un registro de pago activo para esta orden.'
+        );
+        return of(null);
+      })
+    ).subscribe();
+  }
+
+  cerrarVerificacionWhatsapp(): void {
+    this.ordenParaVerificarWhatsapp.set(null);
+    this.comprobanteWhatsappData.set(null);
+    this.motivoRechazoWhatsapp.set('');
+    this.errorVerifWhatsapp.set(null);
+    this.feedbackVerifWhatsapp.set(null);
+  }
+
+  aprobarComprobanteWhatsapp(): void {
+    const orden = this.ordenParaVerificarWhatsapp();
+    const pago = this.comprobanteWhatsappData();
+    if (!orden || this.verificandoWhatsapp()) return;
+
+    const pagoFromMap = this.paymentService.pagosPorOrdenMap().get(String(orden.id));
+    const pagoId = pago?.id || (pagoFromMap ? Number(pagoFromMap.id) : null);
+
+    if (!pagoId) {
+      this.errorVerifWhatsapp.set('No se encontró el pago registrado para esta orden.');
+      return;
+    }
+
+    this.verificandoWhatsapp.set(true);
+    this.errorVerifWhatsapp.set(null);
+
+    this.paymentService.verificarComprobante(pagoId, true).pipe(
+      tap(actualizado => {
+        this.verificandoWhatsapp.set(false);
+        this.comprobanteWhatsappData.set(actualizado);
+        this.feedbackVerifWhatsapp.set({ aprobado: true, ordenId: String(orden.id) });
+        this.notify.showSuccess(`Comprobante de orden #${orden.id} aprobado. Pedido enviado a cocina.`);
+        this.ordersService.loadActiveOrders();
+        this.paymentService.cargarPagos().subscribe();
+        setTimeout(() => this.cerrarVerificacionWhatsapp(), 1800);
+      }),
+      catchError(err => {
+        this.verificandoWhatsapp.set(false);
+        this.errorVerifWhatsapp.set(
+          err?.message || 'Error al aprobar el comprobante en el microservicio de pagos.'
+        );
+        return of(null);
+      })
+    ).subscribe();
+  }
+
+  rechazarComprobanteWhatsapp(): void {
+    const orden = this.ordenParaVerificarWhatsapp();
+    const pago = this.comprobanteWhatsappData();
+    const motivo = this.motivoRechazoWhatsapp().trim();
+
+    if (!orden || this.verificandoWhatsapp()) return;
+    if (!motivo) {
+      this.errorVerifWhatsapp.set('Debes ingresar un motivo de rechazo para el cliente.');
+      return;
+    }
+
+    const pagoFromMap = this.paymentService.pagosPorOrdenMap().get(String(orden.id));
+    const pagoId = pago?.id || (pagoFromMap ? Number(pagoFromMap.id) : null);
+
+    if (!pagoId) {
+      this.errorVerifWhatsapp.set('No se encontró el pago registrado para esta orden.');
+      return;
+    }
+
+    this.verificandoWhatsapp.set(true);
+    this.errorVerifWhatsapp.set(null);
+
+    this.paymentService.verificarComprobante(pagoId, false, motivo).pipe(
+      tap(actualizado => {
+        this.verificandoWhatsapp.set(false);
+        this.comprobanteWhatsappData.set(actualizado);
+        this.feedbackVerifWhatsapp.set({ aprobado: false, ordenId: String(orden.id) });
+        this.notify.showSuccess(`Comprobante rechazado. Se notificó al cliente por WhatsApp.`);
+        this.ordersService.loadActiveOrders();
+        this.paymentService.cargarPagos().subscribe();
+        setTimeout(() => this.cerrarVerificacionWhatsapp(), 1800);
+      }),
+      catchError(err => {
+        this.verificandoWhatsapp.set(false);
+        this.errorVerifWhatsapp.set(
+          err?.message || 'Error al rechazar el comprobante en el microservicio de pagos.'
         );
         return of(null);
       })

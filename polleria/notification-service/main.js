@@ -41,7 +41,10 @@ async function main() {
 
     // Alta del pedido anónimo (T3b): el bot crea el DELIVERY con POST /ordenes y usa el
     // total que devuelve orders-service (el envío lo suma Orden.recalcularTotal()).
-    const ordenes = crearClienteOrdenes({ baseUrl: config.ordersServiceUrl });
+    const ordenes = crearClienteOrdenes({
+        baseUrl: config.ordersServiceUrl,
+        internalKey: config.internalKeyCompartida
+    });
 
     // Comprobante de Yape (T6b, S6/S7): el bot sube la imagen a MinIO y registra la
     // evidencia en payments-service (POST /pagos/comprobante con X-Internal-Key).
@@ -80,6 +83,7 @@ async function main() {
     const app = crearApp({
         service,
         store,
+        conversacion,
         estadoWhatsapp: whatsapp.estado,
         ultimoQr: whatsapp.ultimoQr,
         errorWhatsapp: whatsapp.ultimoError,

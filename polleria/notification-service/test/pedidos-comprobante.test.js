@@ -298,6 +298,63 @@ test('(a4) un mensaje con hasMedia: false pero type: image (hidratación tardía
     assert.match(respuesta, /Recibimos el comprobante/i);
 });
 
+test('(a5) si downloadMedia() arroja error "r" en el primer intento pero el reintento o downloadMediaStream resuelve, se procesa exitosamente', async () => {
+    const store = await storeConfirmado();
+    const { bot, minio, pagos } = montar({ conversacion: store });
+    let intentos = 0;
+    const mensaje = {
+        from: FROM,
+        id: 'img-error-r',
+        type: 'image',
+        hasMedia: true,
+        async downloadMedia() {
+            intentos += 1;
+            if (intentos === 1) throw new Error('r');
+            return { mimetype: 'image/jpeg', data: 'Zm90by1kZS1wcnVlYmE=', filename: 'yape.jpg' };
+        }
+    };
+
+    const respuesta = await bot.procesar(mensaje);
+
+    assert.strictEqual(intentos, 2, 'superó el error r y reintentó con éxito');
+    assert.strictEqual(minio.llamadas.putObject.length, 1);
+    assert.strictEqual(pagos.llamadas.length, 1);
+    assert.match(respuesta, /Recibimos el comprobante/i);
+});
+
+test('(a6) si downloadMedia() devuelve undefined pero el fallback de Puppeteer recupera el comprobante, se procesa exitosamente', async () => {
+    const store = await storeConfirmado();
+    const { bot, minio, pagos } = montar({ conversacion: store });
+    const mensaje = {
+        from: '140072137531482@lid',
+        telefonoCliente: CELULAR,
+        id: { _serialized: 'false_140072137531482@lid_ACF2B8D5664DB9C512C3FF2EC058C22D', id: 'ACF2B8D5664DB9C512C3FF2EC058C22D' },
+        type: 'image',
+        hasMedia: true,
+        async downloadMedia() {
+            return undefined; // Simula comportamiento de WhatsApp Web cuando no encuentra el ID @lid directamente
+        },
+        client: {
+            pupPage: {
+                isClosed: () => false,
+                evaluate: async () => ({
+                    mimetype: 'image/jpeg',
+                    data: 'Zm90by1kZS1wcnVlYmEtbGlk',
+                    filename: 'comprobante.jpg',
+                    filesize: 1024
+                })
+            }
+        }
+    };
+
+    const respuesta = await bot.procesar(mensaje);
+
+    assert.strictEqual(minio.llamadas.putObject.length, 1, 'subió el comprobante a MinIO');
+    assert.strictEqual(pagos.llamadas.length, 1, 'registró el pago');
+    assert.match(respuesta, /Recibimos el comprobante/i);
+});
+
+
 // (b) Lo que no es imagen (texto) → no sube ni registra y pide una imagen.
 test('(b) un mensaje de texto con el pedido confirmado no sube ni registra y pide una imagen', async () => {
     const store = await storeConfirmado();
@@ -392,3 +449,34 @@ test('PRESERVE: el doble confirmar recuerda el mismo pedido y no dispara subida 
     assert.strictEqual(minio.llamadas.putObject.length, 0, 'no hay imagen que subir');
     assert.strictEqual(pagos.llamadas.length, 0, 'no hay comprobante que registrar');
 });
+
+test('tras subir el comprobante con éxito, un mensaje de texto como "Okok" no vuelve a pedir pagar por Yape', async () => {
+    const store = await storeConfirmado();
+    const { bot } = montar({ conversacion: store });
+    const { mensaje } = mensajeImagen({ id: 'img-1' });
+
+    // 1. Cliente envía imagen
+    const respImg = await bot.procesar(mensaje);
+    assert.match(respImg, /comprobante/i);
+
+    // 2. Cliente envía "Okok"
+    const respTexto = await bot.procesar(mensajeTexto('Okok', 'msg-okok'));
+
+    // NO debe pedir pago ni enviar los datos de Yape
+    assert.doesNotMatch(respTexto, /Paga por \*?Yape\*?/i, 'no vuelve a pedir el pago');
+    assert.doesNotMatch(respTexto, /\+51 934 421 442/, 'no repite número de transferencia');
+    assert.match(respTexto, /gusto|revis|administrador/i, 'responde amablemente confirmando la revisión');
+});
+
+test('tras subir el comprobante, "gracias" o "listo" reciben agradecimiento y no el mensaje de pago', async () => {
+    const store = await storeConfirmado();
+    const { bot } = montar({ conversacion: store });
+    const { mensaje } = mensajeImagen({ id: 'img-1' });
+
+    await bot.procesar(mensaje);
+
+    const respGracias = await bot.procesar(mensajeTexto('Muchas gracias!', 'msg-gracias'));
+    assert.doesNotMatch(respGracias, /Paga por/i);
+    assert.match(respGracias, /gusto|avisaremos/i);
+});
+
