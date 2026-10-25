@@ -213,10 +213,39 @@ test('PRESERVE: los grupos y los estados de WhatsApp se siguen ignorando', async
 
     await handleMessage({ from: 'status@broadcast', id: 'g-1', body: 'estado' }, { service: servicio, bot, serializador });
     await handleMessage({ from: '1234567890-123@g.us', id: 'g-2', body: 'grupo' }, { service: servicio, bot, serializador });
+    await handleMessage({ from: '120363169271016023@newsletter', id: 'g-3', body: 'canal' }, { service: servicio, bot, serializador });
 
-    assert.strictEqual(llamadas, 0, 'no se invoca al bot para grupos ni estados');
+    assert.strictEqual(llamadas, 0, 'no se invoca al bot para grupos, canales ni estados');
     assert.strictEqual(servicio.encoladas.length, 0);
     assert.strictEqual(serializador.tamanio, 0, 'ignorar un mensaje no deja una cadena abierta');
+});
+
+test('si el mensaje viene con JID @lid, el handler resuelve el teléfono real antes de llamar al bot', async () => {
+    const servicio = servicioFalso();
+    const serializador = new SerializadorConversaciones();
+    const vistos = [];
+    const bot = {
+        async procesar(msg) {
+            vistos.push({ from: msg.from, telefonoCliente: msg.telefonoCliente });
+            return 'ok lid';
+        }
+    };
+    const msgLid = {
+        from: '5231337337022@lid',
+        id: 'lid-1',
+        body: 'hola',
+        async getContact() {
+            return { number: '51934421442' };
+        }
+    };
+
+    await handleMessage(msgLid, { service: servicio, bot, serializador });
+
+    assert.strictEqual(vistos.length, 1);
+    assert.strictEqual(vistos[0].telefonoCliente, '51934421442', 'resuelve el número real del contacto @lid');
+    assert.deepStrictEqual(servicio.encoladas, [
+        { chatId: '5231337337022@lid', mensaje: 'ok lid', marcarVisto: true }
+    ]);
 });
 
 test('PRESERVE: el handler sigue encolando el texto del bot con chatId y marcarVisto', async () => {

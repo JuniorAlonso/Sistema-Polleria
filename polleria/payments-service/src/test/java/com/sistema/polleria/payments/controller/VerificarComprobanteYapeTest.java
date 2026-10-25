@@ -3,9 +3,11 @@ package com.sistema.polleria.payments.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistema.polleria.payments.entity.EstadoPago;
+import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import com.sistema.polleria.payments.service.NotificadorOrden;
+import com.sistema.polleria.payments.service.WhatsappNotificationClient;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
@@ -33,6 +35,7 @@ import java.util.Date;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -79,6 +82,9 @@ class VerificarComprobanteYapeTest {
     @MockitoBean
     private NotificadorOrden notificadorOrden;
 
+    @MockitoBean
+    private WhatsappNotificationClient whatsappNotificationClient;
+
     private final List<Long> pagosCreados = new ArrayList<>();
 
     @AfterEach
@@ -109,6 +115,8 @@ class VerificarComprobanteYapeTest {
         // Mismo mecanismo que el pago aprobado de Mercado Pago (PagoService.confirmar).
         verify(notificadorOrden, times(1))
                 .notificarPagoAprobado(eq(ordenId), anyString());
+        verify(whatsappNotificationClient, times(1))
+                .notificarPagoConfirmado(eq(ordenId), any(), eq(MetodoPago.YAPE_PLIN));
     }
 
     @Test

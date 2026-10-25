@@ -12,6 +12,9 @@
  * de inventar un éxito. El `fetchImpl` y el timeout son inyectables para los tests.
  */
 
+const { crearLogger } = require('../logger');
+const logger = crearLogger('PagosClient');
+
 const URL_POR_DEFECTO = 'http://localhost:8083';
 
 class ClientePagos {
@@ -29,7 +32,13 @@ class ClientePagos {
         if (monto !== undefined && monto !== null) cuerpo.monto = monto;
 
         const headers = { 'Content-Type': 'application/json' };
-        if (this.internalKey) headers['X-Internal-Key'] = this.internalKey;
+        if (this.internalKey) {
+            headers['X-Internal-Key'] = this.internalKey;
+        } else {
+            logger.warn(`Llamada a ${this.baseUrl}/pagos/comprobante sin X-Internal-Key (puede responder 401 si el microservicio lo exige)`);
+        }
+
+        logger.info(`Enviando comprobante a payments-service: ${this.baseUrl}/pagos/comprobante | orden #${ordenId} | monto: ${monto} | clave: "${comprobanteClave}"`);
 
         const controlador = new AbortController();
         const temporizador = setTimeout(() => controlador.abort(), this.timeoutMs);
@@ -40,13 +49,29 @@ class ClientePagos {
                 body: JSON.stringify(cuerpo),
                 signal: controlador.signal
             });
+
             if (!res || res.ok === false) {
-                throw new Error(`payments-service respondió ${res ? res.status : 'sin respuesta'}`);
+                let errorDetalle = '';
+                if (res && typeof res.text === 'function') {
+                    try {
+                        errorDetalle = await res.text();
+                    } catch (_) {}
+                }
+                const status = res ? res.status : 'sin respuesta';
+                logger.error(`payments-service respondió status HTTP ${status}: ${errorDetalle || 'sin cuerpo de error'}`);
+                throw new Error(`payments-service respondió ${status}${errorDetalle ? ': ' + errorDetalle : ''}`);
             }
+
+            logger.success(`Comprobante registrado exitosamente en payments-service para orden #${ordenId} (HTTP ${res.status})`);
             if (typeof res.json === 'function') {
                 return await res.json();
             }
             return null;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                logger.error(`Timeout (${this.timeoutMs}ms) esperando respuesta de payments-service en ${this.baseUrl}/pagos/comprobante`);
+            }
+            throw error;
         } finally {
             clearTimeout(temporizador);
         }

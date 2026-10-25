@@ -188,3 +188,24 @@ test('el código de seguimiento se envía real pero se guarda oculto en el histo
     assert.match(log.mensaje, /\*\*\*\*/);
     assert.strictEqual(log.ordenId, null);
 });
+
+test('encolar acepta un JID @lid cuando WhatsApp no pudo revelar el teléfono y lo envía a ese chatId directo', async () => {
+    const store = new MemoryStore();
+    const whatsapp = whatsappFalso();
+    const service = new NotificacionService({ store, whatsapp, intervaloMs: 0, maxIntentos: 3 });
+
+    const log = await service.encolar({
+        ordenId: 90,
+        telefono: '5231337337022@lid',
+        tipo: 'PAGO_CONFIRMADO',
+        mensaje: 'Pago confirmado por Yape'
+    });
+    assert.strictEqual(log.estado, 'EN_COLA');
+    await esperarCola(service);
+
+    const [final] = await store.findAll({ ordenId: 90 });
+    assert.strictEqual(final.estado, 'ENVIADO');
+    assert.strictEqual(whatsapp.enviados.length, 1);
+    assert.strictEqual(whatsapp.enviados[0].chatId, '5231337337022@lid');
+});
+

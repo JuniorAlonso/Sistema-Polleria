@@ -82,16 +82,33 @@ async function main() {
         store,
         estadoWhatsapp: whatsapp.estado,
         ultimoQr: whatsapp.ultimoQr,
-        errorWhatsapp: whatsapp.ultimoError
+        errorWhatsapp: whatsapp.ultimoError,
+        reiniciarWhatsapp: reiniciarSesion
     });
     app.listen(config.port, () => {
         const { intervaloMs, jitterPct, presupuestoHora, presupuestoDia, horaDesde, horaHasta } = ajustes.obtener();
+        console.log(`\n======================================================`);
         console.log(`🚀 Notification service en puerto ${config.port} (delay base entre mensajes: ${intervaloMs} ms, jitter ±${jitterPct}%)`);
         console.log(`🛡️ Anti-baneo: ${presupuestoHora}/hora, ${presupuestoDia}/día, ventana ${horaDesde}:00-${horaHasta}:00`);
+        console.log(`☁️ MinIO: ${config.minio.useSSL ? 'https' : 'http'}://${config.minio.endpoint}:${config.minio.port} (bucket: "${config.minio.bucket}")`);
+        console.log(`💳 Payments Service: ${config.paymentsServiceUrl} (X-Internal-Key: ${config.internalKeyCompartida ? 'Configurada' : 'NO DEFINIDA - riesgo de 401'})`);
+        console.log(`📦 Orders Service: ${config.ordersServiceUrl}`);
+        console.log(`🗄️ Base de datos: ${config.databaseUrl ? 'PostgreSQL' : 'En memoria (sin persistencia)'}`);
+        console.log(`======================================================\n`);
     });
 
     // El handler encola la respuesta del bot en la misma cola saliente (S2).
-    client.on('message', msg => handleMessage(msg, { service, bot }));
+    client.on('message', msg => {
+        console.log(`\n📩 [WhatsApp] Mensaje entrante recibido en cliente (from: ${msg.from}, tipo: ${msg.type}, hasMedia: ${Boolean(msg.hasMedia)})`);
+        handleMessage(msg, { service, bot });
+    });
+
+    client.on('message_create', msg => {
+        if (msg.fromMe && msg.to && msg.from && (msg.to === msg.from || msg.to.split('@')[0] === msg.from.split('@')[0])) {
+            console.log(`ℹ️ [WhatsApp] Auto-mensaje propio detectado (hasMedia: ${Boolean(msg.hasMedia)}). Nota: whatsapp-web.js no dispara 'message' para mensajes propios.`);
+        }
+    });
+
     // arrancar() reintenta solo cuando Chromium no puede lanzarse (por ejemplo por un
     // SingletonLock heredado de un contenedor anterior) y deja el motivo en /status.
     arrancar();

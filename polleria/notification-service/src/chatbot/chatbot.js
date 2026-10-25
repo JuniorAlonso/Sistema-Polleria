@@ -47,6 +47,8 @@ const { DedupMensajes } = require('./dedup');
 const { crearCatalogo } = require('../pedidos/catalogo');
 const { esImagen } = require('../pedidos/almacenamiento');
 const { normalizarTelefono } = require('../notifications/phone');
+const { crearLogger } = require('../logger');
+const logger = crearLogger('Chatbot');
 
 const ESTADO_MENU = 'MENU';
 const ESTADO_CONFIRMANDO_ICA = 'CONFIRMANDO_ICA';
@@ -77,7 +79,26 @@ function textoCrudo(msg) {
 
 /** Clave de conversación: el celular normalizado (S12:S1) y, si no, el `from` crudo. */
 function claveDeUsuario(from) {
+    if (from && typeof from === 'object') {
+        const candidato = from.telefonoCliente || from.from || '';
+        return normalizarTelefono(candidato) || String(candidato);
+    }
     return normalizarTelefono(from) || String(from || '');
+}
+
+const TIPOS_MEDIA_IMAGEN = new Set(['image', 'sticker']);
+const TIPOS_MEDIA_NO_IMAGEN = new Set(['document', 'video', 'audio', 'ptt', 'vcard', 'multi_vcard', 'location']);
+
+function esMensajeConMedia(msg) {
+    if (!msg) return false;
+    if (msg.hasMedia) return true;
+    const tipo = String(msg.type || '').toLowerCase();
+    return TIPOS_MEDIA_IMAGEN.has(tipo) || TIPOS_MEDIA_NO_IMAGEN.has(tipo);
+}
+
+function esTipoImagen(msg) {
+    const tipo = String((msg && msg.type) || '').toLowerCase();
+    return TIPOS_MEDIA_IMAGEN.has(tipo);
 }
 
 function idDeMensaje(msg) {
@@ -104,7 +125,7 @@ function esNegativo(texto) {
 }
 
 class BotPedidos {
-    constructor({ catalogo, ajustes, conversacion, dedup, ordenes, almacenamiento, pagos, ahora } = {}) {
+    constructor({ catalogo, ajustes, conversacion, dedup, ordenes, almacenamiento, pagos, ahora, dormir } = {}) {
         this.catalogo = catalogo || crearCatalogo();
         this.ajustes = ajustes || null;
         this.conversacion = conversacion || new MemoryConversationStore();
@@ -117,17 +138,20 @@ class BotPedidos {
         // pudo guardar el comprobante en vez de inventar un éxito.
         this.almacenamiento = almacenamiento || null;
         this.pagos = pagos || null;
+        this.dormir = dormir || (ms => new Promise(resolve => setTimeout(resolve, ms)));
     }
 
     /** Devuelve el texto a enviar o null si el mensaje no amerita respuesta. */
     async procesar(msg) {
         const id = idDeMensaje(msg);
         if (!this.dedup.registrar(id)) {
-            // Reentrega de WhatsApp: el mismo paso ya se ejecutó, no se repite.
+            logger.warn(`Mensaje id=${id || 'sin-id'} descartado por deduplicación (ya procesado)`);
             return null;
         }
-        const clave = claveDeUsuario(msg.from);
+        const clave = claveDeUsuario(msg.telefonoCliente || msg.from);
         const guardado = (await this.conversacion.get(clave)) || { estado: ESTADO_MENU };
+        const esMedia = esMensajeConMedia(msg);
+        logger.info(`Procesando mensaje [id: ${id || 'sin-id'}] de clave="${clave}" (from="${msg && msg.from}") | estado: "${guardado.estado || ESTADO_MENU}" | pedido confirmado: ${guardado.pedido ? '#' + guardado.pedido.id : 'ninguno'} | esMedia: ${esMedia}`);
         return this._resolver(msg, clave, guardado);
     }
 
@@ -137,7 +161,8 @@ class BotPedidos {
 
         // Recepción del comprobante de Yape (T6b): una imagen solo se procesa cuando la
         // conversación tiene un pedido confirmado; cualquier otra cosa pide una imagen.
-        if (msg && msg.hasMedia) {
+        if (esMensajeConMedia(msg)) {
+            logger.info(`Mensaje de "${clave}" detectado como media (hasMedia=${Boolean(msg && msg.hasMedia)}, type="${msg && msg.type}"). Derivando a receptor de comprobantes.`);
             return this._resolverComprobante(msg, clave, guardado);
         }
 
@@ -338,6 +363,7 @@ class BotPedidos {
 
     async _crearPedido(clave, guardado) {
         if (!this.ordenes) {
+            logger.warn(`No se pudo crear pedido para ${clave}: cliente de orders-service no inyectado`);
             return this._falloPedido(clave, guardado);
         }
 
@@ -353,11 +379,14 @@ class BotPedidos {
         if (guardado.observaciones) datos.observaciones = guardado.observaciones;
 
         try {
+            logger.info(`Creando pedido DELIVERY en orders-service para ${clave}...`);
             const orden = await this.ordenes.crear(datos);
             const pedido = { id: orden.id, numeroCliente: orden.numeroCliente, total: orden.total };
             await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido });
+            logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
             return mensajePedidoCreado(pedido, this.ajustes);
         } catch (error) {
+            logger.error(`Fallo al crear orden para ${clave} en orders-service: ${error.message || error}`);
             // Fallo explícito: no se inventa número de pedido y el carrito no se pierde.
             return this._falloPedido(clave, guardado);
         }
@@ -366,6 +395,40 @@ class BotPedidos {
     async _falloPedido(clave, guardado) {
         await this.conversacion.set(clave, { ...guardado, estado: ESTADO_CATALOGO });
         return MENSAJE_PEDIDO_FALLIDO;
+    }
+
+    async _descargarMediaConReintento(msg, maxIntentos = 3, esperaMs = 150) {
+        if (!msg || typeof msg.downloadMedia !== 'function') {
+            logger.warn(`downloadMedia no es una función en msg (tipo: ${msg && msg.type})`);
+            return null;
+        }
+        let ultimoError = null;
+        for (let intento = 1; intento <= maxIntentos; intento += 1) {
+            try {
+                logger.info(`Descargando archivo adjunto (intento ${intento}/${maxIntentos}) para mensaje id=${idDeMensaje(msg)}...`);
+                const media = await msg.downloadMedia();
+                if (media && media.data) {
+                    const tamBytes = Math.round(media.data.length * 0.75);
+                    logger.success(`Media descargada exitosamente en intento ${intento}: mimetype="${media.mimetype}", filename="${media.filename || 'sin nombre'}", tamaño: ~${tamBytes} bytes (${media.data.length} caracteres base64)`);
+                    return media;
+                }
+                if (media && media.mimetype && !esImagen(media.mimetype)) {
+                    logger.info(`Adjunto no imagen detectado en intento ${intento} (mimetype="${media.mimetype}"). No requiere reintento.`);
+                    // Es un adjunto no imagen (p. ej. PDF): no hace falta reintentar.
+                    return media;
+                }
+                logger.warn(`Intento ${intento}/${maxIntentos}: downloadMedia() devolvió datos vacíos o sin campo data`);
+            } catch (error) {
+                ultimoError = error;
+                logger.warn(`Intento ${intento}/${maxIntentos} falló en downloadMedia(): ${error.message || error}`);
+            }
+            if (intento < maxIntentos) {
+                logger.info(`Esperando ${esperaMs * intento}ms antes del reintento ${intento + 1}...`);
+                await this.dormir(esperaMs * intento);
+            }
+        }
+        if (ultimoError) throw ultimoError;
+        return null;
     }
 
     /**
@@ -377,26 +440,50 @@ class BotPedidos {
     async _resolverComprobante(msg, clave, guardado) {
         const pedido = guardado && guardado.estado === ESTADO_PEDIDO_CONFIRMADO ? guardado.pedido : null;
         if (!pedido || pedido.id === undefined || pedido.id === null) {
+            logger.warn(`Comprobante recibido de "${clave}", pero NO hay un pedido confirmado en curso. Estado actual: "${guardado ? guardado.estado : 'sin estado'}", pedido: ${JSON.stringify(pedido)}. Se avisará al cliente que primero debe confirmar un pedido.`);
             return mensajeSinPedidoConfirmado();
         }
 
+        logger.info(`Iniciando recepción de comprobante para orden #${pedido.id} (Total: S/ ${pedido.total}, Cliente: ${clave})`);
+
         if (!this.almacenamiento || !this.pagos) {
+            console.error(`❌ Comprobante orden #${pedido.id}: almacenamiento o pagos no configurados`);
             return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
+        }
+
+        const tipoMimetypeDeclarado = msg && (msg.mimetype || (msg._data && msg._data.mimetype));
+        if (msg && msg.type && TIPOS_MEDIA_NO_IMAGEN.has(String(msg.type).toLowerCase()) && !esImagen(tipoMimetypeDeclarado)) {
+            logger.warn(`Comprobante orden #${pedido.id}: adjunto descartado por ser tipo no imagen (type: ${msg.type}, mimetype: ${tipoMimetypeDeclarado}). Se solicitará imagen.`);
+            return MENSAJE_PIDE_IMAGEN_COMPROBANTE;
         }
 
         let media;
         try {
-            media = await msg.downloadMedia();
+            logger.info(`Comprobante orden #${pedido.id}: descargando archivo de WhatsApp...`);
+            media = await this._descargarMediaConReintento(msg);
         } catch (error) {
+            console.error(`❌ Comprobante orden #${pedido.id}: fallo en downloadMedia(): ${error.message || error}`);
             return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
         }
 
-        if (!media || !esImagen(media.mimetype)) {
+        if (!media) {
+            if (esTipoImagen(msg) || esImagen(tipoMimetypeDeclarado)) {
+                console.error(`❌ Comprobante orden #${pedido.id}: downloadMedia() devolvió vacío para una imagen (type=${msg && msg.type})`);
+                return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
+            }
+            logger.warn(`Comprobante orden #${pedido.id}: no se recibió imagen válida. Pidiendo imagen al cliente.`);
+            return MENSAJE_PIDE_IMAGEN_COMPROBANTE;
+        }
+
+        if (!esImagen(media.mimetype)) {
+            logger.warn(`Comprobante orden #${pedido.id}: archivo descargado tiene mimetype "${media.mimetype}" (no es imagen). Pidiendo imagen al cliente.`);
             return MENSAJE_PIDE_IMAGEN_COMPROBANTE;
         }
 
         let claveObjeto;
         try {
+            const tamBytes = media.data ? Math.round(media.data.length * 0.75) : 0;
+            logger.info(`Comprobante orden #${pedido.id}: subiendo imagen a MinIO (tamaño aprox: ~${Math.round(tamBytes / 1024)} KB, mimetype: "${media.mimetype}")...`);
             claveObjeto = await this.almacenamiento.subir({
                 ordenId: pedido.id,
                 messageId: idDeMensaje(msg),
@@ -404,20 +491,27 @@ class BotPedidos {
                 contentType: media.mimetype,
                 nombreArchivo: media.filename
             });
+            logger.success(`Comprobante orden #${pedido.id}: subido a MinIO exitosamente con clave: "${claveObjeto}"`);
         } catch (error) {
+            console.error(`❌ Comprobante orden #${pedido.id}: fallo al subir a MinIO: ${error.message || error}`);
             return MENSAJE_COMPROBANTE_FALLO_SUBIDA;
         }
 
         try {
+            logger.info(`Comprobante orden #${pedido.id}: registrando en payments-service (monto: S/ ${pedido.total}, teléfono: ${clave}, clave: "${claveObjeto}")...`);
             await this.pagos.registrarComprobante({
                 ordenId: pedido.id,
                 telefono: clave,
+                monto: pedido.total,
                 comprobanteClave: claveObjeto
             });
+            logger.success(`Comprobante orden #${pedido.id}: registrado exitosamente en payments-service.`);
         } catch (error) {
+            console.error(`❌ Comprobante orden #${pedido.id}: fallo al registrar en payments-service: ${error.message || error}`);
             return MENSAJE_COMPROBANTE_FALLO_REGISTRO;
         }
 
+        logger.success(`Comprobante orden #${pedido.id}: comprobante verificado y registrado. Notificando al cliente.`);
         return mensajeComprobanteRecibido(pedido);
     }
 

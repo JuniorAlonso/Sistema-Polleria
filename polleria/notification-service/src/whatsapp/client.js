@@ -6,6 +6,8 @@ const config = require('../config');
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: config.sessionPath }),
+    authTimeoutMs: 60000,
+    qrMaxRetries: 0,
     puppeteer: {
         headless: true,
         executablePath: config.chromePath,
@@ -13,26 +15,60 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-extensions',
+            '--disable-accelerated-2d-canvas',
+            '--disable-session-crashed-bubble',
+            '--disable-features=Translate,OptimizationHints,MediaRouter',
+            '--mute-audio'
         ]
     }
 });
 
 let estado = 'INICIANDO';
 let ultimoQr = null;
+let ultimoQrTimestamp = null;
 let ultimoError = null;
 
+// Watchdog de arranque: si lleva más de 45s en INICIANDO sin emitir QR ni conectar,
+// autorrecupera automáticamente para evitar bloqueos eternos en pantalla de carga.
+let watchdogTimer = null;
+function iniciarWatchdog(ms = 45000) {
+    cancelarWatchdog();
+    watchdogTimer = setTimeout(async () => {
+        if (estado === 'INICIANDO' && !ultimoQr) {
+            console.warn(`⚠️ [Watchdog] WhatsApp lleva ${ms / 1000}s en INICIANDO sin generar QR ni conectar. Autorrecuperando sesión con perfil limpio...`);
+            ultimoError = 'Tiempo de espera inicial agotado. Autorrecuperando con sesión limpia...';
+            await reiniciarSesion();
+        }
+    }, ms);
+    if (watchdogTimer.unref) watchdogTimer.unref();
+}
+
+function cancelarWatchdog() {
+    if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+    }
+}
+
 client.on('qr', qr => {
+    cancelarWatchdog();
     estado = 'ESPERANDO_QR';
     ultimoQr = qr;
+    ultimoQrTimestamp = Date.now();
     ultimoError = null;
     console.log('--- ESCANEA EL CÓDIGO QR ---');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
+    cancelarWatchdog();
     estado = 'CONECTADO';
     ultimoQr = null;
+    ultimoQrTimestamp = null;
     ultimoError = null;
     console.log('✅ ¡El servicio de WhatsApp de la Pollería está LISTO!');
 });
@@ -42,6 +78,7 @@ client.on('loading_screen', (porcentaje, mensaje) => {
 });
 
 client.on('authenticated', () => {
+    cancelarWatchdog();
     console.log('🔐 Sesión de WhatsApp autenticada, esperando que termine de cargar...');
 });
 
@@ -49,25 +86,21 @@ client.on('change_state', nuevoEstado => {
     console.log('🔄 Estado de WhatsApp:', nuevoEstado);
 });
 
-// Si en 2 minutos no está listo ni pidió QR, avisar en consola (los mensajes quedan en cola)
-setTimeout(() => {
-    if (estado === 'INICIANDO') {
-        console.warn('⚠️ WhatsApp lleva 2 minutos iniciando sin conectarse. Reinicia el servicio; ' +
-            'si se repite, borra la carpeta de sesión y vuelve a escanear el QR.');
-    }
-}, 120000).unref();
-
 client.on('auth_failure', msg => {
+    cancelarWatchdog();
     estado = 'ERROR_AUTENTICACION';
     console.error('❌ Falló la autenticación de WhatsApp:', msg);
 });
 
-client.on('disconnected', razon => {
+client.on('disconnected', async razon => {
+    cancelarWatchdog();
+    ultimoQr = null;
+    ultimoQrTimestamp = null;
+
     if (razon === 'LOGOUT') {
-        // Cerraron la sesión desde el celular: whatsapp-web.js borra la sesión
-        // y genera un QR nuevo por su cuenta, no hay que reiniciar nada.
         estado = 'ESPERANDO_QR';
-        console.warn('⚠️ La sesión de WhatsApp se cerró. Escanea el nuevo QR para volver a conectar.');
+        console.warn('⚠️ La sesión de WhatsApp se cerró (LOGOUT). Limpiando sesión anterior y generando un nuevo QR...');
+        await reiniciarSesion();
         return;
     }
 
@@ -81,18 +114,26 @@ client.on('disconnected', razon => {
 
 /**
  * Empieza de cero con una sesión nueva (QR nuevo).
- * Se usa cuando la sesión guardada quedó inválida y Windows no deja borrarla (EBUSY)
- * porque Chrome sigue abierto: primero se cierra Chrome, luego se borra la carpeta y se reinicia.
+ * Se usa cuando la sesión guardada quedó inválida, tras LOGOUT o por petición del ADMIN.
  */
 let reiniciando = false;
 async function reiniciarSesion() {
     if (reiniciando) return;
     reiniciando = true;
     estado = 'INICIANDO';
+    ultimoQr = null;
+    ultimoQrTimestamp = null;
+    ultimoError = null;
+    iniciarWatchdog(45000);
     try {
+        console.log('🧹 Cerrando navegador WhatsApp y limpiando locks...');
         await client.destroy().catch(() => {});
-        await fs.promises.rm(path.join(config.sessionPath, 'session'), {
+        await limpiarLocksHuerfanos();
+        const sessionDir = path.resolve(config.sessionPath, 'session');
+        await fs.promises.rm(sessionDir, {
             recursive: true, force: true, maxRetries: 5, retryDelay: 1000
+        }).catch(err => {
+            console.warn(`⚠️ Advertencia al limpiar carpeta de sesión: ${err.message}`);
         });
         console.log('🧹 Sesión anterior borrada. Generando un QR nuevo...');
         await arrancar();
@@ -104,22 +145,12 @@ async function reiniciarSesion() {
     }
 }
 
-const ARCHIVOS_LOCK = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
-const PERFIL_CHROMIUM = path.join(config.sessionPath, 'session');
+const ARCHIVOS_LOCK = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'DevToolsActivePort'];
+const PERFIL_CHROMIUM = path.resolve(config.sessionPath, 'session');
 const MAX_INTENTOS_ARRANQUE = 5;
 
 /**
- * Chromium deja un SingletonLock apuntando al host que creó el perfil. Cuando el
- * contenedor se recrea, el host dueño del lock ya no existe y Chromium se niega a
- * arrancar:
- *
- *   The profile appears to be in use by another Chromium process (18) on another
- *   computer (2b3c3a5b55d9). Chromium has locked the profile so that it doesn't get
- *   corrupted.
- *
- * El lock vive en el volumen de sesiones, así que sin borrarlo WhatsApp no vuelve a
- * arrancar en ninguna recreación posterior. Aquí no hay otro Chromium vivo: el
- * propio cliente acaba de fallar al lanzarlo.
+ * Limpia locks de Chromium huérfanos que impiden arrancar tras un reinicio forzado.
  */
 async function limpiarLocksHuerfanos() {
     for (const nombre of ARCHIVOS_LOCK) {
@@ -128,11 +159,10 @@ async function limpiarLocksHuerfanos() {
 }
 
 /**
- * Arranca el navegador con reintentos acotados. Sin esto, un fallo de arranque deja
- * el servicio en INICIANDO indefinidamente: no hay evento 'qr', el panel muestra
- * "Generando el código QR..." para siempre y el motivo solo vive en los logs.
+ * Arranca el navegador con reintentos acotados y watchdog activo.
  */
 async function intentarArranque(intento) {
+    iniciarWatchdog(45000);
     try {
         await client.initialize();
         ultimoError = null;
@@ -143,6 +173,7 @@ async function intentarArranque(intento) {
         console.error(`❌ Falló el arranque del navegador de WhatsApp (intento ${intento}/${MAX_INTENTOS_ARRANQUE}): ${mensaje}`);
 
         if (intento >= MAX_INTENTOS_ARRANQUE) {
+            cancelarWatchdog();
             estado = 'ERROR_INICIO';
             console.error('❌ WhatsApp queda sin arrancar. El motivo se expone en ' +
                 'GET /api/notificaciones/status (whatsapp: error_inicio).');

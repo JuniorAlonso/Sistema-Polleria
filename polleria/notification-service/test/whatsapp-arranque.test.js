@@ -29,12 +29,15 @@ const service = new NotificacionService({
     maxIntentos: 1
 });
 
+let reinicioLlamado = false;
+
 const app = crearApp({
     service,
     store,
     estadoWhatsapp: () => 'ERROR_INICIO',
     ultimoQr: () => null,
-    errorWhatsapp: () => FALLO_ARRANQUE
+    errorWhatsapp: () => FALLO_ARRANQUE,
+    reiniciarWhatsapp: async () => { reinicioLlamado = true; }
 });
 
 let servidor;
@@ -63,7 +66,7 @@ test('GET /status informa error_inicio sin filtrar el detalle a un endpoint púb
     assert.strictEqual(body.detalle, undefined);
 });
 
-test('GET /qr informa el motivo del fallo en lugar de un QR vacío sin explicación', async () => {
+test('GET /qr informa el motivo del fallo en lugar de un QR vacío sin explicación y añade cabeceras anti-cache', async () => {
     const res = await fetch(`${base}/qr`, {
         headers: { Authorization: `Bearer ${tokenAdmin()}` }
     });
@@ -73,4 +76,19 @@ test('GET /qr informa el motivo del fallo en lugar de un QR vacío sin explicaci
     assert.strictEqual(body.whatsapp, 'error_inicio');
     assert.strictEqual(body.qr, null);
     assert.strictEqual(body.detalle, FALLO_ARRANQUE);
+    assert.ok(typeof body.timestamp === 'number');
+    assert.strictEqual(res.headers.get('cache-control'), 'no-store, no-cache, must-revalidate, proxy-revalidate');
+});
+
+test('POST /qr/reiniciar ejecuta la función de reinicio de sesión bajo rol ADMIN', async () => {
+    reinicioLlamado = false;
+    const res = await fetch(`${base}/qr/reiniciar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenAdmin()}` }
+    });
+    const body = await res.json();
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.ok, true);
+    assert.strictEqual(reinicioLlamado, true);
 });

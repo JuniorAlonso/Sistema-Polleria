@@ -221,8 +221,9 @@ public class PagoService {
         pago.setDetalle("Comprobante de Yape verificado por el administrador");
         pago = pagoRepository.save(pago);
 
-        // RF21: mismo camino que el pago aprobado de Mercado Pago (confirmar/iniciar).
+        // RF21 / RF30: mismo camino que el pago aprobado de Mercado Pago (confirmar/iniciar).
         notificarOrdenAsync(pago.getOrdenId(), bearerToken);
+        avisarAprobacionTrasConfirmar(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
         log.info("Comprobante aprobado — pago id={} orden={} admin={}",
                 pago.getId(), pago.getOrdenId(), adminEmail);
         return PagoResponse.from(pago);
@@ -394,6 +395,27 @@ public class PagoService {
             whatsappNotificationClient.notificarComprobanteRechazado(ordenId, motivo);
         } catch (Exception e) {
             log.warn("No se pudo encolar el aviso de rechazo para la orden {}: {}", ordenId, e.getMessage());
+        }
+    }
+
+    private void avisarAprobacionTrasConfirmar(Long ordenId, BigDecimal monto, MetodoPago metodoPago) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            encolarAvisoAprobacion(ordenId, monto, metodoPago);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                encolarAvisoAprobacion(ordenId, monto, metodoPago);
+            }
+        });
+    }
+
+    private void encolarAvisoAprobacion(Long ordenId, BigDecimal monto, MetodoPago metodoPago) {
+        try {
+            whatsappNotificationClient.notificarPagoConfirmado(ordenId, monto, metodoPago);
+        } catch (Exception e) {
+            log.warn("No se pudo encolar el aviso de pago aprobado para la orden {}: {}", ordenId, e.getMessage());
         }
     }
 

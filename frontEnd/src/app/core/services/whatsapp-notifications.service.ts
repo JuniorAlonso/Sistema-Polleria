@@ -215,11 +215,19 @@ export class WhatsappNotificationsService {
     ).subscribe();
   }
 
-  /** Consulta el QR cada 5 s mientras la pestaña de WhatsApp está abierta. */
+  /** Consulta el QR cada 3 s mientras la pestaña de WhatsApp está abierta y refresca status. */
   iniciarSondeoQr(): void {
+    this.cargarStatus();
     this.cargarQr();
     if (!this.sondeoQr) {
-      this.sondeoQr = interval(5000).subscribe(() => this.cargarQr());
+      this.sondeoQr = interval(3000).subscribe(() => {
+        this.cargarQr();
+        // Si ya está conectado, detener el sondeo automáticamente y recargar status
+        if (this.status()?.whatsapp === 'connected') {
+          this.detenerSondeoQr();
+          this.cargarStatus();
+        }
+      });
     }
   }
 
@@ -234,9 +242,18 @@ export class WhatsappNotificationsService {
         this.qr.set(qr);
         this.qrError.set(null);
         // Mantener el estado de la sesión al día sin esperar a "Actualizar"
-        const status = this.status();
-        if (status && status.whatsapp !== qr.whatsapp) {
-          this.status.set({ ...status, whatsapp: qr.whatsapp });
+        const current = this.status();
+        if (current) {
+          if (current.whatsapp !== qr.whatsapp || current.detalle !== qr.detalle) {
+            this.status.set({ ...current, whatsapp: qr.whatsapp, detalle: qr.detalle });
+          }
+        } else {
+          this.status.set({
+            status: 'ok',
+            whatsapp: qr.whatsapp,
+            colaPendiente: 0,
+            detalle: qr.detalle
+          });
         }
       }),
       catchError(err => {
@@ -251,5 +268,17 @@ export class WhatsappNotificationsService {
         return of(null);
       })
     ).subscribe();
+  }
+
+  /**
+   * Reinicia la sesión de WhatsApp en el backend bajo demanda (desbloquea perfiles y fuerza nuevo QR).
+   */
+  reiniciarSesion(): Observable<{ ok: boolean; mensaje: string }> {
+    return this.http.post<{ ok: boolean; mensaje: string }>(`${this.NOTIFICATION_URL}/qr/reiniciar`, {}).pipe(
+      tap(() => {
+        this.cargarStatus();
+        this.cargarQr();
+      })
+    );
   }
 }

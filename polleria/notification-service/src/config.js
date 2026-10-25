@@ -4,8 +4,39 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 const fs = require('fs');
 const { normalizarTelefono } = require('./notifications/phone');
 
-// Chrome instalado en el servidor Linux de despliegue; en Windows/macOS puppeteer usa el suyo
-const CHROME_LINUX = '/usr/bin/google-chrome-stable';
+// Detecta automáticamente Chrome o Edge en Windows, Linux o macOS si Puppeteer no tiene descargado el suyo.
+function detectarRutaNavegador() {
+    if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    const posiblesRutas = [
+        // Linux
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        // Windows (Google Chrome)
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        (process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : null),
+        // Windows (Microsoft Edge Chromium)
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        // macOS
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    ].filter(Boolean);
+
+    for (const ruta of posiblesRutas) {
+        try {
+            if (fs.existsSync(ruta)) {
+                return ruta;
+            }
+        } catch (_) {}
+    }
+
+    return undefined;
+}
 
 // Lee un número de entorno sin que un valor vacío o inválido pise el default.
 function numeroEnv(nombre, porDefecto) {
@@ -24,8 +55,8 @@ const config = {
     port: Number(process.env.PORT) || 3001,
 
     // Sesión de WhatsApp (QR escaneado una sola vez y persistido en disco)
-    sessionPath: process.env.WHATSAPP_SESSION_PATH || './.wwebjs_auth',
-    chromePath: process.env.PUPPETEER_EXECUTABLE_PATH || (fs.existsSync(CHROME_LINUX) ? CHROME_LINUX : undefined),
+    sessionPath: path.resolve(process.env.WHATSAPP_SESSION_PATH || path.join(__dirname, '../.wwebjs_auth')),
+    chromePath: detectarRutaNavegador(),
 
     // RNF10: espera mínima entre mensajes para evitar bloqueos de Meta
     rateLimitMs: Number(process.env.WHATSAPP_RATE_LIMIT_MS) || 10000,
@@ -44,7 +75,7 @@ const config = {
     // PAYMENTS_SERVICE_URL usa el puerto local y sin INTERNAL_API_KEY el servicio
     // responde 401 y el bot avisa el fallo (nunca inventa un éxito).
     paymentsServiceUrl: process.env.PAYMENTS_SERVICE_URL || 'http://localhost:8083',
-    internalKeyCompartida: process.env.INTERNAL_API_KEY || null,
+    internalKeyCompartida: process.env.INTERNAL_API_KEY || process.env.NOTIFICATION_API_KEY || null,
 
     // Almacenamiento de comprobantes en MinIO (T6b, S7). Defaults para local: MinIO
     // levantado con docker-compose.local.yml (API 9000, consola 9001) y credenciales

@@ -40,12 +40,17 @@ function deserializar(texto) {
     return { estado: texto };
 }
 
+const { crearLogger } = require('../logger');
+const logger = crearLogger('Conversacion');
+
 class MemoryConversationStore {
     constructor() {
         this.filas = new Map();
     }
 
-    async init() {}
+    async init() {
+        logger.debug('Store de conversación en memoria listo.');
+    }
 
     async get(clave) {
         const estado = this.filas.get(clave);
@@ -53,10 +58,13 @@ class MemoryConversationStore {
     }
 
     async set(clave, estado) {
-        this.filas.set(clave, normalizarEstado(estado));
+        const norm = normalizarEstado(estado);
+        logger.debug(`[Memoria] Guardando estado para "${clave}": estado="${norm.estado}"${norm.pedido ? ', pedido=#' + norm.pedido.id : ''}`);
+        this.filas.set(clave, norm);
     }
 
     async del(clave) {
+        logger.debug(`[Memoria] Eliminando estado para "${clave}"`);
         this.filas.delete(clave);
     }
 }
@@ -72,6 +80,7 @@ class PostgresConversationStore {
     }
 
     async init() {
+        logger.info('Inicializando tabla de estado de conversación en PostgreSQL...');
         await this.pool.query(`
             CREATE TABLE IF NOT EXISTS conversation_state (
                 clave          TEXT PRIMARY KEY,
@@ -79,6 +88,7 @@ class PostgresConversationStore {
                 actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
             );
         `);
+        logger.success('Tabla conversation_state lista en PostgreSQL.');
     }
 
     async get(clave) {
@@ -90,6 +100,8 @@ class PostgresConversationStore {
     }
 
     async set(clave, estado) {
+        const norm = normalizarEstado(estado);
+        logger.debug(`[Postgres] Guardando estado para "${clave}": estado="${norm.estado}"${norm.pedido ? ', pedido=#' + norm.pedido.id : ''}`);
         await this.pool.query(
             `INSERT INTO conversation_state (clave, estado, actualizado_en)
              VALUES ($1, $2, now())
@@ -99,6 +111,7 @@ class PostgresConversationStore {
     }
 
     async del(clave) {
+        logger.debug(`[Postgres] Eliminando estado para "${clave}"`);
         await this.pool.query('DELETE FROM conversation_state WHERE clave = $1', [clave]);
     }
 }

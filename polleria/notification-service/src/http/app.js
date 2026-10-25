@@ -69,7 +69,7 @@ img{border:8px solid #fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1
  * @param ultimoQr  función que devuelve el último QR de WhatsApp (o null)
  * @param errorWhatsapp función que devuelve el motivo del último fallo de arranque (o null)
  */
-function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null }) {
+function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null, reiniciarWhatsapp = async () => {} }) {
     const app = express();
     app.use(express.json());
 
@@ -253,13 +253,31 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
     // QR para vincular WhatsApp desde el panel admin (solo ADMIN). El QR se genera aquí, sin servicios externos.
     router.get('/qr', requiereRol('ADMIN'), async (req, res, next) => {
         try {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+
             const estado = estadoWhatsapp();
             const qr = estado === 'CONECTADO' ? null : ultimoQr();
             res.json({
                 whatsapp: ESTADO_WHATSAPP[estado] || estado,
                 qr: qr ? await QRCode.toDataURL(qr, { width: 280, margin: 1 }) : null,
-                detalle: errorWhatsapp()
+                detalle: errorWhatsapp(),
+                timestamp: Date.now()
             });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    // Endpoint para reiniciar la sesión de WhatsApp bajo demanda cuando el QR se atasque o expire
+    router.post('/qr/reiniciar', requiereRol('ADMIN'), async (req, res, next) => {
+        try {
+            if (typeof reiniciarWhatsapp === 'function') {
+                await reiniciarWhatsapp();
+                return res.json({ ok: true, mensaje: 'Reinicio de sesión de WhatsApp solicitado con éxito' });
+            }
+            res.status(501).json({ ok: false, error: 'Reinicio no configurado' });
         } catch (error) {
             next(error);
         }
@@ -293,6 +311,10 @@ function crearApp({ service, store, estadoWhatsapp, ultimoQr = () => null, error
     // máquina o con ?clave=<NOTIFICATION_API_KEY>. El QR se genera aquí, sin servicios externos.
     app.get('/qr', async (req, res, next) => {
         try {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+
             const desdeLocal = IPS_LOCALES.includes(req.socket.remoteAddress);
             const conClave = config.internalApiKey && req.query.clave === config.internalApiKey;
             if (!desdeLocal && !conClave) {

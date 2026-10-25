@@ -3,6 +3,11 @@ const { normalizarTelefono } = require('./phone');
 const { crearAjustes } = require('../outbound/ajustes');
 const { duracionEscribiendo } = require('../outbound/humanizacion');
 
+function esJidDirecto(telefono) {
+    if (typeof telefono !== 'string') return false;
+    return /^\d+@(?:lid|c\.us)$/.test(telefono.trim());
+}
+
 /**
  * Orquesta el envío: registra el log como EN_COLA, lo encola
  * y actualiza su estado final (ENVIADO / ERROR) cuando la cola lo procesa.
@@ -41,24 +46,34 @@ class NotificacionService {
      * @param mensajeRegistro  texto que se guarda en el historial (p. ej. con el código oculto); por defecto, el mismo
      */
     async encolar({ ordenId, telefono, tipo, mensaje, mensajeRegistro }) {
+        const textoTelefono = typeof telefono === 'string' ? telefono.trim() : '';
+        const jidDirecto = esJidDirecto(textoTelefono) ? textoTelefono : null;
         const numero = normalizarTelefono(telefono);
+        const destinatario = numero || jidDirecto;
 
         const log = await this.store.create({
             ordenId,
-            destinatario: numero || String(telefono),
+            destinatario: destinatario || String(telefono),
             tipo,
             mensaje: mensajeRegistro || mensaje
         });
 
         // Un número mal formado no entra a la cola: se registra como ERROR y no bloquea a nadie
-        if (!numero) {
+        if (!destinatario) {
             return this.store.update(log.id, {
                 estado: 'ERROR',
                 errorDetalle: `Teléfono con formato inválido: ${telefono}`
             });
         }
 
-        this.cola.add({ logId: log.id, numero, mensaje, intentos: 0, marcarVisto: false });
+        this.cola.add({
+            logId: log.id,
+            numero: destinatario,
+            chatId: jidDirecto || undefined,
+            mensaje,
+            intentos: 0,
+            marcarVisto: false
+        });
         return log;
     }
 
@@ -87,6 +102,7 @@ class NotificacionService {
             this.cola.add({
                 logId: log.id,
                 numero: log.destinatario,
+                chatId: esJidDirecto(log.destinatario) ? log.destinatario : undefined,
                 mensaje: log.mensaje,
                 intentos: log.intentos,
                 marcarVisto: false

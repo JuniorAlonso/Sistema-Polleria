@@ -1982,7 +1982,7 @@ export type InsumoAlmacen = Insumo;
           </div>
 
           <!-- Vincular WhatsApp: QR visible solo para ADMIN cuando no hay sesión -->
-          @if (whatsappService.status() && whatsappService.status()?.whatsapp !== 'connected') {
+          @if (whatsappService.status()?.whatsapp !== 'connected') {
             @if (whatsappService.qr() ?? { whatsapp: 'starting', qr: null }; as estadoQr) {
               <div class="bg-[#14161a] p-6 rounded-2xl border border-amber-400/30 flex flex-col md:flex-row items-center gap-6">
                 <div class="w-[220px] h-[220px] shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden">
@@ -1992,14 +1992,31 @@ export type InsumoAlmacen = Insumo;
                     <span class="text-xs text-red-500 px-4 text-center">{{ whatsappService.qrError() }}</span>
                   } @else if (whatsappService.diagnostico()) {
                     <span class="text-xs text-red-500 px-4 text-center">
-                      WhatsApp no pudo iniciar. Reinicia el servicio de notificaciones.
+                      WhatsApp no pudo iniciar. Pulsa "Forzar nuevo QR" para reintentar.
                     </span>
                   } @else {
-                    <span class="text-xs text-slate-500 px-4 text-center">Generando el código QR...</span>
+                    <div class="flex flex-col items-center gap-2 p-4 text-center">
+                      <div class="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span class="text-xs text-slate-500">Generando el código QR...</span>
+                    </div>
                   }
                 </div>
-                <div class="space-y-3 text-sm">
-                  <h3 class="text-lg font-bold text-white">Vincula el WhatsApp de la pollería</h3>
+                <div class="space-y-3 text-sm flex-1">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-white">Vincula el WhatsApp de la pollería</h3>
+                    <button
+                      type="button"
+                      (click)="reiniciarSesionWhatsapp()"
+                      [disabled]="reiniciandoWhatsapp()"
+                      class="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer">
+                      @if (reiniciandoWhatsapp()) {
+                        <span class="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></span>
+                        <span>Reiniciando...</span>
+                      } @else {
+                        <span>🔄 Forzar nuevo QR</span>
+                      }
+                    </button>
+                  </div>
                   <p class="text-slate-400 text-xs">
                     Los avisos a clientes no se enviarán hasta que se vincule un número. Escanea el código con el celular del negocio:
                   </p>
@@ -4093,6 +4110,12 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         this.verificandoComprobante.set(false);
         this.motivoRechazo.set('');
         this.decisionVerificacion.set({ aprobado });
+        if (aprobado) {
+          this.ordersService.loadActiveOrders();
+          this.notify.showSuccess('Comprobante aprobado. La orden pasó a preparación.');
+        } else {
+          this.notify.showSuccess('Comprobante rechazado. Se notificó al cliente por WhatsApp.');
+        }
       }),
       catchError(err => {
         this.verificandoComprobante.set(false);
@@ -4274,6 +4297,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   filtroNotifOrdenId: number | null = null;
   filtroNotifEstado: EstadoNotificacion | '' = '';
   filtroNotifDesde = '';
+  readonly reiniciandoWhatsapp = signal<boolean>(false);
 
   // T5b (S4/S8/S11) — formulario editable de la sección "Anti-baneo y contactos".
   // Es un borrador local: `guardarAjustesWhatsapp()` manda al backend SOLO lo que cambió.
@@ -4364,6 +4388,21 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
     this.filtroNotifEstado = '';
     this.filtroNotifDesde = '';
     this.cargarNotificaciones();
+  }
+
+  reiniciarSesionWhatsapp(): void {
+    if (this.reiniciandoWhatsapp()) return;
+    this.reiniciandoWhatsapp.set(true);
+    this.whatsappService.reiniciarSesion().subscribe({
+      next: (res) => {
+        this.reiniciandoWhatsapp.set(false);
+        this.notify.showSuccess('WhatsApp reiniciado', res?.mensaje || 'Se ha solicitado un nuevo código QR.');
+      },
+      error: (err) => {
+        this.reiniciandoWhatsapp.set(false);
+        this.notify.showError('Error al reiniciar WhatsApp', err?.error?.error || err?.message || 'No se pudo reiniciar la sesión.');
+      }
+    });
   }
 
   etiquetaSesionWhatsapp(): string {

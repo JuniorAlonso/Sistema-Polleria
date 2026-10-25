@@ -103,7 +103,7 @@ function mensajeTexto(body, id = 'txt-1') {
     return { from: FROM, body, id, hasMedia: false };
 }
 
-function montar({ minio = minioFalso(), pagos = pagosFalso(), conversacion, ahora = () => TS } = {}) {
+function montar({ minio = minioFalso(), pagos = pagosFalso(), conversacion, ahora = () => TS, dormir = async () => {} } = {}) {
     const almacenamiento = crearAlmacenamiento({ cliente: minio.cliente, bucket: BUCKET, ahora });
     const bot = crearBot({
         catalogo: catalogoFalso(),
@@ -111,7 +111,8 @@ function montar({ minio = minioFalso(), pagos = pagosFalso(), conversacion, ahor
         conversacion: conversacion || new MemoryConversationStore(),
         almacenamiento,
         pagos: pagos.cliente,
-        ahora
+        ahora,
+        dormir
     });
     return { bot, minio, pagos, almacenamiento };
 }
@@ -222,10 +223,79 @@ test('(a) una imagen con pedido confirmado se sube con la clave esperada, se reg
     assert.strictEqual(minio.llamadas.putObject[0].clave, CLAVE_ESPERADA, 'usa la clave del pedido y el mensaje');
     assert.strictEqual(pagos.llamadas.length, 1, 'registra la evidencia una sola vez');
     assert.strictEqual(pagos.llamadas[0].ordenId, PEDIDO.id);
+    assert.strictEqual(pagos.llamadas[0].monto, PEDIDO.total, 'manda el total del pedido para registrar el monto real');
     assert.strictEqual(pagos.llamadas[0].comprobanteClave, CLAVE_ESPERADA);
     assert.strictEqual(pagos.llamadas[0].telefono, CELULAR, 'manda el celular del remitente');
     assert.match(respuesta, /comprobante/i, 'confirma que recibió el comprobante');
     assert.match(respuesta, /administrador/i, 'avisa que un administrador lo va a verificar');
+});
+
+test('(a2) si msg.downloadMedia() devuelve null en el primer intento (media aún descargándose), reintenta y procesa la imagen', async () => {
+    const store = await storeConfirmado();
+    const { bot, minio, pagos } = montar({ conversacion: store });
+    let intentos = 0;
+    const mensaje = {
+        from: FROM,
+        id: 'img-retry',
+        type: 'image',
+        hasMedia: true,
+        async downloadMedia() {
+            intentos += 1;
+            if (intentos === 1) return undefined;
+            return { mimetype: 'image/jpeg', data: 'Zm90by1kZS1wcnVlYmE=', filename: 'yape.jpg' };
+        }
+    };
+
+    const respuesta = await bot.procesar(mensaje);
+
+    assert.strictEqual(intentos, 2, 'reintentó la descarga de la imagen');
+    assert.strictEqual(minio.llamadas.putObject.length, 1, 'sube la imagen tras el reintento');
+    assert.strictEqual(pagos.llamadas.length, 1, 'registra el comprobante');
+    assert.match(respuesta, /Recibimos el comprobante/i);
+});
+
+test('(a3) si msg.type es image pero downloadMedia devuelve null tras los reintentos, avisa fallo de subida y NO pide "necesito una imagen"', async () => {
+    const store = await storeConfirmado();
+    const { bot, minio, pagos } = montar({ conversacion: store });
+    let intentos = 0;
+    const mensaje = {
+        from: FROM,
+        id: 'img-null',
+        type: 'image',
+        hasMedia: true,
+        async downloadMedia() {
+            intentos += 1;
+            return undefined;
+        }
+    };
+
+    const respuesta = await bot.procesar(mensaje);
+
+    assert.ok(intentos >= 2, 'reintentó antes de fallar');
+    assert.strictEqual(minio.llamadas.putObject.length, 0);
+    assert.strictEqual(pagos.llamadas.length, 0);
+    assert.match(respuesta, /No pudimos guardar la imagen/i, 'informa que falló la descarga/guardado');
+    assert.doesNotMatch(respuesta, /Necesito una \*imagen\*/i, 'no le miente diciendo que no envió una imagen');
+});
+
+test('(a4) un mensaje con hasMedia: false pero type: image (hidratación tardía de WhatsApp Web) se trata como comprobante', async () => {
+    const store = await storeConfirmado();
+    const { bot, minio, pagos } = montar({ conversacion: store });
+    const mensaje = {
+        from: FROM,
+        id: 'img-hidratacion',
+        type: 'image',
+        hasMedia: false,
+        async downloadMedia() {
+            return { mimetype: 'image/jpeg', data: 'Zm90by1kZS1wcnVlYmE=', filename: 'yape.jpg' };
+        }
+    };
+
+    const respuesta = await bot.procesar(mensaje);
+
+    assert.strictEqual(minio.llamadas.putObject.length, 1, 'descarga y sube la imagen aunque hasMedia fuera false');
+    assert.strictEqual(pagos.llamadas.length, 1);
+    assert.match(respuesta, /Recibimos el comprobante/i);
 });
 
 // (b) Lo que no es imagen (texto) → no sube ni registra y pide una imagen.

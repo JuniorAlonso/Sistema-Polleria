@@ -47,20 +47,38 @@ function extensionDe(mimetype, nombreArchivo) {
     return 'bin';
 }
 
+const { crearLogger } = require('../logger');
+const logger = crearLogger('MinIO');
+
 class AlmacenamientoComprobantes {
-    constructor({ cliente, bucket = BUCKET_POR_DEFECTO, ahora = Date.now } = {}) {
+    constructor({ cliente, bucket = BUCKET_POR_DEFECTO, ahora = Date.now, endpoint, port, useSSL } = {}) {
         this.cliente = cliente;
         this.bucket = bucket;
         this.ahora = ahora;
+        this.endpoint = endpoint;
+        this.port = port;
+        this.useSSL = useSSL;
         this.bucketListo = false;
     }
 
     /** Garantiza que el bucket exista antes de subir; lo crea si falta. */
     async asegurarBucket() {
         if (this.bucketListo) return;
-        const existe = await this.cliente.bucketExists(this.bucket);
-        if (!existe) await this.cliente.makeBucket(this.bucket);
-        this.bucketListo = true;
+        try {
+            logger.debug(`Verificando existencia del bucket "${this.bucket}"...`);
+            const existe = await this.cliente.bucketExists(this.bucket);
+            if (!existe) {
+                logger.info(`Bucket "${this.bucket}" no existe en MinIO. Creándolo con makeBucket()...`);
+                await this.cliente.makeBucket(this.bucket);
+                logger.success(`Bucket "${this.bucket}" creado exitosamente.`);
+            } else {
+                logger.debug(`Bucket "${this.bucket}" verificado (ya existe).`);
+            }
+            this.bucketListo = true;
+        } catch (error) {
+            logger.error(`Error al verificar/asegurar bucket "${this.bucket}": ${error.message}`);
+            throw error;
+        }
     }
 
     /** Clave del objeto en el bucket (pura, para reutilizarla y testearla). */
@@ -74,12 +92,15 @@ class AlmacenamientoComprobantes {
      */
     async subir({ ordenId, messageId, archivo, contentType, nombreArchivo } = {}) {
         if (ordenId === undefined || ordenId === null) {
+            logger.error('Intento de subida sin ordenId');
             throw new Error('ordenId requerido para subir el comprobante');
         }
         if (!archivo || !archivo.length) {
+            logger.error(`Intento de subida para orden #${ordenId} sin archivo o archivo vacío`);
             throw new Error('archivo requerido para subir el comprobante');
         }
 
+        logger.info(`Preparando subida de comprobante para orden #${ordenId} (tamaño archivo: ${archivo.length} bytes, tipo declarado: ${contentType})`);
         await this.asegurarBucket();
 
         const extension = extensionDe(contentType, nombreArchivo);
@@ -88,16 +109,24 @@ class AlmacenamientoComprobantes {
         const cuerpo = Buffer.isBuffer(archivo) ? archivo : Buffer.from(archivo);
         const tipo = contentType || 'application/octet-stream';
 
-        await this.cliente.putObject(this.bucket, clave, cuerpo, cuerpo.length, {
-            'Content-Type': tipo
-        });
-        return clave;
+        logger.info(`Subiendo a MinIO: bucket="${this.bucket}", clave="${clave}", tamaño=${cuerpo.length} bytes, Content-Type="${tipo}"`);
+        try {
+            await this.cliente.putObject(this.bucket, clave, cuerpo, cuerpo.length, {
+                'Content-Type': tipo
+            });
+            logger.success(`Imagen subida exitosamente a MinIO con clave: "${clave}" (${cuerpo.length} bytes)`);
+            return clave;
+        } catch (error) {
+            logger.error(`Fallo en putObject a MinIO (bucket="${this.bucket}", clave="${clave}"): ${error.message}`);
+            throw error;
+        }
     }
 }
 
 /** Construye el cliente oficial de MinIO. Solo se llama cuando no se inyecta un doble. */
 function crearClienteMinio({ endpoint, port, useSSL, accessKey, secretKey } = {}) {
     const Minio = require('minio');
+    logger.info(`Inicializando cliente oficial MinIO -> ${useSSL ? 'https' : 'http'}://${endpoint}:${port} (accessKey: ${accessKey ? accessKey.slice(0, 3) + '***' : 'no definida'})`);
     return new Minio.Client({
         endPoint: endpoint,
         port,
@@ -115,7 +144,7 @@ function crearClienteMinio({ endpoint, port, useSSL, accessKey, secretKey } = {}
  */
 function crearAlmacenamiento({ cliente, bucket, ahora, endpoint, port, useSSL, accessKey, secretKey } = {}) {
     const minio = cliente || crearClienteMinio({ endpoint, port, useSSL, accessKey, secretKey });
-    return new AlmacenamientoComprobantes({ cliente: minio, bucket, ahora });
+    return new AlmacenamientoComprobantes({ cliente: minio, bucket, ahora, endpoint, port, useSSL });
 }
 
 module.exports = {
