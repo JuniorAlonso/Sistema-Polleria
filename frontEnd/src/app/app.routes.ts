@@ -74,6 +74,14 @@ export const routes: Routes = [
     title: 'Hoja de Ruta & Reparto - San Pollo Delivery'
   },
 
+  // 7. Módulo Cajero / POS & Arqueo (Solo CAJERO y ADMIN)
+  {
+    path: 'cajero',
+    loadComponent: () => import('./features/cajero/cajero-dashboard.component').then(m => m.CajeroDashboardComponent),
+    canActivate: [staffGuard],
+    title: 'Punto de Cobro & Caja - San Pollo Cajero'
+  },
+
   // 5. Main App routes (Clientes y navegación general)
   {
     path: '',

@@ -436,6 +436,29 @@ export class OrdersService {
   }
 
   /**
+   * Cierra/cobra una comanda de salón, realizando el avance secuencial
+   * necesario si la orden no había sido completada en cocina aún.
+   */
+  completarOrdenSalon(orderId: string, currentStatus?: OrderStatus): Observable<Order> {
+    const cleanId = this.extractNumericId(orderId);
+    const order = this.orders().find(o => o.id === orderId || (cleanId > 0 && this.extractNumericId(o.id) === cleanId));
+    const estado = currentStatus || order?.estado;
+
+    if (estado === 'PAGADO' || estado === 'PENDIENTE_PAGO') {
+      return this.updateOrderStatus(orderId, 'EN_PREPARACION').pipe(
+        switchMap(() => this.updateOrderStatus(orderId, 'LISTO_COCINA')),
+        switchMap(() => this.updateOrderStatus(orderId, 'COMPLETADO'))
+      );
+    }
+    if (estado === 'EN_PREPARACION') {
+      return this.updateOrderStatus(orderId, 'LISTO_COCINA').pipe(
+        switchMap(() => this.updateOrderStatus(orderId, 'COMPLETADO'))
+      );
+    }
+    return this.updateOrderStatus(orderId, 'COMPLETADO');
+  }
+
+  /**
    * Helper para avance secuencial de estado exclusivo en cocina (PAGADO -> EN_PREPARACION -> LISTO_COCINA)
    */
   advanceKitchenStatus(orderId: string): void {

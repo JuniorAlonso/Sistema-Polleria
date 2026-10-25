@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
@@ -16,6 +16,26 @@ export class PaymentService {
 
   readonly lastTransaction = signal<PaymentTransaction | null>(null);
   readonly isLoading = signal<boolean>(false);
+  readonly pagos = signal<PaymentTransaction[]>([]);
+
+  readonly pagosPorOrdenMap = computed(() => {
+    const map = new Map<string, PaymentTransaction>();
+    for (const p of this.pagos()) {
+      map.set(String(p.orderId), p);
+    }
+    return map;
+  });
+
+  /**
+   * Carga todos los pagos registrados desde payments-service (:8083)
+   */
+  cargarPagos(): Observable<PaymentTransaction[]> {
+    return this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`).pipe(
+      map(dtos => (dtos || []).map(dto => PaymentAdapter.toPaymentTransaction(dto))),
+      tap(lista => this.pagos.set(lista)),
+      catchError(() => of([]))
+    );
+  }
 
   /**
    * RF21: Iniciar Pago en payments-service (:8083)

@@ -26,7 +26,22 @@ export const clientGuard: CanActivateFn = () => {
     return false;
   }
 
-  if (user.rol === 'ADMIN' || user.rol === 'MOZO' || user.rol === 'REPARTIDOR') {
+  if (user.rol === 'MOZO') {
+    router.navigate(['/mozo']);
+    return false;
+  }
+
+  if (user.rol === 'REPARTIDOR') {
+    router.navigate(['/delivery']);
+    return false;
+  }
+
+  if (user.rol === 'CAJERO') {
+    router.navigate(['/cajero']);
+    return false;
+  }
+
+  if (user.rol === 'ADMIN') {
     router.navigate(['/admin']);
     return false;
   }

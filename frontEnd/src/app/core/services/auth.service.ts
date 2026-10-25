@@ -30,6 +30,7 @@ export class AuthService {
   readonly isChef = computed(() => this.currentUser()?.rol === 'CHEF');
   readonly isMozo = computed(() => this.currentUser()?.rol === 'MOZO');
   readonly isRepartidor = computed(() => this.currentUser()?.rol === 'REPARTIDOR');
+  readonly isCajero = computed(() => this.currentUser()?.rol === 'CAJERO');
   readonly isStaff = computed(() => {
     const rol = this.currentUser()?.rol;
     return !!rol && rol !== 'CLIENTE';

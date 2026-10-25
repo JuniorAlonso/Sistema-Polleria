@@ -3,7 +3,7 @@
 // ============================================================
 
 // --- 1.1 Auth Service (:8081) ---
-export type BackendRole = 'CLIENTE' | 'MOZO' | 'COCINA' | 'ADMIN' | 'REPARTIDOR';
+export type BackendRole = 'CLIENTE' | 'MOZO' | 'COCINA' | 'ADMIN' | 'REPARTIDOR' | 'CAJERO';
 
 export interface BackendRegisterRequest {
   name: string;

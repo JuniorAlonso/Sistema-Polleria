@@ -24,10 +24,10 @@ public class PagoController {
     private final PagoService pagoService;
     private final MercadoPagoGateway mercadoPagoGateway;
 
-    /** Iniciar pago — CLIENTE, MOZO (para delivery/recojo online) */
+    /** Iniciar pago — CLIENTE, MOZO, CAJERO (para delivery/recojo online y cobro en caja) */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
     public PagoResponse iniciar(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal,
@@ -40,7 +40,7 @@ public class PagoController {
     /** Crear Preferencia de Mercado Pago (Checkout Pro) — requiere usuario autenticado */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
     public PreferenceResponse crearPreferenciaMercadoPago(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal) {
@@ -53,14 +53,14 @@ public class PagoController {
 
     /** Detalle de un pago */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse obtener(@PathVariable Long id) {
         return pagoService.obtener(id);
     }
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse porOrden(@PathVariable Long ordenId) {
         return pagoService.obtenerPorOrden(ordenId);
     }
@@ -72,9 +72,9 @@ public class PagoController {
         return pagoService.misOrdenes(extractUserId(principal));
     }
 
-    /** Todos los pagos — solo ADMIN / finanzas */
+    /** Todos los pagos — ADMIN / CAJERO / finanzas */
     @GetMapping
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
     public List<PagoResponse> todos() {
         return pagoService.todos();
     }
@@ -85,7 +85,7 @@ public class PagoController {
      * y debe validar un HMAC-secret propio de la pasarela (implementación futura).
      */
     @PatchMapping("/{id}/confirmar")
-    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse confirmar(
             @PathVariable Long id,
             @Valid @RequestBody ConfirmarPagoRequest req,

@@ -12,6 +12,7 @@ import { FinanceService } from '../../../core/services/finance.service';
 import { FeedbackService } from '../../../core/services/feedback.service';
 import { SecurityAuditService } from '../../../core/services/security-audit.service';
 import { RepartidoresService } from '../../../core/services/repartidores.service';
+import { PaymentService } from '../../../core/services/payment.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
@@ -379,6 +380,12 @@ export type InsumoAlmacen = Insumo;
                           <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/10 text-slate-300">
                             {{ order.tipo }}
                           </span>
+                          <span 
+                            class="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono"
+                            [ngClass]="estaOrdenPagada(order) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'"
+                          >
+                            {{ estaOrdenPagada(order) ? '✓ PAGADO' : '💵 POR COBRAR' }}
+                          </span>
                         </div>
                         <span class="text-xs font-bold text-slate-300">
                           {{ order.cliente.nombre }}
@@ -462,6 +469,12 @@ export type InsumoAlmacen = Insumo;
                           </span>
                           <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/10 text-slate-300">
                             {{ order.tipo }}
+                          </span>
+                          <span 
+                            class="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono"
+                            [ngClass]="estaOrdenPagada(order) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'"
+                          >
+                            {{ estaOrdenPagada(order) ? '✓ PAGADO' : '💵 POR COBRAR' }}
                           </span>
                         </div>
                         <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">
@@ -565,6 +578,17 @@ export type InsumoAlmacen = Insumo;
                           <div class="flex items-center gap-1.5 text-[10px] text-amber-300 font-semibold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
                             <span>🛵</span>
                             <span>{{ nombreMotorizado(order) }}</span>
+                          </div>
+                        }
+                        @if (estaOrdenPagada(order)) {
+                          <div class="flex items-center gap-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/30 w-fit font-mono">
+                            <span>✓</span>
+                            <span>PAGADO (No cobrar)</span>
+                          </div>
+                        } @else {
+                          <div class="flex items-center gap-1 text-[10px] font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30 w-fit font-mono">
+                            <span>💵</span>
+                            <span>COBRAR: {{ order.total | currencyPEN }}</span>
                           </div>
                         }
                       </div>
@@ -2261,6 +2285,18 @@ export type InsumoAlmacen = Insumo;
                 <span class="text-slate-400">Método de Pago:</span>
                 <span class="text-polleria-gold font-bold">{{ order.metodoPago || 'No registrado' }}</span>
               </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-400">Estado del Cobro:</span>
+                @if (estaOrdenPagada(order)) {
+                  <span class="text-emerald-400 font-bold bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/30 text-[11px] font-mono">
+                    ✓ COBRADO / PAGADO
+                  </span>
+                } @else {
+                  <span class="text-amber-300 font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 text-[11px] font-mono">
+                    💵 PAGO PENDIENTE (Contraentrega)
+                  </span>
+                }
+              </div>
               @if (order.tipo === 'DELIVERY') {
                 <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
                   <span class="text-slate-400">Motorizado Asignado:</span>
@@ -2401,6 +2437,20 @@ export type InsumoAlmacen = Insumo;
               <div class="flex justify-between items-center pt-1.5 border-t border-white/5">
                 <span class="text-slate-400 font-semibold">Total / Pago:</span>
                 <span class="font-bold text-polleria-gold">{{ order.total | currencyPEN }} <span class="text-slate-400 font-normal">({{ order.metodoPago || 'No registrado' }})</span></span>
+              </div>
+              <div class="p-2.5 rounded-xl border text-xs flex items-center justify-between"
+                [ngClass]="estaOrdenPagada(order) ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300' : 'bg-amber-950/30 border-amber-500/40 text-amber-300'"
+              >
+                <div class="flex items-center gap-1.5 font-bold">
+                  @if (estaOrdenPagada(order)) {
+                    <span>✓ PEDIDO PAGADO</span>
+                  } @else {
+                    <span>💵 PAGO PENDIENTE (Contraentrega)</span>
+                  }
+                </div>
+                <span class="text-[11px] font-medium font-mono">
+                  {{ estaOrdenPagada(order) ? 'No cobrar al cliente' : 'Cobrar: ' + (order.total | currencyPEN) }}
+                </span>
               </div>
             </div>
 
@@ -3660,6 +3710,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly securityAuditService = inject(SecurityAuditService);
   readonly whatsappService = inject(WhatsappNotificationsService);
   readonly repartidoresService = inject(RepartidoresService);
+  readonly paymentService = inject(PaymentService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -3931,6 +3982,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.ordersService.loadActiveOrders();
+    this.paymentService.cargarPagos().subscribe();
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
     this.inventoryService.cargarInsumos();
@@ -3950,8 +4002,15 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         // Pestaña oculta: no se consulta el backend hasta que el usuario vuelva.
         if (typeof document !== 'undefined' && document.hidden) return;
         this.ordersService.loadActiveOrders();
+        this.paymentService.cargarPagos().subscribe();
       });
     }
+  }
+
+  estaOrdenPagada(order: Order): boolean {
+    if (!order) return false;
+    const pago = this.paymentService.pagosPorOrdenMap().get(String(order.id));
+    return pago?.estado === 'APROBADO' || order.estado === 'PAGADO';
   }
 
   ngOnDestroy(): void {
