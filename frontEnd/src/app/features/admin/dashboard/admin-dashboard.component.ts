@@ -12,7 +12,6 @@ import { FinanceService } from '../../../core/services/finance.service';
 import { FeedbackService } from '../../../core/services/feedback.service';
 import { SecurityAuditService } from '../../../core/services/security-audit.service';
 import { RepartidoresService } from '../../../core/services/repartidores.service';
-import { PaymentService } from '../../../core/services/payment.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { AjustesWhatsapp, WhatsappNotificationsService } from '../../../core/services/whatsapp-notifications.service';
@@ -4046,7 +4045,6 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   readonly whatsappService = inject(WhatsappNotificationsService);
   readonly paymentService = inject(PaymentService);
   readonly repartidoresService = inject(RepartidoresService);
-  readonly paymentService = inject(PaymentService);
   readonly notify = inject(NotificationService);
   readonly router = inject(Router);
   private platformId = inject(PLATFORM_ID);
