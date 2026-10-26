@@ -110,18 +110,34 @@ public class PagoController {
     }
 
     /**
-     * Verificación del comprobante de Yape (T6c, S6). **Exclusiva de ADMIN**: el
-     * rol {@code CAJERO}
-     * no se toca. Aprobar avanza la orden con el mismo mecanismo del pago aprobado
-     * de Mercado Pago;
-     * rechazar exige {@code motivoRechazo} y deja la orden impaga.
+     * Subida web de la captura del pago (S3). El CLIENTE dueño de la orden o el personal
+     * (ADMIN, CAJERO) envían la imagen como multipart ({@code file}); el pago queda en
+     * {@code PENDIENTE_VERIFICACION}.
+     */
+    @PostMapping(value = "/orden/{ordenId}/comprobante", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyAuthority('CLIENTE','ADMIN','CAJERO')")
+    public PagoResponse subirComprobante(
+            @PathVariable Long ordenId,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+            Principal principal,
+            Authentication authentication) {
+        PagoResponse pago = pagoService.subirComprobanteWeb(
+                ordenId, file, extractUserId(principal), puedeVerComprobante(authentication));
+        return conComprobanteSegunRol(pago, authentication);
+    }
+
+    /**
+     * Verificación del comprobante de Yape (S3). La ejecutan ADMIN y CAJERO. Aprobar avanza la
+     * orden con el mismo mecanismo del pago aprobado de Mercado Pago y exige captura adjunta y
+     * estar dentro de la ventana de 15 minutos (400 si no); rechazar exige {@code motivoRechazo}
+     * y deja la orden impaga.
      *
      * <p>
      * Solo se puede verificar un comprobante en {@code PENDIENTE_VERIFICACION} (si
      * no, 409).
      */
     @PostMapping("/{id}/verificar")
-    @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN','CAJERO')")
     public PagoResponse verificar(
             @PathVariable Long id,
             @Valid @RequestBody VerificarPagoRequest request,
@@ -130,6 +146,7 @@ public class PagoController {
         String adminEmail = principal != null ? principal.getName() : null;
         return pagoService.verificar(id, request, adminEmail, authorization != null ? authorization : "");
     }
+    // The verify response carries the proof only for staff; it is already limited to ADMIN/CAJERO.
 
     /** Detalle de un pago */
     @GetMapping("/{id}")
@@ -154,11 +171,18 @@ public class PagoController {
                 .toList();
     }
 
-    /** Todos los pagos — ADMIN / CAJERO / finanzas */
+    /**
+     * Pagos — ADMIN / CAJERO. Con {@code ?estado=PENDIENTE_VERIFICACION} es la bandeja del cajero;
+     * incluye la URL firmada de la captura para renderizarla.
+     */
     @GetMapping
     @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
-    public List<PagoResponse> todos() {
-        return pagoService.todos();
+    public List<PagoResponse> todos(
+            @RequestParam(value = "estado", required = false) com.sistema.polleria.payments.entity.EstadoPago estado,
+            Authentication authentication) {
+        return pagoService.todos(estado).stream()
+                .map(pago -> conComprobanteSegunRol(pago, authentication))
+                .toList();
     }
 
     /**
@@ -217,7 +241,7 @@ public class PagoController {
      * bucket se mantiene privado. Los pagos sin comprobante no cambian.
      */
     private PagoResponse conComprobanteSegunRol(PagoResponse pago, Authentication authentication) {
-        if (!esAdmin(authentication) || pago.comprobanteClave() == null) {
+        if (!puedeVerComprobante(authentication) || pago.comprobanteClave() == null) {
             return pago.sinComprobante();
         }
         return pago.conUrlComprobante(firmadorComprobantes.urlFirmada(pago.comprobanteClave()));
@@ -230,15 +254,17 @@ public class PagoController {
      * clave del objeto.
      */
     private PagoResponse soloAdminVeElComprobante(PagoResponse pago, Authentication authentication) {
-        return esAdmin(authentication) ? pago : pago.sinComprobante();
+        return puedeVerComprobante(authentication) ? pago : pago.sinComprobante();
     }
 
-    private boolean esAdmin(Authentication authentication) {
+    /** ADMIN and CAJERO (who verify the capture) are the only roles that see the proof. */
+    private boolean puedeVerComprobante(Authentication authentication) {
         if (authentication == null || authentication.getAuthorities() == null) {
             return false;
         }
         return authentication.getAuthorities().stream()
-                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "ROLE_ADMIN".equals(a.getAuthority()));
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "ROLE_ADMIN".equals(a.getAuthority())
+                        || "CAJERO".equals(a.getAuthority()) || "ROLE_CAJERO".equals(a.getAuthority()));
     }
 
     private Long extractUserId(Principal principal) {

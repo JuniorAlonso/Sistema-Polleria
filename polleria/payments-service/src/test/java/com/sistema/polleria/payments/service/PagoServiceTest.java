@@ -47,8 +47,18 @@ class PagoServiceTest {
     @Mock
     private WhatsappNotificationClient whatsappNotificationClient;
 
+    @Mock
+    private OrdenesClient ordenesClient;
+
+    @Mock
+    private AlmacenComprobantes almacenComprobantes;
+
     @InjectMocks
     private PagoService pagoService;
+
+    private static OrdenesClient.OrdenInfo orden(long id, String tipo, String estado, String total) {
+        return new OrdenesClient.OrdenInfo(id, estado, tipo, new BigDecimal(total), 10L, LocalDateTime.now());
+    }
 
     @Test
     @DisplayName("Debe iniciar un pago exitosamente usando el gateway seleccionado")
@@ -241,6 +251,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("Pago con Yape OTP válido aprueba de inmediato y avanza a cocina")
     void procesarYapeOtp_conOtpValido_aprueba() {
+        when(ordenesClient.obtener(301L)).thenReturn(orden(301L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
         when(pagoRepository.buscarPorOrdenIdConBloqueo(301L)).thenReturn(Optional.empty());
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> {
             Pago p = inv.getArgument(0);
@@ -261,6 +272,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("Pago con Yape OTP inválido '000000' es rechazado")
     void procesarYapeOtp_conOtpInvalido_rechaza() {
+        when(ordenesClient.obtener(302L)).thenReturn(orden(302L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
         when(pagoRepository.buscarPorOrdenIdConBloqueo(302L)).thenReturn(Optional.empty());
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -277,6 +289,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("Cobro en efectivo registra pago contraentrega y avanza orden a ENTREGADO")
     void procesarCobroEfectivo_registraYCompletaEntrega() {
+        when(ordenesClient.obtener(303L)).thenReturn(orden(303L, "DELIVERY", "EN_PUERTA", "70.00"));
         when(pagoRepository.buscarPorOrdenIdConBloqueo(303L)).thenReturn(Optional.empty());
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> {
             Pago p = inv.getArgument(0);
@@ -292,5 +305,65 @@ class PagoServiceTest {
         assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
         assertThat(res.metodoPago()).isEqualTo(MetodoPago.CONTRAENTREGA);
         verify(notificadorOrden).notificarEstado(eq(303L), eq("ENTREGADO"), eq("Bearer motorizado"));
+    }
+
+    @Test
+    @DisplayName("S6: el cobro en efectivo se rechaza si la orden no esta en un estado de entrega valido")
+    void procesarCobroEfectivo_estadoInvalido_rechaza() {
+        for (String[] caso : new String[][] {
+                {"DELIVERY", "PREPARANDO"}, {"DELIVERY", "ENTREGADO"}, {"RECOJO", "PREPARANDO"},
+                {"RECOJO", "EN_PUERTA"}, {"SALON", "LISTO"}}) {
+            when(pagoRepository.buscarPorOrdenIdConBloqueo(304L)).thenReturn(Optional.empty());
+            when(ordenesClient.obtener(304L)).thenReturn(orden(304L, caso[0], caso[1], "70.00"));
+            CobroEfectivoRequest req = new CobroEfectivoRequest(304L, new BigDecimal("70.00"), null, null);
+
+            assertThatThrownBy(() -> pagoService.procesarCobroEfectivo(req, 4L, "Bearer t"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No se puede cobrar en efectivo");
+        }
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("S6: el cobro en efectivo se permite en EN_CAMINO/EN_PUERTA (delivery) y LISTO/LISTO_PARA_ENTREGAR (recojo)")
+    void procesarCobroEfectivo_estadosValidos_permiten() {
+        for (String[] caso : new String[][] {
+                {"DELIVERY", "EN_CAMINO"}, {"DELIVERY", "EN_PUERTA"}, {"RECOJO", "LISTO"},
+                {"RECOJO", "LISTO_PARA_ENTREGAR"}}) {
+            when(pagoRepository.buscarPorOrdenIdConBloqueo(305L)).thenReturn(Optional.empty());
+            when(ordenesClient.obtener(305L)).thenReturn(orden(305L, caso[0], caso[1], "70.00"));
+            when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            PagoResponse res = pagoService.procesarCobroEfectivo(
+                    new CobroEfectivoRequest(305L, new BigDecimal("70.00"), null, null), 4L, "Bearer t");
+
+            assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        }
+    }
+
+    @Test
+    @DisplayName("S6: si orders-service no responde, el cobro en efectivo falla cerrado")
+    void procesarCobroEfectivo_ordersCaido_fallaCerrado() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(306L)).thenReturn(Optional.empty());
+        when(ordenesClient.obtener(306L)).thenThrow(new OrdenesClient.OrdenNoDisponibleException("caido", null));
+
+        assertThatThrownBy(() -> pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(306L, new BigDecimal("70.00"), null, null), 4L, "Bearer t"))
+                .isInstanceOf(OrdenesClient.OrdenNoDisponibleException.class);
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("S5: Yape OTP con monto distinto al total del pedido lanza IllegalArgumentException")
+    void procesarYapeOtp_montoDistinto_rechaza() {
+        when(ordenesClient.obtener(307L)).thenReturn(orden(307L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+
+        assertThatThrownBy(() -> pagoService.procesarYapeOtp(
+                new YapeOtpPagoRequest(307L, new BigDecimal("0.10"), "987654321", "123456", null), 10L, "Bearer t"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no coincide");
+        verify(pagoRepository, never()).save(any(Pago.class));
     }
 }

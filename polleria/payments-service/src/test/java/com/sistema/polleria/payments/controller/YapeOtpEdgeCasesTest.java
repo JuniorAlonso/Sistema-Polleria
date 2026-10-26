@@ -6,7 +6,9 @@ import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import com.sistema.polleria.payments.service.NotificadorOrden;
 import com.sistema.polleria.payments.service.WhatsappNotificationClient;
+import com.sistema.polleria.payments.service.OrdenesClient;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,9 +20,16 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -38,6 +47,15 @@ class YapeOtpEdgeCasesTest {
 
     @MockitoBean
     private NotificadorOrden notificadorOrden;
+
+    @MockitoBean
+    private OrdenesClient ordenesClient;
+
+    @BeforeEach
+    void ordenesConTotalDe4550() {
+        when(ordenesClient.obtener(anyLong())).thenAnswer(inv -> new OrdenesClient.OrdenInfo(
+                inv.getArgument(0), "PENDIENTE_PAGO", "DELIVERY", new BigDecimal("45.50"), 1L, LocalDateTime.now()));
+    }
 
     @AfterEach
     void tearDown() {
@@ -118,5 +136,32 @@ class YapeOtpEdgeCasesTest {
         assertEquals(HttpStatus.OK, resp.getStatusCode());
         assertNotNull(resp.getBody());
         assertEquals(EstadoPago.RECHAZADO, resp.getBody().estado());
+    }
+
+    @Test
+    @DisplayName("S5: un monto distinto al total del pedido es rechazado con 400 y no se crea ni aprueba el pago")
+    void testMontoDistintoAlTotal_rechazaCon400() {
+        YapeOtpPagoRequest req = new YapeOtpPagoRequest(
+                5507L, new BigDecimal("1.00"), "987654321", "123456", "cliente@test.com");
+
+        ResponseEntity<String> resp = restTemplate.postForEntity("/pagos/yape-otp", req, String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue(pagoRepository.findByOrdenId(5507L).isEmpty());
+        verify(notificadorOrden, never()).notificarPagoAprobado(anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("S5: si orders-service no responde, el pago Yape OTP falla cerrado con 503")
+    void testOrdersCaido_fallaCerrado503() {
+        when(ordenesClient.obtener(5508L)).thenThrow(
+                new OrdenesClient.OrdenNoDisponibleException("orders caido", null));
+        YapeOtpPagoRequest req = new YapeOtpPagoRequest(
+                5508L, new BigDecimal("45.50"), "987654321", "123456", "cliente@test.com");
+
+        ResponseEntity<String> resp = restTemplate.postForEntity("/pagos/yape-otp", req, String.class);
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, resp.getStatusCode());
+        assertTrue(pagoRepository.findByOrdenId(5508L).isEmpty());
     }
 }

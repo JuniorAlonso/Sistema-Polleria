@@ -65,6 +65,35 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** orders-service could not confirm the order: fail closed, the caller can retry. */
+    @ExceptionHandler(com.sistema.polleria.payments.service.OrdenesClient.OrdenNoDisponibleException.class)
+    public ProblemDetail handleOrdenNoDisponible(
+            com.sistema.polleria.payments.service.OrdenesClient.OrdenNoDisponibleException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        pd.setTitle("Pedido no verificable");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ProblemDetail handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYLOAD_TOO_LARGE);
+        pd.setTitle("Archivo demasiado grande");
+        pd.setDetail("La captura supera el tamaño máximo permitido");
+        return pd;
+    }
+
+    @ExceptionHandler({
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class,
+            org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+    public ProblemDetail handleBadRequestParams(Exception ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setTitle("Datos inválidos");
+        pd.setDetail("Parámetro faltante o con formato inválido");
+        return pd;
+    }
+
     /**
      * Una ruta que no existe debe responder 404, nunca 500.
      */

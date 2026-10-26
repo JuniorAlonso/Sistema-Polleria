@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -40,6 +41,17 @@ public class PagoService {
     private final MercadoPagoGateway mercadoPagoGateway;
     private final NotificadorOrden notificadorOrden;
     private final WhatsappNotificationClient whatsappNotificationClient;
+    private final OrdenesClient ordenesClient;
+    private final AlmacenComprobantes almacenComprobantes;
+
+    /**
+     * Minutes, counted from the order creation, during which a Yape/Plin capture can still be
+     * approved. Matches the 15-minute PENDIENTE_PAGO timeout of orders-service.
+     */
+    @Value("${pagos.comprobante.ventana-minutos:15}")
+    private long ventanaMinutos = 15;
+
+    private static final Set<String> ESTADOS_ORDEN_TERMINALES = Set.of("CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA");
 
     /**
      * Id del cliente para los pedidos anónimos de WhatsApp (S1): no hay cuenta y
@@ -123,6 +135,15 @@ public class PagoService {
      */
     @Transactional
     public PagoResponse registrarComprobante(RegistrarComprobanteRequest request) {
+        return registrarComprobante(request, CLIENTE_ANONIMO);
+    }
+
+    /**
+     * Same as {@link #registrarComprobante(RegistrarComprobanteRequest)} but records the owner of
+     * the pago when it is created (web upload by an authenticated customer).
+     */
+    @Transactional
+    public PagoResponse registrarComprobante(RegistrarComprobanteRequest request, long clienteId) {
         Pago existente = pagoRepository.findByOrdenId(request.ordenId()).orElse(null);
 
         if (existente != null && !ESTADOS_VERIFICABLES.contains(existente.getEstado())) {
@@ -135,7 +156,7 @@ public class PagoService {
         Pago pago = esNuevo ? new Pago() : existente;
         if (esNuevo) {
             pago.setOrdenId(request.ordenId());
-            pago.setClienteId(CLIENTE_ANONIMO);
+            pago.setClienteId(clienteId);
             pago.setMonto(request.monto() != null ? request.monto() : BigDecimal.ZERO);
         } else if (request.monto() != null) {
             pago.setMonto(request.monto());
@@ -165,9 +186,33 @@ public class PagoService {
     }
 
     /**
-     * Verificación del comprobante de Yape por parte del administrador (T6c, S6). Es exclusiva del
-     * rol {@code ADMIN} (la autorización la aplica {@code PagoController} con {@code @PreAuthorize});
-     * aquí solo se aplica la decisión.
+     * Web upload of the payment capture (S3). The order is read from orders-service (fail closed if
+     * it cannot be read): a customer may only upload to their own order, staff to any; closed orders
+     * are rejected. The file is stored in the shared bucket and then registered through
+     * {@link #registrarComprobante(RegistrarComprobanteRequest, long)}, so the pago ends in
+     * {@code PENDIENTE_VERIFICACION} with the same invariants as the WhatsApp path.
+     */
+    public PagoResponse subirComprobanteWeb(Long ordenId, MultipartFile archivo, Long usuarioId, boolean esPersonal) {
+        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(ordenId);
+        if (!esPersonal && (usuarioId == null || !usuarioId.equals(orden.clienteId()))) {
+            // 404 instead of 403 so order ids of other customers are not revealed.
+            throw new NoSuchElementException("Orden no encontrada: " + ordenId);
+        }
+        if (orden.estado() != null && ESTADOS_ORDEN_TERMINALES.contains(orden.estado())) {
+            throw new IllegalStateException(
+                    "La orden " + ordenId + " está en estado " + orden.estado() + " y ya no admite comprobantes");
+        }
+        String clave = almacenComprobantes.guardar(ordenId, archivo);
+        long duenio = orden.clienteId() != null ? orden.clienteId() : CLIENTE_ANONIMO;
+        return registrarComprobante(new RegistrarComprobanteRequest(ordenId, null, orden.total(), clave), duenio);
+    }
+
+    /**
+     * Verificación del comprobante de Yape por el personal (S3). La ejecutan {@code ADMIN} y
+     * {@code CAJERO} (la autorización la aplica {@code PagoController} con {@code @PreAuthorize});
+     * aquí solo se aplica la decisión. Aprobar exige una captura adjunta y que no hayan pasado
+     * {@code pagos.comprobante.ventana-minutos} minutos desde la creación de la orden (HTTP 400);
+     * rechazar sigue permitido.
      *
      * <p><b>Aprobar</b>: el pago pasa a {@link EstadoPago#APROBADO} y el pedido avanza con el
      * **mismo mecanismo** que usa el pago aprobado de Mercado Pago
@@ -214,6 +259,17 @@ public class PagoService {
             log.info("Comprobante rechazado — pago id={} orden={} admin={}",
                     pago.getId(), pago.getOrdenId(), adminEmail);
             return PagoResponse.from(pago);
+        }
+
+        if (pago.getComprobanteClave() == null || pago.getComprobanteClave().isBlank()) {
+            throw new IllegalArgumentException(
+                    "No se puede confirmar el pago: el cliente aún no adjuntó la captura del comprobante");
+        }
+        LocalDateTime inicioVentana = inicioVentanaDeVerificacion(pago);
+        if (LocalDateTime.now().isAfter(inicioVentana.plusMinutes(ventanaMinutos))) {
+            throw new IllegalArgumentException(
+                    "Pasaron más de " + ventanaMinutos + " minutos desde que se creó el pedido: "
+                            + "ya no se puede confirmar este pago");
         }
 
         pago.setEstado(EstadoPago.APROBADO);
@@ -265,8 +321,42 @@ public class PagoService {
     }
 
     public List<PagoResponse> todos() {
-        return pagoRepository.findAllByOrderByCreadoEnDesc()
-                .stream().map(PagoResponse::from).toList();
+        return todos(null);
+    }
+
+    /** Lists pagos newest first, optionally filtered by estado (cashier inbox: PENDIENTE_VERIFICACION). */
+    public List<PagoResponse> todos(EstadoPago estado) {
+        List<Pago> pagos = estado == null
+                ? pagoRepository.findAllByOrderByCreadoEnDesc()
+                : pagoRepository.findByEstadoOrderByCreadoEnDesc(estado);
+        return pagos.stream().map(PagoResponse::from).toList();
+    }
+
+    /**
+     * Start of the verification window: the order creation time when orders-service answers; if it
+     * cannot be read, the pago creation time (a degraded fallback: slightly more lenient, since the
+     * pago is created after the order).
+     */
+    private LocalDateTime inicioVentanaDeVerificacion(Pago pago) {
+        try {
+            OrdenesClient.OrdenInfo orden = ordenesClient.obtener(pago.getOrdenId());
+            if (orden != null && orden.creadoEn() != null) {
+                return orden.creadoEn();
+            }
+        } catch (OrdenesClient.OrdenNoDisponibleException | NoSuchElementException e) {
+            log.warn("Ventana de verificación del pago {}: se usa la fecha del pago ({})", pago.getId(), e.getMessage());
+        }
+        return pago.getCreadoEn();
+    }
+
+    private static boolean cobroEfectivoPermitido(OrdenesClient.OrdenInfo orden) {
+        String estado = orden.estado() == null ? "" : orden.estado();
+        String tipo = orden.tipo() == null ? "" : orden.tipo();
+        return switch (tipo) {
+            case "DELIVERY" -> estado.equals("EN_PUERTA") || estado.equals("EN_CAMINO");
+            case "RECOJO" -> estado.equals("LISTO") || estado.equals("LISTO_PARA_ENTREGAR");
+            default -> false;
+        };
     }
 
     @Transactional
@@ -454,6 +544,13 @@ public class PagoService {
         log.info("Procesando pago directo Yape OTP para orden={}, celular={}, monto=S/ {}",
                 request.ordenId(), request.telefono(), request.monto());
 
+        // S5: the amount charged must be the order total, never what the (public) caller declares.
+        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(request.ordenId());
+        if (orden.total() == null || orden.total().compareTo(request.monto()) != 0) {
+            throw new IllegalArgumentException(
+                    "El monto no coincide con el total del pedido (S/ " + orden.total() + ")");
+        }
+
         Pago pago = pagoRepository.buscarPorOrdenIdConBloqueo(request.ordenId()).orElseGet(() -> {
             Pago nuevo = new Pago();
             nuevo.setOrdenId(request.ordenId());
@@ -513,6 +610,15 @@ public class PagoService {
         if (pago.getEstado() == EstadoPago.APROBADO) {
             log.info("El cobro en efectivo para la orden {} ya estaba registrado como APROBADO", request.ordenId());
             return PagoResponse.from(pago);
+        }
+
+        // S6: cash can only be collected at the door / at pickup; fail closed if the order is unknown.
+        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(request.ordenId());
+        if (!cobroEfectivoPermitido(orden)) {
+            throw new IllegalStateException(
+                    "No se puede cobrar en efectivo: la orden " + request.ordenId() + " es " + orden.tipo()
+                            + " y está en estado " + orden.estado()
+                            + " (delivery: EN_PUERTA/EN_CAMINO; recojo: LISTO/LISTO_PARA_ENTREGAR)");
         }
 
         String detalle = "Cobro en efectivo verificado por operador #" + operadorId;

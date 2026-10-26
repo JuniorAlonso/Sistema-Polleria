@@ -7,6 +7,7 @@ import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import com.sistema.polleria.payments.service.NotificadorOrden;
+import com.sistema.polleria.payments.service.OrdenesClient;
 import com.sistema.polleria.payments.service.WhatsappNotificationClient;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -85,6 +86,10 @@ class VerificarComprobanteYapeTest {
     @MockitoBean
     private WhatsappNotificationClient whatsappNotificationClient;
 
+    /** Unstubbed: returns null, so the verification window falls back to the pago creation time. */
+    @MockitoBean
+    private OrdenesClient ordenesClient;
+
     private final List<Long> pagosCreados = new ArrayList<>();
 
     @AfterEach
@@ -146,14 +151,17 @@ class VerificarComprobanteYapeTest {
     }
 
     @Test
-    @DisplayName("T6c (c): con un rol que no es ADMIN (o sin token) responde 403/401 y el pago no cambia")
+    @DisplayName("T6c (c): con un rol que no es ADMIN ni CAJERO (o sin token) responde 403/401 y el pago no cambia")
     void sinTokenDeAdminNoSePuedeVerificar() throws Exception {
         long ordenId = 978103L;
         long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978103/ajeno.jpg");
 
-        ResponseEntity<String> comoCajero = verificar(
-                pagoId, "{\"aprobado\": true}", token(OTRO_ID, "CAJERO", "cajero@prueba.local"));
-        assertThat(comoCajero.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        ResponseEntity<String> comoMozo = verificar(
+                pagoId, "{\"aprobado\": true}", token(OTRO_ID, "MOZO", "mozo@prueba.local"));
+        assertThat(comoMozo.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        ResponseEntity<String> comoCliente = verificar(
+                pagoId, "{\"aprobado\": true}", token(944L, "CLIENTE", "cliente@prueba.local"));
+        assertThat(comoCliente.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
 
         ResponseEntity<String> sinToken = verificar(pagoId, "{\"aprobado\": true}", null);
         assertThat(sinToken.getStatusCode())
@@ -316,6 +324,69 @@ class VerificarComprobanteYapeTest {
         assertThat(body.path("comprobanteUrl").asText(null)).isNull();
         assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado())
                 .isEqualTo(EstadoPago.CANCELADO);
+    }
+
+    @Test
+    @DisplayName("S3: un CAJERO aprueba dentro de la ventana → APROBADO, verificadoPor y la orden avanza")
+    void cajeroApruebaDentroDeLaVentana() throws Exception {
+        long ordenId = 978110L;
+        long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978110/cajero.jpg");
+
+        ResponseEntity<String> respuesta = verificar(
+                pagoId, "{\"aprobado\": true}", token(OTRO_ID, "CAJERO", "cajero@prueba.local"));
+
+        assertThat(respuesta.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Pago pago = pagoRepository.findById(pagoId).orElseThrow();
+        assertThat(pago.getEstado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(pago.getVerificadoPor()).isEqualTo("cajero@prueba.local");
+        verify(notificadorOrden, times(1)).notificarPagoAprobado(eq(ordenId), anyString());
+    }
+
+    @Test
+    @DisplayName("S3: aprobar un pago sin captura adjunta responde 400 y no cambia el pago ni avanza la orden")
+    void aprobarSinCapturaResponde400() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(), "PostgreSQL de pruebas no disponible en localhost:5433");
+        Pago sinCaptura = new Pago();
+        sinCaptura.setOrdenId(978111L);
+        sinCaptura.setClienteId(944L);
+        sinCaptura.setMonto(new java.math.BigDecimal("30.00"));
+        sinCaptura.setMetodoPago(MetodoPago.YAPE_PLIN);
+        sinCaptura.setEstado(EstadoPago.PENDIENTE_VERIFICACION);
+        long pagoId = pagoRepository.saveAndFlush(sinCaptura).getId();
+        pagosCreados.add(pagoId);
+
+        ResponseEntity<String> respuesta = verificar(
+                pagoId, "{\"aprobado\": true}", token(OTRO_ID, "CAJERO", "cajero@prueba.local"));
+
+        assertThat(respuesta.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(respuesta.getBody()).contains("captura");
+        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado())
+                .isEqualTo(EstadoPago.PENDIENTE_VERIFICACION);
+        verify(notificadorOrden, never()).notificarPagoAprobado(anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("S3: aprobar pasados los 15 minutos de la orden responde 400; rechazar sigue permitido")
+    void aprobarFueraDeVentanaResponde400PeroRechazarSiPermite() throws Exception {
+        long ordenId = 978112L;
+        long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978112/tarde.jpg");
+        org.mockito.Mockito.when(ordenesClient.obtener(ordenId)).thenReturn(new OrdenesClient.OrdenInfo(
+                ordenId, "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"), 944L,
+                java.time.LocalDateTime.now().minusMinutes(16)));
+        String tokenCajero = token(OTRO_ID, "CAJERO", "cajero@prueba.local");
+
+        ResponseEntity<String> aprobar = verificar(pagoId, "{\"aprobado\": true}", tokenCajero);
+
+        assertThat(aprobar.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(aprobar.getBody()).contains("15 minutos");
+        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado())
+                .isEqualTo(EstadoPago.PENDIENTE_VERIFICACION);
+        verify(notificadorOrden, never()).notificarPagoAprobado(anyLong(), anyString());
+
+        ResponseEntity<String> rechazar = verificar(
+                pagoId, "{\"aprobado\": false, \"motivoRechazo\": \"Captura ilegible\"}", tokenCajero);
+        assertThat(rechazar.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado()).isEqualTo(EstadoPago.RECHAZADO);
     }
 
     // ─── util ───────────────────────────────────────────────────────
