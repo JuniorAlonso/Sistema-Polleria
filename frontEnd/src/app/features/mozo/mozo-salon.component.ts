@@ -1,704 +1,127 @@
 import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
-import { CommonModule, isPlatformBrowser } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { RouterModule, Router } from '@angular/router';
+import { isPlatformBrowser } from '@angular/common';
+import { Router } from '@angular/router';
 import { OrdersService } from '../../core/services/orders.service';
 import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { SalonService, ZonaSalonConfig } from '../../core/services/salon.service';
 import { leerUserIdDelToken } from '../../core/utils/jwt.util';
-import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
 import { Order, OrderStatus } from '../../core/models/order.model';
+import { AlertaPlatoListo, ComandaItem, MesaSalon, MozoTab } from './mozo.types';
+import {
+  esMesaParaCobrar as esMesaParaCobrarHelper,
+  esMiComanda as esMiComandaHelper,
+  etiquetaEstadoComanda as etiquetaEstadoComandaHelper,
+  getCodeNum as getCodeNumHelper,
+  horaDe as horaDeHelper,
+  resumenItems as resumenItemsHelper,
+  tiempoTranscurridoDesde as tiempoTranscurridoDesdeHelper
+} from './mozo.helpers';
+import { MozoSidebarComponent } from './components/mozo-sidebar.component';
+import { MozoHeaderComponent } from './components/mozo-header.component';
+import { MozoAlertBannerComponent } from './components/mozo-alert-banner.component';
+import { MozoMesasFiltersComponent } from './components/mozo-mesas-filters.component';
+import { MozoCroquisComponent } from './components/mozo-croquis.component';
+import { MozoMesasCardsComponent } from './components/mozo-mesas-cards.component';
+import { MozoMenuPickerComponent } from './components/mozo-menu-picker.component';
+import { MozoOrderSummaryComponent } from './components/mozo-order-summary.component';
+import { MozoAlertasListComponent } from './components/mozo-alertas-list.component';
+import { MozoHistorialComponent } from './components/mozo-historial.component';
+import { MozoMesaModalComponent } from './components/mozo-mesa-modal.component';
 
-export type MozoTab = 'MESAS' | 'TOMAR_COMANDA' | 'ALERTAS_COCINA' | 'HISTORIAL_TURNO';
-
-export interface MesaSalon {
-  id: number;
-  /** Número visible de la mesa en el salón (1, 2, 3...). Se usa en títulos y en la comanda. */
-  numero?: number;
-  nombre: string;
-  zona: 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP' | string;
-  capacidad: number;
-  estado: TableStatus;
-  posicionX?: number;
-  posicionY?: number;
-  comensales?: number;
-  tiempoMinutos?: number;
-  totalConsumo: number;
-  mozo?: string;
-  platosListos?: boolean;
-  /** Mozo que tomó la comanda activa (para el chip «Tu comanda»). */
-  mozoId?: number;
-  ordenId?: string;
-  servidoEn?: string | null;
-  creadoEn?: string | null;
-  items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
-}
-
-export interface AlertaPlatoListo {
-  id: string;
-  /** Comanda a marcar como servida (POST /ordenes/{id}/servir). */
-  ordenId?: string;
-  mozoId?: number;
-  mesa: string;
-  plato: string;
-  cantidad: number;
-  hora: string;
-  atendido: boolean;
-}
+export type { MozoTab, MesaSalon, AlertaPlatoListo } from './mozo.types';
 
 @Component({
   selector: 'app-mozo-salon',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, CurrencyPENPipe],
+  imports: [
+    MozoSidebarComponent,
+    MozoHeaderComponent,
+    MozoAlertBannerComponent,
+    MozoMesasFiltersComponent,
+    MozoCroquisComponent,
+    MozoMesasCardsComponent,
+    MozoMenuPickerComponent,
+    MozoOrderSummaryComponent,
+    MozoAlertasListComponent,
+    MozoHistorialComponent,
+    MozoMesaModalComponent
+  ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
-      
-      <!-- ================= SIDEBAR LATERAL MOZO ================= -->
-      <aside class="w-full md:w-64 bg-[#14161a] border-r border-white/10 flex flex-col shrink-0 md:sticky md:top-0 md:h-screen z-40">
-        
-        <!-- Sidebar Brand Header -->
-        <div class="h-16 px-5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
-          <a routerLink="/" class="flex items-center gap-1.5 leading-none">
-            <span class="font-display text-2xl font-black text-polleria-crimson tracking-wider">
-              SAN POLLO
-            </span>
-            <span class="font-display text-2xl font-black text-polleria-gold tracking-wider">
-              MOZO
-            </span>
-          </a>
-        </div>
 
-        <!-- Sidebar Navigation Menu -->
-        <nav class="flex-1 p-3.5 space-y-1 overflow-y-auto no-scrollbar">
-          <div class="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3 py-1.5">
-            Salón & Atención
-          </div>
+      <app-mozo-sidebar
+        [activeTab]="activeTab()"
+        [mesasCount]="mesas().length"
+        [alertasCount]="alertasPendientes().length"
+        [userName]="auth.currentUser()?.nombre"
+        (tabChange)="activeTab.set($event)"
+        (logout)="cerrarSesion()"
+      />
 
-          <button 
-            type="button"
-            (click)="activeTab.set('MESAS')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'MESAS' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-              </svg>
-              <span>Mapa de Mesas</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-md bg-black/40 text-[11px] font-bold text-slate-300">
-              {{ mesas().length }}
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('TOMAR_COMANDA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'TOMAR_COMANDA' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-              </svg>
-              <span>Tomar Comanda</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-full bg-polleria-crimson text-[10px] font-bold text-white">
-              + Nuevo
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('ALERTAS_COCINA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'ALERTAS_COCINA' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-              </svg>
-              <span>Platos Listos</span>
-            </div>
-            @if (alertasPendientes().length > 0) {
-              <span class="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center animate-bounce">
-                {{ alertasPendientes().length }}
-              </span>
-            }
-          </button>
-
-          <div class="pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3">
-            Caja & Turno
-          </div>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('HISTORIAL_TURNO')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'HISTORIAL_TURNO' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span>Historial del Turno</span>
-            </div>
-          </button>
-        </nav>
-
-        <!-- Sidebar User Footer -->
-        <div class="p-3 border-t border-white/10 bg-[#101215] shrink-0">
-          <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-white/5">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <div class="w-8 h-8 rounded-full ring-2 ring-polleria-gold overflow-hidden bg-slate-800 flex items-center justify-center text-xs font-black text-polleria-gold shrink-0 shadow">
-                <span>{{ (auth.currentUser()?.nombre?.substring(0, 2) || 'MZ') | uppercase }}</span>
-              </div>
-              <div class="flex flex-col text-left leading-tight min-w-0">
-                <span class="text-xs font-bold text-white truncate">
-                  {{ auth.currentUser()?.nombre || 'Mozo Salón' }}
-                </span>
-                <span class="text-[10px] font-mono text-polleria-gold font-bold">
-                  MOZO / SALÓN
-                </span>
-              </div>
-            </div>
-            <button 
-              type="button"
-              (click)="cerrarSesion()"
-              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/20 transition cursor-pointer shrink-0"
-              title="Cerrar Sesión"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-      </aside>
-
-      <!-- ================= MAIN CONTENT WRAPPER ================= -->
       <div class="flex-1 flex flex-col min-w-0 min-h-screen bg-[#0d0e11] overflow-y-auto">
-        
-        <!-- Top Bar for Status & Actions -->
-        <header class="h-16 bg-[#14161a]/90 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
-          
-          <div class="flex items-center gap-2.5">
-            <h1 class="text-base sm:text-lg font-extrabold text-white tracking-wide uppercase">
-              {{ getActiveTabLabel() }}
-            </h1>
-          </div>
 
-          <div class="flex items-center gap-3">
-            <!-- Quick Alert Indicator -->
-            <button 
-              (click)="activeTab.set('ALERTAS_COCINA')"
-              class="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-              [ngClass]="alertasPendientes().length > 0 ? 'animate-pulse motion-reduce:animate-none' : ''"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-              </svg>
-              <span>Avisos Cocina ({{ alertasPendientes().length }})</span>
-            </button>
-
-            <button 
-              (click)="abrirModalComandaRapida()"
-              class="px-4 py-1.5 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-            >
-              <span>+ Tomar Comanda</span>
-            </button>
-          </div>
-
-        </header>
+        <app-mozo-header
+          [tabLabel]="getActiveTabLabel()"
+          [alertasCount]="alertasPendientes().length"
+          (openAlertas)="activeTab.set('ALERTAS_COCINA')"
+          (nuevaComanda)="abrirModalComandaRapida()"
+        />
 
         <!-- Aviso fijo de comanda lista: guía la vista en todas las pestañas sin bloquear clicks -->
         @if (alertaPrincipal(); as a) {
-          <div
-            role="status"
-            aria-live="polite"
-            class="sticky top-16 z-30 mx-4 sm:mx-6 mt-3 animate-slide-up motion-reduce:animate-none rounded-2xl border border-amber-500/50 bg-amber-500/15 px-4 py-3 text-amber-100 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-          >
-            <div class="flex items-center gap-3 min-w-0">
-              <span class="relative flex w-2.5 h-2.5 shrink-0">
-                <span class="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping motion-reduce:animate-none"></span>
-                <span class="relative inline-flex w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-              </span>
-              <div class="min-w-0">
-                <p class="text-sm font-bold text-white truncate">
-                  {{ a.mesa }} · Comanda lista para servir
-                  @if (esMiComanda(a)) {
-                    <span class="ml-2 align-middle px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/40 text-[10px] font-black uppercase tracking-wider">Tu comanda</span>
-                  }
-                </p>
-                <p class="text-[11px] text-amber-200/80">Entregala en mesa; el cobro es después, cuando el cliente se retire.</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              (click)="servirAlerta(a)"
-              class="shrink-0 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer"
-            >
-              Servir en mesa
-            </button>
-          </div>
+          <app-mozo-alert-banner [alerta]="a" [miUserId]="miUserId()" (servir)="servirAlerta($event)" />
         }
 
         <!-- ================= TAB 1: MAPA DE MESAS ================= -->
         @if (activeTab() === 'MESAS') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
-            <!-- Summary Bar with View Switcher & Zone Filters -->
-            <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
-              <div>
-                <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                  <span>Control del Salón y Comensales</span>
-                </h2>
-                <p class="text-xs text-slate-400">Toca una mesa en el croquis o catálogo para ver su cuenta, agregar platos, cobrar o liberarla.</p>
-              </div>
 
-              <div class="flex items-center gap-3 flex-wrap">
-                <!-- Toggle Vista Croquis vs Tarjetas -->
-                <div class="flex items-center gap-1 bg-black/50 p-1 rounded-xl border border-white/10 text-xs">
-                  <button 
-                    type="button"
-                    (click)="vistaMesas.set('CROQUIS')"
-                    class="px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer"
-                    [ngClass]="vistaMesas() === 'CROQUIS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-                    </svg>
-                    <span>Croquis Salón</span>
-                  </button>
-                  <button 
-                    type="button"
-                    (click)="vistaMesas.set('TARJETAS')"
-                    class="px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer"
-                    [ngClass]="vistaMesas() === 'TARJETAS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
-                    </svg>
-                    <span>Tarjetas</span>
-                  </button>
-                </div>
+            <app-mozo-mesas-filters
+              [vistaMesas]="vistaMesas()"
+              [selectedZone]="selectedZone()"
+              [zonasSalon]="zonasSalon"
+              [mesasCount]="mesas().length"
+              (vistaChange)="vistaMesas.set($event)"
+              (zoneChange)="selectedZone.set($event)"
+            />
 
-                <!-- Filter Zones -->
-                <div class="flex items-center gap-1 text-xs bg-black/40 p-1 rounded-xl border border-white/5">
-                  <button 
-                    (click)="selectedZone.set('TODAS')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'TODAS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Todas ({{ mesas().length }})
-                  </button>
-                  @for (z of zonasSalon; track z.id) {
-                    <button 
-                      (click)="selectedZone.set(z.id)"
-                      class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                      [ngClass]="selectedZone() === z.id ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                    >
-                      {{ z.nombre }}
-                    </button>
-                  }
-                </div>
-              </div>
-            </div>
-
-            <!-- ================= CROQUIS MATRICIAL POR ZONAS (SLIDES) ================= -->
             @if (vistaMesas() === 'CROQUIS') {
-              <div class="relative bg-[#0d0f14] border border-white/10 rounded-2xl overflow-hidden shadow-2xl p-5 space-y-4">
-                
-                <!-- Banner de Error de Conexión con Backend -->
-                @if (salonService.hasError()) {
-                  <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
-                    <span class="flex items-center gap-2">
-                      <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      <span>Sin conexión con el servidor para sincronizar mesas.</span>
-                    </span>
-                    <button type="button" (click)="salonService.cargarMesas()" class="px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-white font-bold transition text-[11px] cursor-pointer">Reintentar</button>
-                  </div>
-                }
-
-                <!-- Overlay de Espera y Sincronización en la Cuadrícula -->
-                @if (isProcesandoMesa() || salonService.isLoading()) {
-                  <div class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm z-40 rounded-2xl flex flex-col items-center justify-center p-6 text-center animate-fade-in shadow-2xl border border-polleria-gold/30">
-                    <div class="relative flex items-center justify-center mb-3">
-                      <div class="w-16 h-16 rounded-full border-2 border-polleria-gold/20 animate-ping absolute"></div>
-                      <svg class="animate-spin w-12 h-12 text-polleria-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
-                        <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                    </div>
-                    <h4 class="font-display text-base font-bold text-white tracking-wide">
-                      {{ isProcesandoMesa() ? mensajeProcesandoMesa() : 'Cargando mesas del salón...' }}
-                    </h4>
-                    <p class="text-xs text-slate-400 mt-1 max-w-xs">
-                      Por favor espere un momento mientras se completa la sincronización con el servidor.
-                    </p>
-                  </div>
-                }
-
-                <!-- Barra de Navegación por Slides de Zona -->
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/10">
-                  <!-- Controles de Slide Anterior / Siguiente -->
-                  <div class="flex items-center gap-3">
-                    <button 
-                      type="button"
-                      (click)="prevZona()"
-                      class="p-2.5 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-                      title="Ver zona anterior"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                      </svg>
-                      <span class="hidden sm:inline">Anterior</span>
-                    </button>
-
-                    <div class="flex flex-col">
-                      <div class="flex items-center gap-2">
-                        <span class="font-display text-lg sm:text-xl font-black text-white tracking-wide">
-                          {{ currentZona().nombre }}
-                        </span>
-                        <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/30">
-                          Slide {{ activeZonaIndex() + 1 }} de {{ zonasSalon.length }}
-                        </span>
-                      </div>
-                      <span class="text-[11px] text-slate-400">
-                        Cuadrícula de casillas: {{ currentZona().filas }} filas × {{ currentZona().columnas }} columnas
-                      </span>
-                    </div>
-
-                    <button 
-                      type="button"
-                      (click)="nextZona()"
-                      class="p-2.5 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-                      title="Ver siguiente zona"
-                    >
-                      <span class="hidden sm:inline">Siguiente</span>
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                      </svg>
-                    </button>
-                  </div>
-
-                  <!-- Píldoras de Salto Directo a Zona -->
-                  <div class="flex items-center gap-1.5 bg-black/50 p-1.5 rounded-xl border border-white/10 overflow-x-auto max-w-full">
-                    @for (z of zonasSalon; track z.id; let idx = $index) {
-                      <button 
-                        type="button"
-                        (click)="setZonaIndex(idx)"
-                        class="px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5"
-                        [ngClass]="activeZonaIndex() === idx ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-                      >
-                        <span>{{ z.nombre }}</span>
-                      </button>
-                    }
-                  </div>
-                </div>
-
-                <!-- Barra de Personalización de Cuadrícula (Filas × Columnas) & Leyenda -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#121419] p-3 rounded-xl border border-white/5 text-xs">
-                  @if (auth.isAdmin()) {
-                    <div class="flex items-center gap-4 flex-wrap">
-                      <span class="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Personalizar Cuadrícula:</span>
-                      
-                      <!-- Ajuste de Filas -->
-                      <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                        <span class="text-slate-400">Filas:</span>
-                        <button 
-                          type="button" 
-                          (click)="ajustarFilas(-1)" 
-                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                          title="Quitar fila"
-                        >-</button>
-                        <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().filas }}</span>
-                        <button 
-                          type="button" 
-                          (click)="ajustarFilas(1)" 
-                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                          title="Agregar fila"
-                        >+</button>
-                      </div>
-
-                      <!-- Ajuste de Columnas -->
-                      <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                        <span class="text-slate-400">Columnas:</span>
-                        <button 
-                          type="button" 
-                          (click)="ajustarColumnas(-1)" 
-                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                          title="Quitar columna"
-                        >-</button>
-                        <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().columnas }}</span>
-                        <button 
-                          type="button" 
-                          (click)="ajustarColumnas(1)" 
-                          class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                          title="Agregar columna"
-                        >+</button>
-                      </div>
-                    </div>
-                  } @else {
-                    <div class="flex items-center gap-2 text-slate-400 text-[11px]">
-                      <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                      </svg>
-                      <span>Toca una mesa verde para iniciar comanda, o amarilla para cobrar y cerrar comanda.</span>
-                    </div>
-                  }
-
-                  <!-- Leyenda de Estados para el Mozo -->
-                  <div class="flex items-center gap-3 text-[11px] flex-wrap">
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Libre</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Ocupada (Cocina)</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30"></span> Servida / Cobrar</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span> Limpieza</span>
-                  </div>
-                </div>
-
-                <!-- Estado de Movimiento Activo -->
-                @if (mesaEnMovimiento(); as mem) {
-                  <div class="flex items-center justify-between bg-amber-500/15 border border-amber-500/40 px-3 py-2 rounded-xl text-amber-300 text-xs animate-pulse">
-                    <div class="flex items-center gap-2">
-                      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                      </svg>
-                      <span>Moviendo <strong>{{ mem.nombre }}</strong>: Toca una casilla vacía para reubicarla</span>
-                    </div>
-                    <button 
-                      type="button" 
-                      (click)="mesaEnMovimiento.set(null)" 
-                      class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                }
-
-                <!-- Lienzo de la Cuadrícula Matricial -->
-                <div class="overflow-x-auto pb-4 select-none">
-                  <div 
-                    class="grid gap-3 p-4 bg-[#0a0c10] border border-white/10 rounded-2xl min-w-max mx-auto shadow-inner"
-                    [style.gridTemplateColumns]="'repeat(' + currentZona().columnas + ', minmax(110px, 1fr))'"
-                  >
-                    @for (r of getRowsArray(); track r) {
-                      @for (c of getColsArray(); track c) {
-                        @if (getMesaEnCasilla(r, c); as mesa) {
-                          <!-- CASILLA OCUPADA POR MESA -->
-                          <div 
-                            [attr.draggable]="auth.isAdmin() ? true : null"
-                            (dragstart)="auth.isAdmin() ? onDragStartMesa($event, mesa) : null"
-                            (click)="onCasillaClick(r, c)"
-                            class="h-28 rounded-2xl p-2.5 border-2 flex flex-col justify-between items-center transition-all cursor-pointer relative select-none group shadow-lg"
-                            [ngClass]="{
-                              'bg-emerald-950/80 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/20 hover:scale-[1.02]': mesa.estado === 'LIBRE',
-                              'bg-amber-950/80 border-amber-500 text-amber-300 ring-2 ring-amber-500/40 hover:scale-[1.02] shadow-amber-500/10': esMesaParaCobrar(mesa),
-                              'bg-rose-950/80 border-rose-500 text-rose-300 ring-2 ring-rose-500/20 hover:scale-[1.02]': !esMesaParaCobrar(mesa) && mesa.estado === 'OCUPADA',
-                              'bg-sky-950/80 border-sky-500 text-sky-300 ring-2 ring-sky-500/20 hover:scale-[1.02]': mesa.estado === 'EN_LIMPIEZA' || mesa.estado === 'LIMPIEZA',
-                              'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
-
-                              'ring-4 ring-polleria-gold border-polleria-gold scale-[1.03] shadow-polleria-gold/30 z-20': selectedMesaModal()?.id === mesa.id,
-                              'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id,
-                              'ring-4 ring-amber-400/70 animate-pulse motion-reduce:animate-none': mesa.platosListos
-                            }"
-                          >
-                            <!-- Badge Alerta Plato Listo -->
-                            @if (mesa.platosListos) {
-                              <span class="absolute -top-3 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black uppercase tracking-wider animate-bounce shadow border border-white/20 whitespace-nowrap z-30">
-                                ¡Plato Listo!
-                              </span>
-                            }
-
-                            <!-- Coordenadas Casilla & Capacidad -->
-                            <div class="w-full flex justify-between items-center text-[10px]">
-                              <span class="font-mono text-slate-400 opacity-60">F{{ r }}:C{{ c }}</span>
-                              <span class="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-black/40">
-                                {{ mesa.capacidad }}p
-                              </span>
-                            </div>
-
-                            <!-- Nombre/Número de Mesa Central + Estado + Contador Servido -->
-                            <div class="flex flex-col items-center my-auto">
-                              <span class="font-display text-base font-black text-white tracking-tight leading-none group-hover:text-polleria-gold transition">
-                                {{ mesa.nombre }}
-                              </span>
-                              <span class="text-[9px] font-bold uppercase tracking-wider mt-0.5"
-                                [ngClass]="esMesaParaCobrar(mesa) ? 'text-amber-300' : 'opacity-80'">
-                                {{ esMesaParaCobrar(mesa) ? 'POR COBRAR' : mesa.estado }}
-                              </span>
-
-                              <!-- Contador de tiempo desde que se sirvió -->
-                              @if (mesa.servidoEn) {
-                                <div class="flex items-center gap-1 font-mono text-[9px] text-amber-300 bg-amber-900/70 border border-amber-500/40 px-1.5 py-0.5 rounded-md mt-1 shadow-xs" title="Tiempo transcurrido desde que se sirvió la comida">
-                                  <svg class="w-2.5 h-2.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                  </svg>
-                                  <span>{{ tiempoTranscurridoDesde(mesa.servidoEn) }}</span>
-                                </div>
-                              }
-                            </div>
-
-                            <!-- Footer de Casilla: Total Consumo & Botón Reubicar (Solo Admin) -->
-                            <div class="w-full flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
-                              @if (mesa.totalConsumo && mesa.totalConsumo > 0) {
-                                <span class="font-mono font-bold text-polleria-gold">
-                                  {{ mesa.totalConsumo | currencyPEN }}
-                                </span>
-                              } @else {
-                                <span class="text-slate-400">Sin orden</span>
-                              }
-                              @if (auth.isAdmin()) {
-                                <button 
-                                  type="button"
-                                  (click)="iniciarMoverMesa(mesa, $event)"
-                                  class="p-1 rounded bg-white/10 hover:bg-polleria-gold hover:text-slate-950 text-slate-300 transition cursor-pointer"
-                                  title="Reubicar a otra casilla"
-                                >
-                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
-                                  </svg>
-                                </button>
-                              }
-                            </div>
-                          </div>
-                        } @else {
-                          <!-- CASILLA VACÍA -->
-                          <div 
-                            (click)="onCasillaClick(r, c)"
-                            (dragover)="auth.isAdmin() ? onDragOverCasilla($event) : null"
-                            (drop)="auth.isAdmin() ? onDropCasilla($event, r, c) : null"
-                            class="h-28 rounded-2xl border-2 border-dashed transition-all flex flex-col justify-between items-center p-2.5 cursor-pointer group"
-                            [ngClass]="mesaEnMovimiento() ? 'border-polleria-gold/50 bg-polleria-gold/10 hover:border-polleria-gold hover:bg-polleria-gold/20' : 'border-white/10 bg-[#0d0e12] hover:border-white/30 hover:bg-white/5'"
-                          >
-                            <div class="w-full flex justify-between items-center text-[10px] text-slate-500">
-                              <span class="font-mono">F{{ r }}:C{{ c }}</span>
-                              <span class="text-[9px] opacity-0 group-hover:opacity-100 text-slate-400 transition">Vacía</span>
-                            </div>
-
-                            <div class="flex flex-col items-center justify-center my-auto transition-transform group-hover:scale-110">
-                              @if (mesaEnMovimiento()) {
-                                <span class="text-xs font-bold text-polleria-gold flex items-center gap-1">
-                                  <svg class="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                                  </svg>
-                                  <span>Ubicar aquí</span>
-                                </span>
-                              } @else {
-                                <span class="w-6 h-6 rounded-full border border-dashed border-slate-700 flex items-center justify-center text-slate-600 group-hover:border-slate-500 group-hover:text-slate-400 transition">
-                                  <span class="text-[10px]">•</span>
-                                </span>
-                                <span class="text-[10px] text-slate-600 group-hover:text-slate-400 mt-1 transition">
-                                  Disponible
-                                </span>
-                              }
-                            </div>
-
-                            <div class="w-full text-center text-[9px] text-slate-600">
-                              Espacio libre
-                            </div>
-                          </div>
-                        }
-                      }
-                    }
-                  </div>
-                </div>
-
-              </div>
+              <app-mozo-croquis
+                [zonasSalon]="zonasSalon"
+                [currentZona]="currentZona()"
+                [activeZonaIndex]="activeZonaIndex()"
+                [mesas]="mesas()"
+                [hasError]="salonService.hasError()"
+                [isLoading]="salonService.isLoading()"
+                [isProcesandoMesa]="isProcesandoMesa()"
+                [mensajeProcesandoMesa]="mensajeProcesandoMesa()"
+                [isAdmin]="auth.isAdmin()"
+                [mesaEnMovimiento]="mesaEnMovimiento()"
+                [selectedMesaId]="selectedMesaModal()?.id"
+                [ahora]="tiempoActual()"
+                (reintentar)="salonService.cargarMesas()"
+                (prevZona)="prevZona()"
+                (nextZona)="nextZona()"
+                (zonaSelect)="setZonaIndex($event)"
+                (ajustarFilas)="ajustarFilas($event)"
+                (ajustarColumnas)="ajustarColumnas($event)"
+                (cancelarMovimiento)="mesaEnMovimiento.set(null)"
+                (casillaClick)="onCasillaClick($event.row, $event.col)"
+                (dragStartMesa)="onDragStartMesa($event.event, $event.mesa)"
+                (dragOverCasilla)="onDragOverCasilla($event)"
+                (dropCasilla)="onDropCasilla($event.event, $event.row, $event.col)"
+                (moverMesa)="iniciarMoverMesa($event.mesa, $event.event)"
+              />
             } @else {
-              <!-- ================= VISTA TARJETAS MOZO ================= -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                @for (m of filteredMesas(); track m.id) {
-                  <div 
-                    (click)="seleccionarMesa(m)"
-                    class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between group shadow-lg"
-                    [ngClass]="{
-                      'bg-[#102419] border-emerald-500/40 hover:border-emerald-400': m.estado === 'LIBRE',
-                      'bg-[#2d220f] border-amber-500/40 hover:border-amber-400': esMesaParaCobrar(m),
-                      'bg-[#2d1217] border-rose-500/40 hover:border-rose-400': !esMesaParaCobrar(m) && m.estado === 'OCUPADA',
-                      'bg-[#131f33] border-sky-500/40 hover:border-sky-400': m.estado === 'RESERVADA',
-                      'ring-4 ring-amber-400/70 animate-pulse motion-reduce:animate-none': m.platosListos
-                    }"
-                  >
-                    <!-- Platos Listos Badge -->
-                    @if (m.platosListos) {
-                      <div class="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black uppercase tracking-wider animate-pulse shadow">
-                        <svg class="w-3.5 h-3.5 text-amber-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>Plato Listo
-                      </div>
-                    }
-
-                    <div>
-                      <div class="flex items-center justify-between">
-                        <span class="font-display text-2xl font-black text-white group-hover:text-polleria-gold transition">
-                          {{ m.nombre }}
-                        </span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                          [ngClass]="{
-                            'bg-emerald-500/20 text-emerald-300': m.estado === 'LIBRE',
-                            'bg-amber-500/20 text-amber-300': esMesaParaCobrar(m),
-                            'bg-rose-500/20 text-rose-300': !esMesaParaCobrar(m) && m.estado === 'OCUPADA',
-                            'bg-sky-500/20 text-sky-300': m.estado === 'RESERVADA'
-                          }"
-                        >
-                          {{ esMesaParaCobrar(m) ? 'POR COBRAR' : m.estado }}
-                        </span>
-                      </div>
-
-                      <p class="text-xs text-slate-400 mt-1">Capacidad: {{ m.capacidad }} personas • {{ m.zona }}</p>
-
-                      @if (m.estado === 'OCUPADA' || m.estado === 'POR_COBRAR' || m.servidoEn) {
-                        <div class="mt-4 pt-3 border-t border-white/10 space-y-1.5 text-xs">
-                          <div class="flex justify-between text-slate-300">
-                            <span>Comensales:</span>
-                            <span class="font-bold text-white">{{ m.comensales }}</span>
-                          </div>
-
-                          @if (m.servidoEn) {
-                            <div class="flex justify-between items-center text-amber-300 font-semibold bg-amber-500/10 p-1.5 rounded-lg border border-amber-500/20">
-                              <span class="flex items-center gap-1.5 text-[11px]">
-                                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                </svg>
-                                Comida servida:
-                              </span>
-                              <span class="font-mono text-[11px] text-amber-300 font-bold">Hace {{ tiempoTranscurridoDesde(m.servidoEn) }}</span>
-                            </div>
-                          } @else {
-                            <div class="flex justify-between text-slate-300">
-                              <span>Tiempo esperando:</span>
-                              <span class="font-mono text-amber-400">{{ m.tiempoMinutos }} min</span>
-                            </div>
-                          }
-
-                          <div class="flex justify-between text-slate-300">
-                            <span>Mozo:</span>
-                            <span class="font-bold text-slate-200">{{ m.mozo || 'Yovana M.' }}</span>
-                          </div>
-                        </div>
-                      } @else {
-                        <div class="mt-4 pt-3 border-t border-white/10 text-xs text-slate-500 flex flex-col items-center justify-center h-16 gap-1">
-                          <span class="text-emerald-400 font-semibold">Disponible para asignar</span>
-                          <span class="text-[10px] text-slate-400">Toca para iniciar comanda</span>
-                        </div>
-                      }
-                    </div>
-
-                    <!-- Footer / Consumo -->
-                    <div class="mt-4 pt-3 border-t border-white/10 flex justify-between items-center">
-                      <span class="text-xs text-slate-400">Total acumulado:</span>
-                      <span class="font-display text-lg font-bold text-polleria-gold">
-                        {{ m.totalConsumo | currencyPEN }}
-                      </span>
-                    </div>
-
-                  </div>
-                }
-              </div>
+              <app-mozo-mesas-cards
+                [mesas]="filteredMesas()"
+                [ahora]="tiempoActual()"
+                (seleccionar)="seleccionarMesa($event)"
+              />
             }
 
           </main>
@@ -707,126 +130,28 @@ export interface AlertaPlatoListo {
         <!-- ================= TAB 2: TOMAR COMANDA RÁPIDA ================= -->
         @if (activeTab() === 'TOMAR_COMANDA') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              <!-- Left: Product Catalog Selection -->
-              <div class="lg:col-span-2 space-y-4">
-                <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                  <div>
-                    <h2 class="text-lg font-bold text-white">Carta Digital de Salón</h2>
-                    <p class="text-xs text-slate-400">Selecciona platos y bebidas para la mesa elegida.</p>
-                  </div>
-                  
-                  <!-- Mesa Target Selector -->
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-slate-300 font-bold">Mesa:</label>
-                    <select 
-                      [(ngModel)]="selectedMesaForOrder"
-                      class="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                    >
-                      @for (m of mesas(); track m.id) {
-                        <option [value]="m.id">{{ m.nombre }} ({{ m.estado }})</option>
-                      }
-                    </select>
-                  </div>
-                </div>
 
-                <!-- Products Grid -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  @for (prod of productsService.products(); track prod.id) {
-                    <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 flex flex-col justify-between gap-3 shadow hover:border-polleria-gold/40 transition">
-                      <div class="flex items-center gap-3">
-                        <img [src]="prod.imagenUrl" [alt]="prod.nombre" class="w-16 h-16 rounded-xl object-cover shrink-0 bg-slate-800"/>
-                        <div class="min-w-0">
-                          <h3 class="text-sm font-bold text-white truncate">{{ prod.nombre }}</h3>
-                          <p class="text-xs text-slate-400 line-clamp-1">{{ prod.descripcion }}</p>
-                          <span class="font-display text-sm font-bold text-polleria-gold">{{ prod.precio | currencyPEN }}</span>
-                        </div>
-                      </div>
-                      <button 
-                        (click)="agregarItemComanda(prod)"
-                        class="w-full py-2 rounded-xl bg-polleria-gold/10 hover:bg-polleria-gold text-polleria-gold hover:text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <span>+ Agregar a la comanda</span>
-                      </button>
-                    </div>
-                  }
-                </div>
-              </div>
+              <app-mozo-menu-picker
+                [mesas]="mesas()"
+                [products]="productsService.products()"
+                [selectedMesaForOrder]="selectedMesaForOrder"
+                (mesaChange)="selectedMesaForOrder = $any($event)"
+                (agregar)="agregarItemComanda($event)"
+              />
 
-              <!-- Right: Comanda Builder Drawer -->
-              <div class="bg-[#14161a] p-5 rounded-2xl border border-white/10 shadow flex flex-col justify-between h-[calc(100vh-175px)] sticky top-20">
-                <div>
-                  <div class="flex justify-between items-center pb-4 border-b border-white/10">
-                    <div>
-                      <h3 class="text-base font-extrabold text-white">Comanda Mesa #{{ mesaParaComanda()?.numero ?? selectedMesaForOrder }}</h3>
-                      <p class="text-xs text-slate-400">Mozo: {{ auth.currentUser()?.nombre || 'Yovana M.' }}</p>
-                    </div>
-                    <span class="px-2.5 py-1 rounded-full bg-polleria-crimson text-white text-xs font-bold">
-                      {{ comandaItems.length }} items
-                    </span>
-                  </div>
-
-                  <!-- Comanda activa de la mesa: los platos se suman a la misma orden -->
-                  @if (mesaParaComanda()?.ordenId; as ordenId) {
-                    <div class="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-[11px] text-amber-200 leading-snug">
-                      Esta mesa ya tiene la comanda #{{ ordenId }}{{ comandaMesa()?.estado ? ' (' + etiquetaEstadoComanda(comandaMesa()!.estado) + ')' : '' }}. Los platos que agregues se suman a esa comanda.
-                    </div>
-                  }
-
-                  <!-- Comanda Items List -->
-                  <div class="py-4 space-y-3 overflow-y-auto max-h-[360px] custom-scrollbar">
-                    @if (comandaItems.length === 0) {
-                      <div class="text-center py-12 text-slate-500 text-xs">
-                        No hay platos agregados a esta comanda.<br/>Selecciona productos de la carta.
-                      </div>
-                    }
-
-                    @for (item of comandaItems; track $index) {
-                      <div class="p-3 rounded-xl bg-white/5 border border-white/5 space-y-2">
-                        <div class="flex justify-between items-start">
-                          <div>
-                            <span class="text-xs font-bold text-white">{{ item.cantidad }}x {{ item.producto.nombre }}</span>
-                            <span class="block text-[11px] font-mono text-polleria-gold">{{ item.producto.precio * item.cantidad | currencyPEN }}</span>
-                          </div>
-                          <button (click)="eliminarItemComanda($index)" class="text-rose-400 hover:text-rose-300 cursor-pointer" aria-label="Eliminar"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-                        </div>
-                        <input 
-                          type="text" 
-                          [(ngModel)]="item.notas" 
-                          placeholder="Notas de cocina (ej: papas bien doradas, sin ají...)"
-                          class="w-full px-2.5 py-1 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                        />
-                      </div>
-                    }
-                  </div>
-                </div>
-
-                <!-- Footer Summary & Submit -->
-                <div class="pt-4 border-t border-white/10 space-y-3">
-                  <div class="flex justify-between items-center">
-                    <span class="text-xs text-slate-400 font-bold">Total Comanda:</span>
-                    <span class="font-display text-2xl font-black text-polleria-gold">
-                      {{ calcularTotalComanda() | currencyPEN }}
-                    </span>
-                  </div>
-
-                  <button 
-                    [disabled]="comandaItems.length === 0"
-                    (click)="enviarComandaACocina()"
-                    class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-                  >
-                    <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    @if (mesaParaComanda()?.ordenId; as ordenId) {
-                      <span>Agregar a la comanda #{{ ordenId }}</span>
-                    } @else {
-                      <span>Enviar a Cocina & Horno</span>
-                    }
-                  </button>
-                </div>
-
-              </div>
+              <app-mozo-order-summary
+                [mesaTitulo]="mesaParaComanda()?.numero ?? selectedMesaForOrder"
+                [userName]="auth.currentUser()?.nombre"
+                [ordenActivaId]="mesaParaComanda()?.ordenId"
+                [estadoComandaLabel]="comandaMesa()?.estado ? etiquetaEstadoComanda(comandaMesa()!.estado) : ''"
+                [items]="comandaItems"
+                [total]="calcularTotalComanda()"
+                (eliminar)="eliminarItemComanda($event)"
+                (notasChange)="actualizarNotasItem($event.index, $event.notas)"
+                (enviar)="enviarComandaACocina()"
+              />
 
             </div>
 
@@ -836,348 +161,44 @@ export interface AlertaPlatoListo {
         <!-- ================= TAB 3: ALERTAS DE COCINA ================= -->
         @if (activeTab() === 'ALERTAS_COCINA') {
           <main class="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full space-y-6">
-            
-            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow flex justify-between items-center">
-              <div>
-                <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                  <span>Avisos de Platos Listos en Cocina</span>
-                </h2>
-                <p class="text-xs text-slate-400">Notificaciones instantáneas de platos recién salidos del horno para servir a mesa.</p>
-              </div>
-            </div>
-
-            <!-- Alerts List -->
-            <div class="space-y-3">
-              @for (a of alertasPendientes(); track a.id) {
-                <div 
-                  class="p-4 rounded-2xl border transition duration-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg bg-amber-500/10 border-amber-500/40 animate-slide-up motion-reduce:animate-none"
-                >
-                  <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
-                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-display text-lg font-black text-white">{{ a.mesa }}</span>
-                        @if (a.hora) {
-                          <span class="text-xs text-slate-400">• {{ a.hora }}</span>
-                        }
-                        @if (esMiComanda(a)) {
-                          <span class="px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/40 text-[10px] font-black uppercase tracking-wider">Tu comanda</span>
-                        }
-                      </div>
-                      <p class="text-sm font-bold text-amber-300">{{ a.plato }}</p>
-                    </div>
-                  </div>
-
-                  <button 
-                    (click)="servirAlerta(a)"
-                    class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
-                  >
-                    <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Servir en mesa
-                  </button>
-                </div>
-              } @empty {
-                <div class="p-6 rounded-2xl bg-white/5 border border-white/10 text-center text-xs text-slate-400">
-                  No hay platos listos pendientes de servir.
-                </div>
-              }
-            </div>
-
+            <app-mozo-alertas-list
+              [alertas]="alertasPendientes()"
+              [miUserId]="miUserId()"
+              (servir)="servirAlerta($event)"
+            />
           </main>
         }
 
         <!-- ================= TAB 4: HISTORIAL & COBROS DEL TURNO ================= -->
         @if (activeTab() === 'HISTORIAL_TURNO') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Mesas Atendidas Hoy</span>
-                <p class="font-display text-3xl font-black text-white mt-1">{{ mesasAtendidasHoy() }}</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Total Cobrado en Turno</span>
-                <p class="font-display text-3xl font-black text-polleria-gold mt-1">{{ totalCobradoTurno() | currencyPEN }}</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Comandas de Salón Activas</span>
-                <p class="font-display text-3xl font-black text-emerald-400 mt-1">{{ comandasActivasSalon() }}</p>
-              </div>
-            </div>
-
-            <!-- Cobros Realizados Table -->
-            <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow">
-              <div class="p-4 border-b border-white/10 flex justify-between items-center">
-                <h3 class="text-sm font-bold text-white">Transacciones y Cierres de Mesa de Salón</h3>
-                <span class="text-xs text-slate-400">Turno Almuerzo / Cena</span>
-              </div>
-              <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs text-slate-300">
-                  <thead class="bg-black/40 text-[11px] uppercase tracking-wider text-slate-400 border-b border-white/10">
-                    <tr>
-                      <th class="p-3">Mesa</th>
-                      <th class="p-3">Comanda / Detalle</th>
-                      <th class="p-3">Total</th>
-                      <th class="p-3">Hora</th>
-                      <th class="p-3">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-white/5">
-                    @for (o of historialSalon(); track o.id) {
-                      <tr class="hover:bg-white/5">
-                        <td class="p-3 font-bold text-white">Mesa {{ o.cliente.mesaNumero ?? '—' }}</td>
-                        <td class="p-3">#{{ getCodeNum(o.codigoSeguimiento) }} · {{ resumenItems(o) }}</td>
-                        <td class="p-3 font-display font-bold text-polleria-gold">{{ o.total | currencyPEN }}</td>
-                        <td class="p-3 text-slate-400">{{ horaDe(o.updatedAt) }}</td>
-                        <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cerrada</span></td>
-                      </tr>
-                    } @empty {
-                      <tr>
-                        <td colspan="5" class="p-6 text-center text-slate-500">Todavía no hay comandas cerradas en este turno.</td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
+            <app-mozo-historial
+              [historialSalon]="historialSalon()"
+              [mesasAtendidasHoy]="mesasAtendidasHoy()"
+              [totalCobradoTurno]="totalCobradoTurno()"
+              [comandasActivasSalon]="comandasActivasSalon()"
+            />
           </main>
         }
 
         <!-- ================= MODAL DETALLE DE MESA & COBRO ================= -->
-        @if (selectedMesaModal()) {
-          <div class="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <div class="bg-[#14161a] w-full max-w-lg rounded-3xl border border-white/15 p-6 space-y-4 shadow-2xl">
-              
-              <div class="flex justify-between items-start pb-3 border-b border-white/10">
-                <div>
-                  <h3 class="font-display text-2xl font-bold text-white">{{ selectedMesaModal()?.nombre }}</h3>
-                  <span class="text-xs text-slate-400">{{ selectedMesaModal()?.zona }} • Capacidad {{ selectedMesaModal()?.capacidad }} pers.</span>
-                </div>
-                <button (click)="cerrarModalMesa()" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-              </div>
-
-              <!-- Estado y Contenido de la Mesa -->
-              @if (selectedMesaModal()?.estado === 'LIBRE') {
-                <!-- VISTA MODAL PARA MESA LIBRE: INICIAR COMANDA -->
-                <div class="space-y-4 text-xs">
-                  <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                        </svg>
-                      </div>
-                      <div>
-                        <span class="text-xs font-bold text-white block">Mesa Libre & Lista</span>
-                        <span class="text-[11px] text-emerald-300">Capacidad para {{ selectedMesaModal()?.capacidad }} comensales</span>
-                      </div>
-                    </div>
-                    <span class="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] uppercase tracking-wider">
-                      Disponible
-                    </span>
-                  </div>
-
-                  <!-- BOTÓN HERO PARA INICIAR COMANDA -->
-                  <div class="p-5 rounded-2xl bg-gradient-to-br from-polleria-gold/15 via-white/5 to-transparent border border-polleria-gold/30 text-center space-y-3 shadow-lg">
-                    <p class="text-xs text-slate-300 leading-relaxed">
-                      ¿Deseas sentar comensales en esta mesa? Podrás seleccionar productos de la carta y enviar el pedido directamente a la cocina y horno.
-                    </p>
-                    <button 
-                      type="button"
-                      (click)="iniciarComandaParaMesa(selectedMesaModal()!)"
-                      class="w-full py-3.5 px-4 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover active:scale-[0.98] text-white font-black text-xs sm:text-sm uppercase tracking-wider transition cursor-pointer shadow-lg shadow-polleria-crimson/25 flex items-center justify-center gap-2"
-                    >
-                      <svg class="w-5 h-5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-                      </svg>
-                      <span>+ Iniciar Comanda (Tomar Pedido)</span>
-                    </button>
-                  </div>
-
-                  <!-- Opciones Secundarias -->
-                  <div class="pt-2 border-t border-white/10 flex items-center justify-between text-slate-400">
-                    <span class="text-[11px]">Otras operaciones:</span>
-                    <div class="flex items-center gap-2">
-                      <button 
-                        type="button"
-                        (click)="cambiarEstadoMesa('RESERVADA')"
-                        class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[11px] font-bold transition cursor-pointer"
-                      >
-                        Reservar
-                      </button>
-                      <button 
-                        type="button"
-                        (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
-                        class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[11px] font-bold transition cursor-pointer"
-                      >
-                        Limpieza
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              } @else {
-                <!-- VISTA MODAL PARA MESAS OCUPADAS / POR COBRAR / EN ATENCIÓN -->
-                <div class="space-y-3 text-xs">
-                  <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                    <span class="text-slate-300">Estado Actual:</span>
-                    <span class="font-bold uppercase" [ngClass]="{
-                      'text-amber-400': esMesaParaCobrar(selectedMesaModal()),
-                      'text-rose-400': !esMesaParaCobrar(selectedMesaModal()) && selectedMesaModal()?.estado === 'OCUPADA',
-                      'text-sky-400': selectedMesaModal()?.estado === 'EN_LIMPIEZA' || selectedMesaModal()?.estado === 'LIMPIEZA',
-                      'text-purple-400': selectedMesaModal()?.estado === 'RESERVADA'
-                    }">
-                      {{ esMesaParaCobrar(selectedMesaModal()) ? 'POR COBRAR' : selectedMesaModal()?.estado }}
-                    </span>
-                  </div>
-
-                  <!-- Contador de tiempo servido en el modal -->
-                  @if (selectedMesaModal()?.servidoEn || comandaMesa()?.servidoEn; as servidoIso) {
-                    <div class="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-between text-xs">
-                      <span class="flex items-center gap-2 text-amber-200 font-medium">
-                        <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        Comida servida en mesa:
-                      </span>
-                      <span class="font-mono font-bold text-amber-300">
-                        Hace {{ tiempoTranscurridoDesde(servidoIso) }} ({{ horaDe(servidoIso) }})
-                      </span>
-                    </div>
-                  }
-
-                  <!-- Detalle de Consumo (comanda real de la orden activa) -->
-                  <div class="p-3 rounded-xl bg-black/40 space-y-2 border border-white/5">
-                    <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
-
-                    @if (comandaMesa(); as comanda) {
-                      <div class="space-y-1 text-slate-400">
-                        @for (item of comanda.items; track $index) {
-                          <p class="flex justify-between">
-                            <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
-                            <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
-                          </p>
-                        }
-                        @if (comanda.items.length === 0) {
-                          <p class="text-slate-500">La comanda no tiene ítems registrados.</p>
-                        }
-                      </div>
-                      <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
-                        <span>Total a Cobrar:</span>
-                        <span>{{ comanda.total | currencyPEN }}</span>
-                      </div>
-                      <div class="flex justify-between text-[11px] text-slate-400">
-                        <span>Estado de la comanda:</span>
-                        <span class="font-bold" [ngClass]="{
-                          'text-amber-400': comanda.estado === 'EN_PREPARACION',
-                          'text-emerald-400': comanda.estado === 'LISTO_COCINA'
-                        }">{{ etiquetaEstadoComanda(comanda.estado) }}</span>
-                      </div>
-                    } @else if (cargandoComanda()) {
-                      <p class="text-slate-400 text-xs">Cargando comanda del servidor...</p>
-                    } @else if (errorComanda()) {
-                      <p class="text-rose-400 text-xs">{{ errorComanda() }}</p>
-                    } @else {
-                      <p class="text-slate-500 text-xs">Sin comanda activa</p>
-                    }
-                  </div>
-
-                  <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
-                  <div class="space-y-2 pt-2">
-                    <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
-                    <div class="grid grid-cols-2 gap-2">
-                      <button 
-                        (click)="cambiarEstadoMesa('OCUPADA')"
-                        class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                        <span>Ocupar Mesa</span>
-                      </button>
-                      <button 
-                        (click)="cambiarEstadoMesa('POR_COBRAR')"
-                        class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                        <span>Por Cobrar</span>
-                      </button>
-                      <button 
-                        (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
-                        class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-                        <span>En Limpieza</span>
-                      </button>
-                      <button 
-                        (click)="cambiarEstadoMesa('LIBRE')"
-                        class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <span>Liberar Mesa</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Casilla en Cuadrícula de Salón (Solo Admin) -->
-                  @if (auth.isAdmin()) {
-                    <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
-                      <span class="text-[11px] font-bold text-slate-400 block">Casilla en Cuadrícula (Columna X, Fila Y):</span>
-                      <div class="grid grid-cols-2 gap-2">
-                        <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                          <span class="text-[10px] text-slate-400 font-bold">Col X:</span>
-                          <input 
-                            type="number" 
-                            [(ngModel)]="selectedMesaModal()!.posicionX" 
-                            class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                          />
-                        </div>
-                        <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                          <span class="text-[10px] text-slate-400 font-bold">Fila Y:</span>
-                          <input 
-                            type="number" 
-                            [(ngModel)]="selectedMesaModal()!.posicionY" 
-                            class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                      <button 
-                        (click)="guardarPosicionMesaModal()"
-                        class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                        <span>Guardar Casilla en Cuadrícula</span>
-                      </button>
-                    </div>
-                  }
-
-                  <!-- Servir en mesa: marca persistida; el cobro sigue siendo el que libera la mesa -->
-                  @if (comandaMesa()?.estado === 'LISTO_COCINA' && !comandaMesa()?.servidoEn) {
-                    <button 
-                      (click)="servirMesaSeleccionada()"
-                      class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
-                    >
-                      Servir en mesa
-                    </button>
-                  } @else if (comandaMesa()?.servidoEn) {
-                    <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
-                  }
-
-                  <!-- Cobro Inmediato -->
-                  <div class="pt-2 border-t border-white/10">
-                    <button 
-                      (click)="cobrarMesaModal()"
-                      class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
-                    >
-                      <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Cerrar Comanda</span>
-                    </button>
-                  </div>
-                </div>
-              }
-
-            </div>
-          </div>
+        @if (selectedMesaModal(); as mesaModal) {
+          <app-mozo-mesa-modal
+            [mesa]="mesaModal"
+            [comandaMesa]="comandaMesa()"
+            [cargandoComanda]="cargandoComanda()"
+            [errorComanda]="errorComanda()"
+            [isAdmin]="auth.isAdmin()"
+            [ahora]="tiempoActual()"
+            (cerrar)="cerrarModalMesa()"
+            (iniciarComanda)="iniciarComandaParaMesa($event)"
+            (cambiarEstado)="cambiarEstadoMesa($event)"
+            (posicionXChange)="mesaModal.posicionX = $event"
+            (posicionYChange)="mesaModal.posicionY = $event"
+            (guardarPosicion)="guardarPosicionMesaModal()"
+            (servirMesa)="servirMesaSeleccionada()"
+            (cobrar)="cobrarMesaModal()"
+          />
         }
 
       </div>
@@ -1219,7 +240,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly tiempoActual = signal<number>(Date.now());
 
   selectedMesaForOrder = 1;
-  comandaItems: { producto: Product; cantidad: number; notas: string }[] = [];
+  comandaItems: ComandaItem[] = [];
 
   // Mesas sincronizadas de SalonService (sin fallbacks mock)
   readonly mesas = computed<MesaSalon[]>(() => {
@@ -1246,23 +267,11 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   });
 
   esMesaParaCobrar(mesa: MesaSalon | null | undefined): boolean {
-    if (!mesa) return false;
-    return mesa.estado === 'POR_COBRAR' || !!mesa.servidoEn;
+    return esMesaParaCobrarHelper(mesa);
   }
 
   tiempoTranscurridoDesde(fechaIso?: string | null): string {
-    if (!fechaIso) return '';
-    const fecha = new Date(fechaIso);
-    const diffMs = this.tiempoActual() - fecha.getTime();
-    if (isNaN(diffMs) || diffMs < 0) return 'Recién servido';
-    const totalMinutos = Math.floor(diffMs / 60000);
-    if (totalMinutos < 1) return 'Recién servido';
-    const horas = Math.floor(totalMinutos / 60);
-    const minutos = totalMinutos % 60;
-    if (horas === 0) {
-      return `${minutos} min`;
-    }
-    return minutos > 0 ? `${horas}h ${minutos}m` : `${horas}h`;
+    return tiempoTranscurridoDesdeHelper(fechaIso, this.tiempoActual());
   }
 
   iniciarComandaParaMesa(mesa: MesaSalon): void {
@@ -1297,8 +306,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly miUserId = computed(() => leerUserIdDelToken(this.auth.token()));
 
   esMiComanda(alerta: AlertaPlatoListo): boolean {
-    const userId = this.miUserId();
-    return !!userId && !!alerta.mozoId && alerta.mozoId === userId;
+    return esMiComandaHelper(alerta, this.miUserId());
   }
 
   readonly filteredMesas = computed(() => {
@@ -1385,15 +393,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   etiquetaEstadoComanda(estado: OrderStatus): string {
-    switch (estado) {
-      case 'EN_PREPARACION': return 'Cocinando';
-      case 'LISTO_COCINA': return 'Listo';
-      case 'PAGADO': return 'En cola';
-      case 'EN_REPARTO': return 'En reparto';
-      case 'COMPLETADO': return 'Entregado';
-      case 'CANCELADO': return 'Cancelado';
-      default: return 'Pendiente de pago';
-    }
+    return etiquetaEstadoComandaHelper(estado);
   }
 
   // ================= CROQUIS POR ZONAS (SLIDES) & CUADRÍCULA MATRICIAL =================
@@ -1559,15 +559,21 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   agregarItemComanda(prod: Product): void {
     const exist = this.comandaItems.find(i => i.producto.id === prod.id);
     if (exist) {
-      exist.cantidad += 1;
+      this.comandaItems = this.comandaItems.map(i =>
+        i === exist ? { ...i, cantidad: i.cantidad + 1 } : i
+      );
     } else {
-      this.comandaItems.push({ producto: prod, cantidad: 1, notas: '' });
+      this.comandaItems = [...this.comandaItems, { producto: prod, cantidad: 1, notas: '' }];
     }
     this.notify.showSuccess(`Agregado: ${prod.nombre}`);
   }
 
   eliminarItemComanda(index: number): void {
-    this.comandaItems.splice(index, 1);
+    this.comandaItems = this.comandaItems.filter((_, i) => i !== index);
+  }
+
+  actualizarNotasItem(index: number, notas: string): void {
+    this.comandaItems = this.comandaItems.map((item, i) => (i === index ? { ...item, notas } : item));
   }
 
   calcularTotalComanda(): number {
@@ -1582,19 +588,15 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
 
   /** «1x Chaufa de Pollo, 2x Inca Kola» a partir de los ítems reales de la orden. */
   resumenItems(o: Order): string {
-    if (!o?.items?.length) return '—';
-    return o.items.map(i => `${i.cantidad}x ${i.product?.nombre ?? 'Producto'}`).join(', ');
+    return resumenItemsHelper(o);
   }
 
   horaDe(iso: string): string {
-    if (!iso) return '—';
-    const fecha = new Date(iso);
-    if (Number.isNaN(fecha.getTime())) return '—';
-    return fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    return horaDeHelper(iso);
   }
 
   getCodeNum(code: string): string {
-    return code ? code.replace('POL-', '') : '—';
+    return getCodeNumHelper(code);
   }
 
   /**
