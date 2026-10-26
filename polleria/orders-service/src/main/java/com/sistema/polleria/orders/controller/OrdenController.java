@@ -250,7 +250,8 @@ public class OrdenController {
                     "El flujo del pedido lo gestiona la pollería. Del tuyo solo puedes cancelarlo.");
         }
 
-        return ResponseEntity.ok(ordenService.actualizarEstado(id, request, extraerUserId(authentication)));
+        return ResponseEntity.ok(ordenService.actualizarEstado(
+                id, request, extraerUserId(authentication), esLlamadaInterna(claveInterna)));
     }
 
     private boolean esLlamadaInterna(String claveInterna) {

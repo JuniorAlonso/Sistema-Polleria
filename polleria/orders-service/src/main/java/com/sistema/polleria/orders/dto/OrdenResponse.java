@@ -36,6 +36,7 @@ public class OrdenResponse {
     private BigDecimal montoPagaCon;
     private BigDecimal vueltoEstimado;
     private String motivoFantasma;
+    private Boolean requiereCobroEfectivo;
     private List<ItemResponse> items;
 
     @Data
@@ -87,6 +88,7 @@ public class OrdenResponse {
                 .montoPagaCon(o.getMontoPagaCon())
                 .vueltoEstimado(o.getVueltoEstimado())
                 .motivoFantasma(o.getMotivoFantasma())
+                .requiereCobroEfectivo(Boolean.TRUE.equals(o.getRequiereCobroEfectivo()))
                 .items(items)
                 .build();
     }

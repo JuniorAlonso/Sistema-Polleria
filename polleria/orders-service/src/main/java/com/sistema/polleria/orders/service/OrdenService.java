@@ -65,6 +65,7 @@ public class OrdenService {
                 .observaciones(request.getObservaciones())
                 .montoPagaCon(request.getMontoPagaCon())
                 .ipOrigen(request.getIpOrigen())
+                .requiereCobroEfectivo(request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION)
                 .build();
 
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() != null) {
@@ -235,10 +236,28 @@ public class OrdenService {
                 .stream().map(OrdenResponse::from).toList();
     }
 
+    /**
+     * Ruta de confianza: la usan el scheduler y los métodos internos de este servicio, que ya
+     * validaron sus propias precondiciones. Equivale a {@code llamadaInterna = true}.
+     */
     @Transactional
     public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId) {
+        return actualizarEstado(id, request, usuarioId, true);
+    }
+
+    /**
+     * @param llamadaInterna true si la llamada es de confianza (clave interna de otro microservicio,
+     *                       scheduler o método interno); false para el PATCH genérico del personal,
+     *                       que no puede saltarse el pago, la llamada de confirmación ni el cobro.
+     */
+    @Transactional
+    public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId,
+                                          boolean llamadaInterna) {
         Orden orden = buscarOFallar(id);
         validarTransicionEstado(orden.getEstado(), request.getEstado(), orden.getTipo());
+        if (!llamadaInterna) {
+            validarCompuertasDeNegocio(orden, request.getEstado());
+        }
 
         boolean esDelivery = orden.getTipo() == OrdenTipo.DELIVERY;
         if (request.getEstado() == OrdenEstado.EN_CAMINO) {
@@ -459,6 +478,9 @@ public class OrdenService {
         if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
             throw new ConflictoDeEstadoException("El pedido #" + id + " ya está en estado terminal: " + orden.getEstado());
         }
+        if (usuarioId != null && usuarioId > 0) {
+            validarPlazoPedidoFantasma(orden);
+        }
         String motivoFinal = (motivo != null && !motivo.isBlank())
                 ? motivo
                 : (orden.getTipo() == OrdenTipo.DELIVERY ? "NO_ENTREGADO" : "ABANDONADO");
@@ -467,6 +489,72 @@ public class OrdenService {
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
         req.setEstado(OrdenEstado.PEDIDO_FANTASMA);
         return actualizarEstado(id, req, usuarioId);
+    }
+
+    /** Plazo en puerta (delivery) antes de poder declarar el pedido fantasma. */
+    static final long MINUTOS_ESPERA_PUERTA = 30;
+    /** Plazo en tienda (recojo) antes de poder declarar el pedido fantasma. */
+    static final long MINUTOS_ESPERA_RECOJO = 60;
+
+    /**
+     * Compuertas del PATCH genérico del personal: el pago verificado, la llamada de confirmación y
+     * el cobro en efectivo se registran por sus flujos propios y no se pueden saltar con un estado.
+     */
+    private void validarCompuertasDeNegocio(Orden orden, OrdenEstado nuevo) {
+        OrdenEstado actual = orden.getEstado();
+        if (actual == nuevo) return;
+
+        if (nuevo == OrdenEstado.PEDIDO_FANTASMA) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido fantasma se declara con POST /ordenes/" + orden.getId()
+                    + "/pedido-fantasma, no cambiando el estado.");
+        }
+        if (nuevo.esPreparacion()) {
+            if (actual == OrdenEstado.PENDIENTE_PAGO) {
+                throw new ConflictoDeEstadoException(
+                        "El pedido #" + orden.getId() + " espera pago: el pago debe verificarse "
+                        + "a través del flujo de pagos (payments-service) antes de pasar a preparación.");
+            }
+            if (actual == OrdenEstado.PENDIENTE_CONFIRMACION && orden.getLlamadaConfirmacionAt() == null) {
+                throw new ConflictoDeEstadoException(
+                        "El pedido #" + orden.getId() + " requiere confirmar la llamada al cliente: "
+                        + "usa POST /ordenes/" + orden.getId() + "/confirmar-llamada.");
+            }
+        }
+        if (nuevo == OrdenEstado.ENTREGADO
+                && (orden.getTipo() == OrdenTipo.DELIVERY || orden.getTipo() == OrdenTipo.RECOJO)
+                && Boolean.TRUE.equals(orden.getRequiereCobroEfectivo())) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + orden.getId() + " se paga en efectivo: registra el cobro "
+                    + "(payments cobro-efectivo) antes de marcarlo como ENTREGADO.");
+        }
+    }
+
+    /** Un actor humano solo puede declarar fantasma cuando ya venció la espera del tipo de pedido. */
+    private void validarPlazoPedidoFantasma(Orden orden) {
+        LocalDateTime ahora = LocalDateTime.now();
+        if (orden.getTipo() == OrdenTipo.DELIVERY) {
+            if (orden.getEstado() != OrdenEstado.EN_PUERTA || orden.getEnPuertaAt() == null) {
+                throw new ConflictoDeEstadoException(
+                        "El pedido #" + orden.getId() + " debe estar EN_PUERTA para declararlo fantasma.");
+            }
+            exigirEspera(orden, orden.getEnPuertaAt().plusMinutes(MINUTOS_ESPERA_PUERTA), ahora, "en la puerta");
+        } else if (orden.getTipo() == OrdenTipo.RECOJO) {
+            if (!orden.getEstado().esListo() || orden.getListoAt() == null) {
+                throw new ConflictoDeEstadoException(
+                        "El pedido #" + orden.getId() + " debe estar listo para recoger para declararlo fantasma.");
+            }
+            exigirEspera(orden, orden.getListoAt().plusMinutes(MINUTOS_ESPERA_RECOJO), ahora, "en tienda");
+        }
+    }
+
+    private void exigirEspera(Orden orden, LocalDateTime venceEn, LocalDateTime ahora, String lugar) {
+        if (venceEn.isAfter(ahora)) {
+            long faltan = java.time.Duration.between(ahora, venceEn).toMinutes() + 1;
+            throw new ConflictoDeEstadoException(
+                    "Aún no se cumple la espera " + lugar + " del pedido #" + orden.getId()
+                    + ": faltan " + faltan + " min para declararlo fantasma.");
+        }
     }
 
     private void validarRequest(CrearOrdenRequest request) {

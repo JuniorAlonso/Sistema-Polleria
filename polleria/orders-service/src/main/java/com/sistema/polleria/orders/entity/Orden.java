@@ -108,6 +108,15 @@ public class Orden {
     @Column(name = "vuelto_estimado", precision = 10, scale = 2)
     private BigDecimal vueltoEstimado;
 
+    /**
+     * true cuando el pedido se cobra en efectivo a la entrega (ContraPago). Antes de pasar a
+     * ENTREGADO el cobro debe registrarse en payments-service. DEFAULT false para que
+     * ddl-auto=update pueda agregar la columna NOT NULL sobre filas existentes.
+     */
+    @Column(name = "requiere_cobro_efectivo", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean requiereCobroEfectivo = false;
+
     @Column(name = "motivo_fantasma", length = 30)
     private String motivoFantasma;
 

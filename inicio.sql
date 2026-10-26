@@ -174,6 +174,31 @@ ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS monto_paga_con NUMERIC(10, 2);
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS vuelto_estimado NUMERIC(10, 2);
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS motivo_fantasma VARCHAR(30);
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS ip_origen VARCHAR(45);
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS requiere_cobro_efectivo BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Pagos (payments-service). comprobante_clave holds the object-storage key of the Yape/Plin capture.
+-- The estado CHECK is realigned at startup by InicializadorEstadoPago.
+CREATE TABLE IF NOT EXISTS pagos (
+    id                 BIGSERIAL PRIMARY KEY,
+    orden_id           BIGINT        NOT NULL,
+    cliente_id         BIGINT        NOT NULL,
+    monto              NUMERIC(38, 2) NOT NULL,
+    metodo_pago        VARCHAR(20)   NOT NULL,
+    estado             VARCHAR(30)   NOT NULL DEFAULT 'PENDIENTE',
+    referencia_externa VARCHAR(100),
+    detalle            VARCHAR(500),
+    checkout_url       VARCHAR(500),
+    comprobante_clave  VARCHAR(300),
+    verificado_por     VARCHAR(100),
+    verificado_en      TIMESTAMP,
+    motivo_rechazo     VARCHAR(300),
+    creado_en          TIMESTAMP     NOT NULL DEFAULT NOW(),
+    actualizado_en     TIMESTAMP,
+    version            BIGINT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_orden_id ON pagos (orden_id);
+CREATE INDEX IF NOT EXISTS idx_pagos_estado ON pagos (estado);
+CREATE INDEX IF NOT EXISTS idx_pagos_cliente_id ON pagos (cliente_id);
 
 -- Comprobantes de pago (Boleta / Factura en finance-service)
 CREATE TABLE IF NOT EXISTS comprobantes_pago (

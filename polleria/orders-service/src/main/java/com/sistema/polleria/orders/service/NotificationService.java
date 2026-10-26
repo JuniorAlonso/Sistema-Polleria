@@ -62,6 +62,10 @@ public class NotificationService {
             body.put("telefono", telefono);
             body.put("nombreCliente", orden.getNombreCliente() != null ? orden.getNombreCliente() : "Cliente");
             body.put("estadoNuevo", nuevoEstado.name());
+            if (esRecojoNotificable && nuevoEstado.esListo()) {
+                body.put("mensaje", mensajeRecojoListo(orden));
+                body.put("plazoRecojoMinutos", PLAZO_RECOJO_MINUTOS);
+            }
 
             restClient.post()
                     .uri(notificationUrl + "/api/notificaciones/whatsapp/estado")
@@ -75,6 +79,15 @@ public class NotificationService {
         } catch (Exception e) {
             log.warn("No se pudo encolar WhatsApp para orden #{}: {}", orden.getId(), e.getMessage());
         }
+    }
+
+    static final int PLAZO_RECOJO_MINUTOS = 60;
+
+    /** Texto para el cliente de recojo cuando su pedido queda listo. */
+    static String mensajeRecojoListo(Orden orden) {
+        String numero = orden.getNumeroCliente() != null ? " #" + orden.getNumeroCliente() : "";
+        return "Tu pedido" + numero + " está listo. Debes recogerlo en tienda dentro de 1 hora "
+                + "presentando tu ticket; pasado ese plazo se declarará pedido fantasma.";
     }
 
     /** Código de 4 dígitos para ver los pedidos sin iniciar sesión. */
