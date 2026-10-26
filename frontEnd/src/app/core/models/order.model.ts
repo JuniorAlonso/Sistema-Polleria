@@ -68,6 +68,9 @@ export interface Order {
   enPuertaAt?: string;
   listoAt?: string;
   intentosLlamada?: number;
+  llamadaConfirmacionAt?: string;
+  /** ContraPago order: the cash must be collected (and registered) before ENTREGADO. */
+  requiereCobroEfectivo?: boolean;
   montoPagaCon?: number;
   vueltoEstimado?: number;
   motivoFantasma?: string;

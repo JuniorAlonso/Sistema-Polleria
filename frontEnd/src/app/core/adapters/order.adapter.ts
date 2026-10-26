@@ -189,6 +189,8 @@ export class OrderAdapter {
       enPuertaAt: dto.enPuertaAt || undefined,
       listoAt: dto.listoAt || undefined,
       intentosLlamada: dto.intentosLlamada ?? undefined,
+      llamadaConfirmacionAt: dto.llamadaConfirmacionAt || undefined,
+      requiereCobroEfectivo: dto.requiereCobroEfectivo === true,
       montoPagaCon: dto.montoPagaCon ?? undefined,
       vueltoEstimado: dto.vueltoEstimado ?? undefined,
       motivoFantasma: dto.motivoFantasma || undefined

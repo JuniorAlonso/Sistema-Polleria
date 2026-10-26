@@ -341,14 +341,13 @@ export class OrdersService {
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => {
         this.hasError.set(false);
-        if (list.length > 0) {
-          const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
-          const current = this.orders();
-          const changed = current.length !== sorted.length || 
-            sorted.some((o, i) => !current[i] || current[i].id !== o.id || current[i].estado !== o.estado || current[i].updatedAt !== o.updatedAt);
-          if (changed) {
-            this.orders.set(sorted);
-          }
+        // An empty answer is the truth too: cancelled/removed orders must leave the list.
+        const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
+        const current = this.orders();
+        const changed = current.length !== sorted.length ||
+          sorted.some((o, i) => !current[i] || current[i].id !== o.id || current[i].estado !== o.estado || current[i].updatedAt !== o.updatedAt);
+        if (changed) {
+          this.orders.set(sorted);
         }
       }),
       catchError(() => {
@@ -437,28 +436,8 @@ export class OrdersService {
   updateOrderStatus(orderId: string, newStatus: OrderStatus, repartidorId?: number): Observable<Order> {
     const cleanId = this.extractNumericId(orderId);
     const backendEstado = OrderAdapter.toBackendEstado(newStatus);
-    const estadoAnterior = this.orders();
-    const trackingAnterior = this.currentTrackingOrder();
 
-    // Optimistic UI update
-    this.orders.update(items =>
-      items.map(order => {
-        if (order.id === orderId || (cleanId > 0 && order.id === String(cleanId))) {
-          const updated: Order = {
-            ...order,
-            estado: newStatus,
-            repartidorId: repartidorId !== undefined ? repartidorId : order.repartidorId,
-            updatedAt: new Date().toISOString()
-          };
-          if (this.currentTrackingOrder()?.id === order.id) {
-            this.currentTrackingOrder.set(updated);
-          }
-          return updated;
-        }
-        return order;
-      })
-    );
-
+    // No optimistic update: the UI only changes with the state the backend returns (HTTP 200).
     if (cleanId > 0) {
       const payload: BackendActualizarEstadoRequest = {
         estado: backendEstado,
@@ -475,13 +454,7 @@ export class OrdersService {
             this.currentTrackingOrder.set(updated);
           }
         }),
-        catchError((error: HttpErrorResponse) => {
-          // El backend rechazó la transición: la UI vuelve al estado real en lugar
-          // de dejar el cambio optimista aplicado y emitir un resultado nulo.
-          this.orders.set(estadoAnterior);
-          this.currentTrackingOrder.set(trackingAnterior);
-          return throwError(() => error);
-        })
+        catchError((error: HttpErrorResponse) => throwError(() => error))
       );
     }
 

@@ -15,6 +15,18 @@ export class PaymentsApiService {
     return this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`);
   }
 
+  /** Cashier inbox: payments filtered by state (ADMIN, CAJERO). */
+  listarPorEstado(estado: string): Observable<BackendPagoResponse[]> {
+    return this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`, { params: { estado } });
+  }
+
+  /** Uploads the payment proof image for an order (CLIENTE owner, ADMIN, CAJERO). */
+  subirComprobante(ordenId: number | string, file: File): Observable<BackendPagoResponse> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos/orden/${ordenId}/comprobante`, form);
+  }
+
   iniciar(body: unknown): Observable<BackendPagoResponse> {
     return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos`, body);
   }

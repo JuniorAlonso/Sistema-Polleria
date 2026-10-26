@@ -113,6 +113,31 @@ export class PaymentService {
   }
 
   /**
+   * Cashier/admin inbox: payments waiting for proof verification, with the signed proof URL.
+   * Never cached (the URL lives 5 minutes). Errors propagate with the backend message.
+   */
+  listarPendientesVerificacion(): Observable<PagoOrdenAdmin[]> {
+    return this.api.listarPorEstado('PENDIENTE_VERIFICACION').pipe(
+      map(list => list as PagoOrdenAdmin[]),
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+    );
+  }
+
+  /** Uploads the payment proof image of an order; the returned state comes from the backend. */
+  subirComprobante(ordenId: number | string, file: File): Observable<PagoOrdenAdmin> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('POL-', '').replace('ord-', ''), 10);
+    if (!Number.isFinite(cleanId) || cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
+    return this.api.subirComprobante(cleanId, file).pipe(
+      map(dto => dto as PagoOrdenAdmin),
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+    );
+  }
+
+  /**
    * T6e (S6) — decisión del `ADMIN` sobre el comprobante de Yape.
    *
    * Rechazar exige motivo: sin motivo no se dispara ninguna llamada (el backend respondería 400 y el

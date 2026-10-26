@@ -139,6 +139,10 @@ export interface BackendOrdenResponse {
   enPuertaAt?: string | null;
   listoAt?: string | null;
   intentosLlamada?: number | null;
+  /** Set when the cashier confirmed the ContraPago phone call. */
+  llamadaConfirmacionAt?: string | null;
+  /** True for ContraPago orders: cash must be collected before ENTREGADO. */
+  requiereCobroEfectivo?: boolean;
   montoPagaCon?: number | null;
   vueltoEstimado?: number | null;
   motivoFantasma?: string | null;
