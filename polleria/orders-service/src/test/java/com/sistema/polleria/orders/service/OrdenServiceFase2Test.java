@@ -46,6 +46,9 @@ class OrdenServiceFase2Test {
     @Mock
     private NumeroPedidoService numeroPedidoService;
 
+    @Mock
+    private SancionDispatcherService sancionDispatcherService;
+
     @InjectMocks
     private OrdenService ordenService;
 
@@ -513,5 +516,106 @@ class OrdenServiceFase2Test {
 
         assertEquals(OrdenEstado.ENTREGADO, orden.getEstado());
         assertNull(orden.getRepartidorId(), "SALON no lleva repartidor");
+    }
+
+    @Test
+    void testFlujoCompletoDeliveryHastaEnPuertaYEntregado() {
+        Orden orden = Orden.builder()
+                .id(200L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.PENDIENTE_CONFIRMACION)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(200L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+
+        // 1. Confirmar llamada -> PREPARANDO
+        ActualizarEstadoRequest req1 = new ActualizarEstadoRequest();
+        req1.setEstado(OrdenEstado.PREPARANDO);
+        ordenService.actualizarEstado(200L, req1, 1L);
+        assertEquals(OrdenEstado.PREPARANDO, orden.getEstado());
+
+        // 2. Cocina lista -> LISTO_PARA_ENTREGAR
+        ActualizarEstadoRequest req2 = new ActualizarEstadoRequest();
+        req2.setEstado(OrdenEstado.LISTO_PARA_ENTREGAR);
+        ordenService.actualizarEstado(200L, req2, 1L);
+        assertEquals(OrdenEstado.LISTO_PARA_ENTREGAR, orden.getEstado());
+        assertNotNull(orden.getListoAt());
+
+        // 3. Despacho a ruta con repartidor -> EN_CAMINO
+        ActualizarEstadoRequest req3 = new ActualizarEstadoRequest();
+        req3.setEstado(OrdenEstado.EN_CAMINO);
+        req3.setRepartidorId(5L);
+        ordenService.actualizarEstado(200L, req3, 5L);
+        assertEquals(OrdenEstado.EN_CAMINO, orden.getEstado());
+
+        // 4. Repartidor llega a la puerta -> EN_PUERTA
+        ActualizarEstadoRequest req4 = new ActualizarEstadoRequest();
+        req4.setEstado(OrdenEstado.EN_PUERTA);
+        ordenService.actualizarEstado(200L, req4, 5L);
+        assertEquals(OrdenEstado.EN_PUERTA, orden.getEstado());
+        assertNotNull(orden.getEnPuertaAt());
+
+        // 5. Cobro y entrega -> ENTREGADO
+        ActualizarEstadoRequest req5 = new ActualizarEstadoRequest();
+        req5.setEstado(OrdenEstado.ENTREGADO);
+        ordenService.actualizarEstado(200L, req5, 5L);
+        assertEquals(OrdenEstado.ENTREGADO, orden.getEstado());
+    }
+
+    @Test
+    void testTransicionAPedidoFantasmaDesdeEnPuertaEnDelivery() {
+        Orden orden = Orden.builder()
+                .id(201L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.EN_PUERTA)
+                .repartidorId(5L)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(201L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.PEDIDO_FANTASMA);
+        ordenService.actualizarEstado(201L, req, 5L);
+
+        assertEquals(OrdenEstado.PEDIDO_FANTASMA, orden.getEstado());
+        assertEquals("NO_ENTREGADO", orden.getMotivoFantasma());
+    }
+
+    @Test
+    void testTransicionAPedidoFantasmaDesdeListoEnRecojo() {
+        Orden orden = Orden.builder()
+                .id(202L)
+                .tipo(OrdenTipo.RECOJO)
+                .estado(OrdenEstado.LISTO_PARA_ENTREGAR)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(202L)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.PEDIDO_FANTASMA);
+        ordenService.actualizarEstado(202L, req, 1L);
+
+        assertEquals(OrdenEstado.PEDIDO_FANTASMA, orden.getEstado());
+        assertEquals("ABANDONADO", orden.getMotivoFantasma());
+    }
+
+    @Test
+    void testTransicionInvalidaDesdePendienteConfirmacionAEntregadoLanzaExcepcion() {
+        Orden orden = Orden.builder()
+                .id(203L)
+                .tipo(OrdenTipo.DELIVERY)
+                .estado(OrdenEstado.PENDIENTE_CONFIRMACION)
+                .items(new ArrayList<>())
+                .build();
+        when(ordenRepository.findById(203L)).thenReturn(Optional.of(orden));
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.ENTREGADO);
+
+        assertThrows(IllegalArgumentException.class, () ->
+                ordenService.actualizarEstado(203L, req, 1L));
     }
 }

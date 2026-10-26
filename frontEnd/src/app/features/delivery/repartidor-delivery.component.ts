@@ -297,9 +297,10 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                         'bg-rose-500/20 text-rose-300': order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO',
                         'bg-amber-500/20 text-amber-300': order.estado === 'EN_PREPARACION',
                         'bg-purple-500/20 text-purple-300': order.estado === 'LISTO_COCINA',
-                        'bg-sky-500/20 text-sky-300': order.estado === 'EN_REPARTO'
+                        'bg-sky-500/20 text-sky-300': order.estado === 'EN_REPARTO',
+                        'bg-amber-400/20 text-amber-300 border border-amber-400/40': order.estado === 'EN_PUERTA'
                       }">
-                        {{ order.estado === 'LISTO_COCINA' ? 'LISTO PARA RECOGER' : order.estado }}
+                        {{ order.estado === 'LISTO_COCINA' ? 'LISTO PARA RECOGER' : order.estado === 'EN_PUERTA' ? 'EN LA PUERTA (TIMER 30M)' : order.estado }}
                       </span>
                     </div>
 
@@ -367,7 +368,7 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                       <span class="font-bold text-white font-mono">{{ order.metodoPago || 'CONTRAENTREGA' }}</span>
                     </div>
 
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                       @if (order.estado === 'LISTO_COCINA') {
                         <button 
                           (click)="tomarPedido(order)"
@@ -378,11 +379,30 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
                         </button>
                       } @else if (order.estado === 'EN_REPARTO') {
                         <button 
-                          (click)="abrirModalCobroEntrega(order)"
-                          class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider transition cursor-pointer shadow-lg animate-pulse flex items-center gap-1.5"
+                          (click)="marcarLlegadaEnPuerta(order)"
+                          class="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-black uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
                         >
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregar y Cobrar Pedido</span>
+                          <span class="flex items-center justify-center gap-1.5">🔔 Llegué a la Puerta</span>
                         </button>
+                      } @else if (order.estado === 'EN_PUERTA') {
+                        <div class="flex items-center gap-2">
+                          <span class="px-2.5 py-1 rounded-lg bg-amber-950/60 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold">
+                            ⏱ Esperando: {{ calcularMinutosEnPuerta(order) }}m / 30m
+                          </span>
+                          <button 
+                            (click)="abrirModalCobroEntrega(order)"
+                            class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
+                          >
+                            <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Cobrar y Entregar</span>
+                          </button>
+                          <button 
+                            (click)="declararFantasma(order)"
+                            class="px-3.5 py-2.5 rounded-xl bg-rose-950/70 hover:bg-rose-800 border border-rose-500/40 text-rose-300 text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+                            title="Declarar Pedido Fantasma si el cliente no sale tras 30 min"
+                          >
+                            <span>✕ No Sale</span>
+                          </button>
+                        </div>
                       }
                     </div>
                   </div>
@@ -645,7 +665,7 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     const miId = this.miIdMotorizado();
     if (!miId) return [];
     return this.deliveryOrders().filter(
-      o => o.repartidorId === miId && (o.estado === 'EN_REPARTO' || o.estado === 'LISTO_COCINA')
+      o => o.repartidorId === miId && (o.estado === 'EN_REPARTO' || o.estado === 'EN_PUERTA' || o.estado === 'LISTO_COCINA')
     );
   });
 
@@ -827,19 +847,70 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
 
   abrirModalCobroEntrega(order: Order): void {
     this.selectedOrderModal.set(order);
-    this.montoPagaCliente = order.total <= 50 ? 50 : 100;
+    this.montoPagaCliente = order.montoPagaCon ? Number(order.montoPagaCon) : (order.total <= 50 ? 50 : 100);
+  }
+
+  marcarLlegadaEnPuerta(order: Order): void {
+    this.ordersService.marcarEnPuerta(order.id).subscribe({
+      next: () => {
+        this.notify.showSuccess('¡Estás en la puerta!', 'Inició el cronómetro de 30 min y se avisó al cliente por WhatsApp.');
+        this.ordersService.loadActiveOrders();
+      },
+      error: (err) => {
+        this.notify.showError('Error al marcar en puerta', err?.message);
+      }
+    });
+  }
+
+  calcularMinutosEnPuerta(order: Order): number {
+    if (!order.enPuertaAt) return 0;
+    const inicio = new Date(order.enPuertaAt).getTime();
+    const ahora = Date.now();
+    const difMin = Math.floor((ahora - inicio) / 60000);
+    return difMin > 0 ? difMin : 0;
+  }
+
+  declararFantasma(order: Order): void {
+    const confirmar = confirm(`¿Declarar el Pedido #${this.getCodeNum(order.codigoSeguimiento)} como Pedido Fantasma?\nEsto bloqueará al cliente y devolverás el producto al local.`);
+    if (!confirmar) return;
+
+    this.ordersService.declararPedidoFantasma(order.id, 'NO_ENTREGADO: Cliente no salió a la puerta tras 30 min').subscribe({
+      next: () => {
+        this.notify.showInfo('Pedido Fantasma declarado', 'Devuelve el producto a caja para registro de merma.');
+        this.ordersService.loadActiveOrders();
+      },
+      error: (err) => {
+        this.notify.showError('Error al declarar pedido fantasma', err?.message);
+      }
+    });
   }
 
   calcularVuelto(): number {
     const o = this.selectedOrderModal();
     if (!o) return 0;
     const vuelto = this.montoPagaCliente - o.total;
-    return vuelto > 0 ? vuelto : 0;
+    return vuelto > 0 ? Math.round(vuelto * 100) / 100 : 0;
   }
 
   confirmarCobroYEntrega(): void {
     const order = this.selectedOrderModal();
-    if (order) {
+    if (!order) return;
+
+    if (order.metodoPago === 'EFECTIVO_CONTRAENTREGA' || !order.metodoPago) {
+      // Registro obligatorio de cobro en efectivo en payments-service
+      const vuelto = this.calcularVuelto();
+      this.paymentService.registrarCobroEfectivo(order.id, order.total, this.montoPagaCliente, vuelto).subscribe({
+        next: () => {
+          this.selectedOrderModal.set(null);
+          this.notify.showSuccess(`¡Cobro de S/ ${order.total.toFixed(2)} registrado y pedido ENTREGADO!`);
+          this.ordersService.loadActiveOrders();
+        },
+        error: (err) => {
+          this.notify.showError('Error al registrar cobro en efectivo', err?.message);
+        }
+      });
+    } else {
+      // Pedido ya pagado digitalmente
       this.ordersService.updateOrderStatus(order.id, 'COMPLETADO').subscribe({
         next: () => {
           this.selectedOrderModal.set(null);

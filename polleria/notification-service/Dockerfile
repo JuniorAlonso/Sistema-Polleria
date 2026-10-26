@@ -13,6 +13,7 @@ RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.co
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     WHATSAPP_SESSION_PATH=/app/whatsapp-session \
+    TZ=America/Lima \
     NODE_ENV=production
 
 WORKDIR /app

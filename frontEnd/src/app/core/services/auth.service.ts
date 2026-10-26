@@ -2,9 +2,9 @@ import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError, map } from 'rxjs';
+import { Observable, tap, catchError, throwError, map, of } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
-import { BackendAuthResponse } from '../models/api-contracts.model';
+import { BackendAuthResponse, BackendVerificarSancionResponse } from '../models/api-contracts.model';
 import { AuthAdapter } from '../adapters/auth.adapter';
 import { environment } from '../../../environments/environment';
 
@@ -245,5 +245,20 @@ export class AuthService {
         localStorage.setItem('polleria_refresh_token', auth.refreshToken);
       }
     }
+  }
+
+  /**
+   * Consulta pública de verificación de sanciones para bloquear pagos en efectivo / ContraPago.
+   */
+  verificarSancion(telefono?: string, email?: string, ip?: string): Observable<BackendVerificarSancionResponse> {
+    const params: string[] = [];
+    if (telefono) params.push(`telefono=${encodeURIComponent(telefono)}`);
+    if (email) params.push(`email=${encodeURIComponent(email)}`);
+    if (ip) params.push(`ip=${encodeURIComponent(ip)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : '';
+
+    return this.http.get<BackendVerificarSancionResponse>(`${this.API_URL}/auth/sanciones/verificar${query}`).pipe(
+      catchError(() => of({ sancionado: false, bloqueadoEfectivo: false, bloqueadoTotal: false }))
+    );
   }
 }

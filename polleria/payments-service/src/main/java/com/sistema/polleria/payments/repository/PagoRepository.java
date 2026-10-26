@@ -15,6 +15,10 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
 
     Optional<Pago> findByOrdenId(Long ordenId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Pago p WHERE p.ordenId = :ordenId")
+    Optional<Pago> buscarPorOrdenIdConBloqueo(@Param("ordenId") Long ordenId);
+
     List<Pago> findByClienteIdOrderByCreadoEnDesc(Long clienteId);
 
     List<Pago> findByEstadoOrderByCreadoEnDesc(EstadoPago estado);

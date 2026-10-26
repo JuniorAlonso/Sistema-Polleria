@@ -1,3 +1,6 @@
+// Forzar zona horaria oficial del Perú (UTC-5) para todo el proceso
+process.env.TZ = process.env.TZ || 'America/Lima';
+
 const config = require('./src/config');
 const { client, whatsapp, reiniciarSesion, arrancar } = require('./src/whatsapp/client');
 const handleMessage = require('./src/whatsapp/handler');

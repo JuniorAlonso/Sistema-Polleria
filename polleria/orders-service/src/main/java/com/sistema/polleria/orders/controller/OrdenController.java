@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
@@ -132,6 +133,62 @@ public class OrdenController {
     ) {
         return ResponseEntity.ok(
                 ordenService.reclamarParaEntrega(id, extraerUserId(authentication)));
+    }
+
+    /**
+     * El cajero confirma la llamada telefónica con el cliente de ContraPago.
+     */
+    @PostMapping("/{id}/confirmar-llamada")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
+    public ResponseEntity<OrdenResponse> confirmarLlamada(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                ordenService.confirmarLlamada(id, extraerUserId(authentication)));
+    }
+
+    /**
+     * Registra un intento de llamada para ContraPago (máx 2 intentos).
+     */
+    @PostMapping("/{id}/intento-llamada")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
+    public ResponseEntity<OrdenResponse> registrarIntentoLlamada(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body,
+            Authentication authentication
+    ) {
+        String obs = body != null ? body.get("observaciones") : null;
+        return ResponseEntity.ok(
+                ordenService.registrarIntentoLlamada(id, extraerUserId(authentication), obs));
+    }
+
+    /**
+     * El repartidor notifica que está en la puerta del cliente (inicia timer de 30 min).
+     */
+    @PostMapping("/{id}/en-puerta")
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR')")
+    public ResponseEntity<OrdenResponse> marcarEnPuerta(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                ordenService.marcarEnPuerta(id, extraerUserId(authentication)));
+    }
+
+    /**
+     * Declara un pedido como fantasma (por inasistencia en puerta o recojo en tienda).
+     */
+    @PostMapping("/{id}/pedido-fantasma")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','REPARTIDOR')")
+    public ResponseEntity<OrdenResponse> declararPedidoFantasma(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body,
+            Authentication authentication
+    ) {
+        String motivo = body != null ? body.get("motivo") : null;
+        return ResponseEntity.ok(
+                ordenService.declararPedidoFantasma(id, motivo, extraerUserId(authentication)));
     }
 
     @GetMapping("/activos")

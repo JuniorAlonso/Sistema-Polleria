@@ -34,31 +34,31 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
     @EntityGraph(attributePaths = {"items", "items.producto"})
     List<Orden> findAllByOrderByCreadoEnDesc();
 
-    // Pedidos activos (todo lo que no sea ENTREGADO o CANCELADO)
+    // Pedidos activos (todo lo que no sea terminal: ENTREGADO, CANCELADO, PEDIDO_FANTASMA)
     @EntityGraph(attributePaths = {"items", "items.producto"})
-    @Query("SELECT o FROM Orden o WHERE o.estado NOT IN ('ENTREGADO', 'CANCELADO') ORDER BY o.creadoEn ASC")
+    @Query("SELECT o FROM Orden o WHERE o.estado NOT IN ('ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA') ORDER BY o.creadoEn ASC")
     List<Orden> findActivos();
 
     // Pedidos activos + completados del día de hoy. El completado se fecha por `actualizadoEn`:
     // una comanda creada antes de medianoche y cobrada después también cuenta para hoy.
     @EntityGraph(attributePaths = {"items", "items.producto"})
-    @Query("SELECT o FROM Orden o WHERE o.estado NOT IN ('ENTREGADO', 'CANCELADO') " +
+    @Query("SELECT o FROM Orden o WHERE o.estado NOT IN ('ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA') " +
            "OR (o.estado = 'ENTREGADO' AND CAST(o.actualizadoEn AS date) = CURRENT_DATE) " +
            "ORDER BY o.creadoEn DESC")
     List<Orden> findActivosYCompletadosHoy();
 
     // Pedidos activos de cocina (los que cocina debe ver)
     @EntityGraph(attributePaths = {"items", "items.producto"})
-    @Query("SELECT o FROM Orden o WHERE o.estado IN ('RECIBIDO', 'EN_PREPARACION') ORDER BY o.creadoEn ASC")
+    @Query("SELECT o FROM Orden o WHERE o.estado IN ('RECIBIDO', 'EN_PREPARACION', 'PREPARANDO') ORDER BY o.creadoEn ASC")
     List<Orden> findParaCocina();
 
     /**
      * S10: pedidos de delivery listos y todavía sin repartidor, del más viejo al más nuevo. Es la
      * lista que el repartidor ve para tomar un pedido; el reclamo después es atómico. Un pedido ya
-     * tomado (con repartidorId positivo) deja de ofrecerse aunque siga en LISTO.
+     * tomado (con repartidorId positivo) deja de ofrecerse aunque siga en LISTO / LISTO_PARA_ENTREGAR.
      */
     @EntityGraph(attributePaths = {"items", "items.producto"})
-    @Query("SELECT o FROM Orden o WHERE o.tipo = 'DELIVERY' AND o.estado = 'LISTO' " +
+    @Query("SELECT o FROM Orden o WHERE o.tipo = 'DELIVERY' AND o.estado IN ('LISTO', 'LISTO_PARA_ENTREGAR') " +
            "AND (o.repartidorId IS NULL OR o.repartidorId = 0) ORDER BY o.creadoEn ASC")
     List<Orden> findDisponiblesParaEntrega();
 
@@ -97,4 +97,19 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
     boolean existsByTelefonoClienteIn(Collection<String> telefonos);
 
     List<Orden> findTop20ByTelefonoClienteInOrderByCreadoEnDesc(Collection<String> telefonos);
+
+    // ─── Consultas para SLA y Expiración Automática (Schedulers) ───
+
+    @Query("SELECT o FROM Orden o WHERE o.estado = 'PENDIENTE_CONFIRMACION' AND o.creadoEn <= :limite")
+    List<Orden> findExpiradosConfirmacion(@Param("limite") java.time.LocalDateTime limite);
+
+    @Query("SELECT o FROM Orden o WHERE o.estado = 'PENDIENTE_PAGO' AND o.creadoEn <= :limite")
+    List<Orden> findExpiradosPago(@Param("limite") java.time.LocalDateTime limite);
+
+    @Query("SELECT o FROM Orden o WHERE o.estado = 'EN_PUERTA' AND o.enPuertaAt <= :limite")
+    List<Orden> findExpiradosEnPuerta(@Param("limite") java.time.LocalDateTime limite);
+
+    @Query("SELECT o FROM Orden o WHERE o.tipo = 'RECOJO' AND o.estado IN ('LISTO', 'LISTO_PARA_ENTREGAR') AND " +
+           "(o.listoAt <= :limite OR (o.listoAt IS NULL AND o.actualizadoEn <= :limite))")
+    List<Orden> findExpiradosRecojo(@Param("limite") java.time.LocalDateTime limite);
 }

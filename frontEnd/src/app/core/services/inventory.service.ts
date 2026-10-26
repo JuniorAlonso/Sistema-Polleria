@@ -7,6 +7,10 @@ import {
   Merma, RegistrarMermaRequest, 
   AlertaStock, RentabilidadInventario 
 } from '../models/inventory.model';
+import { 
+  BackendResolucionProductoFantasmaRequest, 
+  BackendResolucionProductoFantasmaResponse 
+} from '../models/api-contracts.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 
@@ -135,5 +139,16 @@ export class InventoryService {
       tap(data => this.rentabilidad.set(data)),
       catchError(() => of(null))
     ).subscribe();
+  }
+
+  resolverProductoFantasma(req: BackendResolucionProductoFantasmaRequest): Observable<BackendResolucionProductoFantasmaResponse> {
+    return this.http.post<BackendResolucionProductoFantasmaResponse>(
+      `${this.API_URL}/inventario/pedidos-fantasma/resolver`, req
+    ).pipe(
+      tap(res => {
+        this.notify.showSuccess(`Resolución de pedido #${req.ordenId}: ${res.resultado}`);
+        this.cargarMermas();
+      })
+    );
   }
 }

@@ -34,7 +34,7 @@ public class Orden {
     private CanalOrigen canalOrigen;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     @Builder.Default
     private OrdenEstado estado = OrdenEstado.RECIBIDO;
 
@@ -87,6 +87,32 @@ public class Orden {
 
     @Column(length = 500)
     private String observaciones;
+
+    // Timestamps y auditoría operativa (SLA)
+    @Column(name = "en_puerta_at")
+    private LocalDateTime enPuertaAt;
+
+    @Column(name = "listo_at")
+    private LocalDateTime listoAt;
+
+    @Column(name = "intentos_llamada")
+    @Builder.Default
+    private Integer intentosLlamada = 0;
+
+    @Column(name = "llamada_confirmacion_at")
+    private LocalDateTime llamadaConfirmacionAt;
+
+    @Column(name = "monto_paga_con", precision = 10, scale = 2)
+    private BigDecimal montoPagaCon;
+
+    @Column(name = "vuelto_estimado", precision = 10, scale = 2)
+    private BigDecimal vueltoEstimado;
+
+    @Column(name = "motivo_fantasma", length = 30)
+    private String motivoFantasma;
+
+    @Column(name = "ip_origen", length = 45)
+    private String ipOrigen;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime creadoEn;

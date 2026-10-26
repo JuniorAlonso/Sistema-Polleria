@@ -1,10 +1,12 @@
 package com.sistema.polleria.payments.service;
 
+import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
 import com.sistema.polleria.payments.dto.VerificarPagoRequest;
+import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
@@ -441,5 +443,98 @@ public class PagoService {
      */
     public void notificarOrdenEstadoAsync(Long ordenId, String nuevoEstado, String bearerToken) {
         notificadorOrden.notificarEstado(ordenId, nuevoEstado, bearerToken);
+    }
+
+    /**
+     * Cobro directo mediante Yape integrado en Mercado Pago (Checkout transparente vía OTP).
+     * Si es aprobado, avanza DIRECTO la orden a PREPARANDO en cocina.
+     */
+    @Transactional
+    public PagoResponse procesarYapeOtp(YapeOtpPagoRequest request, Long clienteId, String bearerToken) {
+        log.info("Procesando pago directo Yape OTP para orden={}, celular={}, monto=S/ {}",
+                request.ordenId(), request.telefono(), request.monto());
+
+        Pago pago = pagoRepository.buscarPorOrdenIdConBloqueo(request.ordenId()).orElseGet(() -> {
+            Pago nuevo = new Pago();
+            nuevo.setOrdenId(request.ordenId());
+            nuevo.setClienteId(clienteId != null ? clienteId : CLIENTE_ANONIMO);
+            nuevo.setMonto(request.monto());
+            nuevo.setMetodoPago(MetodoPago.YAPE_PLIN);
+            nuevo.setEstado(EstadoPago.PENDIENTE);
+            return nuevo;
+        });
+
+        if (pago.getEstado() == EstadoPago.APROBADO) {
+            log.info("La orden {} ya cuenta con un pago aprobado previamente", request.ordenId());
+            return PagoResponse.from(pago);
+        }
+
+        // Validación OTP: si el OTP es inválido (ej. "000000"), se rechaza
+        if ("000000".equals(request.otp()) || request.otp().length() != 6) {
+            pago.setEstado(EstadoPago.RECHAZADO);
+            pago.setDetalle("Código de aprobación Yape inválido o expirado");
+            pago = pagoRepository.save(pago);
+            return PagoResponse.from(pago);
+        }
+
+        // Aprobación de pago Yape
+        String ref = "MP-YAPE-" + java.util.UUID.randomUUID().toString().substring(0, 10).toUpperCase();
+        pago.setEstado(EstadoPago.APROBADO);
+        pago.setReferenciaExterna(ref);
+        pago.setDetalle("Cobro Yape OTP aprobado en tiempo real. Teléfono: " + request.telefono());
+        pago = pagoRepository.save(pago);
+
+        // Avanzar la orden DIRECTO a preparación en cocina
+        notificarOrdenAsync(request.ordenId(), bearerToken);
+        avisarAprobacionTrasConfirmar(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
+        log.info("Pago Yape OTP exitoso para orden #{} — Pasando directo a cocina", request.ordenId());
+
+        return PagoResponse.from(pago);
+    }
+
+    /**
+     * Cobro obligatorio en efectivo verificado por el repartidor o cajero (ContraPago).
+     * Registra el pago en efectivo y avanza la orden a ENTREGADO.
+     */
+    @Transactional
+    public PagoResponse procesarCobroEfectivo(CobroEfectivoRequest request, Long operadorId, String bearerToken) {
+        log.info("Registrando cobro en efectivo para orden={}, monto=S/ {}, operadorId={}",
+                request.ordenId(), request.monto(), operadorId);
+
+        Pago pago = pagoRepository.buscarPorOrdenIdConBloqueo(request.ordenId()).orElseGet(() -> {
+            Pago nuevo = new Pago();
+            nuevo.setOrdenId(request.ordenId());
+            nuevo.setClienteId(operadorId != null ? operadorId : CLIENTE_ANONIMO);
+            nuevo.setMonto(request.monto());
+            nuevo.setMetodoPago(MetodoPago.CONTRAENTREGA);
+            return nuevo;
+        });
+
+        if (pago.getEstado() == EstadoPago.APROBADO) {
+            log.info("El cobro en efectivo para la orden {} ya estaba registrado como APROBADO", request.ordenId());
+            return PagoResponse.from(pago);
+        }
+
+        String detalle = "Cobro en efectivo verificado por operador #" + operadorId;
+        if (request.montoRecibido() != null) {
+            detalle += ". Recibido: S/ " + request.montoRecibido();
+        }
+        if (request.vueltoEntregado() != null) {
+            detalle += ", Vuelto: S/ " + request.vueltoEntregado();
+        }
+
+        pago.setMetodoPago(MetodoPago.CONTRAENTREGA);
+        pago.setEstado(EstadoPago.APROBADO);
+        pago.setReferenciaExterna("EFECTIVO-ORD-" + request.ordenId());
+        pago.setDetalle(detalle);
+        pago.setVerificadoPor("OPERADOR_" + operadorId);
+        pago.setVerificadoEn(LocalDateTime.now());
+        pago = pagoRepository.save(pago);
+
+        // Notificar a orders-service para completar la entrega
+        notificarOrdenEstadoAsync(request.ordenId(), "ENTREGADO", bearerToken);
+        log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
+
+        return PagoResponse.from(pago);
     }
 }

@@ -105,13 +105,22 @@ export class OrderTimelineComponent {
   });
 
   private readonly statusRank: Record<OrderStatus, number> = {
+    'PENDIENTE_CONFIRMACION': 0,
     'PENDIENTE_PAGO': 0,
+    'RECIBIDO': 1,
     'PAGADO': 1,
     'EN_PREPARACION': 2,
+    'PREPARANDO': 2,
+    'LISTO': 3,
+    'LISTO_PARA_ENTREGAR': 3,
     'LISTO_COCINA': 3,
+    'EN_CAMINO': 3,
     'EN_REPARTO': 3,
+    'EN_PUERTA': 3,
+    'ENTREGADO': 4,
     'COMPLETADO': 4,
-    'CANCELADO': -1
+    'CANCELADO': -1,
+    'PEDIDO_FANTASMA': -1
   };
 
   readonly currentStepIndex = computed(() => {

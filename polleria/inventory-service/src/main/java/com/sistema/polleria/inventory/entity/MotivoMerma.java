@@ -5,5 +5,6 @@ public enum MotivoMerma {
     MAL_ESTADO,
     ERROR_COCINA,
     CAIDA,
+    PEDIDO_FANTASMA,
     OTRO
 }

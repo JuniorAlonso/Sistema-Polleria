@@ -249,7 +249,11 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 return res.status(400).json({ error: 'El cuerpo debe ser un objeto con los ajustes a cambiar' });
             }
             // `actualizar()` valida y lanza RangeError sin aplicar nada: el store queda intacto.
-            res.json(ajustesDelServicio().actualizar(cambios));
+            const ajustes = ajustesDelServicio().actualizar(cambios);
+            if (Object.prototype.hasOwnProperty.call(cambios, 'operativoTodoElDia') && service?.cola?.despertar) {
+                service.cola.despertar();
+            }
+            res.json(ajustes);
         } catch (error) {
             if (error instanceof RangeError) {
                 return res.status(400).json({ error: error.message });

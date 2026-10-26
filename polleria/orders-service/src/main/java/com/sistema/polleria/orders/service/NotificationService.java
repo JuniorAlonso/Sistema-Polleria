@@ -21,8 +21,12 @@ import java.util.Set;
 @Service
 public class NotificationService {
 
-    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES =
-            Set.of(OrdenEstado.EN_PREPARACION, OrdenEstado.EN_CAMINO, OrdenEstado.ENTREGADO);
+    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_DELIVERY =
+            Set.of(OrdenEstado.EN_PREPARACION, OrdenEstado.PREPARANDO, OrdenEstado.EN_CAMINO,
+                   OrdenEstado.EN_PUERTA, OrdenEstado.ENTREGADO);
+
+    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_RECOJO =
+            Set.of(OrdenEstado.LISTO, OrdenEstado.LISTO_PARA_ENTREGAR, OrdenEstado.ENTREGADO);
 
     private final RestClient restClient;
     private final String notificationUrl;
@@ -38,7 +42,10 @@ public class NotificationService {
 
     @Async
     public void notificarCambioEstado(Orden orden, OrdenEstado nuevoEstado) {
-        if (orden.getTipo() != OrdenTipo.DELIVERY || !ESTADOS_NOTIFICABLES.contains(nuevoEstado)) {
+        boolean esDeliveryNotificable = orden.getTipo() == OrdenTipo.DELIVERY && ESTADOS_NOTIFICABLES_DELIVERY.contains(nuevoEstado);
+        boolean esRecojoNotificable = orden.getTipo() == OrdenTipo.RECOJO && ESTADOS_NOTIFICABLES_RECOJO.contains(nuevoEstado);
+
+        if (!esDeliveryNotificable && !esRecojoNotificable) {
             return;
         }
 

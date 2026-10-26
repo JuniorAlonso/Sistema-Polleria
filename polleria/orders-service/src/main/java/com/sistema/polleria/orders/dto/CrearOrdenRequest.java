@@ -1,6 +1,7 @@
 package com.sistema.polleria.orders.dto;
 
 import com.sistema.polleria.orders.entity.CanalOrigen;
+import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.entity.OrdenTipo;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
@@ -31,6 +32,11 @@ public class CrearOrdenRequest {
     private String telefonoCliente;
 
     private String observaciones;
+
+    // Campos operativos opcionales (ContraPago / WhatsApp / Auditoría)
+    private OrdenEstado estadoInicial;
+    private java.math.BigDecimal montoPagaCon;
+    private String ipOrigen;
 
     @NotEmpty(message = "La orden debe tener al menos un producto")
     @Valid

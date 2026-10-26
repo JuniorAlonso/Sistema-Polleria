@@ -551,6 +551,58 @@ export class OrdersService {
     }
   }
 
+  /**
+   * Cajero confirma llamada telefónica para pedido ContraPago.
+   */
+  confirmarLlamada(orderId: string | number): Observable<Order> {
+    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/confirmar-llamada`, {}).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+      })
+    );
+  }
+
+  /**
+   * Registra intento fallido de llamada para ContraPago.
+   */
+  registrarIntentoLlamada(orderId: string | number, observaciones?: string): Observable<Order> {
+    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/intento-llamada`, { observaciones }).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+      })
+    );
+  }
+
+  /**
+   * Repartidor notifica que está en la puerta del domicilio del cliente.
+   */
+  marcarEnPuerta(orderId: string | number): Observable<Order> {
+    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/en-puerta`, {}).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+      })
+    );
+  }
+
+  /**
+   * Declara pedido como fantasma (por timeout de 30m en puerta o 1h de recojo).
+   */
+  declararPedidoFantasma(orderId: string | number, motivo?: string): Observable<Order> {
+    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/pedido-fantasma`, { motivo }).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+      })
+    );
+  }
+
   private extractNumericId(id: string): number {
     if (!id) return 0;
     const clean = id.replace('POL-', '').replace('ord-', '');

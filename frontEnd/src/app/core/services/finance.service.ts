@@ -5,6 +5,10 @@ import {
   ArqueoCaja, AperturaCajaRequest, MovimientoCaja, MovimientoCajaRequest, 
   CierreCajaRequest, BalanceDiario 
 } from '../models/finance.model';
+import { 
+  BackendComprobanteResponse, 
+  BackendLiquidacionResponse 
+} from '../models/api-contracts.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 
@@ -152,5 +156,56 @@ export class FinanceService {
       tap(h => this.historial.set(h)),
       catchError(() => of([]))
     ).subscribe();
+  }
+
+  // --- Comprobantes Electrónicos (Boleta / Factura) ---
+
+  emitirComprobante(req: {
+    ordenId: number;
+    tipo: 'BOLETA' | 'FACTURA';
+    clienteTipoDoc?: string;
+    clienteNumDoc?: string;
+    clienteNombre: string;
+    clienteDireccion?: string;
+    total: number;
+    pagadoDigitalmente: boolean;
+    vueltoEstimado?: number;
+  }): Observable<BackendComprobanteResponse> {
+    return this.http.post<BackendComprobanteResponse>(`${this.API_URL}/finanzas/comprobantes`, req);
+  }
+
+  obtenerComprobantePorOrden(ordenId: number | string): Observable<BackendComprobanteResponse> {
+    return this.http.get<BackendComprobanteResponse>(`${this.API_URL}/finanzas/comprobantes/orden/${ordenId}`);
+  }
+
+  // --- Liquidaciones de Repartidores ---
+
+  abrirLiquidacion(req: {
+    repartidorId: number;
+    repartidorNombre: string;
+    fondoInicial: number;
+    observaciones?: string;
+  }): Observable<BackendLiquidacionResponse> {
+    return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/apertura`, req);
+  }
+
+  cerrarLiquidacion(id: number | string, req: {
+    totalRendido: number;
+    totalCobradoEfectivo?: number;
+    observaciones?: string;
+  }): Observable<BackendLiquidacionResponse> {
+    return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/${id}/cierre`, req);
+  }
+
+  listarLiquidacionesPorRepartidor(repartidorId: number | string): Observable<BackendLiquidacionResponse[]> {
+    return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/repartidor/${repartidorId}`).pipe(
+      catchError(() => of([]))
+    );
+  }
+
+  listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {
+    return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/abiertas`).pipe(
+      catchError(() => of([]))
+    );
   }
 }

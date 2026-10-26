@@ -161,4 +161,75 @@ SELECT
     NOW() - INTERVAL '5 hours'
 FROM insumos WHERE nombre = 'Pollo Entero Fresco Eviscerado (Calibre 2.2kg)';
 
+-- ------------------------------------------------------------
+-- 5. EXTENSIÓN DE ESQUEMA OPERATIVO: DELIVERY, RECOJO, COMPROBANTES Y SANCIONES
+-- ------------------------------------------------------------
+
+-- Columnas operativas en ordenes para SLAs, motorizado en puerta y contrapago
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS en_puerta_at TIMESTAMP;
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS listo_at TIMESTAMP;
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS intentos_llamada INT DEFAULT 0;
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS llamada_confirmacion_at TIMESTAMP;
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS monto_paga_con NUMERIC(10, 2);
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS vuelto_estimado NUMERIC(10, 2);
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS motivo_fantasma VARCHAR(30);
+ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS ip_origen VARCHAR(45);
+
+-- Comprobantes de pago (Boleta / Factura en finance-service)
+CREATE TABLE IF NOT EXISTS comprobantes_pago (
+    id                  BIGSERIAL PRIMARY KEY,
+    orden_id            BIGINT NOT NULL,
+    tipo                VARCHAR(20) NOT NULL, -- BOLETA, FACTURA
+    serie_correlativo   VARCHAR(30) NOT NULL UNIQUE,
+    cliente_tipo_doc    VARCHAR(10), -- DNI, RUC
+    cliente_num_doc     VARCHAR(20),
+    cliente_nombre      VARCHAR(150) NOT NULL,
+    cliente_direccion   VARCHAR(300),
+    subtotal            NUMERIC(10, 2) NOT NULL,
+    igv                 NUMERIC(10, 2) NOT NULL,
+    total               NUMERIC(10, 2) NOT NULL,
+    estado_pago_texto   VARCHAR(50) NOT NULL, -- "PAGADO", "COBRAR EN EFECTIVO: S/ XX.XX"
+    vuelto_entregado    NUMERIC(10, 2) DEFAULT 0.00,
+    emitido_en          TIMESTAMP NOT NULL DEFAULT NOW(),
+    emitido_por         BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_comprobantes_orden_id ON comprobantes_pago(orden_id);
+
+-- Liquidación de efectivo de repartidores (finance-service)
+CREATE TABLE IF NOT EXISTS liquidaciones_repartidores (
+    id                      BIGSERIAL PRIMARY KEY,
+    repartidor_id           BIGINT NOT NULL,
+    repartidor_nombre       VARCHAR(100) NOT NULL,
+    arqueo_caja_id          BIGINT,
+    fondo_inicial           NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    total_cobrado_efectivo  NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    total_rendido           NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    diferencia              NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    estado                  VARCHAR(20) NOT NULL DEFAULT 'ABIERTA', -- ABIERTA, CERRADA, DISCREPANCIA
+    observaciones           VARCHAR(500),
+    creado_en               TIMESTAMP NOT NULL DEFAULT NOW(),
+    cerrado_en              TIMESTAMP,
+    cerrado_por             BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_liquidaciones_repartidor ON liquidaciones_repartidores(repartidor_id);
+CREATE INDEX IF NOT EXISTS idx_liquidaciones_estado ON liquidaciones_repartidores(estado);
+
+-- Sanciones y bloqueos permanentes de cliente (auth-service / incident-service)
+CREATE TABLE IF NOT EXISTS sanciones_cliente (
+    id                   BIGSERIAL PRIMARY KEY,
+    telefono             VARCHAR(30),
+    telefono_normalizado VARCHAR(20),
+    email                VARCHAR(150),
+    ip_address           VARCHAR(45),
+    motivo               VARCHAR(255) NOT NULL,
+    orden_id             BIGINT,
+    bloqueado_efectivo   BOOLEAN NOT NULL DEFAULT TRUE,
+    bloqueado_total      BOOLEAN NOT NULL DEFAULT FALSE,
+    creado_en            TIMESTAMP NOT NULL DEFAULT NOW(),
+    creado_por           VARCHAR(100) DEFAULT 'SISTEMA_PEDIDO_FANTASMA'
+);
+CREATE INDEX IF NOT EXISTS idx_sanciones_telefono_norm ON sanciones_cliente(telefono_normalizado);
+CREATE INDEX IF NOT EXISTS idx_sanciones_email ON sanciones_cliente(email);
+CREATE INDEX IF NOT EXISTS idx_sanciones_ip ON sanciones_cliente(ip_address);
+
 COMMIT;

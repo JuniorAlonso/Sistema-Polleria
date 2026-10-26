@@ -19,6 +19,12 @@ export class OrderStatusBadgeComponent {
   readonly statusConfig = computed(() => {
     const s = this.status();
     switch (s) {
+      case 'PENDIENTE_CONFIRMACION':
+        return {
+          label: 'Esperando Confirmación (Llamada)',
+          bg: 'bg-amber-100 text-amber-800 border-amber-300',
+          dot: 'bg-amber-500 animate-pulse'
+        };
       case 'PENDIENTE_PAGO':
         return {
           label: 'Pendiente de Pago',
@@ -32,24 +38,35 @@ export class OrderStatusBadgeComponent {
           dot: 'bg-blue-500'
         };
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return {
           label: 'En Preparación (Cocina)',
           bg: 'bg-orange-50 text-orange-700 border-orange-200',
           dot: 'bg-orange-500 animate-pulse'
         };
       case 'LISTO_COCINA':
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
         return {
-          label: 'Listo en Cocina',
+          label: 'Listo para Entregar',
           bg: 'bg-purple-50 text-purple-700 border-purple-200',
           dot: 'bg-purple-500'
         };
       case 'EN_REPARTO':
+      case 'EN_CAMINO':
         return {
           label: 'En Camino / Reparto',
           bg: 'bg-indigo-50 text-indigo-700 border-indigo-200',
           dot: 'bg-indigo-500 animate-bounce'
         };
+      case 'EN_PUERTA':
+        return {
+          label: '¡Repartidor en la Puerta!',
+          bg: 'bg-sky-100 text-sky-800 border-sky-300',
+          dot: 'bg-sky-600 animate-bounce'
+        };
       case 'COMPLETADO':
+      case 'ENTREGADO':
         return {
           label: 'Entregado / Completado',
           bg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -60,6 +77,12 @@ export class OrderStatusBadgeComponent {
           label: 'Cancelado',
           bg: 'bg-rose-50 text-rose-700 border-rose-200',
           dot: 'bg-rose-500'
+        };
+      case 'PEDIDO_FANTASMA':
+        return {
+          label: 'Pedido Fantasma (Incidencia)',
+          bg: 'bg-rose-100 text-rose-900 border-rose-400',
+          dot: 'bg-rose-600'
         };
       default:
         return {

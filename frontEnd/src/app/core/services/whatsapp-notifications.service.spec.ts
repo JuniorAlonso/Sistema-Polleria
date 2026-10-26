@@ -29,6 +29,7 @@ describe('WhatsappNotificationsService — ajustes anti-baneo', () => {
     presupuestoDia: 500,
     horaDesde: 11,
     horaHasta: 23,
+    operativoTodoElDia: false,
     breakerBaseMs: 60000,
     breakerMaxMs: 900000,
     numeroAsesor: '51999888777',
@@ -42,7 +43,7 @@ describe('WhatsappNotificationsService — ajustes anti-baneo', () => {
     detalle: null,
     presupuestoHora: { enviados: 3, limite: 40 },
     presupuestoDia: { enviados: 12, limite: 500 },
-    ventana: { horaDesde: 11, horaHasta: 23, abierta: true },
+    ventana: { horaDesde: 11, horaHasta: 23, operativoTodoElDia: false, abierta: true },
     breaker: { estado: 'cerrado', senal: null, detalle: null, aperturas: 0, reintentoEn: 0 }
   };
 

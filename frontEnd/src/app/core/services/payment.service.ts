@@ -206,4 +206,52 @@ export class PaymentService {
       metodoPago: 'TARJETA'
     });
   }
+
+  /**
+   * Cobro directo con Yape integrado en Mercado Pago (OTP 6 dígitos).
+   */
+  pagarConYapeOtp(
+    ordenId: number | string,
+    monto: number,
+    telefono: string,
+    otp: string,
+    email?: string
+  ): Observable<PaymentTransaction> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const body = {
+      ordenId: cleanId,
+      monto: Math.round(monto * 100) / 100,
+      telefono: telefono.replace(/\D/g, ''),
+      otp: otp.trim(),
+      email: email?.trim()
+    };
+
+    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos/yape-otp`, body).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      tap(tx => this.lastTransaction.set(tx))
+    );
+  }
+
+  /**
+   * Registro obligatorio de cobro en efectivo antes de completar la entrega (ContraPago).
+   */
+  registrarCobroEfectivo(
+    ordenId: number | string,
+    monto: number,
+    montoRecibido?: number,
+    vueltoEntregado?: number
+  ): Observable<PaymentTransaction> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const body = {
+      ordenId: cleanId,
+      monto: Math.round(monto * 100) / 100,
+      montoRecibido: montoRecibido ? Math.round(montoRecibido * 100) / 100 : undefined,
+      vueltoEntregado: vueltoEntregado ? Math.round(vueltoEntregado * 100) / 100 : undefined
+    };
+
+    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos/cobro-efectivo`, body).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      tap(tx => this.lastTransaction.set(tx))
+    );
+  }
 }

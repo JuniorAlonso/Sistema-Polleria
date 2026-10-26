@@ -1,8 +1,10 @@
 package com.sistema.polleria.payments.service;
 
+import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
@@ -234,5 +236,61 @@ class PagoServiceTest {
         assertThat(res.estado()).isEqualTo(EstadoPago.RECHAZADO);
         verify(pagoRepository).buscarConBloqueo(13L);
         verify(pagoRepository).save(pago);
+    }
+
+    @Test
+    @DisplayName("Pago con Yape OTP válido aprueba de inmediato y avanza a cocina")
+    void procesarYapeOtp_conOtpValido_aprueba() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(301L)).thenReturn(Optional.empty());
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> {
+            Pago p = inv.getArgument(0);
+            p.setId(99L);
+            return p;
+        });
+
+        YapeOtpPagoRequest req = new YapeOtpPagoRequest(
+                301L, new BigDecimal("45.00"), "987654321", "123456", "cliente@test.com");
+
+        PagoResponse res = pagoService.procesarYapeOtp(req, 10L, "Bearer token");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(res.referenciaExterna()).startsWith("MP-YAPE-");
+        verify(notificadorOrden).notificarPagoAprobado(eq(301L), eq("Bearer token"));
+    }
+
+    @Test
+    @DisplayName("Pago con Yape OTP inválido '000000' es rechazado")
+    void procesarYapeOtp_conOtpInvalido_rechaza() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(302L)).thenReturn(Optional.empty());
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        YapeOtpPagoRequest req = new YapeOtpPagoRequest(
+                302L, new BigDecimal("45.00"), "987654321", "000000", "cliente@test.com");
+
+        PagoResponse res = pagoService.procesarYapeOtp(req, 10L, "Bearer token");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.RECHAZADO);
+        assertThat(res.detalle()).contains("inválido");
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+    }
+
+    @Test
+    @DisplayName("Cobro en efectivo registra pago contraentrega y avanza orden a ENTREGADO")
+    void procesarCobroEfectivo_registraYCompletaEntrega() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(303L)).thenReturn(Optional.empty());
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> {
+            Pago p = inv.getArgument(0);
+            p.setId(101L);
+            return p;
+        });
+
+        CobroEfectivoRequest req = new CobroEfectivoRequest(
+                303L, new BigDecimal("70.00"), new BigDecimal("100.00"), new BigDecimal("30.00"));
+
+        PagoResponse res = pagoService.procesarCobroEfectivo(req, 4L, "Bearer motorizado");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(res.metodoPago()).isEqualTo(MetodoPago.CONTRAENTREGA);
+        verify(notificadorOrden).notificarEstado(eq(303L), eq("ENTREGADO"), eq("Bearer motorizado"));
     }
 }

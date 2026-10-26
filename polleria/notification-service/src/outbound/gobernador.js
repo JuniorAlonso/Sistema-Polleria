@@ -1,5 +1,5 @@
 const { CircuitBreaker } = require('./breaker');
-const { LimitesDeEnvio, dentroDeVentana } = require('./limites');
+const { LimitesDeEnvio, dentroDeVentana, obtenerHoraPeru } = require('./limites');
 
 /**
  * Gobernador de envíos (T4b, S2/S8): coordina el presupuesto por hora/día, la ventana
@@ -61,7 +61,8 @@ class Gobernador {
             ventana: {
                 horaDesde: cfg.horaDesde,
                 horaHasta: cfg.horaHasta,
-                abierta: dentroDeVentana(new Date(t).getHours(), cfg)
+                operativoTodoElDia: Boolean(cfg.operativoTodoElDia),
+                abierta: dentroDeVentana(obtenerHoraPeru(t), cfg)
             },
             breaker: this.breaker.estado(t)
         };

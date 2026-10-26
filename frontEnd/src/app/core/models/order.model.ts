@@ -8,18 +8,23 @@ export type OrderType = 'DELIVERY' | 'RECOJO_EN_TIENDA' | 'SALON';
  */
 export type OrderStatus =
   | 'RECIBIDO'
-  | 'EN_PREPARACION'
-  | 'LISTO'
-  | 'EN_CAMINO'
-  | 'ENTREGADO'
-  | 'CANCELADO'
+  | 'PENDIENTE_CONFIRMACION'
   | 'PENDIENTE_PAGO'
-  | 'PAGADO'
+  | 'EN_PREPARACION'
+  | 'PREPARANDO'
+  | 'LISTO'
+  | 'LISTO_PARA_ENTREGAR'
   | 'LISTO_COCINA'
+  | 'EN_CAMINO'
   | 'EN_REPARTO'
-  | 'COMPLETADO';
+  | 'EN_PUERTA'
+  | 'ENTREGADO'
+  | 'COMPLETADO'
+  | 'CANCELADO'
+  | 'PEDIDO_FANTASMA'
+  | 'PAGADO';
 
-export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA';
+export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA' | 'YAPE_OTP';
 
 /**
  * Canal por el que entró el pedido (S1). Sirve para medir y auditar los pedidos de WhatsApp:
@@ -59,6 +64,12 @@ export interface Order {
   /** ISO timestamp de cuando el mozo confirmó que entregó la comanda en mesa. */
   servidoEn?: string;
   servidoPor?: number;
+  enPuertaAt?: string;
+  listoAt?: string;
+  intentosLlamada?: number;
+  montoPagaCon?: number;
+  vueltoEstimado?: number;
+  motivoFantasma?: string;
 }
 
 export interface CreateOrderRequest {
@@ -66,6 +77,9 @@ export interface CreateOrderRequest {
   /** Id real de la mesa en orders-service (no el número visible). Obligatorio para SALON. */
   mesaId?: number;
   cliente: OrderCustomerInfo;
+  estadoInicial?: OrderStatus;
+  montoPagaCon?: number;
+  ipOrigen?: string;
   items: {
     productoId: string;
     cantidad: number;

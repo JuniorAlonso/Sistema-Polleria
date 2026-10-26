@@ -2250,7 +2250,7 @@ export type InsumoAlmacen = Insumo;
                     <p class="mt-1 font-bold" [ngClass]="gob.ventana.abierta ? 'text-emerald-300' : 'text-amber-300'">
                       {{ gob.ventana.abierta ? 'Abierta' : 'Cerrada' }}
                     </p>
-                    <p class="text-[11px] text-slate-400 mt-0.5">{{ gob.ventana.horaDesde }}:00 – {{ gob.ventana.horaHasta }}:00</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">{{ gob.ventana.operativoTodoElDia ? 'Operación continua (24/7)' : gob.ventana.horaDesde + ':00 – ' + gob.ventana.horaHasta + ':00 (hora de Lima)' }}</p>
                   </div>
 
                   <div class="p-3 rounded-xl bg-black/30 border border-white/10">
@@ -2269,6 +2269,19 @@ export type InsumoAlmacen = Insumo;
                   </div>
                 </div>
               }
+
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-400/20 bg-amber-400/5">
+                <div>
+                  <p class="text-sm font-bold text-white">Operación todo el día</p>
+                  <p class="text-xs text-slate-400 mt-1">Al activarlo, se omite únicamente la ventana horaria; se mantienen límites y protección anti-baneo. Se desactiva al reiniciar notification-service.</p>
+                </div>
+                <button type="button" (click)="alternarOperativoTodoElDia()"
+                  [disabled]="whatsappService.guardandoAjustes() || !whatsappService.ajustes()"
+                  class="px-4 py-2 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                  [ngClass]="whatsappService.ajustes()?.operativoTodoElDia ? 'bg-rose-500/20 text-rose-200 border border-rose-400/30' : 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30'">
+                  {{ whatsappService.ajustes()?.operativoTodoElDia ? 'Desactivar 24/7' : 'Activar 24/7' }}
+                </button>
+              </div>
 
               <!-- Parámetros anti-baneo (borrador local; se manda solo lo cambiado) -->
               <div class="space-y-3">
@@ -4961,6 +4974,11 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
    * T5b — arma el PATCH con SOLO los campos que cambiaron respecto de los ajustes vigentes.
    * Así el panel nunca reescribe valores que el admin no tocó.
    */
+  alternarOperativoTodoElDia(): void {
+    const actual = this.whatsappService.ajustes()?.operativoTodoElDia ?? false;
+    this.whatsappService.guardarAjustes({ operativoTodoElDia: !actual });
+  }
+
   guardarAjustesWhatsapp(): void {
     const actuales = this.whatsappService.ajustes();
     const form = this.ajustesForm;

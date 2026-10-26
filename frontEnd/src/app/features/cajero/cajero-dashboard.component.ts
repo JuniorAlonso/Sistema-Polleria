@@ -11,8 +11,10 @@ import { NotificationService } from '../../core/services/notification.service';
 import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 import { Order } from '../../core/models/order.model';
 import { ArqueoCaja, MovimientoCaja, TipoMovimiento } from '../../core/models/finance.model';
+import { InventoryService } from '../../core/services/inventory.service';
+import { BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 
-export type CajeroTab = 'POS' | 'ARQUEO' | 'HISTORIAL';
+export type CajeroTab = 'POS' | 'LLAMADAS_CONTRAPAGO' | 'LIQUIDACIONES' | 'MERMAS_FANTASMA' | 'ARQUEO' | 'HISTORIAL';
 export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
 
 @Component({
@@ -82,6 +84,57 @@ export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
             </div>
             <span class="px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-black text-xs">
               {{ comandasPorCobrar().length }}
+            </span>
+          </button>
+
+          <button 
+            type="button"
+            (click)="activeTab.set('LLAMADAS_CONTRAPAGO')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'LLAMADAS_CONTRAPAGO' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+              <span>Llamadas ContraPago</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="ordenesPendientesLlamada().length > 0 ? 'bg-amber-500 text-slate-950 animate-pulse' : 'bg-slate-800 text-slate-400'">
+              {{ ordenesPendientesLlamada().length }}
+            </span>
+          </button>
+
+          <button 
+            type="button"
+            (click)="activeTab.set('LIQUIDACIONES')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'LIQUIDACIONES' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+              </svg>
+              <span>Liquidación Repartidores</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold text-xs">
+              {{ liquidacionesAbiertas().length }}
+            </span>
+          </button>
+
+          <button 
+            type="button"
+            (click)="activeTab.set('MERMAS_FANTASMA')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'MERMAS_FANTASMA' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              <span>Mermas / Pedidos Fantasma</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="ordenesFantasma().length > 0 ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-400'">
+              {{ ordenesFantasma().length }}
             </span>
           </button>
 
@@ -651,6 +704,233 @@ export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
             </div>
           }
 
+          <!-- ================= TAB: LLAMADAS CONTRAPAGO ================= -->
+          @if (activeTab() === 'LLAMADAS_CONTRAPAGO') {
+            <div class="space-y-4">
+              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 flex justify-between items-center">
+                <div>
+                  <h3 class="font-bold text-base text-white flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span>Bandeja de Confirmación de Llamadas (ContraPago)</span>
+                  </h3>
+                  <p class="text-xs text-slate-400">
+                    SLA Máximo: 15 minutos para llamar al cliente y validar vuelto antes de cocinar. (Máximo 2 intentos).
+                  </p>
+                </div>
+                <span class="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30">
+                  {{ ordenesPendientesLlamada().length }} llamadas pendientes
+                </span>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                @for (o of ordenesPendientesLlamada(); track o.id) {
+                  <div class="p-5 rounded-2xl bg-[#14161a] border border-amber-500/30 shadow-xl space-y-3">
+                    <div class="flex justify-between items-start border-b border-white/10 pb-2">
+                      <div>
+                        <span class="font-mono text-base font-black text-amber-300">#{{ o.codigoSeguimiento || o.id }}</span>
+                        <p class="text-sm font-bold text-white">{{ o.cliente.nombre }}</p>
+                      </div>
+                      <div class="text-right">
+                        <span class="text-xs text-slate-400 block font-mono">Total a Cobrar:</span>
+                        <span class="font-mono text-lg font-black text-polleria-gold">{{ o.total | currencyPEN }}</span>
+                      </div>
+                    </div>
+
+                    <div class="text-xs space-y-1.5">
+                      <div class="flex items-center gap-2">
+                        <span class="text-slate-400 font-bold">Celular:</span>
+                        <a [href]="'tel:' + o.cliente.celular" class="text-emerald-400 font-mono font-bold hover:underline">
+                          📞 {{ o.cliente.celular }}
+                        </a>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-slate-400 font-bold">Dirección:</span>
+                        <span class="text-slate-200 truncate">{{ o.cliente.direccion || 'Ica' }}</span>
+                      </div>
+                      @if (o.cliente.referencia) {
+                        <p class="text-[11px] text-slate-400 italic">Ref: {{ o.cliente.referencia }}</p>
+                      }
+                      <div class="p-2.5 rounded-xl bg-black/40 border border-white/5 flex justify-between items-center text-xs">
+                        <span class="text-slate-300">Paga con billete: <strong class="text-white">S/ {{ o.montoPagaCon || o.total }}</strong></span>
+                        <span class="text-emerald-300 font-bold font-mono">Vuelto: S/ {{ o.vueltoEstimado || 0 }}</span>
+                      </div>
+                      <div class="flex justify-between items-center text-[11px] pt-1 text-slate-400">
+                        <span>Intentos realizados: <strong class="text-white">{{ o.intentosLlamada || 0 }} / 2</strong></span>
+                        <span class="font-mono text-amber-300">⏱ Esperando respuesta</span>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 pt-2 border-t border-white/10">
+                      <button 
+                        (click)="confirmarLlamadaPedido(o)"
+                        class="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                      >
+                        ✓ Confirmar y Cocinar
+                      </button>
+                      <button 
+                        (click)="intentoLlamadaPedido(o)"
+                        class="py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold text-xs transition cursor-pointer"
+                        title="Registrar intento fallido de llamada"
+                      >
+                        📞 No Contesta
+                      </button>
+                      <button 
+                        (click)="cancelarPedidoContraPago(o)"
+                        class="py-2 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition cursor-pointer"
+                        title="Cancelar pedido por no atender"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="col-span-2 py-12 text-center text-slate-500 bg-[#14161a] rounded-2xl border border-white/10">
+                    <p class="text-sm">No hay llamadas pendientes de confirmación en este momento.</p>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- ================= TAB: LIQUIDACIONES DE REPARTIDORES ================= -->
+          @if (activeTab() === 'LIQUIDACIONES') {
+            <div class="space-y-4">
+              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 flex justify-between items-center">
+                <div>
+                  <h3 class="font-bold text-base text-white">Liquidación de Repartidores Vuelta por Vuelta</h3>
+                  <p class="text-xs text-slate-400">Entrega de fondo de vueltos y rendición del efectivo cobrado en delivery.</p>
+                </div>
+                <button 
+                  (click)="mostrarModalNuevaLiquidacion.set(true)"
+                  class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>+ Entregar Fondo a Motorizado</span>
+                </button>
+              </div>
+
+              <div class="overflow-x-auto rounded-2xl border border-white/10 bg-[#14161a]">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-white/10 text-slate-400 uppercase text-[10px] tracking-wider font-extrabold">
+                      <th class="py-3 px-4">ID</th>
+                      <th class="py-3 px-4">Repartidor</th>
+                      <th class="py-3 px-4">Hora Salida</th>
+                      <th class="py-3 px-4">Fondo Inicial</th>
+                      <th class="py-3 px-4">Cobrado Efectivo</th>
+                      <th class="py-3 px-4">Total Esperado</th>
+                      <th class="py-3 px-4">Estado</th>
+                      <th class="py-3 px-4 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5 font-medium">
+                    @for (liq of liquidacionesAbiertas(); track liq.id) {
+                      <tr class="hover:bg-white/5 transition">
+                        <td class="py-3 px-4 font-mono font-bold text-white">#{{ liq.id }}</td>
+                        <td class="py-3 px-4 text-slate-200 font-bold">{{ liq.repartidorNombre }}</td>
+                        <td class="py-3 px-4 font-mono text-slate-400">{{ liq.creadoEn | date:'shortTime' }}</td>
+                        <td class="py-3 px-4 font-mono text-polleria-gold">{{ liq.fondoInicial | currencyPEN }}</td>
+                        <td class="py-3 px-4 font-mono text-emerald-400">{{ liq.totalCobradoEfectivo | currencyPEN }}</td>
+                        <td class="py-3 px-4 font-mono font-bold text-white">{{ (liq.fondoInicial + liq.totalCobradoEfectivo) | currencyPEN }}</td>
+                        <td class="py-3 px-4">
+                          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {{ liq.estado }}
+                          </span>
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                          <button 
+                            (click)="abrirModalCierreLiquidacion(liq)"
+                            class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                          >
+                            Rendir Caja
+                          </button>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="8" class="py-12 text-center text-slate-500">
+                          No hay liquidaciones abiertas de repartidores en este turno.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          }
+
+          <!-- ================= TAB: MERMAS / PEDIDOS FANTASMA ================= -->
+          @if (activeTab() === 'MERMAS_FANTASMA') {
+            <div class="space-y-4">
+              <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 flex justify-between items-center">
+                <div>
+                  <h3 class="font-bold text-base text-rose-300">Gestión de Pedidos Fantasma y Destino de Merma</h3>
+                  <p class="text-xs text-slate-400">
+                    Clasificación de productos devueltos o abandonados (Control de inventario vs Venta Rápida en Salón).
+                  </p>
+                </div>
+                <span class="px-3 py-1 rounded-xl bg-rose-500/20 text-rose-300 font-bold text-xs border border-rose-500/30">
+                  {{ ordenesFantasma().length }} incidentes
+                </span>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                @for (o of ordenesFantasma(); track o.id) {
+                  <div class="p-5 rounded-2xl bg-[#14161a] border border-rose-500/40 shadow-xl space-y-3">
+                    <div class="flex justify-between items-start border-b border-white/10 pb-2">
+                      <div>
+                        <span class="font-mono text-base font-black text-rose-400">#{{ o.codigoSeguimiento || o.id }}</span>
+                        <p class="text-sm font-bold text-white">{{ o.cliente.nombre }}</p>
+                      </div>
+                      <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                        {{ o.tipo }} • FANTASMA
+                      </span>
+                    </div>
+
+                    <div class="text-xs space-y-1">
+                      <p class="text-slate-300"><strong>Motivo:</strong> {{ o.motivoFantasma || 'No atendido / Abandonado' }}</p>
+                      <p class="text-slate-400"><strong>Teléfono Sancionado:</strong> {{ o.cliente.celular }}</p>
+                      <p class="text-slate-400"><strong>Total Pérdida:</strong> {{ o.total | currencyPEN }}</p>
+                    </div>
+
+                    <div class="p-3 rounded-xl bg-black/40 border border-white/5 text-xs">
+                      @if (o.tipo === 'RECOJO_EN_TIENDA') {
+                        <p class="text-amber-300 pb-2">El pedido quedó en la vitrina caliente del local.</p>
+                        <div class="flex gap-2">
+                          <button 
+                            (click)="resolverProductoFantasma(o, 'VENTA_RAPIDA_SALON')"
+                            class="flex-1 py-2 px-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer"
+                          >
+                            Reasignar a Salón
+                          </button>
+                          <button 
+                            (click)="resolverProductoFantasma(o, 'MERMA_JUSTIFICADA')"
+                            class="flex-1 py-2 px-2.5 rounded-xl bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-500/40 font-bold text-xs transition cursor-pointer"
+                          >
+                            Merma Justificada
+                          </button>
+                        </div>
+                      } @else {
+                        <p class="text-slate-300 pb-2 text-[11px]">
+                          Por inocuidad bromatológica (estuvo en moto >30 min), debe registrarse como Merma Justificada.
+                        </p>
+                        <button 
+                          (click)="resolverProductoFantasma(o, 'MERMA_JUSTIFICADA')"
+                          class="w-full py-2 px-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-bold text-xs transition cursor-pointer"
+                        >
+                          Asentar en Libro de Mermas
+                        </button>
+                      }
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="col-span-2 py-12 text-center text-slate-500 bg-[#14161a] rounded-2xl border border-white/10">
+                    <p class="text-sm">No hay pedidos fantasma pendientes de resolución de inventario.</p>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
         </div>
       </main>
 
@@ -1215,6 +1495,56 @@ export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
         </div>
       }
 
+      <!-- MODAL APERTURA LIQUIDACIÓN MOTORIZADO -->
+      @if (mostrarModalNuevaLiquidacion()) {
+        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="w-full max-w-md bg-[#14161a] border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4">
+            <h3 class="font-display text-xl font-bold text-white">Entregar Fondo de Vueltos a Repartidor</h3>
+            <div class="space-y-3 text-xs">
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Nombre del Repartidor:</label>
+                <input type="text" [(ngModel)]="repartidorNombreLiqInput" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white font-medium" />
+              </div>
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Fondo Inicial de Sencillo (S/):</label>
+                <input type="number" [(ngModel)]="fondoInicialLiqInput" step="10" min="0" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white font-mono font-bold" />
+              </div>
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Observaciones:</label>
+                <input type="text" [(ngModel)]="observacionesLiqInput" placeholder="Turno tarde / Zona San Joaquín" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white" />
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-white/10">
+              <button type="button" (click)="mostrarModalNuevaLiquidacion.set(false)" class="px-4 py-2 rounded-xl bg-white/5 text-slate-300 font-bold text-xs uppercase">Cancelar</button>
+              <button type="button" (click)="ejecutarAperturaLiquidacion()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase">Aperturar</button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- MODAL CIERRE Y RENDICIÓN DE LIQUIDACIÓN -->
+      @if (mostrarModalCierreLiquidacion()) {
+        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="w-full max-w-md bg-[#14161a] border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4">
+            <h3 class="font-display text-xl font-bold text-white">Rendir Efectivo de Repartidor</h3>
+            <div class="p-3 rounded-xl bg-black/40 border border-white/10 text-xs space-y-1">
+              <p class="text-slate-300">Repartidor: <strong class="text-white">{{ liquidacionSeleccionada()?.repartidorNombre }}</strong></p>
+              <p class="text-slate-300">Fondo Inicial: <strong class="text-polleria-gold">{{ (liquidacionSeleccionada()?.fondoInicial || 0) | currencyPEN }}</strong></p>
+              <p class="text-slate-300">Cobrado en Ruta: <strong class="text-emerald-400">{{ (liquidacionSeleccionada()?.totalCobradoEfectivo || 0) | currencyPEN }}</strong></p>
+              <p class="text-slate-200 font-bold border-t border-white/10 pt-1">Total Esperado: {{ ((liquidacionSeleccionada()?.fondoInicial || 0) + (liquidacionSeleccionada()?.totalCobradoEfectivo || 0)) | currencyPEN }}</p>
+            </div>
+            <div class="space-y-1 text-xs">
+              <label class="block text-slate-300 font-bold mb-1">Efectivo Físico Entregado por Repartidor (S/):</label>
+              <input type="number" [(ngModel)]="totalRendidoLiqInput" step="5" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white font-mono text-lg font-bold" />
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-white/10">
+              <button type="button" (click)="mostrarModalCierreLiquidacion.set(false)" class="px-4 py-2 rounded-xl bg-white/5 text-slate-300 font-bold text-xs uppercase">Cancelar</button>
+              <button type="button" (click)="confirmarCierreLiquidacion()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase">Cerrar y Cuadrar</button>
+            </div>
+          </div>
+        </div>
+      }
+
     </div>
   `
 })
@@ -1222,6 +1552,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
+  readonly inventoryService = inject(InventoryService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -1261,6 +1592,26 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   posCierreInput = 0;
   digitalesCierreInput = 0;
   observacionesCierreInput = '';
+
+  // --- Módulos Operativos Nuevos: Llamadas, Liquidaciones y Mermas ---
+  readonly ordenesPendientesLlamada = computed(() =>
+    this.ordersService.orders().filter(o => o.estado === 'PENDIENTE_CONFIRMACION')
+  );
+
+  readonly ordenesFantasma = computed(() =>
+    this.ordersService.orders().filter(o => o.estado === 'PEDIDO_FANTASMA')
+  );
+
+  readonly liquidacionesAbiertas = signal<BackendLiquidacionResponse[]>([]);
+  readonly mostrarModalNuevaLiquidacion = signal<boolean>(false);
+  readonly mostrarModalCierreLiquidacion = signal<boolean>(false);
+  readonly liquidacionSeleccionada = signal<BackendLiquidacionResponse | null>(null);
+
+  repartidorIdLiqInput = 4;
+  repartidorNombreLiqInput = 'Carlos Motorizado';
+  fondoInicialLiqInput = 50.0;
+  totalRendidoLiqInput = 0;
+  observacionesLiqInput = '';
 
   // Registro combinado de cobros aprobados desde el microservicio de pagos
   readonly cobrosDelDia = computed(() => {
@@ -1381,6 +1732,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.paymentService.cargarPagos().subscribe();
     this.financeService.obtenerCajaActual();
     this.financeService.cargarMovimientos();
+    this.cargarLiquidaciones();
     setTimeout(() => this.cargando.set(false), 800);
   }
 
@@ -1617,6 +1969,135 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       error: (err) => {
         this.procesandoAccion.set(false);
         this.notify.showError(err?.error?.error || 'No se pudo realizar el cierre de caja');
+      }
+    });
+  }
+
+  // --- Métodos de Gestión Operativa: Llamadas, Liquidaciones y Mermas ---
+
+  confirmarLlamadaPedido(o: Order): void {
+    this.ordersService.confirmarLlamada(o.id).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Pedido #${o.codigoSeguimiento || o.id} confirmado`, 'Pasa directo a preparación en cocina.');
+        // Emisión automática de comprobante Boleta en finance-service
+        this.financeService.emitirComprobante({
+          ordenId: Number(o.id),
+          tipo: 'BOLETA',
+          clienteNombre: o.cliente.nombre || 'Cliente General',
+          clienteDireccion: o.cliente.direccion,
+          total: o.total,
+          pagadoDigitalmente: false,
+          vueltoEstimado: o.vueltoEstimado
+        }).subscribe();
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al confirmar llamada', err?.message);
+      }
+    });
+  }
+
+  intentoLlamadaPedido(o: Order): void {
+    this.ordersService.registrarIntentoLlamada(o.id, 'Cliente no contesta llamada').subscribe({
+      next: (actualizada) => {
+        if (actualizada.estado === 'CANCELADO') {
+          this.notify.showError(`Pedido #${o.codigoSeguimiento || o.id} cancelado`, 'Alcanzó el máximo de 2 intentos fallidos.');
+        } else {
+          this.notify.showInfo('Intento registrado', `Intentos: ${actualizada.intentosLlamada || 1} / 2`);
+        }
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al registrar intento', err?.message);
+      }
+    });
+  }
+
+  cancelarPedidoContraPago(o: Order): void {
+    const confirmar = confirm(`¿Cancelar el pedido #${o.codigoSeguimiento || o.id} por inasistencia del cliente?`);
+    if (!confirmar) return;
+
+    this.ordersService.updateOrderStatus(o.id, 'CANCELADO').subscribe({
+      next: () => {
+        this.notify.showInfo('Pedido cancelado', 'La comanda fue cancelada.');
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al cancelar pedido', err?.message);
+      }
+    });
+  }
+
+  cargarLiquidaciones(): void {
+    this.financeService.listarLiquidacionesAbiertas().subscribe({
+      next: (list) => this.liquidacionesAbiertas.set(list || [])
+    });
+  }
+
+  ejecutarAperturaLiquidacion(): void {
+    if (this.fondoInicialLiqInput < 0) {
+      this.notify.showError('El fondo inicial no puede ser negativo');
+      return;
+    }
+
+    this.financeService.abrirLiquidacion({
+      repartidorId: this.repartidorIdLiqInput,
+      repartidorNombre: this.repartidorNombreLiqInput,
+      fondoInicial: this.fondoInicialLiqInput,
+      observaciones: this.observacionesLiqInput || undefined
+    }).subscribe({
+      next: (liq) => {
+        this.mostrarModalNuevaLiquidacion.set(false);
+        this.notify.showSuccess(`Liquidación #${liq.id} aperturada para ${liq.repartidorNombre}`);
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al aperturar liquidación', err?.error?.message || err?.message);
+      }
+    });
+  }
+
+  abrirModalCierreLiquidacion(liq: BackendLiquidacionResponse): void {
+    this.liquidacionSeleccionada.set(liq);
+    this.totalRendidoLiqInput = (liq.fondoInicial || 0) + (liq.totalCobradoEfectivo || 0);
+    this.mostrarModalCierreLiquidacion.set(true);
+  }
+
+  confirmarCierreLiquidacion(): void {
+    const liq = this.liquidacionSeleccionada();
+    if (!liq) return;
+
+    this.financeService.cerrarLiquidacion(liq.id, {
+      totalRendido: this.totalRendidoLiqInput,
+      totalCobradoEfectivo: liq.totalCobradoEfectivo,
+      observaciones: 'Cuadre en caja de turno'
+    }).subscribe({
+      next: (cerrada) => {
+        this.mostrarModalCierreLiquidacion.set(false);
+        this.liquidacionSeleccionada.set(null);
+        this.notify.showSuccess(`Liquidación #${cerrada.id} cerrada. Diferencia: S/ ${cerrada.diferencia.toFixed(2)} (${cerrada.estado})`);
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al cerrar liquidación', err?.error?.message || err?.message);
+      }
+    });
+  }
+
+  resolverProductoFantasma(o: Order, destino: 'VENTA_RAPIDA_SALON' | 'MERMA_JUSTIFICADA'): void {
+    const tipo = o.tipo === 'RECOJO_EN_TIENDA' ? 'RECOJO' : 'DELIVERY';
+    this.inventoryService.resolverProductoFantasma({
+      ordenId: Number(o.id),
+      ordenTipo: tipo,
+      destino: destino,
+      observaciones: `Resuelto por cajero: ${destino}`
+    }).subscribe({
+      next: () => {
+        this.notify.showSuccess(`Destino registrado: ${destino === 'VENTA_RAPIDA_SALON' ? 'Reasignado a mostrador' : 'Merma Justificada'}`);
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al resolver producto', err?.message);
       }
     });
   }

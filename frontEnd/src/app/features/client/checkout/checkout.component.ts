@@ -1,5 +1,5 @@
 import { etiquetaPedido } from '../../../core/utils/pedido';
-import { Component, inject, signal, OnInit } from '@angular/core';
+import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
@@ -7,15 +7,9 @@ import { CartService } from '../../../core/services/cart.service';
 import { OrdersService } from '../../../core/services/orders.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
-import { Order, PaymentMethod } from '../../../core/models/order.model';
+import { Order, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { environment } from '../../../../environments/environment';
-
-import { PLATFORM_ID } from '@angular/core';
-import { isPlatformBrowser } from '@angular/common';
-
-declare const MercadoPago: any;
 
 @Component({
   selector: 'app-checkout',
@@ -125,8 +119,10 @@ declare const MercadoPago: any;
           </div>
 
           <div class="flex justify-between text-xs text-slate-600 font-medium">
-            <span>Delivery</span>
-            <span class="font-semibold text-slate-900">{{ cart.costoEnvio() | currencyPEN }}</span>
+            <span>Envío ({{ tipoPedido() === 'DELIVERY' ? 'Delivery' : 'Recojo en local' }})</span>
+            <span class="font-semibold text-slate-900">
+              {{ (tipoPedido() === 'DELIVERY' ? cart.costoEnvio() : 0) | currencyPEN }}
+            </span>
           </div>
 
           <!-- TOTAL A PAGAR -->
@@ -135,13 +131,12 @@ declare const MercadoPago: any;
               TOTAL A PAGAR
             </span>
             <span class="font-display text-3xl sm:text-4xl font-black text-polleria-crimson tracking-tight">
-              {{ cart.total() | currencyPEN }}
+              {{ totalPagar() | currencyPEN }}
             </span>
           </div>
         </div>
 
       </div>
-
 
       <!-- ================= RIGHT COLUMN: DETALLES DE PAGO ================= -->
       <div class="lg:w-1/2 p-4 sm:p-6 lg:p-8 bg-[#7a0513] text-white flex flex-col justify-between h-full lg:overflow-y-auto shadow-2xl">
@@ -149,11 +144,33 @@ declare const MercadoPago: any;
         <div class="space-y-4">
           
           <!-- Title -->
-          <h2 class="font-display text-3xl sm:text-4xl font-black uppercase text-white tracking-wide leading-none">
-            DETALLES DE PAGO
-          </h2>
+          <div class="flex items-center justify-between">
+            <h2 class="font-display text-2xl sm:text-3xl font-black uppercase text-white tracking-wide leading-none">
+              CHECKOUT
+            </h2>
+            
+            <!-- Selector Tipo de Pedido -->
+            <div class="flex bg-black/40 p-1 rounded-xl border border-white/15 text-xs font-bold">
+              <button 
+                type="button" 
+                (click)="tipoPedido.set('DELIVERY')"
+                [ngClass]="tipoPedido() === 'DELIVERY' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-white/70 hover:text-white'"
+                class="px-3 py-1.5 rounded-lg transition uppercase tracking-wider cursor-pointer"
+              >
+                Delivery
+              </button>
+              <button 
+                type="button" 
+                (click)="tipoPedido.set('RECOJO_EN_TIENDA')"
+                [ngClass]="tipoPedido() === 'RECOJO_EN_TIENDA' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-white/70 hover:text-white'"
+                class="px-3 py-1.5 rounded-lg transition uppercase tracking-wider cursor-pointer"
+              >
+                Recojo en Tienda
+              </button>
+            </div>
+          </div>
 
-          <!-- Card 1: ENTREGA -->
+          <!-- Card 1: DATOS DE ENTREGA O RECOJO -->
           <div class="p-4 rounded-2xl bg-black/25 border border-white/10 space-y-2.5">
             
             <div class="flex items-center gap-2 text-polleria-gold text-xs font-bold uppercase tracking-wider">
@@ -161,38 +178,62 @@ declare const MercadoPago: any;
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
               </svg>
-              <span>ENTREGA</span>
+              <span>{{ tipoPedido() === 'DELIVERY' ? 'DIRECCIÓN DE ENTREGA' : 'LOCAL DE RECOJO EN TIENDA' }}</span>
             </div>
 
-            <!-- Input Dirección -->
-            <input 
-              type="text" 
-              [(ngModel)]="direccion" 
-              placeholder="Av. Larco 1234, Miraflores"
-              class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-            />
+            @if (tipoPedido() === 'DELIVERY') {
+              <!-- Input Dirección -->
+              <input 
+                type="text" 
+                [(ngModel)]="direccion" 
+                placeholder="Av. San Martín 1234, Ica"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
+              />
 
-            <!-- Input Celular: recibe las notificaciones de WhatsApp (Fase 3) -->
+              <!-- Input Instrucciones Especiales -->
+              <input 
+                type="text" 
+                [(ngModel)]="instrucciones" 
+                placeholder="Referencia (ej. Frente al parque, timbre 201)"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
+              />
+            } @else {
+              <div class="p-3 rounded-xl bg-black/40 border border-polleria-gold/30 text-xs space-y-1">
+                <p class="font-bold text-polleria-gold">Local Principal San Pollo:</p>
+                <p class="text-white/90">Av. San Martín 456, Centro de Ica (Frente a Plaza de Armas)</p>
+                <p class="text-[11px] text-white/60">Tiempo aprox. de preparación: 25 - 35 minutos. Tienes hasta 1 hora para retirarlo una vez listo.</p>
+              </div>
+            }
+
+            <!-- Input Celular: notificaciones de WhatsApp -->
             <div class="space-y-1">
               <input 
                 type="tel" 
                 [(ngModel)]="celular" 
+                (ngModelChange)="onCelularChange($event)"
                 inputmode="numeric"
-                maxlength="12"
+                maxlength="9"
                 placeholder="Celular para WhatsApp (ej. 912345678)"
                 class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
               />
-              <p class="text-[10px] text-white/50 px-1">Te avisaremos por WhatsApp el pago y el estado de tu pedido.</p>
+              <p class="text-[10px] text-white/50 px-1">Te avisaremos por WhatsApp el estado del pedido y cuando esté en tu puerta o listo para recoger.</p>
             </div>
-
-            <!-- Input Instrucciones Especiales -->
-            <input 
-              type="text" 
-              [(ngModel)]="instrucciones" 
-              placeholder="Instrucciones especiales (ej. Timbre 301)"
-              class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-            />
           </div>
+
+          <!-- AVISO DE CLIENTE SANCIONADO (BLACK LIST) -->
+          @if (sancionActiva()) {
+            <div class="p-3.5 rounded-2xl bg-rose-950/80 border-2 border-rose-500/80 text-rose-200 text-xs space-y-1 shadow-lg animate-pulse">
+              <div class="flex items-center gap-2 font-bold text-rose-300">
+                <svg class="w-5 h-5 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+                <span>PAGO EN EFECTIVO NO DISPONIBLE</span>
+              </div>
+              <p class="text-[11px] leading-relaxed">
+                Este número o dirección registra una sanción por <strong>Pedido Fantasma / No recogido</strong>. Para continuar con tu compra, debes pagar en línea con <strong>Tarjeta</strong> o <strong>Yape OTP</strong>.
+              </p>
+            </div>
+          }
 
           <!-- Card 2: MÉTODO DE PAGO -->
           <div class="p-4 rounded-2xl bg-black/25 border border-white/10 space-y-2.5">
@@ -204,58 +245,119 @@ declare const MercadoPago: any;
               <span>MÉTODO DE PAGO</span>
             </div>
 
-            <!-- Selector Tabs: Tarjeta vs Efectivo -->
-            <div class="grid grid-cols-2 gap-2.5">
+            <!-- Selector Tabs: Tarjeta vs Yape OTP vs Efectivo -->
+            <div class="grid grid-cols-3 gap-2">
               <button 
                 type="button"
                 (click)="metodoPago.set('TARJETA')"
-                class="py-2.5 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer"
+                class="py-2 px-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-1 transition cursor-pointer"
                 [ngClass]="metodoPago() === 'TARJETA' ? 
-                  'border-2 border-polleria-gold bg-black/40 text-white shadow-md' : 
+                  'border-2 border-polleria-gold bg-black/50 text-white shadow-md' : 
                   'border-white/15 bg-black/20 text-white/70 hover:bg-black/30'"
               >
-                <svg class="w-4 h-4 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
-                </svg>
                 <span>TARJETA</span>
+                <span class="text-[9px] text-white/50">Mercado Pago</span>
               </button>
 
               <button 
                 type="button"
-                (click)="metodoPago.set('EFECTIVO_CONTRAENTREGA')"
-                class="py-2.5 px-3 rounded-xl border text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer"
-                [ngClass]="metodoPago() === 'EFECTIVO_CONTRAENTREGA' ? 
-                  'border-2 border-polleria-gold bg-black/40 text-white shadow-md' : 
+                (click)="metodoPago.set('YAPE_OTP')"
+                class="py-2 px-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-1 transition cursor-pointer"
+                [ngClass]="metodoPago() === 'YAPE_OTP' ? 
+                  'border-2 border-purple-400 bg-purple-950/40 text-purple-200 shadow-md' : 
                   'border-white/15 bg-black/20 text-white/70 hover:bg-black/30'"
               >
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>
-                </svg>
+                <span>YAPE OTP</span>
+                <span class="text-[9px] text-purple-300/60">Pase a Cocina</span>
+              </button>
+
+              <button 
+                type="button"
+                (click)="seleccionarEfectivo()"
+                [disabled]="sancionActiva()"
+                class="py-2 px-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-1 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                [ngClass]="metodoPago() === 'EFECTIVO_CONTRAENTREGA' ? 
+                  'border-2 border-emerald-400 bg-emerald-950/40 text-emerald-200 shadow-md' : 
+                  'border-white/15 bg-black/20 text-white/70 hover:bg-black/30'"
+              >
                 <span>EFECTIVO</span>
+                <span class="text-[9px] text-emerald-300/60">{{ tipoPedido() === 'DELIVERY' ? 'En Puerta' : 'En Caja' }}</span>
               </button>
             </div>
 
-            @if (metodoPago() === 'TARJETA') {
-              <!-- Botón Oficial de Mercado Pago Checkout Pro (Abajito) -->
-              <div class="pt-2">
-                <button 
-                  type="button" 
-                  (click)="payWithMercadoPago()"
-                  [disabled]="isProcessing() || cart.isEmpty()"
-                  class="w-full py-3 px-4 rounded-xl bg-[#009ee3] hover:bg-[#0081ba] active:scale-98 text-white font-bold text-xs sm:text-sm tracking-wider uppercase transition shadow-lg flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
-                >
-                  <svg class="w-6 h-4" viewBox="0 0 100 60" fill="none">
-                    <rect width="100" height="60" rx="10" fill="#FFFFFF"/>
-                    <path d="M50 15C38 15 28 23 25 32C28 41 38 49 50 49C62 49 72 41 75 32C72 23 62 15 50 15Z" fill="#009EE3"/>
-                    <path d="M43 28C41.5 28 40.5 29 40.5 30.5C40.5 32 41.5 33 43 33H47C48 33 49 34 49 35C49 36 48 37 47 37H41V39H44V41H46V39H47C49.5 39 51 37.5 51 35.5C51 33.5 49.5 32 47 32H43C42 32 41 31.5 41 30.5C41 29.5 42 29 43 29H48V27H46V25H44V27H43V28Z" fill="#FFFFFF"/>
-                  </svg>
-                  <span>PAGAR CON MERCADO PAGO</span>
-                </button>
+            <!-- CONTENIDO ESPECÍFICO SEGÚN MÉTODO -->
+            @if (metodoPago() === 'YAPE_OTP') {
+              <div class="p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/30 space-y-2.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-purple-300 uppercase">Pago Inmediato con Yape</span>
+                  <span class="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-md font-mono">Sin comisiones</span>
+                </div>
+
+                <div class="space-y-1">
+                  <label class="text-[11px] font-medium text-purple-200 block">Celular Yape:</label>
+                  <input 
+                    type="tel" 
+                    [(ngModel)]="celularYape" 
+                    maxlength="9"
+                    placeholder="912345678"
+                    class="w-full px-3 py-2 rounded-lg bg-black/40 border border-purple-400/30 text-white font-mono text-xs focus:ring-1 focus:ring-purple-400 outline-none"
+                  />
+                </div>
+
+                <div class="space-y-1">
+                  <div class="flex justify-between items-center text-[11px] text-purple-200">
+                    <label class="font-medium">Código de Aprobación (6 dígitos):</label>
+                    <span class="text-[10px] text-white/50">App Yape ➔ Menú ➔ Código</span>
+                  </div>
+                  <input 
+                    type="text" 
+                    [(ngModel)]="otpYape" 
+                    maxlength="6"
+                    inputmode="numeric"
+                    placeholder="123456"
+                    class="w-full px-3 py-2 rounded-lg bg-black/40 border border-purple-400/30 text-white font-mono text-center text-lg tracking-widest font-black focus:ring-1 focus:ring-purple-400 outline-none"
+                  />
+                </div>
+                <p class="text-[10px] text-purple-200/70 leading-tight">
+                  Al confirmar, tu pago se procesará en tiempo real con Mercado Pago y pasará <strong>DIRECTO a cocina</strong> sin esperas de validación.
+                </p>
+              </div>
+
+            } @else if (metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
+              <div class="p-3.5 rounded-xl bg-black/30 border border-emerald-500/30 space-y-2.5">
+                <span class="text-xs font-bold text-emerald-300 uppercase block">Cobro en Efectivo</span>
+                
+                <div class="space-y-1">
+                  <label class="text-[11px] font-medium text-slate-200 block">¿Con cuánto vas a pagar? (Para llevarte vuelto exacto):</label>
+                  <div class="relative">
+                    <span class="absolute left-3 top-2 text-xs font-bold text-slate-400">S/</span>
+                    <input 
+                      type="number" 
+                      [(ngModel)]="montoPagaCon" 
+                      [min]="totalPagar()"
+                      step="5"
+                      placeholder="{{ totalPagar() }}"
+                      class="w-full pl-8 pr-3 py-2 rounded-lg bg-black/40 border border-white/20 text-white font-mono text-sm focus:ring-1 focus:ring-emerald-400 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/20 text-xs">
+                  <span class="text-emerald-300">Vuelto que recibirás:</span>
+                  <span class="font-bold text-sm text-emerald-400 font-mono">
+                    {{ calcularVuelto() | currencyPEN }}
+                  </span>
+                </div>
+
+                <p class="text-[10px] text-slate-300 leading-tight">
+                  📞 <strong>Llamada requerida:</strong> El cajero te llamará en un máximo de <strong>15 minutos</strong> para validar tu pedido y vuelto antes de empezar a cocinar.
+                </p>
               </div>
 
             } @else {
-              <div class="p-3 rounded-xl bg-black/20 text-xs text-slate-200">
-                Pagas al repartidor en efectivo al recibir tu pedido en la puerta.
+              <!-- TARJETA (MERCADO PAGO) -->
+              <div class="p-3 rounded-xl bg-black/20 text-xs text-slate-200 space-y-1">
+                <p>Serás redirigido a la pasarela segura de <strong>Mercado Pago</strong> para pagar con tarjeta de débito o crédito.</p>
               </div>
             }
 
@@ -282,7 +384,7 @@ declare const MercadoPago: any;
           </button>
 
           <p class="text-[10px] sm:text-xs font-bold text-white/80 uppercase tracking-widest">
-            PAGO 100% SEGURO
+            SAN POLLO • CALIDAD Y PAGO 100% SEGURO
           </p>
         </div>
 
@@ -300,22 +402,41 @@ export class CheckoutComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
 
+  readonly tipoPedido = signal<OrderType>('DELIVERY');
   readonly metodoPago = signal<PaymentMethod>('TARJETA');
   readonly isProcessing = signal<boolean>(false);
+  readonly sancionActiva = signal<boolean>(false);
 
   direccion = '';
   celular = '';
   instrucciones = '';
 
-  ngOnInit(): void {
-    this.celular = this.auth.currentUser()?.celular || '';
+  // Específico Yape OTP
+  celularYape = '';
+  otpYape = '';
 
-    // Manejar parámetros de retorno de pasarela si llegan al checkout
+  // Específico Efectivo
+  montoPagaCon: number | null = null;
+
+  readonly totalPagar = computed(() => {
+    const envio = this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0;
+    return Math.round((this.cart.subtotal() + envio) * 100) / 100;
+  });
+
+  ngOnInit(): void {
+    const user = this.auth.currentUser();
+    this.celular = user?.celular || '';
+    this.celularYape = this.celular;
+
+    if (this.celular) {
+      this.verificarSancionCliente(this.celular);
+    }
+
     this.route.queryParams.subscribe(params => {
       if (params['status'] === 'failure') {
         this.notify.showError(
           'El pago en Mercado Pago no fue completado',
-          'Puedes reintentar el pago con tu tarjeta o elegir pago contraentrega.'
+          'Puedes reintentar el pago con tu tarjeta o elegir otro medio.'
         );
       } else if (params['status'] === 'pending') {
         this.notify.showInfo(
@@ -326,6 +447,50 @@ export class CheckoutComponent implements OnInit {
     });
   }
 
+  onCelularChange(nuevoCelular: string): void {
+    let limpio = (nuevoCelular || '').replace(/\D/g, '');
+    if (limpio.length === 11 && limpio.startsWith('51')) {
+      limpio = limpio.substring(2);
+    }
+    if (limpio.length === 9) {
+      this.celularYape = limpio;
+      this.verificarSancionCliente(limpio);
+    }
+  }
+
+  verificarSancionCliente(telefono: string): void {
+    const user = this.auth.currentUser();
+    this.auth.verificarSancion(telefono, user?.correo).subscribe({
+      next: (resp) => {
+        if (resp.sancionado && resp.bloqueadoEfectivo) {
+          this.sancionActiva.set(true);
+          if (this.metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
+            this.metodoPago.set('YAPE_OTP');
+          }
+        } else {
+          this.sancionActiva.set(false);
+        }
+      }
+    });
+  }
+
+  seleccionarEfectivo(): void {
+    if (this.sancionActiva()) {
+      this.notify.showError('Pago en efectivo bloqueado', 'Registras un incidente previo por pedido fantasma.');
+      return;
+    }
+    this.metodoPago.set('EFECTIVO_CONTRAENTREGA');
+    if (!this.montoPagaCon) {
+      this.montoPagaCon = this.totalPagar();
+    }
+  }
+
+  calcularVuelto(): number {
+    const paga = Number(this.montoPagaCon) || 0;
+    const total = this.totalPagar();
+    return paga > total ? Math.round((paga - total) * 100) / 100 : 0;
+  }
+
   getSubtotalNeto(): number {
     return Math.round((this.cart.subtotal() * 0.82) * 100) / 100;
   }
@@ -334,43 +499,72 @@ export class CheckoutComponent implements OnInit {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
   }
 
-  payWithMercadoPago(): void {
-    if (!this.direccion) {
-      this.notify.showError('Por favor ingresa la dirección de entrega');
+  confirmOrder(): void {
+    if (this.tipoPedido() === 'DELIVERY' && !this.direccion.trim()) {
+      this.notify.showError('Ingresa la dirección de entrega');
       return;
     }
+
     const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
     if (!/^9\d{8}$/.test(celularLimpio)) {
-      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
+      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9 (ej. 912345678)');
       return;
     }
+
     if (this.cart.isEmpty()) {
       this.notify.showError('Tu carrito está vacío');
       return;
     }
 
-    this.isProcessing.set(true);
+    if (this.metodoPago() === 'YAPE_OTP') {
+      this.procesarYapeOtp(celularLimpio);
+      return;
+    }
 
+    if (this.metodoPago() === 'TARJETA') {
+      this.procesarMercadoPagoTarjeta(celularLimpio);
+      return;
+    }
+
+    if (this.metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
+      this.procesarContraPago(celularLimpio);
+    }
+  }
+
+  private procesarYapeOtp(celularCliente: string): void {
+    const yapeTel = this.celularYape.replace(/\D/g, '');
+    if (!/^9\d{8}$/.test(yapeTel)) {
+      this.notify.showError('Celular Yape inválido', 'Debe ser un número de 9 dígitos');
+      return;
+    }
+
+    const otp = (this.otpYape || '').trim();
+    if (!/^\d{6}$/.test(otp)) {
+      this.notify.showError('Código OTP inválido', 'El código de aprobación de Yape debe tener exactamente 6 dígitos');
+      return;
+    }
+
+    this.isProcessing.set(true);
     const currentUser = this.auth.currentUser();
-    // RF21: Se crea primero la orden real; el webhook de MP la confirmará y actualizará el estado
+
     const orderData: Order = {
       id: '0',
       codigoSeguimiento: '',
       cliente: {
         nombre: currentUser?.nombre || 'Cliente San Pollo',
-        celular: celularLimpio,
+        celular: celularCliente,
         correo: currentUser?.correo,
-        direccion: this.direccion,
+        direccion: this.tipoPedido() === 'DELIVERY' ? this.direccion : 'Recojo en Tienda San Pollo Principal',
         referencia: this.instrucciones
       },
       items: [...this.cart.items()],
-      tipo: 'DELIVERY',
-      estado: 'PENDIENTE_PAGO',
-      metodoPago: 'TARJETA',
+      tipo: this.tipoPedido(),
+      estado: 'RECIBIDO',
+      metodoPago: 'YAPE_OTP',
       subtotal: this.cart.subtotal(),
-      costoEnvio: this.cart.costoEnvio(),
-      descuento: this.cart.descuento(),
-      total: this.cart.total(),
+      costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
+      descuento: 0,
+      total: this.totalPagar(),
       notasGenerales: this.instrucciones,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -378,15 +572,63 @@ export class CheckoutComponent implements OnInit {
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        // Guardar en localStorage para que CheckoutStatusComponent muestre el código
-        try {
-          localStorage.setItem('sanpollo_last_order', JSON.stringify({
-            id: createdOrder.id,
-            code: createdOrder.codigoSeguimiento,
-            total: createdOrder.total
-          }));
-        } catch (e) { /* storage bloqueado en modo privado */ }
+        const realOrderId = typeof createdOrder.id === 'number'
+          ? createdOrder.id
+          : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
 
+        this.paymentService.pagarConYapeOtp(realOrderId, createdOrder.total, yapeTel, otp, currentUser?.correo).subscribe({
+          next: (tx) => {
+            this.cart.clearCart();
+            this.isProcessing.set(false);
+            if (tx.estado === 'APROBADO') {
+              this.notify.showSuccess('¡Pago Yape aprobado!', 'Tu pedido ingresó directo a preparación en cocina.');
+              this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
+            } else {
+              this.notify.showError('Código Yape no válido', tx.numeroOperacion || 'Verifica el código en tu app e intenta de nuevo.');
+            }
+          },
+          error: (err) => {
+            this.isProcessing.set(false);
+            this.notify.showError('Error al procesar Yape', err?.message || 'Intenta nuevamente.');
+          }
+        });
+      },
+      error: (err) => {
+        this.isProcessing.set(false);
+        this.notify.showError('No se pudo registrar la orden', err?.message || 'Intenta nuevamente.');
+      }
+    });
+  }
+
+  private procesarMercadoPagoTarjeta(celularCliente: string): void {
+    this.isProcessing.set(true);
+    const currentUser = this.auth.currentUser();
+
+    const orderData: Order = {
+      id: '0',
+      codigoSeguimiento: '',
+      cliente: {
+        nombre: currentUser?.nombre || 'Cliente San Pollo',
+        celular: celularCliente,
+        correo: currentUser?.correo,
+        direccion: this.tipoPedido() === 'DELIVERY' ? this.direccion : 'Recojo en Tienda San Pollo Principal',
+        referencia: this.instrucciones
+      },
+      items: [...this.cart.items()],
+      tipo: this.tipoPedido(),
+      estado: 'RECIBIDO',
+      metodoPago: 'TARJETA',
+      subtotal: this.cart.subtotal(),
+      costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
+      descuento: 0,
+      total: this.totalPagar(),
+      notasGenerales: this.instrucciones,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    this.ordersService.createOrder(orderData).subscribe({
+      next: (createdOrder) => {
         const realOrderId = typeof createdOrder.id === 'number'
           ? createdOrder.id
           : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
@@ -400,83 +642,71 @@ export class CheckoutComponent implements OnInit {
               setTimeout(() => {
                 window.location.href = redirectUrl;
               }, 800);
-            } else {
-              this.notify.showError('Mercado Pago no devolvió una URL de pago. Intenta de nuevo.');
             }
           },
           error: () => {
             this.isProcessing.set(false);
-            this.notify.showError('No se pudo conectar con Mercado Pago. Verifica que el servicio de pagos esté activo.');
+            this.notify.showError('No se pudo conectar con Mercado Pago.');
           }
         });
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
+        this.notify.showError('No se pudo registrar la orden', err?.message);
       }
     });
   }
 
-  confirmOrder(): void {
-    if (this.metodoPago() === 'TARJETA') {
-      this.payWithMercadoPago();
+  private procesarContraPago(celularCliente: string): void {
+    if (this.sancionActiva()) {
+      this.notify.showError('Pago en efectivo bloqueado', 'Debes pagar con un método digital.');
       return;
     }
 
-    if (!this.direccion) {
-      this.notify.showError('Por favor ingresa la dirección de entrega');
-      return;
-    }
-
-    const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
-    if (!/^9\d{8}$/.test(celularLimpio)) {
-      this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9, ej. 912345678');
-      return;
-    }
-
-    if (this.cart.isEmpty()) {
-      this.notify.showError('Tu carrito está vacío');
+    const paga = Number(this.montoPagaCon) || this.totalPagar();
+    if (paga < this.totalPagar()) {
+      this.notify.showError('Monto de pago insuficiente', `El monto debe ser al menos de S/ ${this.totalPagar().toFixed(2)}`);
       return;
     }
 
     this.isProcessing.set(true);
-
     const currentUser = this.auth.currentUser();
-    const clienteNombre = currentUser?.nombre || 'Cliente San Pollo';
-    const clienteCelular = celularLimpio;
 
     const orderData: Order = {
       id: '0',
       codigoSeguimiento: '',
       cliente: {
-        nombre: clienteNombre,
-        celular: clienteCelular,
+        nombre: currentUser?.nombre || 'Cliente San Pollo',
+        celular: celularCliente,
         correo: currentUser?.correo,
-        direccion: this.direccion,
+        direccion: this.tipoPedido() === 'DELIVERY' ? this.direccion : 'Recojo en Tienda San Pollo Principal',
         referencia: this.instrucciones
       },
       items: [...this.cart.items()],
-      tipo: 'DELIVERY',
-      estado: 'PENDIENTE_PAGO',
-      metodoPago: this.metodoPago(),
+      tipo: this.tipoPedido(),
+      estado: 'PENDIENTE_CONFIRMACION',
+      metodoPago: 'EFECTIVO_CONTRAENTREGA',
       subtotal: this.cart.subtotal(),
-      costoEnvio: this.cart.costoEnvio(),
-      descuento: this.cart.descuento(),
-      total: this.cart.total(),
+      costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
+      descuento: 0,
+      total: this.totalPagar(),
       notasGenerales: this.instrucciones,
+      montoPagaCon: paga,
+      vueltoEstimado: this.calcularVuelto(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        // El teléfono Yape/Plin es el del propio cliente que paga: sin él, el gateway
-        // rechaza el cobro en lugar de enviarlo a un número inventado.
-        this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, this.metodoPago(), celularLimpio).subscribe({
+        this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, 'EFECTIVO_CONTRAENTREGA', celularCliente).subscribe({
           next: () => {
             this.cart.clearCart();
             this.isProcessing.set(false);
-            this.notify.showSuccess(`¡${etiquetaPedido(createdOrder)} confirmado!`, 'Pagas al repartidor en efectivo al recibir tu pedido.');
+            this.notify.showSuccess(
+              `¡${etiquetaPedido(createdOrder)} registrado!`,
+              'Te llamaremos en breve al ' + celularCliente + ' para confirmar tu pedido y vuelto.'
+            );
             this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
           },
           error: () => {
@@ -488,7 +718,7 @@ export class CheckoutComponent implements OnInit {
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
+        this.notify.showError('No se pudo registrar la orden', err?.message);
       }
     });
   }

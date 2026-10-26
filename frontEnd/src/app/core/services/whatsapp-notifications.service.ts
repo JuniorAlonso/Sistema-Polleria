@@ -18,6 +18,7 @@ export interface AjustesWhatsapp {
   presupuestoDia: number;
   horaDesde: number;
   horaHasta: number;
+  operativoTodoElDia: boolean;
   breakerBaseMs: number;
   breakerMaxMs: number;
   /** Celular del admin (normalizado 51 + 9 dígitos) o null si aún no se configuró. */
@@ -35,6 +36,7 @@ export interface PresupuestoWhatsapp {
 export interface VentanaWhatsapp {
   horaDesde: number;
   horaHasta: number;
+  operativoTodoElDia: boolean;
   abierta: boolean;
 }
 
@@ -171,6 +173,16 @@ export class WhatsappNotificationsService {
     this.actualizarAjustes(cambios).pipe(
       tap(ajustes => {
         this.ajustes.set(ajustes);
+        this.gobernador.update(actual => actual ? {
+          ...actual,
+          ventana: {
+            ...actual.ventana,
+            horaDesde: ajustes.horaDesde,
+            horaHasta: ajustes.horaHasta,
+            operativoTodoElDia: ajustes.operativoTodoElDia,
+            abierta: ajustes.operativoTodoElDia || actual.ventana.abierta
+          }
+        } : actual);
         this.ajustesError.set(null);
         this.guardandoAjustes.set(false);
       }),

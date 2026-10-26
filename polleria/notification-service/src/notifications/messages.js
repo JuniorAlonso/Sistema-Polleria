@@ -1,6 +1,13 @@
 const config = require('../config');
 
-const ESTADOS_DELIVERY = ['EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO'];
+const ESTADOS_DELIVERY = [
+    'EN_PREPARACION',
+    'PREPARANDO',
+    'LISTO_PARA_ENTREGAR',
+    'EN_CAMINO',
+    'EN_PUERTA',
+    'ENTREGADO'
+];
 
 const FIRMA = 'San Pollo de Ica';
 
@@ -62,7 +69,13 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
 
     switch (estadoNuevo) {
         case 'EN_PREPARACION':
-            cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto.`;
+        case 'PREPARANDO':
+            cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto o esté listo.`;
+            break;
+
+        case 'LISTO':
+        case 'LISTO_PARA_ENTREGAR':
+            cuerpo = `¡Tu pedido N.° ${numero} ya está listo! Si elegiste Recojo en Tienda, ya puedes acercarte a recogerlo a nuestro local. Recuerda que tienes hasta 1 hora para retirarlo.`;
             break;
 
         case 'EN_CAMINO':
@@ -74,8 +87,12 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
             }
             break;
 
+        case 'EN_PUERTA':
+            cuerpo = `¡El repartidor ya está en tu puerta con tu pedido N.° ${numero}! Por favor sal a recibirlo.`;
+            break;
+
         case 'ENTREGADO':
-            cuerpo = `Tu pedido N.° ${numero} fue entregado. Gracias por elegirnos.\n\n` +
+            cuerpo = `Tu pedido N.° ${numero} fue entregado. ¡Muchas gracias por elegir San Pollo!\n\n` +
                 'Si tienes un momento, nos ayudaría mucho conocer tu opinión sobre el pedido.';
             break;
 

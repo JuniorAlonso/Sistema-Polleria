@@ -11,6 +11,7 @@ services:
     # se saltan en silencio (`too many clients already`) y una suite roja parece verde.
     command: ["postgres", "-c", "max_connections=300"]
     environment:
+      TZ: America/Lima
       POSTGRES_DB: polleria
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres123
@@ -278,6 +279,7 @@ services:
       - "3001:3001"
     environment:
       PORT: 3001
+      TZ: America/Lima
       DATABASE_URL: postgres://postgres:postgres123@postgres:5432/polleria
       JWT_SECRET: sanpollo-dev-secret-key-2026-super-segura-256bits-minimo
       NOTIFICATION_API_KEY: sanpollo-dev-notification-key

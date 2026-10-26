@@ -38,6 +38,8 @@ class ColaEnvios {
         this.procesando = false;
         this.ultimoEnvio = 0;
         this.reanudacionPendiente = false;
+        this.timerReanudacion = null;
+        this.resolverReanudacion = null;
     }
 
     // Espera efectiva: base ± un porcentaje aleatorio configurable (jitter).
@@ -52,6 +54,19 @@ class ColaEnvios {
     add(trabajo) {
         this.trabajos.push(trabajo);
         this._ejecutar();
+    }
+
+    /** Despierta la cola cuando un ajuste cambia el motivo de pausa. */
+    despertar() {
+        if (this.timerReanudacion) {
+            clearTimeout(this.timerReanudacion);
+            this.timerReanudacion = null;
+            this.reanudacionPendiente = false;
+            const resolver = this.resolverReanudacion;
+            this.resolverReanudacion = null;
+            resolver?.();
+        }
+        if (this.trabajos.length > 0 && !this.procesando) this._ejecutar();
     }
 
     get pendientes() {
@@ -112,12 +127,20 @@ class ColaEnvios {
     _programarReanudacion(esperarMs) {
         if (this.reanudacionPendiente) return;
         this.reanudacionPendiente = true;
-        this.dormir(Math.max(1, esperarMs))
-            .catch(() => {})
-            .then(() => {
-                this.reanudacionPendiente = false;
-                if (this.trabajos.length > 0) this._ejecutar();
-            });
+        let completar;
+        const despertar = new Promise(resolve => { completar = resolve; });
+        this.resolverReanudacion = completar;
+        if (this.dormir === dormirReal) {
+            this.timerReanudacion = setTimeout(completar, Math.max(1, esperarMs));
+        } else {
+            this.dormir(Math.max(1, esperarMs)).catch(() => {}).then(completar);
+        }
+        despertar.then(() => {
+            this.timerReanudacion = null;
+            this.resolverReanudacion = null;
+            this.reanudacionPendiente = false;
+            if (this.trabajos.length > 0) this._ejecutar();
+        });
     }
 }
 

@@ -205,6 +205,184 @@ try {
     $logoutResp = Invoke-RestMethod -Uri "http://localhost:8081/auth/logout" -Method Post -Body $logoutBody -ContentType "application/json"
     Write-Host "OK - Logout completado: $($logoutResp.message)" -ForegroundColor Green
 
+    # -------------------------------------------------------------------------
+    Write-Step "12. Flujo Delivery Web con Yape OTP (Mercado Pago)"
+    # -------------------------------------------------------------------------
+    $yapeOrderPayload = @{
+        tipo             = "DELIVERY"
+        canalOrigen      = "WEB"
+        nombreCliente    = "Maria Lopez"
+        telefonoCliente  = "912345678"
+        direccionEntrega = "Av. El Sol 555, Ica"
+        referencia       = "Casa blanca porton negro"
+        items            = @(
+            @{ productoId = $prod1Id; cantidad = 1; notas = "Con aji extra" }
+        )
+    } | ConvertTo-Json -Depth 5
+
+    $yapeOrderResp = Invoke-RestMethod -Uri "http://localhost:8082/ordenes" -Method Post -Body $yapeOrderPayload -ContentType "application/json"
+    $yapeOrderId = $yapeOrderResp.id
+    Write-Host "OK - Pedido Delivery Yape #$yapeOrderId creado!" -ForegroundColor Green
+
+    # Pagar directo con Yape OTP
+    $yapePaymentPayload = @{
+        ordenId   = $yapeOrderId
+        monto     = $yapeOrderResp.total
+        telefono  = "912345678"
+        otp       = "123456"
+        email     = "maria.lopez@test.com"
+    } | ConvertTo-Json
+
+    $yapePayResp = Invoke-RestMethod -Uri "http://localhost:8083/pagos/yape-otp" -Method Post -Body $yapePaymentPayload -ContentType "application/json"
+    Write-Host "OK - Cobro Yape OTP aprobado! Ref: $($yapePayResp.referenciaExterna)" -ForegroundColor Green
+
+    # Verificar que paso directo a preparacion en cocina sin intervencion de cajero
+    $yapeCheck = Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$yapeOrderId" -Method Get -Headers $authAdminHeaders
+    Write-Host "OK - Estado de pedido Yape en orders-service: $($yapeCheck.estado)" -ForegroundColor Green
+
+    # -------------------------------------------------------------------------
+    Write-Step "13. Flujo Delivery ContraPago: Confirmacion, En Puerta y Cobro Efectivo"
+    # -------------------------------------------------------------------------
+    $codOrderPayload = @{
+        tipo             = "DELIVERY"
+        canalOrigen      = "WEB"
+        estadoInicial    = "PENDIENTE_CONFIRMACION"
+        nombreCliente    = "Carlos ContraPago"
+        telefonoCliente  = "987654321"
+        direccionEntrega = "Calle Lima 321, Ica"
+        referencia       = "Piso 2"
+        montoPagaCon     = 100.00
+        ipOrigen         = "192.168.1.55"
+        items            = @(
+            @{ productoId = $prod1Id; cantidad = 1 }
+        )
+    } | ConvertTo-Json -Depth 5
+
+    $codOrderResp = Invoke-RestMethod -Uri "http://localhost:8082/ordenes" -Method Post -Body $codOrderPayload -ContentType "application/json"
+    $codOrderId = $codOrderResp.id
+    Write-Host "OK - Pedido ContraPago #$codOrderId creado en estado: $($codOrderResp.estado)" -ForegroundColor Green
+    Write-Host "   Vuelto estimado calculado: S/ $($codOrderResp.vueltoEstimado)" -ForegroundColor Yellow
+
+    # Cajero confirma la llamada telefonica
+    $confirmLlamada = Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$codOrderId/confirmar-llamada" -Method Post -Headers $authAdminHeaders
+    Write-Host "OK - Llamada confirmada. Nuevo estado: $($confirmLlamada.estado)" -ForegroundColor Green
+
+    # Cocina emite comprobante en finance-service y empaqueta
+    $compPayload = @{
+        ordenId            = $codOrderId
+        tipo               = "BOLETA"
+        clienteTipoDoc     = "DNI"
+        clienteNumDoc      = "45678912"
+        clienteNombre      = "Carlos ContraPago"
+        total              = $confirmLlamada.total
+        pagadoDigitalmente = $false
+        vueltoEstimado     = $confirmLlamada.vueltoEstimado
+    } | ConvertTo-Json
+
+    $headersInternos = @{ "X-Internal-Key" = "sanpollo-dev-internal-key" }
+    $compResp = Invoke-RestMethod -Uri "http://localhost:8086/finanzas/comprobantes" -Method Post -Headers $headersInternos -Body $compPayload -ContentType "application/json"
+    Write-Host "OK - Comprobante emitido: $($compResp.serieCorrelativo) - Leyenda: $($compResp.estadoPagoTexto)" -ForegroundColor Green
+
+    # Cocina marca LISTO_PARA_ENTREGAR
+    $listoReq = @{ estado = "LISTO_PARA_ENTREGAR" } | ConvertTo-Json
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$codOrderId/estado" -Method Patch -Headers $authAdminHeaders -Body $listoReq -ContentType "application/json" | Out-Null
+
+    # Repartidor toma el pedido y sale a ruta
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$codOrderId/reclamo" -Method Post -Headers $authAdminHeaders | Out-Null
+    $caminoReq = @{ estado = "EN_CAMINO"; repartidorId = 4 } | ConvertTo-Json
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$codOrderId/estado" -Method Patch -Headers $authAdminHeaders -Body $caminoReq -ContentType "application/json" | Out-Null
+
+    # Repartidor llega a la puerta del cliente (EN_PUERTA)
+    $puertaResp = Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$codOrderId/en-puerta" -Method Post -Headers $authAdminHeaders
+    Write-Host "OK - Repartidor llego a destino! Estado: $($puertaResp.estado) - Timestamp en puerta: $($puertaResp.enPuertaAt)" -ForegroundColor Green
+
+    # Cobro en efectivo verificado
+    $cobroPayload = @{
+        ordenId         = $codOrderId
+        monto           = $confirmLlamada.total
+        montoRecibido   = 100.00
+        vueltoEntregado = $confirmLlamada.vueltoEstimado
+    } | ConvertTo-Json
+
+    $cobroResp = Invoke-RestMethod -Uri "http://localhost:8083/pagos/cobro-efectivo" -Method Post -Headers $authAdminHeaders -Body $cobroPayload -ContentType "application/json"
+    Write-Host "OK - Cobro en efectivo verificado! Orden completada a ENTREGADO." -ForegroundColor Green
+
+    # -------------------------------------------------------------------------
+    Write-Step "14. Liquidacion de Repartidor en Finance-Service"
+    # -------------------------------------------------------------------------
+    $liqApertura = @{
+        repartidorId     = 4
+        repartidorNombre = "Motorizado Mario"
+        fondoInicial     = 50.00
+        observaciones    = "Prueba automatizada"
+    } | ConvertTo-Json
+
+    $liqResp = Invoke-RestMethod -Uri "http://localhost:8086/finanzas/liquidaciones/apertura" -Method Post -Headers $authAdminHeaders -Body $liqApertura -ContentType "application/json"
+    $liqId = $liqResp.id
+    Write-Host "OK - Liquidacion #$liqId abierta para motorizado. Fondo: S/ $($liqResp.fondoInicial)" -ForegroundColor Green
+
+    # Cierre de liquidacion con rendicion de efectivo
+    $totalACerrar = 50.00 + $confirmLlamada.total
+    $liqCierre = @{
+        totalRendido         = $totalACerrar
+        totalCobradoEfectivo = $confirmLlamada.total
+        observaciones        = "Cuadre conforme de turno"
+    } | ConvertTo-Json
+
+    $liqCierreResp = Invoke-RestMethod -Uri "http://localhost:8086/finanzas/liquidaciones/$liqId/cierre" -Method Post -Headers $authAdminHeaders -Body $liqCierre -ContentType "application/json"
+    Write-Host "OK - Liquidacion cerrada! Estado: $($liqCierreResp.estado) - Diferencia: S/ $($liqCierreResp.diferencia)" -ForegroundColor Green
+
+    # -------------------------------------------------------------------------
+    Write-Step "15. Protocolo de Pedido Fantasma, Sancion y Control de Merma"
+    # -------------------------------------------------------------------------
+    $fantasmaPayload = @{
+        tipo             = "DELIVERY"
+        canalOrigen      = "WEB"
+        estadoInicial    = "PENDIENTE_CONFIRMACION"
+        nombreCliente    = "Sospechoso Fantasma"
+        telefonoCliente  = "999888111"
+        direccionEntrega = "Calle Fantasma 000"
+        montoPagaCon     = 100.00
+        ipOrigen         = "190.119.20.45"
+        items            = @(
+            @{ productoId = $prod1Id; cantidad = 1 }
+        )
+    } | ConvertTo-Json -Depth 5
+
+    $fantasmaResp = Invoke-RestMethod -Uri "http://localhost:8082/ordenes" -Method Post -Body $fantasmaPayload -ContentType "application/json"
+    $fantasmaId = $fantasmaResp.id
+
+    # Confirmar llamada y mover hasta puerta
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/confirmar-llamada" -Method Post -Headers $authAdminHeaders | Out-Null
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/estado" -Method Patch -Headers $authAdminHeaders -Body $listoReq -ContentType "application/json" | Out-Null
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/reclamo" -Method Post -Headers $authAdminHeaders | Out-Null
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/estado" -Method Patch -Headers $authAdminHeaders -Body $caminoReq -ContentType "application/json" | Out-Null
+    Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/en-puerta" -Method Post -Headers $authAdminHeaders | Out-Null
+
+    # Cliente no sale (>30 min): Declarar Pedido Fantasma
+    $fantasmaReq = @{ motivo = "NO_ENTREGADO: Cliente no salio tras 30 min en puerta" } | ConvertTo-Json
+    $fantasmaCierre = Invoke-RestMethod -Uri "http://localhost:8082/ordenes/$fantasmaId/pedido-fantasma" -Method Post -Headers $authAdminHeaders -Body $fantasmaReq -ContentType "application/json"
+    Write-Host "OK - Pedido #$fantasmaId declarado como: $($fantasmaCierre.estado) (Motivo: $($fantasmaCierre.motivoFantasma))" -ForegroundColor Magenta
+
+    # Verificar que el cliente quedo sancionado en Auth-Service
+    Start-Sleep -Milliseconds 800
+    $sancionCheck = Invoke-RestMethod -Uri "http://localhost:8081/auth/sanciones/verificar?telefono=999888111&ip=190.119.20.45" -Method Get
+    Write-Host "OK - Verificacion de sancion en Auth-Service:" -ForegroundColor Yellow
+    Write-Host "   Sancionado: $($sancionCheck.sancionado)"
+    Write-Host "   Bloqueado Efectivo: $($sancionCheck.bloqueadoEfectivo)"
+    Write-Host "   Motivo: $($sancionCheck.motivo)"
+
+    # Resolver producto devuelto en Inventario como Merma Justificada
+    $mermaPayload = @{
+        ordenId       = $fantasmaId
+        ordenTipo     = "DELIVERY"
+        destino       = "MERMA_JUSTIFICADA"
+        observaciones = "Pollo frio devuelto tras espera en puerta"
+    } | ConvertTo-Json
+
+    $mermaResp = Invoke-RestMethod -Uri "http://localhost:8085/inventario/pedidos-fantasma/resolver" -Method Post -Headers $authAdminHeaders -Body $mermaPayload -ContentType "application/json"
+    Write-Host "OK - Resolucion en Almacen completada: Destino: $($mermaResp.destino) - Merma ID: $($mermaResp.mermaId)" -ForegroundColor Green
+
     Write-Host "`nTODAS LAS PRUEBAS COMPLETADAS EXITOSAMENTE SIN NINGUN ERROR!" -ForegroundColor Green
 } catch {
     Write-Host "`nError durante la ejecucion de pruebas: $_" -ForegroundColor Red

@@ -111,7 +111,7 @@ test('GET /ajustes es solo ADMIN y devuelve los ajustes vigentes con el estado d
         assert.strictEqual(body.gobernador.pausada, false);
         assert.deepStrictEqual(body.gobernador.presupuestoHora, { enviados: 0, limite: 40 });
         assert.deepStrictEqual(body.gobernador.presupuestoDia, { enviados: 0, limite: 500 });
-        assert.deepStrictEqual(body.gobernador.ventana, { horaDesde: 11, horaHasta: 23, abierta: true });
+        assert.deepStrictEqual(body.gobernador.ventana, { horaDesde: 11, horaHasta: 23, operativoTodoElDia: false, abierta: true });
         assert.strictEqual(body.gobernador.breaker.estado, 'cerrado');
     });
 });
@@ -144,6 +144,34 @@ test('PATCH /ajustes es solo ADMIN, aplica el cambio en caliente y se ve en GET 
         const status = await fetch(`${base}/status`);
         const estado = await status.json();
         assert.strictEqual(estado.antiBaneo.presupuestoHora.limite, 7, 'el gobernador lee la edición en caliente');
+    });
+});
+
+test('el ADMIN puede activar y desactivar operativoTodoElDia; el gobernador refleja la ventana abierta sin cambiar horarios', async () => {
+    await conApp({ horaDesde: 11, horaHasta: 23 }, async ({ base, ajustes, service }) => {
+        const antes = ajustes.obtener();
+        const activar = await patchAjustes(base, { operativoTodoElDia: true });
+        assert.strictEqual(activar.status, 200);
+        assert.strictEqual(activar.body.operativoTodoElDia, true);
+        assert.strictEqual(activar.body.horaDesde, 11);
+        assert.strictEqual(activar.body.horaHasta, 23);
+        assert.strictEqual(service.estadoAntiBaneo().ventana.abierta, true);
+        assert.strictEqual(ajustes.obtener().horaDesde, antes.horaDesde);
+
+        const desactivar = await patchAjustes(base, { operativoTodoElDia: false });
+        assert.strictEqual(desactivar.status, 200);
+        assert.strictEqual(desactivar.body.operativoTodoElDia, false);
+    });
+});
+
+test('operativoTodoElDia requiere booleano y solo ADMIN puede modificarlo', async () => {
+    await conApp({}, async ({ base, ajustes }) => {
+        const antes = ajustes.obtener();
+        const cliente = await patchAjustes(base, { operativoTodoElDia: true }, { Authorization: `Bearer ${token('CLIENTE')}` });
+        assert.strictEqual(cliente.status, 403);
+        const invalido = await patchAjustes(base, { operativoTodoElDia: 'true' });
+        assert.strictEqual(invalido.status, 400);
+        assert.deepStrictEqual(ajustes.obtener(), antes);
     });
 });
 

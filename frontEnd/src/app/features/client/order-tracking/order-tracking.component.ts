@@ -60,11 +60,12 @@ import { Subscription, interval } from 'rxjs';
                       <span 
                         class="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide"
                         [ngClass]="{
-                          'bg-amber-500/20 text-amber-400 border border-amber-500/30': order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO',
-                          'bg-purple-500/20 text-purple-300 border border-purple-500/30': order.estado === 'LISTO_COCINA',
-                          'bg-sky-500/20 text-sky-300 border border-sky-500/30': order.estado === 'EN_REPARTO',
-                          'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30': order.estado === 'COMPLETADO',
-                          'bg-rose-500/20 text-rose-300 border border-rose-500/30': order.estado === 'CANCELADO'
+                          'bg-amber-500/20 text-amber-400 border border-amber-500/30': order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO' || order.estado === 'PREPARANDO' || order.estado === 'PENDIENTE_CONFIRMACION' || order.estado === 'PENDIENTE_PAGO',
+                          'bg-purple-500/20 text-purple-300 border border-purple-500/30': order.estado === 'LISTO_COCINA' || order.estado === 'LISTO' || order.estado === 'LISTO_PARA_ENTREGAR',
+                          'bg-sky-500/20 text-sky-300 border border-sky-500/30': order.estado === 'EN_REPARTO' || order.estado === 'EN_CAMINO',
+                          'bg-sky-400 text-slate-950 font-black animate-bounce': order.estado === 'EN_PUERTA',
+                          'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30': order.estado === 'COMPLETADO' || order.estado === 'ENTREGADO',
+                          'bg-rose-500/20 text-rose-300 border border-rose-500/30': order.estado === 'CANCELADO' || order.estado === 'PEDIDO_FANTASMA'
                         }"
                       >
                         {{ getStatusLabel(order.estado) }}
@@ -1295,13 +1296,22 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   getStatusLabel(status: OrderStatus): string {
     switch (status) {
-      case 'PENDIENTE_PAGO': return 'Pendiente';
+      case 'PENDIENTE_CONFIRMACION': return 'Llamada Pendiente';
+      case 'PENDIENTE_PAGO': return 'Pendiente de Pago';
+      case 'RECIBIDO': return 'Recibido';
       case 'PAGADO': return 'Pagado';
+      case 'PREPARANDO':
       case 'EN_PREPARACION': return 'En Preparación';
-      case 'LISTO_COCINA': return 'Listo Cocina';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+      case 'LISTO_COCINA': return 'Listo';
+      case 'EN_CAMINO':
       case 'EN_REPARTO': return 'En Camino';
+      case 'EN_PUERTA': return '¡En tu Puerta!';
+      case 'ENTREGADO':
       case 'COMPLETADO': return 'Completado';
       case 'CANCELADO': return 'Cancelado';
+      case 'PEDIDO_FANTASMA': return 'No Entregado';
       default: return status;
     }
   }

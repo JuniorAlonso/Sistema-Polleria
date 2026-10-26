@@ -27,19 +27,32 @@ public class OrdenService {
     private final NotificationService notificationService;
     private final SalonEventPublisher salonEventPublisher;
     private final NumeroPedidoService numeroPedidoService;
+    private final SancionDispatcherService sancionDispatcherService;
 
     private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
             OrdenEstado.ENTREGADO,
-            OrdenEstado.CANCELADO
+            OrdenEstado.CANCELADO,
+            OrdenEstado.PEDIDO_FANTASMA
     );
 
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
         validarRequest(request);
 
+        // Validación de sanciones en backend para ContraPago (Anti-Bypass de cliente)
+        if (request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION) {
+            if (sancionDispatcherService != null && sancionDispatcherService.tieneSancionActiva(
+                    request.getTelefonoCliente(), null, request.getIpOrigen())) {
+                throw new ConflictoDeEstadoException(
+                        "El cliente con teléfono " + request.getTelefonoCliente()
+                        + " registra una sanción por Pedido Fantasma y no puede elegir ContraPago en efectivo.");
+            }
+        }
+
         Orden orden = Orden.builder()
                 .tipo(request.getTipo())
                 .canalOrigen(resolverCanalOrigen(request))
+                .estado(request.getEstadoInicial() != null ? request.getEstadoInicial() : OrdenEstado.RECIBIDO)
                 .clienteId(usuarioId)
                 // En salón el usuario autenticado es el mozo que toma la comanda: se registra
                 // también en mozoId para que la ventana del mozo y el admin lo muestren.
@@ -50,6 +63,8 @@ public class OrdenService {
                 .nombreCliente(request.getNombreCliente())
                 .telefonoCliente(request.getTelefonoCliente())
                 .observaciones(request.getObservaciones())
+                .montoPagaCon(request.getMontoPagaCon())
+                .ipOrigen(request.getIpOrigen())
                 .build();
 
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() != null) {
@@ -84,6 +99,9 @@ public class OrdenService {
 
         orden.getItems().addAll(items);
         orden.recalcularTotal();
+        if (orden.getMontoPagaCon() != null && orden.getMontoPagaCon().compareTo(orden.getTotal()) > 0) {
+            orden.setVueltoEstimado(orden.getMontoPagaCon().subtract(orden.getTotal()));
+        }
         numeroPedidoService.asignar(orden);
 
         ordenRepository.save(orden);
@@ -125,7 +143,7 @@ public class OrdenService {
         orden.getItems().addAll(nuevos);
         orden.recalcularTotal();
 
-        if (orden.getEstado() == OrdenEstado.LISTO) {
+        if (orden.getEstado().esListo()) {
             orden.setEstado(OrdenEstado.EN_PREPARACION);
         }
 
@@ -239,11 +257,23 @@ public class OrdenService {
             orden.setRepartidorId(request.getRepartidorId());
         }
 
+        if (request.getEstado() == OrdenEstado.EN_PUERTA && orden.getEnPuertaAt() == null) {
+            orden.setEnPuertaAt(LocalDateTime.now());
+        }
+
+        if (request.getEstado().esListo() && orden.getListoAt() == null) {
+            orden.setListoAt(LocalDateTime.now());
+        }
+
+        if (request.getEstado() == OrdenEstado.PEDIDO_FANTASMA && orden.getMotivoFantasma() == null) {
+            orden.setMotivoFantasma(orden.getTipo() == OrdenTipo.DELIVERY ? "NO_ENTREGADO" : "ABANDONADO");
+        }
+
         orden.setEstado(request.getEstado());
 
         // Liberar mesa cuando la orden termina en salón
         if (orden.getMesa() != null &&
-                (request.getEstado() == OrdenEstado.ENTREGADO || request.getEstado() == OrdenEstado.CANCELADO)) {
+                (request.getEstado() == OrdenEstado.ENTREGADO || request.getEstado() == OrdenEstado.CANCELADO || request.getEstado() == OrdenEstado.PEDIDO_FANTASMA)) {
             orden.getMesa().setEstado(MesaEstado.LIBRE);
         }
 
@@ -251,7 +281,11 @@ public class OrdenService {
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
         notificationService.notificarCambioEstado(orden, request.getEstado());
 
-        if (request.getEstado() == OrdenEstado.LISTO) {
+        if (request.getEstado() == OrdenEstado.PEDIDO_FANTASMA && sancionDispatcherService != null) {
+            sancionDispatcherService.registrarSancionPorPedidoFantasma(orden, orden.getMotivoFantasma());
+        }
+
+        if (request.getEstado().esListo()) {
             salonEventPublisher.notificarPedidoListo(orden);
         }
         if (orden.getMesa() != null) {
@@ -286,7 +320,7 @@ public class OrdenService {
             return OrdenResponse.from(orden);
         }
 
-        if (orden.getEstado() != OrdenEstado.LISTO) {
+        if (!orden.getEstado().esListo()) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " todavía no está lista (estado actual: "
                     + orden.getEstado() + ").");
@@ -329,7 +363,7 @@ public class OrdenService {
                     + " es de tipo " + orden.getTipo() + ".");
         }
 
-        if (orden.getEstado() != OrdenEstado.LISTO) {
+        if (!orden.getEstado().esListo()) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + id + " todavía no está listo para entregar (estado actual: "
                     + orden.getEstado() + ").");
@@ -347,6 +381,94 @@ public class OrdenService {
         return OrdenResponse.from(orden);
     }
 
+    /**
+     * Confirma la llamada de validación para un pedido en PENDIENTE_CONFIRMACION (ContraPago).
+     * Pasa la orden a PREPARANDO para que cocina comience a elaborar.
+     */
+    @Transactional
+    public OrdenResponse confirmarLlamada(Long id, Long cajeroId) {
+        Orden orden = buscarOFallarConBloqueo(id);
+        if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+        }
+        orden.setLlamadaConfirmacionAt(LocalDateTime.now());
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.PREPARANDO);
+        return actualizarEstado(id, req, cajeroId);
+    }
+
+    /**
+     * Registra un intento fallido de llamada para ContraPago.
+     * Si alcanza 2 intentos fallidos, el pedido se cancela automáticamente.
+     */
+    @Transactional
+    public OrdenResponse registrarIntentoLlamada(Long id, Long cajeroId, String observaciones) {
+        Orden orden = buscarOFallarConBloqueo(id);
+        if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+        }
+        int intentos = (orden.getIntentosLlamada() != null ? orden.getIntentosLlamada() : 0) + 1;
+        orden.setIntentosLlamada(intentos);
+        if (observaciones != null && !observaciones.isBlank()) {
+            String obsPrevia = orden.getObservaciones() != null ? orden.getObservaciones() + " | " : "";
+            orden.setObservaciones(obsPrevia + "Intento llamada " + intentos + ": " + observaciones);
+        }
+        if (intentos >= 2) {
+            log.warn("Pedido #{} cancelado tras 2 intentos de llamada fallidos", id);
+            ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+            req.setEstado(OrdenEstado.CANCELADO);
+            return actualizarEstado(id, req, cajeroId);
+        }
+        ordenRepository.save(orden);
+        return OrdenResponse.from(orden);
+    }
+
+    /**
+     * El repartidor notifica que llegó al domicilio del cliente e inicia el cronómetro de 30 min.
+     */
+    @Transactional
+    public OrdenResponse marcarEnPuerta(Long id, Long repartidorId) {
+        Orden orden = buscarOFallarConBloqueo(id);
+        if (orden.getTipo() != OrdenTipo.DELIVERY) {
+            throw new IllegalArgumentException("Solo pedidos de delivery pueden pasar a EN_PUERTA");
+        }
+        if (orden.getEstado() != OrdenEstado.EN_CAMINO) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " debe estar EN_CAMINO para marcar EN_PUERTA (actual: " + orden.getEstado() + ")");
+        }
+        if (orden.getRepartidorId() != null && repartidorId != null && repartidorId > 0
+                && !orden.getRepartidorId().equals(repartidorId)) {
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " está asignado al motorizado #" + orden.getRepartidorId()
+                    + "; el motorizado #" + repartidorId + " no puede marcarlo en puerta.");
+        }
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.EN_PUERTA);
+        req.setRepartidorId(repartidorId);
+        return actualizarEstado(id, req, repartidorId);
+    }
+
+    /**
+     * Declara un pedido como fantasma y dispara el protocolo de sanción y merma.
+     */
+    @Transactional
+    public OrdenResponse declararPedidoFantasma(Long id, String motivo, Long usuarioId) {
+        Orden orden = buscarOFallarConBloqueo(id);
+        if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
+            throw new ConflictoDeEstadoException("El pedido #" + id + " ya está en estado terminal: " + orden.getEstado());
+        }
+        String motivoFinal = (motivo != null && !motivo.isBlank())
+                ? motivo
+                : (orden.getTipo() == OrdenTipo.DELIVERY ? "NO_ENTREGADO" : "ABANDONADO");
+        orden.setMotivoFantasma(motivoFinal);
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.PEDIDO_FANTASMA);
+        return actualizarEstado(id, req, usuarioId);
+    }
+
     private void validarRequest(CrearOrdenRequest request) {
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() == null) {
             throw new IllegalArgumentException("El número de mesa es obligatorio para pedidos de salón");
@@ -362,20 +484,30 @@ public class OrdenService {
         if (actual == nuevo) return;
 
         // Terminal states cannot be changed
-        if (actual == OrdenEstado.ENTREGADO || actual == OrdenEstado.CANCELADO) {
+        if (actual == OrdenEstado.ENTREGADO || actual == OrdenEstado.CANCELADO || actual == OrdenEstado.PEDIDO_FANTASMA) {
             throw new IllegalArgumentException("Transición de estado inválida: " + actual + " → " + nuevo);
         }
 
         // Any active order can be cancelled
         if (nuevo == OrdenEstado.CANCELADO) return;
 
+        // Transitions to PEDIDO_FANTASMA
+        if (nuevo == OrdenEstado.PEDIDO_FANTASMA) {
+            if (tipo == OrdenTipo.DELIVERY && (actual == OrdenEstado.EN_PUERTA || actual == OrdenEstado.EN_CAMINO)) return;
+            if (tipo == OrdenTipo.RECOJO && actual.esListo()) return;
+            throw new IllegalArgumentException("Transición a PEDIDO_FANTASMA no permitida desde " + actual + " para tipo " + tipo);
+        }
+
         boolean valido = switch (actual) {
-            case RECIBIDO -> nuevo == OrdenEstado.EN_PREPARACION;
-            case EN_PREPARACION -> nuevo == OrdenEstado.LISTO;
-            case LISTO -> (tipo == OrdenTipo.DELIVERY)
+            case RECIBIDO -> nuevo.esPreparacion() || nuevo == OrdenEstado.PENDIENTE_CONFIRMACION || nuevo == OrdenEstado.PENDIENTE_PAGO;
+            case PENDIENTE_CONFIRMACION -> nuevo.esPreparacion();
+            case PENDIENTE_PAGO -> nuevo.esPreparacion();
+            case EN_PREPARACION, PREPARANDO -> nuevo.esListo();
+            case LISTO, LISTO_PARA_ENTREGAR -> (tipo == OrdenTipo.DELIVERY)
                     ? (nuevo == OrdenEstado.EN_CAMINO || nuevo == OrdenEstado.ENTREGADO)
                     : (nuevo == OrdenEstado.ENTREGADO);
-            case EN_CAMINO -> nuevo == OrdenEstado.ENTREGADO;
+            case EN_CAMINO -> nuevo == OrdenEstado.EN_PUERTA || nuevo == OrdenEstado.ENTREGADO;
+            case EN_PUERTA -> nuevo == OrdenEstado.ENTREGADO;
             default -> false;
         };
 

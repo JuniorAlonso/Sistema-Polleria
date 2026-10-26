@@ -4,6 +4,7 @@ services:
     container_name: polleria-postgres
     restart: unless-stopped
     environment:
+      TZ: America/Lima
       POSTGRES_DB: polleria
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres123

@@ -83,6 +83,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/register", "/auth/login", "/auth/verify-2fa", "/auth/refresh", "/auth/logout").permitAll()
+                        .requestMatchers("/auth/sanciones/**").permitAll()
                         .requestMatchers("/auth/validate").authenticated()
                         .anyRequest().authenticated()
                 )

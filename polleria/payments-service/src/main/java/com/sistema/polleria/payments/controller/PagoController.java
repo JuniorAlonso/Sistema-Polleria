@@ -1,9 +1,11 @@
 package com.sistema.polleria.payments.controller;
 
+import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.VerificarPagoRequest;
+import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
 import com.sistema.polleria.payments.service.FirmadorComprobantes;
 import com.sistema.polleria.payments.service.PagoService;
 import jakarta.validation.Valid;
@@ -57,6 +59,37 @@ public class PagoController {
 
         Long clienteId = extractUserId(principal);
         return mercadoPagoGateway.crearPreferencia(request, clienteId);
+    }
+
+    /**
+     * Pago directo en Checkout Web con Yape integrado en Mercado Pago (OTP 6 dígitos).
+     * Si es aprobado, pasa la orden DIRECTO a preparación en cocina.
+     */
+    @PostMapping("/yape-otp")
+    @ResponseStatus(HttpStatus.OK)
+    public PagoResponse pagarConYapeOtp(
+            @Valid @RequestBody YapeOtpPagoRequest request,
+            Principal principal,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+
+        Long clienteId = extractUserId(principal);
+        return pagoService.procesarYapeOtp(request, clienteId, authorization != null ? authorization : "");
+    }
+
+    /**
+     * Cobro de efectivo en entrega (ContraPago).
+     * Obligatorio para repartidores o cajero antes de permitir marcar ENTREGADO.
+     */
+    @PostMapping("/cobro-efectivo")
+    @ResponseStatus(HttpStatus.OK)
+    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR','CAJERO')")
+    public PagoResponse registrarCobroEfectivo(
+            @Valid @RequestBody CobroEfectivoRequest request,
+            Principal principal,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+
+        Long operadorId = extractUserId(principal);
+        return pagoService.procesarCobroEfectivo(request, operadorId, authorization != null ? authorization : "");
     }
 
     /**

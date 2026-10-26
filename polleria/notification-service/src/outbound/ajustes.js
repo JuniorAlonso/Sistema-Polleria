@@ -31,8 +31,9 @@ const CAMPOS_NUMERICOS = [
 
 // Datos de contacto configurables (T5, S4/S11/S13): celular peruano o null si está vacío.
 const CAMPOS_TELEFONO = ['numeroAsesor', 'numeroRespaldo', 'numeroYape'];
+const CAMPOS_BOOLEANOS = ['operativoTodoElDia'];
 
-const CAMPOS_AJUSTES = [...CAMPOS_NUMERICOS, ...CAMPOS_TELEFONO];
+const CAMPOS_AJUSTES = [...CAMPOS_NUMERICOS, ...CAMPOS_TELEFONO, ...CAMPOS_BOOLEANOS];
 
 function validarNumericos(valores) {
     for (const campo of CAMPOS_NUMERICOS) {
@@ -88,6 +89,14 @@ function normalizarTelefonos(valores) {
     }
 }
 
+function validarBooleanos(valores) {
+    for (const campo of CAMPOS_BOOLEANOS) {
+        if (valores[campo] !== undefined && typeof valores[campo] !== 'boolean') {
+            throw new RangeError(`${campo} debe ser un valor booleano`);
+        }
+    }
+}
+
 /** Toma solo los campos conocidos y definidos; el resto se queda con la base. */
 function fusionar(parciales, base) {
     const valores = {};
@@ -96,6 +105,7 @@ function fusionar(parciales, base) {
     }
     validarNumericos(valores);
     normalizarTelefonos(valores);
+    validarBooleanos(valores);
     return valores;
 }
 

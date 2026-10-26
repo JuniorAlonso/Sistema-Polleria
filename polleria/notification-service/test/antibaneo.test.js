@@ -134,7 +134,7 @@ test('los ajustes anti-baneo viven en memoria: defaults, edición en caliente y 
     assert.deepStrictEqual(ajustes.obtener(), {
         intervaloMs: 5000, jitterPct: 10, typingMinMs: 1000, typingMaxMs: 4000, typingMsPorCaracter: 40,
         presupuestoHora: 30, presupuestoDia: 200, horaDesde: 11, horaHasta: 23, breakerBaseMs: 60000, breakerMaxMs: 900000,
-        numeroAsesor: null, numeroRespaldo: null, numeroYape: '51934421442'
+        numeroAsesor: null, numeroRespaldo: null, numeroYape: '51934421442', operativoTodoElDia: false
     });
 
     // Edición en caliente (la usará el panel en T5) y descarte del cambio inválido.

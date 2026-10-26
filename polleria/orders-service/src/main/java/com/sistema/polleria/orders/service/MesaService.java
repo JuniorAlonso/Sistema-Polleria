@@ -32,7 +32,8 @@ public class MesaService {
 
     private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
             OrdenEstado.ENTREGADO,
-            OrdenEstado.CANCELADO
+            OrdenEstado.CANCELADO,
+            OrdenEstado.PEDIDO_FANTASMA
     );
 
     public List<MesaResponse> listarTodas() {

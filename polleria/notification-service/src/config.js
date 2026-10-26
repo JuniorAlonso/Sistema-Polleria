@@ -1,3 +1,6 @@
+// Forzar zona horaria oficial del Perú (UTC-5) para todo el proceso
+process.env.TZ = process.env.TZ || 'America/Lima';
+
 const path = require('path');
 require('dotenv').config({ quiet: true });
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
@@ -121,6 +124,8 @@ config.antiBaneo = {
     // Ventana horaria de atención: fuera de [horaDesde, horaHasta) la cola espera, no descarta.
     horaDesde: numeroEnv('WHATSAPP_HORA_DESDE', 11),
     horaHasta: numeroEnv('WHATSAPP_HORA_HASTA', 23),
+    // Control temporal del admin. Se inicializa en false en cada arranque.
+    operativoTodoElDia: false,
 
     // Circuit breaker: backoff exponencial acotado al detectar señales de bloqueo.
     breakerBaseMs: numeroEnv('WHATSAPP_BREAKER_BASE_MS', 60000),

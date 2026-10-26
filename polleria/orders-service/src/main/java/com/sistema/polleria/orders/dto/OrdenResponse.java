@@ -30,6 +30,12 @@ public class OrdenResponse {
     private LocalDateTime actualizadoEn;
     private LocalDateTime servidoEn;
     private Long servidoPor;
+    private LocalDateTime enPuertaAt;
+    private LocalDateTime listoAt;
+    private Integer intentosLlamada;
+    private BigDecimal montoPagaCon;
+    private BigDecimal vueltoEstimado;
+    private String motivoFantasma;
     private List<ItemResponse> items;
 
     @Data
@@ -75,6 +81,12 @@ public class OrdenResponse {
                 .actualizadoEn(o.getActualizadoEn())
                 .servidoEn(o.getServidoEn())
                 .servidoPor(o.getServidoPor())
+                .enPuertaAt(o.getEnPuertaAt())
+                .listoAt(o.getListoAt())
+                .intentosLlamada(o.getIntentosLlamada())
+                .montoPagaCon(o.getMontoPagaCon())
+                .vueltoEstimado(o.getVueltoEstimado())
+                .motivoFantasma(o.getMotivoFantasma())
                 .items(items)
                 .build();
     }

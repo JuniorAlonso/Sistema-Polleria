@@ -24,18 +24,28 @@ export class OrderAdapter {
     const est = backendEstado.toUpperCase();
 
     switch (est) {
+      case 'PENDIENTE_CONFIRMACION':
+        return 'PENDIENTE_CONFIRMACION';
+      case 'PENDIENTE_PAGO':
+        return 'PENDIENTE_PAGO';
       case 'RECIBIDO':
         return 'PAGADO'; // En frontend 'PAGADO' o 'RECIBIDO' indica que ya está en cola de cocina
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'EN_PREPARACION';
       case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
         return 'LISTO_COCINA';
       case 'EN_CAMINO':
         return 'EN_REPARTO';
+      case 'EN_PUERTA':
+        return 'EN_PUERTA';
       case 'ENTREGADO':
         return 'COMPLETADO';
       case 'CANCELADO':
         return 'CANCELADO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO_FANTASMA';
       default:
         return 'PAGADO';
     }
@@ -49,23 +59,33 @@ export class OrderAdapter {
     const s = status.toUpperCase();
 
     switch (s) {
+      case 'PENDIENTE_CONFIRMACION':
+        return 'PENDIENTE_CONFIRMACION';
       case 'PENDIENTE_PAGO':
+        return 'PENDIENTE_PAGO';
       case 'PAGADO':
       case 'RECIBIDO':
         return 'RECIBIDO';
       case 'EN_PREPARACION':
-        return 'EN_PREPARACION';
+      case 'PREPARANDO':
+        return 'PREPARANDO';
       case 'LISTO_COCINA':
       case 'LISTO':
         return 'LISTO';
+      case 'LISTO_PARA_ENTREGAR':
+        return 'LISTO_PARA_ENTREGAR';
       case 'EN_REPARTO':
       case 'EN_CAMINO':
         return 'EN_CAMINO';
+      case 'EN_PUERTA':
+        return 'EN_PUERTA';
       case 'COMPLETADO':
       case 'ENTREGADO':
         return 'ENTREGADO';
       case 'CANCELADO':
         return 'CANCELADO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO_FANTASMA';
       default:
         return 'RECIBIDO';
     }
@@ -165,7 +185,13 @@ export class OrderAdapter {
       repartidorId: dto.repartidorId,
       // Marca persistida de "ya se sirvió en mesa"; el estado sigue siendo LISTO hasta el cobro.
       servidoEn: dto.servidoEn || undefined,
-      servidoPor: dto.servidoPor ?? undefined
+      servidoPor: dto.servidoPor ?? undefined,
+      enPuertaAt: dto.enPuertaAt || undefined,
+      listoAt: dto.listoAt || undefined,
+      intentosLlamada: dto.intentosLlamada ?? undefined,
+      montoPagaCon: dto.montoPagaCon ?? undefined,
+      vueltoEstimado: dto.vueltoEstimado ?? undefined,
+      motivoFantasma: dto.motivoFantasma || undefined
     };
   }
 
@@ -204,6 +230,10 @@ export class OrderAdapter {
 
     return {
       tipo: tipo,
+      canalOrigen: req.canalOrigen,
+      estadoInicial: req.estadoInicial ? this.toBackendEstado(req.estadoInicial) : undefined,
+      montoPagaCon: req.montoPagaCon,
+      ipOrigen: req.ipOrigen,
       mesaId: mesaId,
       // Sin datos inventados: un pedido de delivery sin dirección real debe llegar
       // incompleto para que el backend lo rechace (RF14), y un teléfono falso haría
@@ -213,9 +243,6 @@ export class OrderAdapter {
       nombreCliente: req.cliente.nombre || undefined,
       telefonoCliente: req.cliente.celular || undefined,
       observaciones: req.notasGenerales || undefined,
-      // Canal de origen (S1): el checkout web no lo manda y el backend deriva WEB/SALON. El bot
-      // de WhatsApp mandará WHATSAPP explícito cuando construya este request.
-      canalOrigen: req.canalOrigen,
       items: items
     } as DtoCrearOrdenConCanal;
   }

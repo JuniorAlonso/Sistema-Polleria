@@ -78,6 +78,7 @@ public class SecurityConfig {
                 // Webhook de pasarela: endpoint público para Mercado Pago
                 // /pagos/mercadopago/** requiere JWT (CLIENTE/MOZO/ADMIN)
                 .requestMatchers("/pagos/webhook/**").permitAll()
+                .requestMatchers("/pagos/yape-otp").permitAll()
                 .anyRequest().authenticated()
             )
             .headers(headers -> headers

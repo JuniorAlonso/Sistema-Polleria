@@ -173,6 +173,24 @@ test('presupuesto por día agotado: la cola se pausa y reanuda con el día nuevo
     assert.deepStrictEqual(logs.map(l => l.estado).sort(), ['ENVIADO', 'ENVIADO']);
 });
 
+test('activar 24/7 despierta inmediatamente la cola ya pausada fuera de horario', async () => {
+    const reloj = relojManual(horaLocal(3));
+    const ajustes = ajustesCon();
+    const { service, whatsapp } = servicioCon(reloj, { ajustes });
+
+    await service.encolar({ ordenId: 88, telefono: '999888777', tipo: 'PAGO_CONFIRMADO', mensaje: 'pendiente' });
+    await ticks();
+    assert.strictEqual(service.pendientes, 1);
+    assert.strictEqual(reloj.pendientes(), 1);
+
+    ajustes.actualizar({ operativoTodoElDia: true });
+    service.cola.despertar();
+    await ticks();
+
+    assert.strictEqual(service.pendientes, 0);
+    assert.strictEqual(whatsapp.enviados.length, 1);
+});
+
 test('fuera de la ventana horaria el trabajo sigue pendiente y /status reporta el motivo', async () => {
     const reloj = relojManual(horaLocal(3));
     const { service, store, whatsapp } = servicioCon(reloj, { ajustes: ajustesCon() });
