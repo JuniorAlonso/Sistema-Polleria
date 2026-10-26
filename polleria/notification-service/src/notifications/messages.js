@@ -63,7 +63,7 @@ function mensajePago({ ordenId, numeroPedido, nombreCliente, montoTotal, tiempoE
 }
 
 // RF31: cambio de estado de delivery
-function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repartidorNombre, repartidorTelefono }) {
+function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repartidorNombre, repartidorTelefono, mensaje }) {
     const numero = numeroVisible({ numeroPedido, ordenId });
     let cuerpo;
 
@@ -98,6 +98,13 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
 
         default:
             return null;
+    }
+
+    // orders-service puede mandar el texto ya redactado (p. ej. recojo listo con plazo y ticket);
+    // si viene, reemplaza el cuerpo genérico del estado.
+    const personalizado = typeof mensaje === 'string' ? mensaje.trim() : '';
+    if (personalizado) {
+        cuerpo = personalizado;
     }
 
     return [saludo(nombreCliente), '', cuerpo, '', FIRMA].join('\n');

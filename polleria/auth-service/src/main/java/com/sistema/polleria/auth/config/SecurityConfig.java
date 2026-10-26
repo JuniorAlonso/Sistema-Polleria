@@ -84,6 +84,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/register", "/auth/login", "/auth/verify-2fa", "/auth/refresh", "/auth/logout").permitAll()
                         .requestMatchers("/auth/sanciones/**").permitAll()
+                        // Service-to-service only: the controller itself requires the X-Internal-Key header.
+                        .requestMatchers("/auth/internal/**").permitAll()
                         .requestMatchers("/auth/validate").authenticated()
                         .anyRequest().authenticated()
                 )

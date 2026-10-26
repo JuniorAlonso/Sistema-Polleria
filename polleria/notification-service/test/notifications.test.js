@@ -209,3 +209,13 @@ test('encolar acepta un JID @lid cuando WhatsApp no pudo revelar el teléfono y 
     assert.strictEqual(whatsapp.enviados[0].chatId, '5231337337022@lid');
 });
 
+
+test('mensajeEstado usa el texto personalizado de orders-service cuando viene y conserva el genérico si no', () => {
+    const texto = 'Tu pedido N.° 7 está listo para recoger. Tienes 1 hora para retirarlo presentando tu ticket.';
+    const conMensaje = mensajeEstado({ ordenId: 7, nombreCliente: 'Ana', estadoNuevo: 'LISTO_PARA_ENTREGAR', mensaje: texto, plazoRecojoMinutos: 60 });
+    assert.ok(conMensaje.includes(texto));
+    assert.ok(!conMensaje.includes('Recojo en Tienda'));
+
+    const sinMensaje = mensajeEstado({ ordenId: 7, nombreCliente: 'Ana', estadoNuevo: 'LISTO_PARA_ENTREGAR', mensaje: '   ' });
+    assert.ok(sinMensaje.includes('hasta 1 hora para retirarlo'));
+});

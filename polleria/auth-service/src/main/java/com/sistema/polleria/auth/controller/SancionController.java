@@ -4,6 +4,8 @@ import com.sistema.polleria.auth.dto.CrearSancionRequest;
 import com.sistema.polleria.auth.dto.VerificarSancionResponse;
 import com.sistema.polleria.auth.entity.SancionCliente;
 import com.sistema.polleria.auth.service.SancionService;
+import com.sistema.polleria.auth.util.VentanaDeslizanteLimiter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,16 +30,35 @@ public class SancionController {
     @Value("${internal.api-key:}")
     private String internalApiKey;
 
+    private final VentanaDeslizanteLimiter limiteVerificacion = new VentanaDeslizanteLimiter(30, 60_000);
+
     /**
-     * Consulta pública para el checkout web o personal: verifica si un cliente
-     * (por celular, correo o dirección IP) tiene sanción activa para pago contraentrega en efectivo.
+     * Public check for the checkout: tells whether the phone, e-mail or IP is blocked from cash on
+     * delivery. Rate limited per client IP (30 requests/minute, 429 beyond that); callers holding the
+     * internal key (orders-service) are not limited. Returns flags only, no personal data.
      */
     @GetMapping("/verificar")
     public ResponseEntity<VerificarSancionResponse> verificarSancion(
             @RequestParam(required = false) String telefono,
             @RequestParam(required = false) String email,
-            @RequestParam(required = false) String ip) {
-        return ResponseEntity.ok(sancionService.verificarSancion(telefono, email, ip));
+            @RequestParam(required = false) String ip,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna,
+            HttpServletRequest request) {
+        String ipCliente = ipDeLaPeticion(request);
+        if (!esLlamadaInterna(claveInterna) && !limiteVerificacion.permitir(ipCliente)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
+        }
+        // The browser cannot know its own IP: fall back to the caller's address when none is given.
+        String ipConsulta = (ip != null && !ip.isBlank()) ? ip : ipCliente;
+        return ResponseEntity.ok(sancionService.verificarSancion(telefono, email, ipConsulta));
+    }
+
+    private String ipDeLaPeticion(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     /**

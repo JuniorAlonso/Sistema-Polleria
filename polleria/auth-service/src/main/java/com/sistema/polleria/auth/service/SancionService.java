@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -23,25 +23,49 @@ public class SancionService {
     private final SancionClienteRepository sancionClienteRepository;
     private final UserRepository userRepository;
 
+    /**
+     * Registers a permanent sanction (no expiry). If a sanction already exists for the same normalized
+     * phone, e-mail (case-insensitive) or IP, it is merged into the oldest one instead of duplicated:
+     * missing identifiers are filled in and the blocking flags are OR-ed, never lowered.
+     */
     @Transactional
     public SancionCliente registrarSancion(CrearSancionRequest req, String creadoPor) {
         String telefonoNorm = TelefonoUtil.canonico(req.telefono());
+        String emailNorm = normalizarEmail(req.email());
+        String ipLimpia = (req.ipAddress() != null && !req.ipAddress().isBlank()) ? req.ipAddress().trim() : null;
+        boolean efectivo = req.bloqueadoEfectivo() != null ? req.bloqueadoEfectivo() : true;
+        boolean total = req.bloqueadoTotal() != null ? req.bloqueadoTotal() : false;
 
         log.warn("Registrando sanción permanente — Tel: {} (norm: {}), Email: {}, IP: {}, Motivo: {}",
-                req.telefono(), telefonoNorm, req.email(), req.ipAddress(), req.motivo());
+                req.telefono(), telefonoNorm, emailNorm, ipLimpia, req.motivo());
 
-        SancionCliente sancion = SancionCliente.builder()
-                .telefono(req.telefono())
-                .telefonoNormalizado(telefonoNorm)
-                .email(req.email() != null ? req.email().trim().toLowerCase() : null)
-                .ipAddress(req.ipAddress())
-                .motivo(req.motivo())
-                .ordenId(req.ordenId())
-                .bloqueadoEfectivo(req.bloqueadoEfectivo() != null ? req.bloqueadoEfectivo() : true)
-                .bloqueadoTotal(req.bloqueadoTotal() != null ? req.bloqueadoTotal() : false)
-                .creadoEn(LocalDateTime.now())
-                .creadoPor(creadoPor != null ? creadoPor : "SISTEMA_PEDIDO_FANTASMA")
-                .build();
+        List<SancionCliente> existentes = sancionClienteRepository.buscarCoincidencias(telefonoNorm, emailNorm, ipLimpia);
+        SancionCliente sancion;
+        if (existentes.isEmpty()) {
+            sancion = SancionCliente.builder()
+                    .telefono(req.telefono())
+                    .telefonoNormalizado(telefonoNorm)
+                    .email(emailNorm)
+                    .ipAddress(ipLimpia)
+                    .motivo(req.motivo())
+                    .ordenId(req.ordenId())
+                    .bloqueadoEfectivo(efectivo)
+                    .bloqueadoTotal(total)
+                    .creadoEn(LocalDateTime.now())
+                    .creadoPor(creadoPor != null ? creadoPor : "SISTEMA_PEDIDO_FANTASMA")
+                    .build();
+        } else {
+            sancion = existentes.get(0);
+            if (sancion.getTelefonoNormalizado() == null && telefonoNorm != null) {
+                sancion.setTelefono(req.telefono());
+                sancion.setTelefonoNormalizado(telefonoNorm);
+            }
+            if (sancion.getEmail() == null && emailNorm != null) sancion.setEmail(emailNorm);
+            if (sancion.getIpAddress() == null && ipLimpia != null) sancion.setIpAddress(ipLimpia);
+            sancion.setBloqueadoEfectivo(sancion.isBloqueadoEfectivo() || efectivo);
+            sancion.setBloqueadoTotal(sancion.isBloqueadoTotal() || total);
+            log.info("Sanción existente #{} actualizada (fusión, sin duplicar)", sancion.getId());
+        }
 
         sancion = sancionClienteRepository.save(sancion);
 
@@ -69,24 +93,26 @@ public class SancionService {
     @Transactional(readOnly = true)
     public VerificarSancionResponse verificarSancion(String telefono, String email, String ip) {
         String telefonoNorm = TelefonoUtil.canonico(telefono);
-        String emailNorm = (email != null && !email.isBlank()) ? email.trim().toLowerCase() : null;
+        String emailNorm = normalizarEmail(email);
         String ipLimpia = (ip != null && !ip.isBlank()) ? ip.trim() : null;
 
-        Optional<SancionCliente> optSancion = sancionClienteRepository.buscarSancionActiva(telefonoNorm, emailNorm, ipLimpia);
-        if (optSancion.isEmpty()) {
-            return VerificarSancionResponse.sinSancion(telefonoNorm);
+        if (telefonoNorm == null && emailNorm == null && ipLimpia == null) {
+            return VerificarSancionResponse.sinSancion();
         }
 
-        SancionCliente s = optSancion.get();
-        log.info("Sanción activa detectada para cliente (Tel: {}, Email: {}, IP: {}) — Motivo: {}",
-                telefonoNorm, emailNorm, ipLimpia, s.getMotivo());
+        List<SancionCliente> coincidencias = sancionClienteRepository.buscarCoincidencias(telefonoNorm, emailNorm, ipLimpia);
+        if (coincidencias.isEmpty()) {
+            return VerificarSancionResponse.sinSancion();
+        }
 
-        return new VerificarSancionResponse(
-                true,
-                s.isBloqueadoEfectivo(),
-                s.isBloqueadoTotal(),
-                s.getMotivo(),
-                telefonoNorm
-        );
+        // Any matching row blocks: the flags are the OR of every match (merged or legacy duplicates).
+        boolean efectivo = coincidencias.stream().anyMatch(SancionCliente::isBloqueadoEfectivo);
+        boolean total = coincidencias.stream().anyMatch(SancionCliente::isBloqueadoTotal);
+        log.info("Sanción activa detectada ({} coincidencias) — efectivo={}, total={}", coincidencias.size(), efectivo, total);
+        return new VerificarSancionResponse(true, efectivo, total);
+    }
+
+    private static String normalizarEmail(String email) {
+        return (email != null && !email.isBlank()) ? email.trim().toLowerCase() : null;
     }
 }

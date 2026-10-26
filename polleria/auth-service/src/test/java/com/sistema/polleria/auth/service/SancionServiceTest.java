@@ -11,7 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -62,21 +62,58 @@ class SancionServiceTest {
                 .bloqueadoTotal(false)
                 .build();
 
-        when(sancionClienteRepository.buscarSancionActiva(eq("987654321"), any(), any()))
-                .thenReturn(Optional.of(s));
+        when(sancionClienteRepository.buscarCoincidencias(eq("987654321"), any(), any()))
+                .thenReturn(List.of(s));
 
         VerificarSancionResponse res = sancionService.verificarSancion("+51 987 654 321", null, null);
 
         assertTrue(res.sancionado());
         assertTrue(res.bloqueadoEfectivo());
         assertFalse(res.bloqueadoTotal());
-        assertEquals("PEDIDO_FANTASMA", res.motivo());
+    }
+
+    @Test
+    void testRegistrarSancionFusionaConExistenteSinDuplicar() {
+        SancionCliente existente = SancionCliente.builder()
+                .id(7L).telefonoNormalizado("987654321").motivo("PEDIDO_FANTASMA").bloqueadoEfectivo(true).build();
+        when(sancionClienteRepository.buscarCoincidencias(eq("987654321"), eq("nuevo@test.com"), eq("10.0.0.1")))
+                .thenReturn(List.of(existente));
+        when(sancionClienteRepository.save(any(SancionCliente.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SancionCliente s = sancionService.registrarSancion(new CrearSancionRequest(
+                "987654321", " Nuevo@Test.com ", "10.0.0.1", "otro motivo", 5L, true, null), "TEST");
+
+        assertSame(existente, s);
+        assertEquals("nuevo@test.com", s.getEmail());
+        assertEquals("10.0.0.1", s.getIpAddress());
+        assertEquals("PEDIDO_FANTASMA", s.getMotivo());
+        verify(sancionClienteRepository, times(1)).save(existente);
+    }
+
+    @Test
+    void testVerificarCoincideConEmailSinImportarMayusculas() {
+        SancionCliente s = SancionCliente.builder().id(3L).email("sancionado@test.com").bloqueadoEfectivo(true).build();
+        when(sancionClienteRepository.buscarCoincidencias(isNull(), eq("sancionado@test.com"), isNull()))
+                .thenReturn(List.of(s));
+
+        VerificarSancionResponse res = sancionService.verificarSancion(null, "  SANCIONADO@Test.com ", null);
+
+        assertTrue(res.sancionado());
+        assertTrue(res.bloqueadoEfectivo());
+    }
+
+    @Test
+    void testVerificarSinIdentificadoresNoConsultaYNoBloquea() {
+        VerificarSancionResponse res = sancionService.verificarSancion(null, " ", "");
+
+        assertFalse(res.sancionado());
+        verifyNoInteractions(sancionClienteRepository);
     }
 
     @Test
     void testVerificarSancionInexistenteDevuelveSinSancion() {
-        when(sancionClienteRepository.buscarSancionActiva(any(), any(), any()))
-                .thenReturn(Optional.empty());
+        when(sancionClienteRepository.buscarCoincidencias(any(), any(), any()))
+                .thenReturn(List.of());
 
         VerificarSancionResponse res = sancionService.verificarSancion("911222333", "limpio@test.com", "127.0.0.1");
 

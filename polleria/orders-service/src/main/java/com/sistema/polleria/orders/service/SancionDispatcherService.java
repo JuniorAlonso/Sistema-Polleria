@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,19 +39,33 @@ public class SancionDispatcherService {
         this.restClient = RestClient.builder().requestFactory(requestFactory).build();
     }
 
+    /** Test seam: lets tests bind a mock server to the RestClient. */
+    SancionDispatcherService(RestClient restClient, String authServiceUrl, String incidentServiceUrl, String internalApiKey) {
+        this.restClient = restClient;
+        this.authServiceUrl = authServiceUrl;
+        this.incidentServiceUrl = incidentServiceUrl;
+        this.internalApiKey = internalApiKey;
+    }
+
     /**
      * Consulta sincrónica a auth-service para verificar si un cliente está sancionado para ContraPago.
+     * auth-service hace coincidir por teléfono normalizado, correo (sin distinguir mayúsculas) e IP.
      */
     public boolean tieneSancionActiva(String telefono, String email, String ip) {
         try {
-            StringBuilder sb = new StringBuilder(authServiceUrl).append("/auth/sanciones/verificar?");
-            if (telefono != null && !telefono.isBlank()) sb.append("telefono=").append(telefono).append("&");
-            if (email != null && !email.isBlank()) sb.append("email=").append(email).append("&");
-            if (ip != null && !ip.isBlank()) sb.append("ip=").append(ip);
+            var uri = UriComponentsBuilder.fromUriString(authServiceUrl).path("/auth/sanciones/verificar");
+            // Template variables are encoded strictly, so a '+' in an e-mail is not read as a space.
+            Map<String, String> valores = new HashMap<>();
+            if (telefono != null && !telefono.isBlank()) { uri.queryParam("telefono", "{telefono}"); valores.put("telefono", telefono); }
+            if (email != null && !email.isBlank()) { uri.queryParam("email", "{email}"); valores.put("email", email); }
+            if (ip != null && !ip.isBlank()) { uri.queryParam("ip", "{ip}"); valores.put("ip", ip); }
 
-            Map<String, Object> resp = restClient.get()
-                    .uri(sb.toString())
-                    .retrieve()
+            var req = restClient.get().uri(uri.encode().build(valores));
+            // The internal key exempts this service-to-service call from the public per-IP rate limit.
+            if (internalApiKey != null && !internalApiKey.isBlank()) {
+                req.header("X-Internal-Key", internalApiKey);
+            }
+            Map<String, Object> resp = req.retrieve()
                     .body(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {});
 
             if (resp != null && Boolean.TRUE.equals(resp.get("bloqueadoEfectivo"))) {
@@ -62,6 +77,26 @@ public class SancionDispatcherService {
         return false;
     }
 
+    /** E-mail of the registered customer, or null when there is none or the lookup fails (best effort). */
+    String resolverEmailCliente(Orden orden) {
+        Long clienteId = orden.getClienteId();
+        if (clienteId == null || clienteId <= 0) return null;
+        try {
+            var req = restClient.get().uri(authServiceUrl + "/auth/internal/usuarios/{id}/email", clienteId);
+            if (internalApiKey != null && !internalApiKey.isBlank()) {
+                req.header("X-Internal-Key", internalApiKey);
+            }
+            Map<String, Object> resp = req.retrieve()
+                    .body(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {});
+            Object email = resp != null ? resp.get("email") : null;
+            return email instanceof String e && !e.isBlank() ? e : null;
+        } catch (Exception e) {
+            log.warn("No se pudo resolver el correo del cliente #{} de la orden #{}; se bloquean teléfono e IP: {}",
+                    clienteId, orden.getId(), e.getMessage());
+            return null;
+        }
+    }
+
     @Async
     public void registrarSancionPorPedidoFantasma(Orden orden, String motivo) {
         log.warn("Disparando sanción por PEDIDO_FANTASMA para orden #{} (motivo: {})", orden.getId(), motivo);
@@ -70,7 +105,7 @@ public class SancionDispatcherService {
         try {
             Map<String, Object> sancionPayload = new HashMap<>();
             sancionPayload.put("telefono", orden.getTelefonoCliente());
-            sancionPayload.put("email", null); // si se tiene en clienteId o DTO se pasa
+            sancionPayload.put("email", resolverEmailCliente(orden));
             sancionPayload.put("ipAddress", orden.getIpOrigen());
             sancionPayload.put("ordenId", orden.getId());
             sancionPayload.put("motivo", "PEDIDO_FANTASMA: " + (motivo != null ? motivo : "No entregado / Abandonado"));
