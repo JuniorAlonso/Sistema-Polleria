@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { MainLayoutComponent } from './shared/layouts/main-layout/main-layout.component';
-import { staffGuard } from './core/guards/staff.guard';
+import { roleGuard } from './core/guards/role.guard';
 import { clientGuard } from './core/guards/client.guard';
 import { guestGuard } from './core/guards/guest.guard';
 
@@ -42,44 +42,31 @@ export const routes: Routes = [
     title: 'Pago en Proceso - San Pollo de Ica'
   },
 
-  // 3. Admin Backoffice (Solo ADMIN)
+  // 3. Staff areas: one lazy-loaded route tree per role (ADMIN may intervene in all of them)
   {
     path: 'admin',
-    loadComponent: () => import('./features/admin/dashboard/admin-dashboard.component').then(m => m.AdminDashboardComponent),
-    canActivate: [staffGuard],
-    title: 'Panel de Control y Comandas - San Pollo Admin'
+    canActivate: [roleGuard(['ADMIN'])],
+    loadChildren: () => import('./features/admin/admin.routes').then(m => m.ADMIN_ROUTES)
   },
-
-  // 4. KDS Cocina (Solo COCINA / CHEF y ADMIN)
   {
     path: 'cocina',
-    loadComponent: () => import('./features/kitchen/kitchen-kds.component').then(m => m.KitchenKdsComponent),
-    canActivate: [staffGuard],
-    title: 'KDS Cocina & Horno - San Pollo de Ica'
+    canActivate: [roleGuard(['CHEF'])],
+    loadChildren: () => import('./features/kitchen/kitchen.routes').then(m => m.KITCHEN_ROUTES)
   },
-
-  // 5. Módulo Mozo & Salón (Solo MOZO y ADMIN)
   {
     path: 'mozo',
-    loadComponent: () => import('./features/mozo/mozo-salon.component').then(m => m.MozoSalonComponent),
-    canActivate: [staffGuard],
-    title: 'Gestión de Salón & Mesas - San Pollo Mozo'
+    canActivate: [roleGuard(['MOZO'])],
+    loadChildren: () => import('./features/mozo/mozo.routes').then(m => m.MOZO_ROUTES)
   },
-
-  // 6. Módulo Repartidor / Delivery (Solo REPARTIDOR y ADMIN)
   {
     path: 'delivery',
-    loadComponent: () => import('./features/delivery/repartidor-delivery.component').then(m => m.RepartidorDeliveryComponent),
-    canActivate: [staffGuard],
-    title: 'Hoja de Ruta & Reparto - San Pollo Delivery'
+    canActivate: [roleGuard(['REPARTIDOR'])],
+    loadChildren: () => import('./features/delivery/delivery.routes').then(m => m.DELIVERY_ROUTES)
   },
-
-  // 7. Módulo Cajero / POS & Arqueo (Solo CAJERO y ADMIN)
   {
     path: 'cajero',
-    loadComponent: () => import('./features/cajero/cajero-dashboard.component').then(m => m.CajeroDashboardComponent),
-    canActivate: [staffGuard],
-    title: 'Punto de Cobro & Caja - San Pollo Cajero'
+    canActivate: [roleGuard(['CAJERO'])],
+    loadChildren: () => import('./features/cajero/cajero.routes').then(m => m.CAJERO_ROUTES)
   },
 
   // 5. Main App routes (Clientes y navegación general)
