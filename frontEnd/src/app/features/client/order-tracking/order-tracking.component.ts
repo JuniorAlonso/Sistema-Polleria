@@ -10,7 +10,13 @@ import { NotificationService } from '../../../core/services/notification.service
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { AuthService } from '../../../core/services/auth.service';
 import { etiquetaPedido } from '../../../core/utils/pedido';
+import { PaymentService } from '../../../core/services/payment.service';
 import { Subscription, interval } from 'rxjs';
+
+/** States in which the customer can no longer cancel or act on the order. */
+const ESTADOS_TERMINALES: OrderStatus[] = ['COMPLETADO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
+const TIPOS_COMPROBANTE = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
 
 @Component({
   selector: 'app-order-tracking',
@@ -105,6 +111,38 @@ import { Subscription, interval } from 'rxjs';
               {{ getSubtitle() }}
             </p>
 
+            @if (getCuentaRegresiva()) {
+              <p class="inline-block px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs sm:text-sm font-mono font-bold">
+                {{ getCuentaRegresiva() }}
+              </p>
+            }
+
+            @if (puedeSubirComprobante()) {
+              <div class="max-w-md mx-auto p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2 text-left">
+                @if (comprobanteRecibido()) {
+                  <p class="text-sm font-bold text-emerald-300">Comprobante recibido, en espera de verificación.</p>
+                } @else {
+                  <p class="text-xs text-slate-300">Envía la captura de tu pago (JPG, PNG o WEBP, máximo 5 MB).</p>
+                }
+                <label class="block">
+                  <span class="sr-only">Enviar comprobante de pago</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    [disabled]="subiendoComprobante()"
+                    (change)="onComprobanteSeleccionado($event)"
+                    class="block w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-polleria-gold file:text-slate-950 file:font-bold disabled:opacity-50"
+                  />
+                </label>
+                @if (subiendoComprobante()) {
+                  <p class="text-xs text-amber-300">Enviando comprobante...</p>
+                }
+                @if (errorComprobante()) {
+                  <p class="text-xs text-rose-300" role="alert">{{ errorComprobante() }}</p>
+                }
+              </div>
+            }
+
           </div>
 
           <!-- ================= DYNAMIC STEPPER PROGRESS CARD ================= -->
@@ -185,7 +223,7 @@ import { Subscription, interval } from 'rxjs';
                       class="font-display text-lg sm:text-xl tracking-wide uppercase transition-colors"
                       [ngClass]="getStepTextClass(3)"
                     >
-                      {{ currentOrder()?.tipo === 'SALON' ? 'Listo en Mesa' : 'En camino' }}
+                      {{ getStep3Title() }}
                     </h3>
                     <p class="text-xs font-mono mt-0.5" [ngClass]="isStepActive(3) ? 'text-sky-300 font-bold' : 'text-slate-400'">
                       {{ getStepSubtitle(3) }}
@@ -906,6 +944,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   readonly feedbackService = inject(FeedbackService);
+  private paymentService = inject(PaymentService);
 
   readonly currentOrder = signal<Order | null>(null);
   readonly showDetailsModal = signal<boolean>(false);
@@ -934,10 +973,39 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly puedeCancelarPedido = computed(() => {
     const order = this.currentOrder();
     if (!order || this.auth.token()) return false;
-    return order.estado !== 'COMPLETADO' && order.estado !== 'CANCELADO';
+    return !ESTADOS_TERMINALES.includes(order.estado);
   });
 
   readonly cancelandoPedido = signal<boolean>(false);
+
+  // Time windows enforced by the backend (minutes)
+  readonly VENTANA_CONFIRMACION_MIN = 15;
+  readonly VENTANA_PAGO_MIN = 15;
+  readonly VENTANA_PUERTA_MIN = 30;
+  readonly VENTANA_RECOJO_MIN = 60;
+
+  /** Clock tick so the countdowns re-render without a backend call. */
+  readonly ahora = signal<number>(Date.now());
+
+  // Payment proof upload (PENDIENTE_PAGO)
+  readonly subiendoComprobante = signal<boolean>(false);
+  readonly errorComprobante = signal<string>('');
+  readonly comprobantesEnviados = signal<ReadonlySet<string>>(new Set());
+
+  /** The proof control is for the customer's own wallet/transfer order awaiting payment. */
+  readonly puedeSubirComprobante = computed(() => {
+    const order = this.currentOrder();
+    if (!order || order.estado !== 'PENDIENTE_PAGO') return false;
+    if (order.metodoPago === 'TARJETA' || order.metodoPago === 'YAPE_OTP' || order.metodoPago === 'EFECTIVO_CONTRAENTREGA') {
+      return false;
+    }
+    return this.availableOrders().some(o => o.id === order.id);
+  });
+
+  readonly comprobanteRecibido = computed(() => {
+    const order = this.currentOrder();
+    return !!order && this.comprobantesEnviados().has(String(order.id));
+  });
 
   reviewComment = '';
   reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
@@ -955,6 +1023,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   codigoSeguimiento = '';
 
   private refrescoSub?: Subscription;
+  private relojSub?: Subscription;
   private platformId = inject(PLATFORM_ID);
   readonly etiqueta = etiquetaPedido;
 
@@ -985,6 +1054,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     // 1. Cargar los pedidos del cliente y refrescarlos para ver los cambios de estado
     this.ordersService.loadMyOrders();
     if (isPlatformBrowser(this.platformId)) {
+      this.relojSub = interval(30000).subscribe(() => this.ahora.set(Date.now()));
       this.refrescoSub = interval(15000).subscribe(() => {
         this.ordersService.loadMyOrders();
         const current = this.currentOrder();
@@ -1020,7 +1090,41 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.refrescoSub?.unsubscribe();
+    this.relojSub?.unsubscribe();
     this.removerEvidencia();
+  }
+
+  /** Validates and uploads the payment proof; the state shown comes from the backend response. */
+  onComprobanteSeleccionado(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    const order = this.currentOrder();
+    if (!file || !order || this.subiendoComprobante()) return;
+
+    if (!TIPOS_COMPROBANTE.includes(file.type)) {
+      this.errorComprobante.set('El comprobante debe ser una imagen JPG, PNG o WEBP.');
+      return;
+    }
+    if (file.size > MAX_COMPROBANTE_BYTES) {
+      this.errorComprobante.set('El comprobante supera el máximo de 5 MB.');
+      return;
+    }
+
+    this.errorComprobante.set('');
+    this.subiendoComprobante.set(true);
+    this.paymentService.subirComprobante(order.id, file).subscribe({
+      next: () => {
+        this.subiendoComprobante.set(false);
+        this.comprobantesEnviados.update(prev => new Set(prev).add(String(order.id)));
+        this.notify.showSuccess('Comprobante recibido', 'Estamos verificando tu pago.');
+        this.ordersService.loadMyOrders();
+      },
+      error: (err: Error) => {
+        this.subiendoComprobante.set(false);
+        this.errorComprobante.set(err?.message || 'No se pudo enviar el comprobante.');
+      }
+    });
   }
 
   selectOrder(order: Order): void {
@@ -1155,20 +1259,107 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   // ================= DYNAMIC STATUS HELPERS =================
 
-  getMainTitle(): string {
-    const status = this.currentOrder()?.estado;
+  /**
+   * Stepper stage of an order status: 0 = waiting for call/payment verification, 1 = received,
+   * 2 = preparing, 3 = ready / on the way / at the door, 4 = delivered, -1 = closed without delivery.
+   */
+  etapaPedido(status?: OrderStatus): number {
     switch (status) {
+      case 'PENDIENTE_CONFIRMACION':
+      case 'PENDIENTE_PAGO':
+        return 0;
+      case 'RECIBIDO':
+      case 'PAGADO':
+        return 1;
+      case 'PREPARANDO':
+      case 'EN_PREPARACION':
+        return 2;
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+      case 'LISTO_COCINA':
+      case 'EN_CAMINO':
+      case 'EN_REPARTO':
+      case 'EN_PUERTA':
+        return 3;
+      case 'ENTREGADO':
       case 'COMPLETADO':
+        return 4;
+      case 'CANCELADO':
+      case 'PEDIDO_FANTASMA':
+        return -1;
+      default:
+        return 1;
+    }
+  }
+
+  /** Whole minutes left of a window that started at `desde`; null when there is no start time. */
+  minutosRestantes(desde: string | undefined, ventanaMin: number): number | null {
+    if (!desde) return null;
+    const inicio = Date.parse(desde);
+    if (Number.isNaN(inicio)) return null;
+    const restanteMs = inicio + ventanaMin * 60_000 - this.ahora();
+    return Math.max(0, Math.ceil(restanteMs / 60_000));
+  }
+
+  private esRecojo(order: Order | null): boolean {
+    return order?.tipo === 'RECOJO_EN_TIENDA';
+  }
+
+  /** Short countdown line shown under the subtitle; empty when the status has no running window. */
+  getCuentaRegresiva(): string {
+    const order = this.currentOrder();
+    if (!order) return '';
+    switch (order.estado) {
+      case 'PENDIENTE_CONFIRMACION': {
+        const min = this.minutosRestantes(order.createdAt, this.VENTANA_CONFIRMACION_MIN);
+        return min === null ? '' : `Tiempo restante para confirmar: ${min} min`;
+      }
+      case 'PENDIENTE_PAGO': {
+        const min = this.minutosRestantes(order.createdAt, this.VENTANA_PAGO_MIN);
+        return min === null ? '' : `Tiempo restante para verificar el pago: ${min} min`;
+      }
+      case 'EN_PUERTA': {
+        const min = this.minutosRestantes(order.enPuertaAt, this.VENTANA_PUERTA_MIN);
+        return min === null ? '' : `Tu repartidor te espera: ${min} min`;
+      }
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR': {
+        if (!this.esRecojo(order)) return '';
+        const min = this.minutosRestantes(order.listoAt, this.VENTANA_RECOJO_MIN);
+        return min === null ? '' : `Tiempo para recoger: ${min} min`;
+      }
+      default:
+        return '';
+    }
+  }
+
+  getMainTitle(): string {
+    const order = this.currentOrder();
+    switch (order?.estado) {
+      case 'COMPLETADO':
+      case 'ENTREGADO':
         return '¡PEDIDO ENTREGADO CON ÉXITO!';
+      case 'EN_PUERTA':
+        return 'TU REPARTIDOR ESTÁ EN LA PUERTA';
+      case 'EN_CAMINO':
       case 'EN_REPARTO':
         return 'EL FUEGO ESTÁ EN CAMINO';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
       case 'LISTO_COCINA':
-        return '¡PEDIDO LISTO EN SALIDA!';
+        return this.esRecojo(order) ? '¡LISTO PARA RECOGER!' : '¡PEDIDO LISTO EN SALIDA!';
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'EL FUEGO ESTÁ EN LA COCINA';
-      case 'PAGADO':
+      case 'PENDIENTE_CONFIRMACION':
+        return 'TE LLAMAREMOS PARA CONFIRMAR';
       case 'PENDIENTE_PAGO':
-        return 'PEDIDO RECIBIDO Y CONFIRMADO';
+        return 'PAGO PENDIENTE DE VERIFICACIÓN';
+      case 'PAGADO':
+      case 'RECIBIDO':
+        return 'PEDIDO RECIBIDO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO NO ENTREGADO';
       case 'CANCELADO':
         return 'PEDIDO CANCELADO';
       default:
@@ -1177,19 +1368,43 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   }
 
   getSubtitle(): string {
-    const status = this.currentOrder()?.estado;
-    switch (status) {
+    const order = this.currentOrder();
+    switch (order?.estado) {
       case 'COMPLETADO':
+      case 'ENTREGADO':
         return 'Tu pedido ha sido entregado. ¡Buen provecho y gracias por elegir San Pollo!';
+      case 'EN_PUERTA': {
+        const min = this.minutosRestantes(order?.enPuertaAt, this.VENTANA_PUERTA_MIN);
+        return min === 0
+          ? 'Tu repartidor superó los 30 minutos de espera en tu puerta; el pedido puede darse por no entregado.'
+          : 'Tu repartidor llegó a tu dirección. Sal a recibir tu pedido; te esperará hasta 30 minutos.';
+      }
+      case 'EN_CAMINO':
       case 'EN_REPARTO':
-        return 'Tu repartidor va en ruta a tu dirección. Tiempo estimado de entrega: 10 - 15 min.';
+        return 'Tu repartidor va en ruta a tu dirección.';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+        return this.esRecojo(order)
+          ? 'Tu pedido está listo. Recógelo con tu ticket dentro de 1 hora.'
+          : 'Tu pedido está listo y será despachado inmediatamente.';
       case 'LISTO_COCINA':
         return 'Tu pedido ha salido del horno y está listo para ser despachado inmediatamente.';
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'Nuestros maestros polleros están dorando tu pedido a la leña con papas crujientes.';
-      case 'PAGADO':
+      case 'PENDIENTE_CONFIRMACION': {
+        const min = this.minutosRestantes(order?.createdAt, this.VENTANA_CONFIRMACION_MIN);
+        return min === 0
+          ? 'Terminó el tiempo de confirmación. Si no recibiste la llamada, el pedido se cancelará automáticamente.'
+          : 'Te llamaremos al celular que registraste para confirmar tu pedido antes de enviarlo a cocina.';
+      }
       case 'PENDIENTE_PAGO':
-        return 'Hemos registrado tu pedido y entra a comanda en cocina.';
+        return 'Aún no confirmamos tu pago. Cuando lo verifiquemos, el pedido pasará a cocina; si pasan 15 minutos sin pago verificado, se cancela.';
+      case 'PAGADO':
+      case 'RECIBIDO':
+        return 'Hemos registrado tu pedido.';
+      case 'PEDIDO_FANTASMA':
+        return 'Tu pedido fue marcado como no entregado porque no pudo ser recibido a tiempo.';
       case 'CANCELADO':
         return 'Este pedido ha sido cancelado.';
       default:
@@ -1199,59 +1414,40 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   getProgressWidth(): string {
     const status = this.currentOrder()?.estado;
-    switch (status) {
-      case 'PENDIENTE_PAGO':
-        return '10%';
-      case 'PAGADO':
-        return '25%';
-      case 'EN_PREPARACION':
-        return '50%';
-      case 'LISTO_COCINA':
-        return '65%';
-      case 'EN_REPARTO':
-        return '75%';
-      case 'COMPLETADO':
-        return '100%';
-      case 'CANCELADO':
-        return '0%';
-      default:
-        return '50%';
+    if (status === 'EN_PUERTA') return '90%';
+    switch (this.etapaPedido(status)) {
+      case 0: return '10%';
+      case 1: return '25%';
+      case 2: return '50%';
+      case 3: return '75%';
+      case 4: return '100%';
+      default: return '0%';
     }
   }
 
   isStepCompleted(step: number): boolean {
     const status = this.currentOrder()?.estado;
     if (!status) return false;
-
+    const etapa = this.etapaPedido(status);
     switch (step) {
-      case 1:
-        return ['PAGADO', 'EN_PREPARACION', 'LISTO_COCINA', 'EN_REPARTO', 'COMPLETADO'].includes(status);
-      case 2:
-        return ['LISTO_COCINA', 'EN_REPARTO', 'COMPLETADO'].includes(status);
-      case 3:
-        return ['COMPLETADO'].includes(status);
-      case 4:
-        return status === 'COMPLETADO';
-      default:
-        return false;
+      case 1: return etapa >= 1;
+      case 2: return etapa >= 3;
+      case 3: return etapa >= 4;
+      case 4: return etapa === 4;
+      default: return false;
     }
   }
 
   isStepActive(step: number): boolean {
     const status = this.currentOrder()?.estado;
     if (!status) return false;
-
+    const etapa = this.etapaPedido(status);
     switch (step) {
-      case 1:
-        return status === 'PENDIENTE_PAGO' || status === 'PAGADO';
-      case 2:
-        return status === 'EN_PREPARACION';
-      case 3:
-        return status === 'LISTO_COCINA' || status === 'EN_REPARTO';
-      case 4:
-        return status === 'COMPLETADO';
-      default:
-        return false;
+      case 1: return etapa === 0 || etapa === 1;
+      case 2: return etapa === 2;
+      case 3: return etapa === 3;
+      case 4: return etapa === 4;
+      default: return false;
     }
   }
 
@@ -1278,17 +1474,29 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     return 'text-slate-500';
   }
 
+  getStep3Title(): string {
+    const order = this.currentOrder();
+    if (order?.tipo === 'SALON') return 'Listo en Mesa';
+    return this.esRecojo(order) ? 'Listo para recoger' : 'En camino';
+  }
+
   getStepSubtitle(step: number): string {
-    const status = this.currentOrder()?.estado;
+    const order = this.currentOrder();
+    const status = order?.estado;
     switch (step) {
       case 1:
+        if (status === 'PENDIENTE_CONFIRMACION') return 'Esperando llamada';
+        if (status === 'PENDIENTE_PAGO') return 'Pago por verificar';
+        if (status === 'RECIBIDO') return 'Recibido';
         return this.isStepCompleted(1) ? 'Confirmado' : 'Pendiente';
       case 2:
         return this.isStepActive(2) ? 'En el horno...' : (this.isStepCompleted(2) ? 'Listo' : 'Pendiente');
       case 3:
-        return this.isStepActive(3) ? 'En ruta' : (this.isStepCompleted(3) ? 'Entregado' : 'Pendiente');
+        if (status === 'EN_PUERTA') return 'En tu puerta';
+        if (this.isStepActive(3)) return this.esRecojo(order) ? 'Listo' : 'En ruta';
+        return this.isStepCompleted(3) ? 'Entregado' : 'Pendiente';
       case 4:
-        return status === 'COMPLETADO' ? '¡Entregado!' : '--:--';
+        return this.etapaPedido(status) === 4 ? '¡Entregado!' : '--:--';
       default:
         return '';
     }

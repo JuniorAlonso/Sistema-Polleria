@@ -5,7 +5,7 @@ import {
   ArqueoCaja, AperturaCajaRequest, MovimientoCaja, CierreCajaRequest, BalanceDiario,
   EmitirComprobanteRequest, AbrirLiquidacionRequest, CerrarLiquidacionRequest
 } from '../models/finance.model';
-import { BackendComprobanteResponse, BackendLiquidacionResponse } from '../models/api-contracts.model';
+import { BackendComprobanteResponse, BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from '../models/api-contracts.model';
 import { environment } from '../../../environments/environment';
 
 /** Capa HTTP pura de finance-service (:8087). Sin estado, sin notificaciones. */
@@ -64,6 +64,11 @@ export class FinanceApiService {
 
   listarLiquidacionesPorRepartidor(repartidorId: number | string): Observable<BackendLiquidacionResponse[]> {
     return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/repartidor/${repartidorId}`);
+  }
+
+  obtenerEfectivoPendienteLiquidacion(repartidorId: number | string): Observable<BackendEfectivoPendienteLiquidacion> {
+    return this.http.get<BackendEfectivoPendienteLiquidacion>(
+      `${this.API_URL}/finanzas/liquidaciones/repartidor/${repartidorId}/pendiente`);
   }
 
   listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {

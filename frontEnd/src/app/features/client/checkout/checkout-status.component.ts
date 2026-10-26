@@ -5,9 +5,11 @@ import { PaymentService } from '../../../core/services/payment.service';
 import { OrdersService } from '../../../core/services/orders.service';
 import { CartService } from '../../../core/services/cart.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
-import { Subscription, interval } from 'rxjs';
+import { Observable, Subscription, catchError, interval, map, of } from 'rxjs';
 
 type StatusType = 'SUCCESS' | 'FAILURE' | 'PENDING';
+
+const MAX_INTENTOS_POLLING = 20;
 
 @Component({
   selector: 'app-checkout-status',
@@ -183,11 +185,20 @@ type StatusType = 'SUCCESS' | 'FAILURE' | 'PENDING';
             <div class="bg-black/40 rounded-2xl p-4 border border-amber-500/20 text-xs text-left space-y-2 font-mono">
               <div class="flex items-center justify-between text-[11px]">
                 <span class="text-slate-400 font-sans">Estado de verificación</span>
-                <span class="inline-flex items-center gap-1.5 text-amber-400 font-bold">
-                  <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                  Consultando...
-                </span>
+                @if (pollingAgotado()) {
+                  <span class="text-amber-400 font-bold">Sigue pendiente</span>
+                } @else {
+                  <span class="inline-flex items-center gap-1.5 text-amber-400 font-bold">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    Consultando...
+                  </span>
+                }
               </div>
+              @if (pollingAgotado()) {
+                <p class="text-[11px] text-amber-200 font-sans leading-relaxed" role="status">
+                  Tu pago todavía no fue confirmado. Revisa el estado de tu pedido en el seguimiento: te avisaremos cuando se acredite.
+                </p>
+              }
               @if (trackingCode()) {
                 <div class="flex justify-between items-center text-[11px] pt-1 border-t border-white/10">
                   <span class="text-slate-400 font-sans">Código de Orden</span>
@@ -228,7 +239,10 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   private cartService = inject(CartService);
   private platformId = inject(PLATFORM_ID);
 
-  readonly currentStatus = signal<StatusType>('SUCCESS');
+  /** Never SUCCESS until the backend confirms the payment. */
+  readonly currentStatus = signal<StatusType>('PENDING');
+  /** True once polling hit its attempt limit while the payment was still not approved. */
+  readonly pollingAgotado = signal<boolean>(false);
   readonly trackingCode = signal<string>('');
   readonly paymentId = signal<string>('');
   readonly orderTotal = signal<number>(0);
@@ -255,19 +269,70 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
         this.pagoId = Number(extRef);
       }
 
-      if (url.includes('/failure') || mpStatus === 'rejected') {
-        this.currentStatus.set('FAILURE');
-      } else if (url.includes('/pending') || mpStatus === 'pending' || mpStatus === 'in_process') {
-        this.currentStatus.set('PENDING');
+      // The URL / Mercado Pago params are only a hint: the backend decides the final state.
+      const pistaFallo = url.includes('/failure') || mpStatus === 'rejected';
+      this.currentStatus.set(pistaFallo ? 'FAILURE' : 'PENDING');
+
+      this.resolverDatosPedido();
+      this.verificarEstado(pistaFallo);
+    });
+  }
+
+  /** Asks the backend for the real state; keeps polling while it is not final. */
+  private verificarEstado(pistaFallo: boolean): void {
+    this.pollingSub?.unsubscribe();
+    this.pollingAgotado.set(false);
+    this.consultarEstado().subscribe(resultado => {
+      this.aplicarResultado(resultado, pistaFallo);
+      if (this.currentStatus() === 'PENDING') {
         this.iniciarPollingPendiente();
-      } else {
+      }
+    });
+  }
+
+  private consultarEstado(): Observable<StatusType | null> {
+    if (this.pagoId) {
+      return this.paymentService.obtener(this.pagoId).pipe(
+        map(tx => {
+          if (!tx) return null;
+          if (tx.estado === 'APROBADO') return 'SUCCESS';
+          if (tx.estado === 'RECHAZADO' || tx.estado === 'CANCELADO') return 'FAILURE';
+          return 'PENDING';
+        }),
+        catchError(() => of(null))
+      );
+    }
+    const codigo = this.trackingCode();
+    if (!codigo) return of(null);
+    return this.ordersService.getOrderByTrackingCode(codigo).pipe(
+      map(ord => {
+        if (!ord) return null;
+        if (ord.estado === 'CANCELADO' || ord.estado === 'PEDIDO_FANTASMA') return 'FAILURE';
+        if (ord.estado === 'PENDIENTE_PAGO' || ord.estado === 'PENDIENTE_CONFIRMACION' || ord.estado === 'RECIBIDO') {
+          return 'PENDING';
+        }
+        return 'SUCCESS';
+      }),
+      catchError(() => of(null))
+    );
+  }
+
+  private aplicarResultado(resultado: StatusType | null, pistaFallo = false): void {
+    if (resultado === 'SUCCESS') {
+      this.pollingSub?.unsubscribe();
+      if (this.currentStatus() !== 'SUCCESS') {
         this.currentStatus.set('SUCCESS');
         this.cartService.clearCart();
         this.iniciarCountdownRedireccion();
       }
-
-      this.resolverDatosPedido();
-    });
+    } else if (resultado === 'FAILURE') {
+      this.pollingSub?.unsubscribe();
+      this.currentStatus.set('FAILURE');
+    } else if (resultado === 'PENDING') {
+      this.currentStatus.set('PENDING');
+    } else if (!pistaFallo && this.currentStatus() !== 'PENDING') {
+      this.currentStatus.set('PENDING');
+    }
   }
 
   ngOnDestroy(): void {
@@ -328,31 +393,16 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   private iniciarPollingPendiente(): void {
     if (!isPlatformBrowser(this.platformId)) return;
 
+    this.pollingSub?.unsubscribe();
     let intentos = 0;
     this.pollingSub = interval(3000).subscribe(() => {
       intentos++;
-      if (intentos > 20) {
+      if (intentos > MAX_INTENTOS_POLLING) {
         this.pollingSub?.unsubscribe();
+        this.pollingAgotado.set(true);
         return;
       }
-
-      if (this.pagoId) {
-        this.paymentService.obtener(this.pagoId).subscribe({
-          next: (tx) => {
-            if (tx) {
-              if (tx.estado === 'APROBADO') {
-                this.pollingSub?.unsubscribe();
-                this.currentStatus.set('SUCCESS');
-                this.cartService.clearCart();
-                this.iniciarCountdownRedireccion();
-              } else if (tx.estado === 'RECHAZADO' || tx.estado === 'CANCELADO') {
-                this.pollingSub?.unsubscribe();
-                this.currentStatus.set('FAILURE');
-              }
-            }
-          }
-        });
-      }
+      this.consultarEstado().subscribe(resultado => this.aplicarResultado(resultado));
     });
   }
 }

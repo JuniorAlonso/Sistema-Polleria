@@ -37,12 +37,8 @@ export class SecurityAuditService {
   }
 
   desbloquearIp(ip: string): Observable<void> {
-    return this.api.desbloquearIp(ip).pipe(
-      tap(() => {
-        this.ipsBloqueadas.update(prev => prev.filter(i => i.ip !== ip));
-        this.notify.showSuccess(`IP ${ip} desbloqueada manualmente por el administrador`);
-      })
-    );
+    // Cold Observable: the caller subscribes, shows the toast and reloads the list from the backend.
+    return this.api.desbloquearIp(ip);
   }
 
   cargarIncidentes(): void {

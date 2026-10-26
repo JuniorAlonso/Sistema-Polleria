@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
-import { MermaCierre } from '../data/kitchen-supplies.mock';
+import { DatePipe } from '@angular/common';
+import { Merma } from '../../../core/models/inventory.model';
 
 @Component({
   selector: 'app-kitchen-merma-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CurrencyPENPipe],
+  imports: [DatePipe],
   template: `
           <main class="flex-1 p-4 sm:p-6 max-w-6xl mx-auto w-full space-y-6">
 
@@ -29,7 +29,6 @@ import { MermaCierre } from '../data/kitchen-supplies.mock';
             <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow">
               <div class="p-4 border-b border-white/10 flex justify-between items-center">
                 <h3 class="text-sm font-bold text-white">Mermas Declaradas de la Jornada</h3>
-                <span class="text-xs text-rose-400 font-bold">Total Costo Pérdida: S/. 82.00</span>
               </div>
 
               <div class="overflow-x-auto">
@@ -38,21 +37,19 @@ import { MermaCierre } from '../data/kitchen-supplies.mock';
                     <tr>
                       <th class="p-3">Insumo</th>
                       <th class="p-3">Cantidad Merma</th>
-                      <th class="p-3">Motivo de Descarte</th>
-                      <th class="p-3">Costo Pérdida</th>
-                      <th class="p-3">Responsable</th>
-                      <th class="p-3">Hora</th>
+                      <th class="p-3">Motivo</th>
+                      <th class="p-3">Justificación</th>
+                      <th class="p-3">Fecha y hora</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
                     @for (m of mermas(); track m.id) {
                       <tr class="hover:bg-white/5">
-                        <td class="p-3 font-bold text-white">{{ m.insumo }}</td>
+                        <td class="p-3 font-bold text-white">{{ m.insumoNombre }}</td>
                         <td class="p-3 font-mono text-rose-300">{{ m.cantidad }}</td>
                         <td class="p-3 text-slate-300">{{ m.motivo }}</td>
-                        <td class="p-3 font-display font-bold text-polleria-gold">{{ m.costoEstimado | currencyPEN }}</td>
-                        <td class="p-3 text-slate-400">{{ m.registradoPor }}</td>
-                        <td class="p-3 text-slate-400">{{ m.hora }}</td>
+                        <td class="p-3 text-slate-400">{{ m.justificacion || '—' }}</td>
+                        <td class="p-3 text-slate-400">{{ m.fecha | date:'short' }}</td>
                       </tr>
                     }
                   </tbody>
@@ -64,6 +61,6 @@ import { MermaCierre } from '../data/kitchen-supplies.mock';
   `
 })
 export class KitchenMermaPanelComponent {
-  readonly mermas = input.required<MermaCierre[]>();
+  readonly mermas = input.required<Merma[]>();
   readonly registrarMerma = output<void>();
 }

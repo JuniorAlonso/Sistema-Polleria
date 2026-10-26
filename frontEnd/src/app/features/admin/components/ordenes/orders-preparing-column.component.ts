@@ -81,7 +81,9 @@ import { getCodeNum } from '../../shared/admin-format.util';
                         } @else {
                           <button 
                             (click)="advanceAfterReady.emit(order)"
-                            class="px-4 py-1.5 rounded-lg text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                            [disabled]="cobroPendiente(order)"
+                            [attr.title]="cobroPendiente(order) ? 'Cobro en efectivo pendiente: se registra en caja antes de entregar' : null"
+                            class="disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 rounded-lg text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-xs flex items-center gap-1.5"
                             [ngClass]="order.tipo === 'DELIVERY' ? 'bg-amber-600/30 hover:bg-amber-500 text-amber-200 hover:text-slate-950 border border-amber-500/40' : 'bg-[#2a2e36] hover:bg-purple-600'"
                           >
                             @if (order.tipo === 'DELIVERY') {
@@ -112,5 +114,10 @@ export class OrdersPreparingColumnComponent {
 
   protected estaOrdenPagada(order: Order): boolean {
     return this.paidIds().has(String(order.id));
+  }
+
+  /** Pickup/salon ContraPago orders cannot be delivered before the cash is registered (backend 409). */
+  protected cobroPendiente(order: Order): boolean {
+    return order.tipo !== 'DELIVERY' && !!order.requiereCobroEfectivo && !this.estaOrdenPagada(order);
   }
 }

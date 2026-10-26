@@ -25,6 +25,16 @@ import { OrderStateFilter } from '../../models/admin-forms';
               </button>
               <button 
                 type="button"
+                (click)="filterChange.emit('ATENCION')"
+                class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                [ngClass]="orderStateFilter() === 'ATENCION' ? 'bg-fuchsia-500 text-white shadow' : 'text-slate-400 hover:text-white'"
+              >
+                <span class="w-2 h-2 rounded-full bg-fuchsia-400"></span>
+                <span>ATENCIÓN</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="orderStateFilter() === 'ATENCION' ? 'bg-black/30 text-white' : 'bg-white/10 text-slate-300'">{{ attentionCount() }}</span>
+              </button>
+              <button 
+                type="button"
                 (click)="filterChange.emit('NUEVAS')"
                 class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0"
                 [ngClass]="orderStateFilter() === 'NUEVAS' ? 'bg-rose-500 text-white shadow' : 'text-slate-400 hover:text-white'"
@@ -63,6 +73,16 @@ import { OrderStateFilter } from '../../models/admin-forms';
                 <span>COMPLETADO</span>
                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="orderStateFilter() === 'COMPLETADO' ? 'bg-black/30 text-white' : 'bg-white/10 text-slate-300'">{{ completedCount() }}</span>
               </button>
+              <button 
+                type="button"
+                (click)="filterChange.emit('INCIDENCIAS')"
+                class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                [ngClass]="orderStateFilter() === 'INCIDENCIAS' ? 'bg-slate-500 text-white shadow' : 'text-slate-400 hover:text-white'"
+              >
+                <span class="w-2 h-2 rounded-full bg-slate-300"></span>
+                <span>INCIDENCIAS</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="orderStateFilter() === 'INCIDENCIAS' ? 'bg-black/30 text-white' : 'bg-white/10 text-slate-300'">{{ incidentsCount() }}</span>
+              </button>
             </div>
 
             <!-- New Manual Order Button -->
@@ -81,6 +101,8 @@ import { OrderStateFilter } from '../../models/admin-forms';
 export class OrdersFilterBarComponent {
   readonly orderStateFilter = input.required<OrderStateFilter>();
   readonly totalCount = input.required<number>();
+  readonly attentionCount = input.required<number>();
+  readonly incidentsCount = input.required<number>();
   readonly newCount = input.required<number>();
   readonly preparingCount = input.required<number>();
   readonly dispatchedCount = input.required<number>();

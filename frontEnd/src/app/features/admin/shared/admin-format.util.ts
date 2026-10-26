@@ -22,6 +22,62 @@ export function puedeDespachar(order: Order): boolean {
   return ['EN_PREPARACION', 'LISTO_COCINA', 'EN_REPARTO'].includes(order.estado);
 }
 
+/** Minutes the courier must wait at the door before an order may be declared a ghost order (delivery). */
+export const GHOST_DELIVERY_MINUTES = 30;
+/** Minutes a pickup order may stay ready in store before it may be declared a ghost order. */
+export const GHOST_PICKUP_MINUTES = 60;
+/** Window (from order creation) in which a Yape capture can still be verified. */
+export const PROOF_WINDOW_MINUTES = 15;
+
+export interface GhostWindow {
+  /** True once the waiting time required by the backend has elapsed. */
+  canDeclare: boolean;
+  /** Milliseconds left until the order can be declared; null when the start timestamp is unknown. */
+  remainingMs: number | null;
+}
+
+/**
+ * Ghost-order rule mirrored from orders-service: delivery orders after 30 min at the door,
+ * pickup orders after 1 h ready in store. Returns null when the order is not in a state where
+ * a ghost declaration applies. The backend stays the authority; this only enables/disables the button.
+ */
+export function ghostWindow(order: Order, now: number): GhostWindow | null {
+  let since: string | undefined;
+  let minutes: number;
+  if (order.tipo === 'DELIVERY' && order.estado === 'EN_PUERTA') {
+    since = order.enPuertaAt;
+    minutes = GHOST_DELIVERY_MINUTES;
+  } else if (order.tipo === 'RECOJO_EN_TIENDA' && order.estado === 'LISTO_COCINA') {
+    since = order.listoAt;
+    minutes = GHOST_PICKUP_MINUTES;
+  } else {
+    return null;
+  }
+  const start = since ? Date.parse(since) : NaN;
+  if (!Number.isFinite(start)) return { canDeclare: false, remainingMs: null };
+  const remainingMs = start + minutes * 60_000 - now;
+  return { canDeclare: remainingMs <= 0, remainingMs };
+}
+
+/** Human text explaining why the ghost declaration is (not) available. */
+export function ghostHint(window: GhostWindow): string {
+  if (window.remainingMs === null) return 'Sin hora de registro: no se puede declarar todavía';
+  if (window.canDeclare) return 'Tiempo de espera cumplido';
+  return `Disponible en ${formatRemaining(window.remainingMs)}`;
+}
+
+/** Whole minutes left in the Yape-proof window of an order (negative when expired). */
+export function proofRemainingMs(order: Order, now: number): number | null {
+  const start = Date.parse(order.createdAt);
+  if (!Number.isFinite(start)) return null;
+  return start + PROOF_WINDOW_MINUTES * 60_000 - now;
+}
+
+export function formatRemaining(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return `${minutes} min`;
+}
+
 export function getMotivoLabel(motivo?: string): string {
   switch (motivo) {
     case 'PEDIDO_INCOMPLETO': return 'Pedido Incompleto o Faltan Items';

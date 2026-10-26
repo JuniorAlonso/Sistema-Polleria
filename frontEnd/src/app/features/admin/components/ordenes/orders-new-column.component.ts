@@ -47,7 +47,7 @@ import { getCodeNum } from '../../shared/admin-format.util';
                             class="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono"
                             [ngClass]="estaOrdenPagada(order) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'"
                           >
-                            {{ estaOrdenPagada(order) ? '✓ PAGADO' : '💵 POR COBRAR' }}
+                            {{ estaOrdenPagada(order) ? '✓ PAGADO' : '💵 COBRAR EN ENTREGA' }}
                           </span>
                         </div>
                         <span class="text-xs font-bold text-slate-300">

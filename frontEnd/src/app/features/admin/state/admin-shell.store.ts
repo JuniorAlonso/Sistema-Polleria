@@ -35,7 +35,10 @@ export class AdminShellStore {
   estaOrdenPagada(order: Order): boolean {
     if (!order) return false;
     const pago = this.paymentService.pagosPorOrdenMap().get(String(order.id));
-    return pago?.estado === 'APROBADO' || order.estado === 'PAGADO';
+    if (pago?.estado === 'APROBADO') return true;
+    // A ContraPago order that was only confirmed by phone has NOT been paid: the cash is collected at the door.
+    if (order.requiereCobroEfectivo) return false;
+    return order.estado === 'PAGADO';
   }
 
   /** Ids de las órdenes ya pagadas: permite a los componentes presentacionales mostrar el estado sin servicios. */

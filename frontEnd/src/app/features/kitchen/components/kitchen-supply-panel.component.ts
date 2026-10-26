@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { DespachoLoteInsumo } from '../data/kitchen-supplies.mock';
+import { DatePipe } from '@angular/common';
+import { DespachoCocina } from '../../../core/models/inventory.model';
 
 @Component({
   selector: 'app-kitchen-supply-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [DatePipe],
   template: `
           <main class="flex-1 p-4 sm:p-6 max-w-6xl mx-auto w-full space-y-6">
 
@@ -34,27 +36,23 @@ import { DespachoLoteInsumo } from '../data/kitchen-supplies.mock';
                 <table class="w-full text-left text-xs text-slate-300">
                   <thead class="bg-black/40 text-[11px] uppercase tracking-wider text-slate-400 border-b border-white/10">
                     <tr>
-                      <th class="p-3">Código Lote</th>
-                      <th class="p-3">Insumo</th>
-                      <th class="p-3">Cantidad</th>
+                      <th class="p-3">Despacho</th>
+                      <th class="p-3">Insumos</th>
                       <th class="p-3">Solicitante</th>
-                      <th class="p-3">Hora Despacho</th>
-                      <th class="p-3">Estado</th>
+                      <th class="p-3">Fecha y hora</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
                     @for (d of despachos(); track d.id) {
                       <tr class="hover:bg-white/5">
-                        <td class="p-3 font-mono font-bold text-amber-400">{{ d.codigoLote }}</td>
-                        <td class="p-3 font-bold text-white">{{ d.insumo }}</td>
-                        <td class="p-3 font-mono">{{ d.cantidad }}</td>
-                        <td class="p-3 text-slate-400">{{ d.solicitadoPor }}</td>
-                        <td class="p-3 text-slate-400">{{ d.hora }}</td>
-                        <td class="p-3">
-                          <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                            {{ d.estado }}
-                          </span>
+                        <td class="p-3 font-mono font-bold text-amber-400">#{{ d.id }}</td>
+                        <td class="p-3 text-white">
+                          @for (it of d.items; track $index) {
+                            <p><strong>{{ it.insumoNombre }}</strong> <span class="font-mono text-slate-300">x {{ it.cantidad }}</span></p>
+                          }
                         </td>
+                        <td class="p-3 text-slate-400">{{ d.solicitanteNombre }}</td>
+                        <td class="p-3 text-slate-400">{{ d.fechaDespacho | date:'short' }}</td>
                       </tr>
                     }
                   </tbody>
@@ -66,6 +64,6 @@ import { DespachoLoteInsumo } from '../data/kitchen-supplies.mock';
   `
 })
 export class KitchenSupplyPanelComponent {
-  readonly despachos = input.required<DespachoLoteInsumo[]>();
+  readonly despachos = input.required<DespachoCocina[]>();
   readonly solicitarLote = output<void>();
 }

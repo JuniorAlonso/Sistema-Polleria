@@ -82,8 +82,9 @@ import { getCodeNum } from '../../shared/admin-format.util';
 
                         <button 
                           (click)="advance.emit({ order, status: 'COMPLETADO' })"
-                          class="px-3.5 py-1.5 rounded bg-rose-600 hover:bg-emerald-600 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow"
-                          title="Marcar como entregado"
+                          [disabled]="cobroPendiente(order)"
+                          [attr.title]="cobroPendiente(order) ? 'Cobro en efectivo pendiente: lo registra el repartidor antes de entregar' : 'Marcar como entregado'"
+                          class="px-3.5 py-1.5 rounded bg-rose-600 hover:bg-emerald-600 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           ENTREGADO
                         </button>
@@ -110,6 +111,11 @@ export class OrdersDispatchedColumnComponent {
 
   protected estaOrdenPagada(order: Order): boolean {
     return this.paidIds().has(String(order.id));
+  }
+
+  /** A ContraPago order cannot be closed until the courier registers the cash collection. */
+  protected cobroPendiente(order: Order): boolean {
+    return !!order.requiereCobroEfectivo && !this.estaOrdenPagada(order);
   }
 
   /** Sin roster se muestra el id: nunca un nombre inventado. */

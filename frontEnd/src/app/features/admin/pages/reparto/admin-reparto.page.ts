@@ -3,13 +3,14 @@ import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { OrdersService } from '../../../../core/services/orders.service';
 import { RepartidoresService } from '../../../../core/services/repartidores.service';
 import { AdminShellStore } from '../../state/admin-shell.store';
+import { GhostOrdersListComponent } from '../../components/reparto/ghost-orders-list.component';
 import { DeliveryOrdersTableComponent } from '../../components/reparto/delivery-orders-table.component';
 
 /** Contenedor (smart) de la pestaña REPARTO & DELIVERY (RF18): pedidos de delivery y despacho. */
 @Component({
   selector: 'app-admin-reparto-page',
   standalone: true,
-  imports: [CommonModule, DeliveryOrdersTableComponent],
+  imports: [CommonModule, DeliveryOrdersTableComponent, GhostOrdersListComponent],
   host: { class: 'contents' },
   template: `
     <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
@@ -19,6 +20,8 @@ import { DeliveryOrdersTableComponent } from '../../components/reparto/delivery-
         (refreshRequested)="ordersService.loadActiveOrders()"
         (assignRequested)="store.abrirModalAsignarMotorizado($event)"
       />
+
+      <app-ghost-orders-list [pedidos]="pedidosFantasma()" />
     </main>
   `
 })
@@ -41,6 +44,10 @@ export class AdminRepartoPage implements OnInit {
   // Reparto (RF18): los pedidos y el repartidor salen del backend, sin roster local.
   readonly pedidosDeliveryEnCurso = computed(() =>
     this.ordersService.orders().filter(o =>
-      o.tipo === 'DELIVERY' && o.estado !== 'COMPLETADO' && o.estado !== 'CANCELADO')
+      o.tipo === 'DELIVERY' && !['COMPLETADO', 'CANCELADO', 'PEDIDO_FANTASMA'].includes(o.estado))
+  );
+
+  readonly pedidosFantasma = computed(() =>
+    this.ordersService.orders().filter(o => o.tipo === 'DELIVERY' && o.estado === 'PEDIDO_FANTASMA')
   );
 }

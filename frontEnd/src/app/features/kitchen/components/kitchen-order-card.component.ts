@@ -13,7 +13,8 @@ import { codigoNumerico } from '../kitchen.types';
                 <div
                   class="rounded-3xl border flex flex-col justify-between transition-all duration-300 shadow-xl overflow-hidden animate-slide-up motion-reduce:animate-none"
                   [ngClass]="{
-                    'border-rose-500/40 ring-1 ring-rose-500/20': order().estado === 'PAGADO' || order().estado === 'PENDIENTE_PAGO',
+                    'border-rose-500/40 ring-1 ring-rose-500/20': order().estado === 'PAGADO',
+                    'border-slate-500/40 opacity-80': esperando(),
                     'border-amber-500/50 ring-1 ring-amber-500/30': order().estado === 'EN_PREPARACION',
                     'border-purple-500/50 ring-1 ring-purple-500/30': order().estado === 'LISTO_COCINA'
                   }"
@@ -83,7 +84,13 @@ import { codigoNumerico } from '../kitchen.types';
                   </div>
 
                   <div class="p-4 border-t border-white/10 bg-black/40">
-                    @if (order().estado === 'PAGADO' || order().estado === 'PENDIENTE_PAGO') {
+                    @if (esperando()) {
+                      <div class="flex items-center justify-center p-3 rounded-xl bg-slate-500/10 border border-slate-500/30" data-testid="awaiting-badge">
+                        <span class="text-xs text-slate-300 font-bold">
+                          {{ order().estado === 'PENDIENTE_PAGO' ? 'Esperando pago: aún no se puede cocinar' : 'Esperando confirmación telefónica: aún no se puede cocinar' }}
+                        </span>
+                      </div>
+                    } @else if (order().estado === 'PAGADO') {
                       <button
                         (click)="cambiarEstado.emit('EN_PREPARACION')"
                         class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer"
@@ -120,8 +127,13 @@ export class KitchenOrderCardComponent {
 
   /** Una comanda recién recibida (todavía sin empezar) se marca como nueva. */
   readonly esNueva = computed(() => {
+    return this.order().estado === 'PAGADO';
+  });
+
+  /** Awaiting payment or phone confirmation: visible in the KDS but never cookable. */
+  readonly esperando = computed(() => {
     const estado = this.order().estado;
-    return estado === 'PAGADO' || estado === 'PENDIENTE_PAGO';
+    return estado === 'PENDIENTE_PAGO' || estado === 'PENDIENTE_CONFIRMACION';
   });
 
   readonly claseEspera = computed(() =>

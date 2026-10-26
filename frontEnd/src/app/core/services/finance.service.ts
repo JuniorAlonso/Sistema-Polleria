@@ -8,7 +8,8 @@ import {
 } from '../models/finance.model';
 import { 
   BackendComprobanteResponse, 
-  BackendLiquidacionResponse 
+  BackendEfectivoPendienteLiquidacion,
+  BackendLiquidacionResponse
 } from '../models/api-contracts.model';
 import { NotificationService } from './notification.service';
 
@@ -173,6 +174,11 @@ export class FinanceService {
 
   cerrarLiquidacion(id: number | string, req: CerrarLiquidacionRequest): Observable<BackendLiquidacionResponse> {
     return this.api.cerrarLiquidacion(id, req);
+  }
+
+  /** Cash the courier still has to hand in; errors propagate (404 when no open settlement). */
+  obtenerEfectivoPendienteLiquidacion(repartidorId: number | string): Observable<BackendEfectivoPendienteLiquidacion> {
+    return this.api.obtenerEfectivoPendienteLiquidacion(repartidorId);
   }
 
   listarLiquidacionesPorRepartidor(repartidorId: number | string): Observable<BackendLiquidacionResponse[]> {

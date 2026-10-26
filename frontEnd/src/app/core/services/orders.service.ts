@@ -485,7 +485,8 @@ export class OrdersService {
     const order = this.orders().find(o => o.id === orderId || (cleanId > 0 && this.extractNumericId(o.id) === cleanId));
     const estado = currentStatus || order?.estado;
 
-    if (estado === 'PAGADO' || estado === 'PENDIENTE_PAGO') {
+    // PENDIENTE_PAGO is not advanced from here: the backend only releases it after the payment is verified.
+    if (estado === 'PAGADO') {
       return this.updateOrderStatus(orderId, 'EN_PREPARACION').pipe(
         switchMap(() => this.updateOrderStatus(orderId, 'LISTO_COCINA')),
         switchMap(() => this.updateOrderStatus(orderId, 'COMPLETADO'))
@@ -510,7 +511,7 @@ export class OrdersService {
     // solo se consume para no dejarlo sin manejar.
     const ignorarFallo = () => undefined;
 
-    if (order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO') {
+    if (order.estado === 'PAGADO') {
       this.updateOrderStatus(order.id, 'EN_PREPARACION').subscribe({ next: () => undefined, error: ignorarFallo });
     } else if (order.estado === 'EN_PREPARACION') {
       this.updateOrderStatus(order.id, 'LISTO_COCINA').subscribe({ next: () => undefined, error: ignorarFallo });

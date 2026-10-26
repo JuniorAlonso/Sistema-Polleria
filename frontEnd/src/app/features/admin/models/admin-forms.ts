@@ -8,7 +8,11 @@ import { EstadoNotificacion } from '../../../core/models/notification-log.model'
 /** Contratos de UI compartidos entre los contenedores (smart) y los componentes presentacionales del panel admin. */
 
 export type InventarioSubTab = 'CARTA' | 'INSUMOS' | 'MERMAS' | 'PREDICCION';
-export type OrderStateFilter = 'TODAS' | 'NUEVAS' | 'PREPARANDOSE' | 'EN_CAMINO' | 'COMPLETADO';
+export type OrderStateFilter =
+  | 'TODAS' | 'ATENCION' | 'NUEVAS' | 'PREPARANDOSE' | 'EN_CAMINO' | 'COMPLETADO' | 'INCIDENCIAS';
+
+/** Estado del comprobante de Yape de una orden en PENDIENTE_PAGO, según payments-service. */
+export type ProofState = 'SIN_COMPROBANTE' | 'PENDIENTE_VERIFICACION' | 'RECHAZADO';
 
 export interface OrderAdvance {
   order: Order;

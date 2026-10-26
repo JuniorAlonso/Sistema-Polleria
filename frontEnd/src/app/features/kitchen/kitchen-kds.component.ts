@@ -2,19 +2,15 @@ import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } f
 import { isPlatformBrowser } from '@angular/common';
 import { Router } from '@angular/router';
 import { Subscription, interval } from 'rxjs';
+import { InventoryService } from '../../core/services/inventory.service';
 import { OrdersService } from '../../core/services/orders.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order, OrderStatus } from '../../core/models/order.model';
 import { KitchenTab, KdsFilter, codigoNumerico } from './kitchen.types';
-import {
-  DespachoLoteInsumo,
-  MermaCierre,
-  mockDespachos,
-  mockMermas,
-  mockNuevoDespacho,
-  mockNuevaMerma
-} from './data/kitchen-supplies.mock';
+import { RegistrarMermaRequest } from '../../core/models/inventory.model';
+import { KitchenDespachoModalComponent, DespachoFormValue } from './components/kitchen-despacho-modal.component';
+import { KitchenMermaModalComponent } from './components/kitchen-merma-modal.component';
 import { KitchenSidebarComponent } from './components/kitchen-sidebar.component';
 import { KitchenHeaderComponent } from './components/kitchen-header.component';
 import { KitchenFilterBarComponent } from './components/kitchen-filter-bar.component';
@@ -23,7 +19,6 @@ import { KitchenSupplyPanelComponent } from './components/kitchen-supply-panel.c
 import { KitchenMermaPanelComponent } from './components/kitchen-merma-panel.component';
 
 export type { KitchenTab, KdsFilter } from './kitchen.types';
-export type { DespachoLoteInsumo, MermaCierre } from './data/kitchen-supplies.mock';
 
 @Component({
   selector: 'app-kitchen-kds',
@@ -34,7 +29,9 @@ export type { DespachoLoteInsumo, MermaCierre } from './data/kitchen-supplies.mo
     KitchenFilterBarComponent,
     KitchenOrderCardComponent,
     KitchenSupplyPanelComponent,
-    KitchenMermaPanelComponent
+    KitchenMermaPanelComponent,
+    KitchenDespachoModalComponent,
+    KitchenMermaModalComponent
   ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
@@ -108,25 +105,46 @@ export type { DespachoLoteInsumo, MermaCierre } from './data/kitchen-supplies.mo
 
         @if (activeTab() === 'DESPACHO_INSUMOS') {
           <app-kitchen-supply-panel
-            [despachos]="despachos()"
+            [despachos]="inventory.despachos()"
             (solicitarLote)="solicitarDespachoModal()"
           />
         }
 
         @if (activeTab() === 'MERMAS') {
           <app-kitchen-merma-panel
-            [mermas]="mermas()"
+            [mermas]="inventory.mermas()"
             (registrarMerma)="registrarMermaModal()"
           />
         }
 
       </div>
     </div>
+
+    @if (mostrarDespachoModal()) {
+      <app-kitchen-despacho-modal
+        [insumos]="inventory.insumos()"
+        [enviando]="enviandoInventario()"
+        [error]="errorInventario()"
+        (closed)="mostrarDespachoModal.set(false)"
+        (confirmed)="registrarDespacho($event)"
+      />
+    }
+
+    @if (mostrarMermaModal()) {
+      <app-kitchen-merma-modal
+        [insumos]="inventory.insumos()"
+        [enviando]="enviandoInventario()"
+        [error]="errorInventario()"
+        (closed)="mostrarMermaModal.set(false)"
+        (confirmed)="registrarMerma($event)"
+      />
+    }
   `
 })
 export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly authService = inject(AuthService);
+  readonly inventory = inject(InventoryService);
   private notify = inject(NotificationService);
   private router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -135,13 +153,14 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly activeTab = signal<KitchenTab>('KDS');
   readonly kdsFilter = signal<KdsFilter>('TODAS');
 
-  // MOCK: datos ficticios (ver data/kitchen-supplies.mock.ts)
-  readonly despachos = signal<DespachoLoteInsumo[]>(mockDespachos());
-  readonly mermas = signal<MermaCierre[]>(mockMermas());
+  readonly mostrarDespachoModal = signal(false);
+  readonly mostrarMermaModal = signal(false);
+  readonly enviandoInventario = signal(false);
+  readonly errorInventario = signal<string | null>(null);
 
   readonly rawKitchenOrders = computed(() =>
     this.ordersService.orders()
-      .filter(o => ['PAGADO', 'PENDIENTE_PAGO', 'EN_PREPARACION', 'LISTO_COCINA'].includes(o.estado))
+      .filter(o => ['PAGADO', 'PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION', 'EN_PREPARACION', 'LISTO_COCINA'].includes(o.estado))
       // Cocina atiende por orden de llegada: la comanda más vieja primero (no la más nueva).
       .slice()
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
@@ -150,7 +169,7 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly kitchenOrdersCount = computed(() => this.rawKitchenOrders().length);
 
   readonly pendingCount = computed(() =>
-    this.rawKitchenOrders().filter(o => o.estado === 'PAGADO' || o.estado === 'PENDIENTE_PAGO').length
+    this.rawKitchenOrders().filter(o => o.estado === 'PAGADO').length
   );
 
   readonly preparingCount = computed(() =>
@@ -165,7 +184,7 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
     const f = this.kdsFilter();
     const list = this.rawKitchenOrders();
     if (f === 'POR_PREPARAR') {
-      return list.filter(o => o.estado === 'PAGADO' || o.estado === 'PENDIENTE_PAGO');
+      return list.filter(o => o.estado === 'PAGADO');
     }
     if (f === 'EN_PREPARACION') {
       return list.filter(o => o.estado === 'EN_PREPARACION');
@@ -206,7 +225,7 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
 
   /** Una comanda recién recibida (todavía sin empezar) se marca como nueva. */
   esNueva(order: Order): boolean {
-    return order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO';
+    return order.estado === 'PAGADO';
   }
 
   claseEspera(order: Order): string {
@@ -225,28 +244,73 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   }
 
   cambiarEstadoOrden(order: Order, nuevoEstado: OrderStatus): void {
+    // Cocina solo avanza lo que ya está pagado/confirmado: PAGADO -> EN_PREPARACION -> LISTO_COCINA.
+    const permitido =
+      (order.estado === 'PAGADO' && nuevoEstado === 'EN_PREPARACION') ||
+      (order.estado === 'EN_PREPARACION' && nuevoEstado === 'LISTO_COCINA');
+    if (!permitido) {
+      this.notify.showWarning(`La orden #${this.getCodeNum(order.codigoSeguimiento)} todavía no se puede cocinar`);
+      return;
+    }
     this.ordersService.updateOrderStatus(order.id, nuevoEstado).subscribe({
       next: () => {
         this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} actualizada a ${nuevoEstado}`);
       },
-      error: () => {
-        this.notify.showError(`Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+      error: err => {
+        this.notify.showError(
+          err?.error?.error || err?.error?.message || `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`
+        );
       }
     });
   }
 
-  // MOCK: solo agrega una fila local; no hay llamada HTTP.
   solicitarDespachoModal(): void {
-    const solicitante = this.authService.currentUser()?.nombre || 'Chef Mijael';
-    this.despachos.update(list => [mockNuevoDespacho(solicitante), ...list]);
-    this.notify.showSuccess('Despacho de Lote Solicitado', 'Almacén ha registrado la salida hacia cocina.');
+    this.errorInventario.set(null);
+    this.mostrarDespachoModal.set(true);
   }
 
-  // MOCK: solo agrega una fila local; no hay llamada HTTP.
   registrarMermaModal(): void {
-    const responsable = this.authService.currentUser()?.nombre || 'Chef Mijael';
-    this.mermas.update(list => [mockNuevaMerma(responsable), ...list]);
-    this.notify.showSuccess('Merma Registrada', 'Declaración enviada al balance de inventario y costos.');
+    this.errorInventario.set(null);
+    this.mostrarMermaModal.set(true);
+  }
+
+  /** POST /inventario/despachos: la lista y el stock solo cambian con la respuesta del backend. */
+  registrarDespacho(form: DespachoFormValue): void {
+    this.enviandoInventario.set(true);
+    this.errorInventario.set(null);
+    this.inventory.registrarDespacho({
+      solicitanteNombre: this.authService.currentUser()?.nombre,
+      items: [{ insumoId: form.insumoId, cantidad: form.cantidad, observaciones: form.observaciones }]
+    }).subscribe({
+      next: () => {
+        this.enviandoInventario.set(false);
+        this.mostrarDespachoModal.set(false);
+      },
+      error: err => {
+        this.enviandoInventario.set(false);
+        this.errorInventario.set(this.mensajeInventario(err, 'No se pudo registrar el despacho'));
+      }
+    });
+  }
+
+  /** POST /inventario/mermas: la lista solo cambia con la respuesta del backend. */
+  registrarMerma(req: RegistrarMermaRequest): void {
+    this.enviandoInventario.set(true);
+    this.errorInventario.set(null);
+    this.inventory.registrarMerma(req).subscribe({
+      next: () => {
+        this.enviandoInventario.set(false);
+        this.mostrarMermaModal.set(false);
+      },
+      error: err => {
+        this.enviandoInventario.set(false);
+        this.errorInventario.set(this.mensajeInventario(err, 'No se pudo registrar la merma'));
+      }
+    });
+  }
+
+  private mensajeInventario(err: { error?: { error?: string; message?: string }; message?: string } | null, fallback: string): string {
+    return err?.error?.error || err?.error?.message || err?.message || fallback;
   }
 
   cerrarSesion(): void {

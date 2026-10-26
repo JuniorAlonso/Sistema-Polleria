@@ -218,12 +218,26 @@ export interface BackendLiquidacionResponse {
   arqueoCajaId?: number;
   fondoInicial: number;
   totalCobradoEfectivo: number;
+  /** Cash expected from the courier's approved cash payments (payments-service), set on close. */
+  totalEsperadoEfectivo?: number | null;
+  /** Counted cash minus expected cash, set on close. */
+  diferenciaEfectivo?: number | null;
   totalRendido: number;
   diferencia: number;
   estado: 'ABIERTA' | 'CERRADA' | 'DISCREPANCIA';
   observaciones?: string;
   creadoEn: string;
   cerradoEn?: string;
+}
+
+/** Cash the courier still has to hand in for the open settlement (GET /finanzas/liquidaciones/repartidor/{id}/pendiente). */
+export interface BackendEfectivoPendienteLiquidacion {
+  repartidorId: number;
+  liquidacionId: number;
+  desde: string;
+  total: number;
+  cantidad: number;
+  pagos: { pagoId: number; ordenId: number; monto: number; verificadoEn: string }[];
 }
 
 // --- 1.7 Mermas & Productos Fantasma (:8085) ---

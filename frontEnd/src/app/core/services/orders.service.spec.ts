@@ -59,12 +59,12 @@ describe('OrdersService — updateOrderStatus', () => {
     expect(emitido).withContext('null no es un resultado válido').toBe('sin-emitir');
   });
 
-  it('revierte el cambio optimista cuando el backend rechaza la transición', () => {
+  it('no cambia el estado local antes de que el backend confirme, y lo conserva si rechaza', () => {
     service.orders.set([orden('EN_PREPARACION')]);
 
     service.updateOrderStatus('5', 'CANCELADO').subscribe({ next: () => undefined, error: () => undefined });
 
-    expect(service.orders()[0].estado).withContext('cambio optimista aplicado').toBe('CANCELADO');
+    expect(service.orders()[0].estado).withContext('sin HTTP 200 no hay cambio local').toBe('EN_PREPARACION');
 
     http.expectOne(req => req.method === 'PATCH')
       .flush({ message: 'transición inválida' }, { status: 409, statusText: 'Conflict' });

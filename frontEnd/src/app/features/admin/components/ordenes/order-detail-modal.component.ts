@@ -5,7 +5,7 @@ import { CurrencyPENPipe } from '../../../../shared/pipes/currency-pen.pipe';
 import { Order } from '../../../../core/models/order.model';
 import { PagoOrdenAdmin } from '../../../../core/services/payment.service';
 import { OrderAdvance } from '../../models/admin-forms';
-import { getCodeNum } from '../../shared/admin-format.util';
+import { getCodeNum, ghostHint, ghostWindow, GhostWindow, proofRemainingMs } from '../../shared/admin-format.util';
 
 /** Inspector de orden (con verificación del comprobante de Yape para ADMIN). Presentacional. */
 @Component({
@@ -31,7 +31,8 @@ import { getCodeNum } from '../../shared/admin-format.util';
                   <span 
                     class="text-xs font-bold px-2 py-0.5 rounded"
                     [ngClass]="{
-                      'bg-rose-500/20 text-rose-400': order.estado === 'PENDIENTE_PAGO' || order.estado === 'PAGADO',
+                      'bg-rose-500/20 text-rose-400': order.estado === 'PENDIENTE_PAGO' || order.estado === 'PAGADO' || order.estado === 'PEDIDO_FANTASMA',
+                      'bg-fuchsia-500/20 text-fuchsia-300': order.estado === 'PENDIENTE_CONFIRMACION' || order.estado === 'EN_PUERTA',
                       'bg-amber-500/20 text-amber-300': order.estado === 'EN_PREPARACION' || order.estado === 'LISTO_COCINA',
                       'bg-sky-500/20 text-sky-300': order.estado === 'EN_REPARTO',
                       'bg-emerald-500/20 text-emerald-400': order.estado === 'COMPLETADO',
@@ -86,7 +87,7 @@ import { getCodeNum } from '../../shared/admin-format.util';
                   </span>
                 } @else {
                   <span class="text-amber-300 font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 text-[11px] font-mono">
-                    💵 PAGO PENDIENTE (Contraentrega)
+                    {{ order.requiereCobroEfectivo ? '💵 EFECTIVO: se cobra en la entrega' : '💵 PAGO PENDIENTE' }}
                   </span>
                 }
               </div>
@@ -104,6 +105,12 @@ import { getCodeNum } from '../../shared/admin-format.util';
                 </div>
               }
             </div>
+
+            @if (order.estado === 'PEDIDO_FANTASMA') {
+              <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs" role="status">
+                Pedido fantasma: {{ order.motivoFantasma || 'sin motivo registrado' }}. Teléfono, correo e IP quedan bloqueados para pago contra entrega.
+              </div>
+            }
 
             <!-- Items List -->
             <div class="space-y-2">
@@ -137,6 +144,26 @@ import { getCodeNum } from '../../shared/admin-format.util';
                 </div>
               }
 
+              @if (pagoConComprobante(); as pagoImg) {
+                <div class="bg-black/30 p-3.5 rounded-xl border border-white/10 space-y-2" data-testid="proof-image">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Comprobante de Yape</span>
+                    <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-white/10 text-slate-300">{{ pagoImg.estado }}</span>
+                  </div>
+                  <img
+                    [src]="pagoImg.comprobanteUrl"
+                    alt="Comprobante de Yape del pedido #{{ getCodeNum(order.codigoSeguimiento) }}"
+                    class="w-full max-h-72 object-contain rounded-lg border border-white/10 bg-slate-950"
+                  />
+                  @if (pagoImg.motivoRechazo) {
+                    <p class="text-[11px] text-rose-300">Motivo de rechazo: {{ pagoImg.motivoRechazo }}</p>
+                  }
+                  <p class="text-[10px] text-slate-500">
+                    La imagen se pide al abrir el detalle y su enlace vence en 300 s: no se reutiliza entre consultas.
+                  </p>
+                </div>
+              }
+
               @if (comprobantePendiente(); as pago) {
                 <div class="bg-black/30 p-3.5 rounded-xl border border-polleria-gold/30 space-y-3">
                   <div class="flex items-center justify-between gap-2">
@@ -145,17 +172,6 @@ import { getCodeNum } from '../../shared/admin-format.util';
                       Pendiente de verificación
                     </span>
                   </div>
-
-                  @if (pago.comprobanteUrl) {
-                    <img
-                      [src]="pago.comprobanteUrl"
-                      alt="Comprobante de Yape del pedido #{{ getCodeNum(order.codigoSeguimiento) }}"
-                      class="w-full max-h-72 object-contain rounded-lg border border-white/10 bg-slate-950"
-                    />
-                    <p class="text-[10px] text-slate-500">
-                      La imagen se pide al abrir el detalle y su enlace vence en 300 s: no se reutiliza entre consultas.
-                    </p>
-                  }
 
                   <div class="flex justify-between text-xs">
                     <span class="text-slate-400">Monto registrado:</span>
@@ -201,12 +217,19 @@ import { getCodeNum } from '../../shared/admin-format.util';
                     <button
                       type="button"
                       (click)="approveProof.emit()"
-                      [disabled]="verificandoComprobante()"
+                      [disabled]="verificandoComprobante() || comprobanteVencido()"
+                      [attr.title]="comprobanteVencido() ? 'Pasaron más de 15 minutos desde que se creó el pedido' : null"
                       class="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {{ verificandoComprobante() ? 'Verificando...' : 'Aprobar comprobante' }}
                     </button>
                   </div>
+
+                  @if (comprobanteVencido()) {
+                    <p class="text-[10px] text-rose-300 text-right" data-testid="proof-expired">
+                      Pasaron más de 15 minutos desde que se creó el pedido: el backend ya no acepta la aprobación.
+                    </p>
+                  }
 
                   @if (!puedeRechazarComprobante()) {
                     <p class="text-[10px] text-slate-400 text-right">
@@ -233,7 +256,7 @@ import { getCodeNum } from '../../shared/admin-format.util';
 
             <!-- Action Buttons -->
             <div class="flex flex-wrap justify-end gap-2 pt-2 border-t border-white/10">
-              @if (order.estado !== 'COMPLETADO' && order.estado !== 'CANCELADO') {
+              @if (order.estado !== 'COMPLETADO' && order.estado !== 'CANCELADO' && order.estado !== 'PEDIDO_FANTASMA') {
                 <button 
                   (click)="cancelled.emit(order); closed.emit()"
                   class="px-3.5 py-2 rounded-xl bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-xs font-bold transition cursor-pointer"
@@ -242,7 +265,27 @@ import { getCodeNum } from '../../shared/admin-format.util';
                 </button>
               }
 
-              @if (order.estado === 'PENDIENTE_PAGO' || order.estado === 'PAGADO') {
+              @if (ghost(); as g) {
+                <button
+                  (click)="declareGhost.emit(order); closed.emit()"
+                  [disabled]="!g.canDeclare"
+                  [attr.title]="ghostText(g)"
+                  class="px-3.5 py-2 rounded-xl bg-rose-900/40 hover:bg-rose-700 text-rose-300 text-xs font-bold transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Declarar pedido fantasma
+                </button>
+                <p class="w-full text-[10px] text-slate-400 text-right" data-testid="ghost-hint">{{ ghostText(g) }}</p>
+              }
+
+              @if (order.estado === 'PENDIENTE_PAGO') {
+                <p class="text-[11px] text-slate-400" data-testid="awaiting-payment">
+                  Esperando pago: se habilita al aprobar el comprobante.
+                </p>
+              } @else if (order.estado === 'PENDIENTE_CONFIRMACION') {
+                <p class="text-[11px] text-slate-400" data-testid="awaiting-call">
+                  Esperando la llamada de confirmación (columna Atención).
+                </p>
+              } @else if (order.estado === 'PAGADO') {
                 <button 
                   (click)="advance.emit({ order, status: 'EN_PREPARACION' }); closed.emit()"
                   class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer"
@@ -259,14 +302,18 @@ import { getCodeNum } from '../../shared/admin-format.util';
               } @else if (order.estado === 'LISTO_COCINA') {
                 <button 
                   (click)="advanceAfterReady.emit(order); closed.emit()"
-                  class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer"
+                  [disabled]="order.tipo !== 'DELIVERY' && cobroPendiente()"
+                  [attr.title]="order.tipo !== 'DELIVERY' && cobroPendiente() ? 'Cobro en efectivo pendiente: se registra en caja antes de entregar' : null"
+                  class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {{ order.tipo === 'DELIVERY' ? 'Despachar (En Camino)' : 'Marcar Entregado' }}
                 </button>
               } @else if (order.estado === 'EN_REPARTO') {
                 <button 
                   (click)="advance.emit({ order, status: 'COMPLETADO' }); closed.emit()"
-                  class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer"
+                  [disabled]="cobroPendiente()"
+                  [attr.title]="cobroPendiente() ? 'Cobro en efectivo pendiente: lo registra el repartidor' : null"
+                  class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Confirmar Entrega
                 </button>
@@ -287,6 +334,10 @@ export class OrderDetailModalComponent {
   // Verificación del comprobante (estado que resuelve el contenedor contra el backend)
   readonly comprobanteCargando = input.required<boolean>();
   readonly comprobantePendiente = input.required<PagoOrdenAdmin | null>();
+  /** Pago de la orden que trae imagen de comprobante (en cualquier estado). */
+  readonly pagoConComprobante = input.required<PagoOrdenAdmin | null>();
+  /** Reloj del contenedor (ms) para las ventanas de 15 min / 30 min / 1 h. */
+  readonly now = input.required<number>();
   readonly motivoRechazo = input.required<string>();
   readonly errorVerificacion = input.required<string | null>();
   readonly verificandoComprobante = input.required<boolean>();
@@ -300,9 +351,27 @@ export class OrderDetailModalComponent {
   readonly motivoRechazoChange = output<string>();
   readonly approveProof = output<void>();
   readonly rejectProof = output<void>();
+  readonly declareGhost = output<Order>();
 
   /** Rechazar exige motivo: sin él el botón queda deshabilitado y se explica por qué. */
   protected readonly puedeRechazarComprobante = computed(() => this.motivoRechazo().trim().length > 0);
 
   protected readonly getCodeNum = getCodeNum;
+
+  /** The backend rejects approvals 15 minutes after the order was created. */
+  protected readonly comprobanteVencido = computed(() => {
+    const remaining = proofRemainingMs(this.order(), this.now());
+    return remaining !== null && remaining <= 0;
+  });
+
+  protected readonly ghost = computed(() => ghostWindow(this.order(), this.now()));
+
+  protected ghostText(window: GhostWindow): string {
+    return ghostHint(window);
+  }
+
+  /** ContraPago order whose cash has not been registered yet. */
+  protected cobroPendiente(): boolean {
+    return !!this.order().requiereCobroEfectivo && !this.isPaid();
+  }
 }

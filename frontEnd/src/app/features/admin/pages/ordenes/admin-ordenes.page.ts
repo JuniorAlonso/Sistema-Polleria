@@ -1,15 +1,18 @@
-import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, signal, untracked } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
-import { tap, catchError, of } from 'rxjs';
+import { tap, catchError, of, timer, map } from 'rxjs';
 import { OrdersService } from '../../../../core/services/orders.service';
 import { AuthService } from '../../../../core/services/auth.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { PaymentService, PagoOrdenAdmin } from '../../../../core/services/payment.service';
 import { Order, OrderStatus } from '../../../../core/models/order.model';
 import { AdminShellStore } from '../../state/admin-shell.store';
-import { OrderStateFilter } from '../../models/admin-forms';
-import { getCodeNum } from '../../shared/admin-format.util';
+import { OrderStateFilter, ProofState } from '../../models/admin-forms';
+import { getCodeNum, ghostWindow } from '../../shared/admin-format.util';
 import { OrdersFilterBarComponent } from '../../components/ordenes/orders-filter-bar.component';
+import { OrdersAttentionColumnComponent } from '../../components/ordenes/orders-attention-column.component';
+import { OrdersIncidentsColumnComponent } from '../../components/ordenes/orders-incidents-column.component';
 import { OrdersNewColumnComponent } from '../../components/ordenes/orders-new-column.component';
 import { OrdersPreparingColumnComponent } from '../../components/ordenes/orders-preparing-column.component';
 import { OrdersDispatchedColumnComponent } from '../../components/ordenes/orders-dispatched-column.component';
@@ -17,8 +20,9 @@ import { OrdersCompletedColumnComponent } from '../../components/ordenes/orders-
 import { OrderDetailModalComponent } from '../../components/ordenes/order-detail-modal.component';
 
 /**
- * Contenedor (smart) de la pestaña ÓRDENES: tablero Kanban en vivo. El admin conserva el flujo
- * principal de pedidos (aceptar, listo, despachar, entregar, cancelar) por si necesita intervenir.
+ * Contenedor (smart) de la pestaña ÓRDENES: tablero Kanban en vivo. Cada acción llama al endpoint
+ * real y la vista solo cambia con la respuesta del backend; las compuertas de negocio (comprobante,
+ * llamada de confirmación, pedido fantasma) nunca se saltan con un PATCH genérico.
  */
 @Component({
   selector: 'app-admin-ordenes-page',
@@ -26,6 +30,8 @@ import { OrderDetailModalComponent } from '../../components/ordenes/order-detail
   imports: [
     CommonModule,
     OrdersFilterBarComponent,
+    OrdersAttentionColumnComponent,
+    OrdersIncidentsColumnComponent,
     OrdersNewColumnComponent,
     OrdersPreparingColumnComponent,
     OrdersDispatchedColumnComponent,
@@ -52,15 +58,31 @@ import { OrderDetailModalComponent } from '../../components/ordenes/order-detail
       <app-orders-filter-bar
         [orderStateFilter]="orderStateFilter()"
         [totalCount]="ordersService.orders().length"
-        [newCount]="getNewOrdersRawCount()"
-        [preparingCount]="getPreparingOrdersRawCount()"
-        [dispatchedCount]="getDispatchedOrdersRawCount()"
-        [completedCount]="getCompletedOrdersRawCount()"
+        [attentionCount]="attentionCount()"
+        [incidentsCount]="incidentsCount()"
+        [newCount]="newCount()"
+        [preparingCount]="preparingCount()"
+        [dispatchedCount]="dispatchedCount()"
+        [completedCount]="completedCount()"
         (filterChange)="orderStateFilter.set($event)"
         (newOrder)="store.abrirModalNuevaOrden()"
       />
 
-          <div [ngClass]="orderStateFilter() === 'TODAS' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 min-w-[960px] h-[calc(100vh-175px)]' : 'grid grid-cols-1 max-w-xl mx-auto w-full gap-4 h-[calc(100vh-175px)]'">
+          <div [ngClass]="orderStateFilter() === 'TODAS' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 min-w-[960px] h-[calc(100vh-175px)]' : 'grid grid-cols-1 max-w-xl mx-auto w-full gap-4 h-[calc(100vh-175px)]'">
+        @if (orderStateFilter() === 'TODAS' || orderStateFilter() === 'ATENCION') {
+          <app-orders-attention-column
+            [orders]="attentionOrders()"
+            [now]="now()"
+            [proofStates]="proofStates()"
+            (orderSelected)="selectedOrderForModal.set($event)"
+            (cancelled)="cancelarOrden($event)"
+            (confirmCall)="confirmarLlamada($event)"
+            (callAttempt)="registrarIntentoLlamada($event)"
+            (declareGhost)="declararFantasma($event)"
+            (advance)="advanceOrderStatus($event.order, $event.status)"
+          />
+        }
+
         @if (orderStateFilter() === 'TODAS' || orderStateFilter() === 'NUEVAS') {
           <app-orders-new-column
             [orders]="newOrders()"
@@ -97,6 +119,13 @@ import { OrderDetailModalComponent } from '../../components/ordenes/order-detail
             (orderSelected)="selectedOrderForModal.set($event)"
           />
         }
+
+        @if (orderStateFilter() === 'TODAS' || orderStateFilter() === 'INCIDENCIAS') {
+          <app-orders-incidents-column
+            [orders]="incidentOrders()"
+            (orderSelected)="selectedOrderForModal.set($event)"
+          />
+        }
       </div>
     </main>
 
@@ -109,6 +138,8 @@ import { OrderDetailModalComponent } from '../../components/ordenes/order-detail
         [motorizadoName]="store.nombreMotorizado(order)"
         [comprobanteCargando]="comprobanteCargando()"
         [comprobantePendiente]="comprobantePendiente()"
+        [pagoConComprobante]="pagoConComprobante()"
+        [now]="now()"
         [motivoRechazo]="motivoRechazo()"
         [errorVerificacion]="errorVerificacion()"
         [verificandoComprobante]="verificandoComprobante()"
@@ -121,11 +152,12 @@ import { OrderDetailModalComponent } from '../../components/ordenes/order-detail
         (motivoRechazoChange)="motivoRechazo.set($event)"
         (approveProof)="aprobarComprobante()"
         (rejectProof)="rechazarComprobante()"
+        (declareGhost)="declararFantasma($event)"
       />
     }
   `
 })
-export class AdminOrdenesPage {
+export class AdminOrdenesPage implements OnInit {
   readonly ordersService = inject(OrdersService);
   readonly authService = inject(AuthService);
   readonly paymentService = inject(PaymentService);
@@ -133,6 +165,14 @@ export class AdminOrdenesPage {
   readonly store = inject(AdminShellStore);
 
   readonly getCodeNum = getCodeNum;
+
+  /** Reloj del tablero (cada 30 s) para los temporizadores de comprobante, llamada y pedido fantasma. */
+  readonly now = toSignal(timer(0, 30_000).pipe(map(() => Date.now())), { initialValue: Date.now() });
+
+  ngOnInit(): void {
+    // Pagos reales: sin ellos no se sabe qué órdenes en PENDIENTE_PAGO tienen comprobante.
+    this.paymentService.cargarPagos().subscribe();
+  }
 
   readonly orderStateFilter = signal<OrderStateFilter>('TODAS');
   readonly searchQuery = signal('');
@@ -150,6 +190,12 @@ export class AdminOrdenesPage {
 
   /** Resultado de la decisión que acaba de responder el backend (sin optimismo local). */
   readonly decisionVerificacion = signal<{ aprobado: boolean } | null>(null);
+
+  /** Pago con imagen de comprobante, en cualquier estado (aprobado, rechazado, pendiente). */
+  readonly pagoConComprobante = computed(() => {
+    const pago = this.pagoDeOrden();
+    return pago && !!pago.comprobanteUrl ? pago : null;
+  });
 
   /** Solo hay algo que verificar si el backend confirmó que está pendiente y mandó la URL firmada. */
   readonly comprobantePendiente = computed(() => {
@@ -226,8 +272,9 @@ export class AdminOrdenesPage {
         this.verificandoComprobante.set(false);
         this.motivoRechazo.set('');
         this.decisionVerificacion.set({ aprobado });
+        this.paymentService.cargarPagos().subscribe();
+        this.ordersService.loadActiveOrders();
         if (aprobado) {
-          this.ordersService.loadActiveOrders();
           this.notify.showSuccess('Comprobante aprobado. La orden pasó a preparación.');
         } else {
           this.notify.showSuccess('Comprobante rechazado. Se notificó al cliente por WhatsApp.');
@@ -243,30 +290,6 @@ export class AdminOrdenesPage {
     ).subscribe();
   }
 
-  getNewOrdersRawCount(): number {
-    return this.ordersService.orders().filter(o => 
-      o.estado === 'PENDIENTE_PAGO' || o.estado === 'PAGADO'
-    ).length;
-  }
-
-  getPreparingOrdersRawCount(): number {
-    return this.ordersService.orders().filter(o => 
-      o.estado === 'EN_PREPARACION' || o.estado === 'LISTO_COCINA'
-    ).length;
-  }
-
-  getDispatchedOrdersRawCount(): number {
-    return this.ordersService.orders().filter(o => 
-      o.estado === 'EN_REPARTO'
-    ).length;
-  }
-
-  getCompletedOrdersRawCount(): number {
-    return this.ordersService.orders().filter(o => 
-      o.estado === 'COMPLETADO'
-    ).length;
-  }
-
   private filterByQuery(orders: Order[]): Order[] {
     const q = (this.searchQuery() || '').toLowerCase().trim();
     if (!q) return orders;
@@ -278,30 +301,97 @@ export class AdminOrdenesPage {
     );
   }
 
-  readonly newOrders = computed(() => this.filterByQuery(this.ordersService.orders().filter(o =>
-    o.estado === 'PENDIENTE_PAGO' || o.estado === 'PAGADO'
-  )));
+  private ordersIn(...states: OrderStatus[]): Order[] {
+    return this.ordersService.orders().filter(o => states.includes(o.estado));
+  }
 
-  readonly preparingOrders = computed(() => this.filterByQuery(this.ordersService.orders().filter(o =>
-    o.estado === 'EN_PREPARACION' || o.estado === 'LISTO_COCINA'
-  )));
+  /** Orders that wait for a human action before they can move (proof, confirmation call, customer at the door). */
+  readonly attentionOrders = computed(() =>
+    this.filterByQuery(this.ordersIn('PENDIENTE_CONFIRMACION', 'PENDIENTE_PAGO', 'EN_PUERTA')));
 
-  readonly dispatchedOrders = computed(() => this.filterByQuery(this.ordersService.orders().filter(o =>
-    o.estado === 'EN_REPARTO'
-  )));
+  /** Received and paid (or confirmed): ready to be accepted into the kitchen. */
+  readonly newOrders = computed(() => this.filterByQuery(this.ordersIn('PAGADO')));
 
-  readonly completedOrders = computed(() => this.filterByQuery(this.ordersService.orders().filter(o =>
-    o.estado === 'COMPLETADO'
-  )));
+  readonly preparingOrders = computed(() =>
+    this.filterByQuery(this.ordersIn('EN_PREPARACION', 'LISTO_COCINA')));
+
+  readonly dispatchedOrders = computed(() => this.filterByQuery(this.ordersIn('EN_REPARTO')));
+
+  readonly completedOrders = computed(() => this.filterByQuery(this.ordersIn('COMPLETADO')));
+
+  readonly incidentOrders = computed(() =>
+    this.filterByQuery(this.ordersIn('PEDIDO_FANTASMA', 'CANCELADO')));
+
+  readonly attentionCount = computed(() =>
+    this.ordersIn('PENDIENTE_CONFIRMACION', 'PENDIENTE_PAGO', 'EN_PUERTA').length);
+  readonly newCount = computed(() => this.ordersIn('PAGADO').length);
+  readonly preparingCount = computed(() => this.ordersIn('EN_PREPARACION', 'LISTO_COCINA').length);
+  readonly dispatchedCount = computed(() => this.ordersIn('EN_REPARTO').length);
+  readonly completedCount = computed(() => this.ordersIn('COMPLETADO').length);
+  readonly incidentsCount = computed(() => this.ordersIn('PEDIDO_FANTASMA', 'CANCELADO').length);
+
+  /** Proof status per PENDIENTE_PAGO order, taken from payments-service. */
+  readonly proofStates = computed<Record<string, ProofState>>(() => {
+    const pagos = this.paymentService.pagosPorOrdenMap();
+    const result: Record<string, ProofState> = {};
+    for (const o of this.ordersIn('PENDIENTE_PAGO')) {
+      const estado = pagos.get(String(o.id))?.estado;
+      result[String(o.id)] =
+        estado === 'PENDIENTE_VERIFICACION' ? 'PENDIENTE_VERIFICACION'
+        : estado === 'RECHAZADO' ? 'RECHAZADO'
+        : 'SIN_COMPROBANTE';
+    }
+    return result;
+  });
+
+  private mensajeError(err: unknown, fallback: string): string {
+    const e = err as { error?: { error?: string; message?: string }; message?: string } | null;
+    return e?.error?.error || e?.error?.message || e?.message || fallback;
+  }
 
   advanceOrderStatus(order: Order, nextStatus: OrderStatus): void {
+    // Los estados con compuerta de negocio tienen su propio flujo: nada de PATCH genérico para saltarlos.
+    if (order.estado === 'PENDIENTE_PAGO' || order.estado === 'PENDIENTE_CONFIRMACION' || nextStatus === 'PEDIDO_FANTASMA') {
+      this.notify.showWarning(
+        'Esta orden requiere su flujo propio',
+        'Aprobá el comprobante, confirmá la llamada o declará el pedido fantasma desde la columna Atención.'
+      );
+      return;
+    }
+    const code = this.getCodeNum(order.codigoSeguimiento);
     this.ordersService.updateOrderStatus(order.id, nextStatus).subscribe({
-      next: () => {
-        this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} actualizada a ${nextStatus}`);
-      },
-      error: () => {
-        this.notify.showError(`Error al actualizar estado de la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
-      }
+      next: () => this.notify.showSuccess(`Orden #${code} actualizada a ${nextStatus}`),
+      error: err => this.notify.showError(this.mensajeError(err, `Error al actualizar estado de la orden #${code}`))
+    });
+  }
+
+  confirmarLlamada(order: Order): void {
+    const code = this.getCodeNum(order.codigoSeguimiento);
+    this.ordersService.confirmarLlamada(order.id).subscribe({
+      next: () => this.notify.showSuccess(`Llamada confirmada: la orden #${code} pasó a cocina`),
+      error: err => this.notify.showError(this.mensajeError(err, `No se pudo confirmar la llamada de la orden #${code}`))
+    });
+  }
+
+  registrarIntentoLlamada(order: Order): void {
+    const code = this.getCodeNum(order.codigoSeguimiento);
+    this.ordersService.registrarIntentoLlamada(order.id).subscribe({
+      next: () => this.notify.showInfo(`Intento de llamada registrado para la orden #${code}`),
+      error: err => this.notify.showError(this.mensajeError(err, `No se pudo registrar el intento de la orden #${code}`))
+    });
+  }
+
+  /** Pedido fantasma solo tras 30 min en la puerta (delivery) o 1 h listo (recojo); el backend lo vuelve a validar. */
+  declararFantasma(order: Order): void {
+    const window = ghostWindow(order, Date.now());
+    if (!window?.canDeclare) {
+      this.notify.showWarning('Todavía no se puede declarar pedido fantasma', 'Falta cumplir el tiempo de espera.');
+      return;
+    }
+    const code = this.getCodeNum(order.codigoSeguimiento);
+    this.ordersService.declararPedidoFantasma(order.id, 'Declarado por el administrador').subscribe({
+      next: () => this.notify.showSuccess(`Orden #${code} declarada pedido fantasma`),
+      error: err => this.notify.showError(this.mensajeError(err, `No se pudo declarar la orden #${code}`))
     });
   }
 
@@ -327,8 +417,8 @@ export class AdminOrdenesPage {
       next: () => {
         this.notify.showInfo(`Orden #${this.getCodeNum(order.codigoSeguimiento)} cancelada`);
       },
-      error: () => {
-        this.notify.showError('No se pudo cancelar la orden');
+      error: err => {
+        this.notify.showError(this.mensajeError(err, 'No se pudo cancelar la orden'));
       }
     });
   }

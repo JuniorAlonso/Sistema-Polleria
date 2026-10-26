@@ -28,7 +28,7 @@ import { IncidentCreateModalComponent } from '../../components/soporte/incident-
 
       <app-blocked-ips-list
         [ipsBloqueadas]="securityAuditService.ipsBloqueadas()"
-        (unblockRequested)="securityAuditService.desbloquearIp($event)"
+        (unblockRequested)="desbloquearIp($event)"
       />
     </main>
 
@@ -50,6 +50,19 @@ export class AdminSoportePage implements OnInit {
   ngOnInit(): void {
     this.securityAuditService.cargarIncidentes();
     this.securityAuditService.cargarIpsBloqueadas();
+  }
+
+  /** The service returns a cold Observable: nothing happens until it is subscribed. */
+  desbloquearIp(ip: string): void {
+    this.securityAuditService.desbloquearIp(ip).subscribe({
+      next: () => {
+        this.notify.showSuccess(`IP ${ip} desbloqueada`);
+        this.securityAuditService.cargarIpsBloqueadas();
+      },
+      error: err => this.notify.showError(
+        err?.error?.error || err?.error?.message || `No se pudo desbloquear la IP ${ip}`
+      )
+    });
   }
 
   // Modal de Documentar Incidente (Fase 6)

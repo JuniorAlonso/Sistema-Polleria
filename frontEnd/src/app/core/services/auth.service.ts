@@ -2,7 +2,7 @@ import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError, map, of } from 'rxjs';
+import { Observable, tap, catchError, throwError, map } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
 import { BackendAuthResponse, BackendVerificarSancionResponse } from '../models/api-contracts.model';
 import { AuthAdapter } from '../adapters/auth.adapter';
@@ -249,6 +249,7 @@ export class AuthService {
 
   /**
    * Consulta pública de verificación de sanciones para bloquear pagos en efectivo / ContraPago.
+   * Si la consulta falla, el error se propaga (no se asume que el cliente está limpio).
    */
   verificarSancion(telefono?: string, email?: string, ip?: string): Observable<BackendVerificarSancionResponse> {
     const params: string[] = [];
@@ -257,8 +258,8 @@ export class AuthService {
     if (ip) params.push(`ip=${encodeURIComponent(ip)}`);
     const query = params.length > 0 ? `?${params.join('&')}` : '';
 
-    return this.http.get<BackendVerificarSancionResponse>(`${this.API_URL}/auth/sanciones/verificar${query}`).pipe(
-      catchError(() => of({ sancionado: false, bloqueadoEfectivo: false, bloqueadoTotal: false }))
-    );
+    // A failed check is not a clean record: the error reaches the caller, which must not assume
+    // the customer is clear. The real enforcement stays server side when the order is created.
+    return this.http.get<BackendVerificarSancionResponse>(`${this.API_URL}/auth/sanciones/verificar${query}`);
   }
 }

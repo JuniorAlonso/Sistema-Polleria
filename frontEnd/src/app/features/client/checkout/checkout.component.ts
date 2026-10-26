@@ -1,6 +1,7 @@
 import { etiquetaPedido } from '../../../core/utils/pedido';
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CartService } from '../../../core/services/cart.service';
@@ -230,8 +231,12 @@ import { AuthService } from '../../../core/services/auth.service';
                 <span>PAGO EN EFECTIVO NO DISPONIBLE</span>
               </div>
               <p class="text-[11px] leading-relaxed">
-                Este número o dirección registra una sanción por <strong>Pedido Fantasma / No recogido</strong>. Para continuar con tu compra, debes pagar en línea con <strong>Tarjeta</strong> o <strong>Yape OTP</strong>.
+                Este número o dirección registra una sanción por <strong>Pedido Fantasma / No recogido</strong>. Por eso ocultamos el pago contra entrega: para continuar debes pagar en línea con <strong>Tarjeta</strong> o <strong>Yape OTP</strong>.
               </p>
+            </div>
+          } @else if (sancionNoVerificada()) {
+            <div class="p-3 rounded-2xl bg-amber-950/60 border border-amber-500/50 text-amber-100 text-[11px] leading-relaxed">
+              No pudimos revisar tu historial de pedidos en este momento. Puedes continuar; la validación final del pago en efectivo se hace al registrar el pedido y, si no procede, te lo indicaremos.
             </div>
           }
 
@@ -406,6 +411,10 @@ export class CheckoutComponent implements OnInit {
   readonly metodoPago = signal<PaymentMethod>('TARJETA');
   readonly isProcessing = signal<boolean>(false);
   readonly sancionActiva = signal<boolean>(false);
+  /** True when the sanction lookup failed: the customer is neither cleared nor blocked here. */
+  readonly sancionNoVerificada = signal<boolean>(false);
+  /** Order already created for a Yape OTP attempt, kept so a retry pays the SAME order. */
+  private ordenYapePendiente: Order | null = null;
 
   direccion = '';
   celular = '';
@@ -462,7 +471,9 @@ export class CheckoutComponent implements OnInit {
     const user = this.auth.currentUser();
     this.auth.verificarSancion(telefono, user?.correo).subscribe({
       next: (resp) => {
-        if (resp.sancionado && resp.bloqueadoEfectivo) {
+        this.sancionNoVerificada.set(false);
+        // The server enforces the block when the order is created; this only hides the option.
+        if (resp.sancionado || resp.bloqueadoEfectivo || resp.bloqueadoTotal) {
           this.sancionActiva.set(true);
           if (this.metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
             this.metodoPago.set('YAPE_OTP');
@@ -470,6 +481,10 @@ export class CheckoutComponent implements OnInit {
         } else {
           this.sancionActiva.set(false);
         }
+      },
+      error: () => {
+        // A failed lookup is not a clean record; any block already known stays.
+        this.sancionNoVerificada.set(true);
       }
     });
   }
@@ -497,6 +512,22 @@ export class CheckoutComponent implements OnInit {
 
   getIgv(): number {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
+  }
+
+  /** Backend message first (`error.error` / `error.message`); never the generic HttpErrorResponse text. */
+  private mensajeError(err: unknown, porDefecto: string): string {
+    const cuerpo = (err as { error?: unknown })?.error;
+    if (typeof cuerpo === 'string' && cuerpo.trim()) return cuerpo;
+    if (cuerpo && typeof cuerpo === 'object') {
+      const c = cuerpo as { error?: unknown; message?: unknown };
+      if (typeof c.error === 'string' && c.error.trim()) return c.error;
+      if (typeof c.message === 'string' && c.message.trim()) return c.message;
+    }
+    if (err instanceof HttpErrorResponse) {
+      return porDefecto;
+    }
+    const mensaje = (err as { message?: unknown })?.message;
+    return typeof mensaje === 'string' && mensaje.trim() ? mensaje : porDefecto;
   }
 
   confirmOrder(): void {
@@ -570,32 +601,47 @@ export class CheckoutComponent implements OnInit {
       updatedAt: new Date().toISOString()
     };
 
+    // Retry after a rejected OTP: pay the SAME order, never create a second one.
+    if (this.ordenYapePendiente) {
+      this.pagarYape(this.ordenYapePendiente, yapeTel, otp, currentUser?.correo);
+      return;
+    }
+
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        const realOrderId = typeof createdOrder.id === 'number'
-          ? createdOrder.id
-          : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
-
-        this.paymentService.pagarConYapeOtp(realOrderId, createdOrder.total, yapeTel, otp, currentUser?.correo).subscribe({
-          next: (tx) => {
-            this.cart.clearCart();
-            this.isProcessing.set(false);
-            if (tx.estado === 'APROBADO') {
-              this.notify.showSuccess('¡Pago Yape aprobado!', 'Tu pedido ingresó directo a preparación en cocina.');
-              this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
-            } else {
-              this.notify.showError('Código Yape no válido', tx.numeroOperacion || 'Verifica el código en tu app e intenta de nuevo.');
-            }
-          },
-          error: (err) => {
-            this.isProcessing.set(false);
-            this.notify.showError('Error al procesar Yape', err?.message || 'Intenta nuevamente.');
-          }
-        });
+        this.ordenYapePendiente = createdOrder;
+        this.pagarYape(createdOrder, yapeTel, otp, currentUser?.correo);
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar la orden', err?.message || 'Intenta nuevamente.');
+        this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
+      }
+    });
+  }
+
+  private pagarYape(createdOrder: Order, yapeTel: string, otp: string, correo?: string): void {
+    const realOrderId = typeof createdOrder.id === 'number'
+      ? createdOrder.id
+      : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
+
+    this.paymentService.pagarConYapeOtp(realOrderId, createdOrder.total, yapeTel, otp, correo).subscribe({
+      next: (tx) => {
+        this.isProcessing.set(false);
+        if (tx.estado === 'APROBADO') {
+          this.ordenYapePendiente = null;
+          this.cart.clearCart();
+          this.notify.showSuccess('¡Pago Yape aprobado!', 'Tu pedido ingresó directo a preparación en cocina.');
+          this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
+        } else {
+          // Not approved: keep the cart and the created order so the OTP can be retried.
+          this.otpYape = '';
+          this.notify.showError('Código Yape no válido', tx.numeroOperacion || 'Verifica el código en tu app e intenta de nuevo.');
+        }
+      },
+      error: (err) => {
+        this.isProcessing.set(false);
+        this.otpYape = '';
+        this.notify.showError('Pago Yape rechazado', this.mensajeError(err, 'Verifica el código e intenta nuevamente.'));
       }
     });
   }
@@ -642,17 +688,22 @@ export class CheckoutComponent implements OnInit {
               setTimeout(() => {
                 window.location.href = redirectUrl;
               }, 800);
+            } else {
+              this.notify.showError(
+                'Mercado Pago no devolvió el enlace de pago',
+                'Tu pedido quedó registrado, pero no pudimos iniciar el pago. Intenta de nuevo o elige otro medio.'
+              );
             }
           },
-          error: () => {
+          error: (err) => {
             this.isProcessing.set(false);
-            this.notify.showError('No se pudo conectar con Mercado Pago.');
+            this.notify.showError('No se pudo conectar con Mercado Pago', this.mensajeError(err, 'Intenta nuevamente.'));
           }
         });
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar la orden', err?.message);
+        this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
       }
     });
   }
@@ -709,16 +760,16 @@ export class CheckoutComponent implements OnInit {
             );
             this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
           },
-          error: () => {
-            this.cart.clearCart();
+          error: (err) => {
+            // Keep the cart and stay here: the registration did not succeed.
             this.isProcessing.set(false);
-            this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
+            this.notify.showError('No se pudo registrar el pedido contra entrega', this.mensajeError(err, 'Intenta nuevamente.'));
           }
         });
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar la orden', err?.message);
+        this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
       }
     });
   }
