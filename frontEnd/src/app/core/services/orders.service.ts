@@ -1,19 +1,18 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
 import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
+import { OrdersApiService } from '../api/orders-api.service';
 import { OrderAdapter } from '../adapters/order.adapter';
-import { environment } from '../../../environments/environment';
 
 @Injectable({
   providedIn: 'root'
 })
 export class OrdersService {
-  private http = inject(HttpClient);
+  private api = inject(OrdersApiService);
   private platformId = inject(PLATFORM_ID);
-  private readonly API_URL = environment.ordersApiUrl || 'http://localhost:8082';
 
   // State Signals
   readonly orders = signal<Order[]>([]);
@@ -67,7 +66,7 @@ export class OrdersService {
     if (!isPlatformBrowser(this.platformId)) return;
 
     if (localStorage.getItem('polleria_token')) {
-      this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/mis-ordenes`).pipe(
+      this.api.listarMisOrdenes().pipe(
         map(dtos => OrderAdapter.toOrderList(dtos)),
         tap(orders => this.myOrders.set([...orders].sort((a, b) => Number(b.id) - Number(a.id)))),
         catchError(() => of([]))
@@ -77,9 +76,7 @@ export class OrdersService {
 
     const seguimiento = this.leerSeguimiento();
     if (seguimiento) {
-      this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/seguimiento`, {
-        headers: { 'X-Seguimiento-Token': seguimiento.token }
-      }).pipe(
+      this.api.listarSeguimiento(seguimiento.token).pipe(
         map(dtos => OrderAdapter.toOrderList(dtos)),
         tap(orders => this.myOrders.set(orders)),
         catchError(err => {
@@ -93,7 +90,7 @@ export class OrdersService {
 
   /** Paso 1: pide un código de 4 dígitos que llega por WhatsApp. */
   solicitarCodigoSeguimiento(telefono: string): Observable<string> {
-    return this.http.post<{ mensaje: string }>(`${this.API_URL}/ordenes/seguimiento/codigo`, { telefono }).pipe(
+    return this.api.solicitarCodigoSeguimiento(telefono).pipe(
       map(res => res.mensaje),
       catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo enviar el código'))))
     );
@@ -101,7 +98,7 @@ export class OrdersService {
 
   /** Paso 2: valida el código y carga los pedidos de ese celular. */
   verificarCodigoSeguimiento(telefono: string, codigo: string): Observable<void> {
-    return this.http.post<{ token: string }>(`${this.API_URL}/ordenes/seguimiento/verificar`, { telefono, codigo }).pipe(
+    return this.api.verificarCodigoSeguimiento(telefono, codigo).pipe(
       tap(res => {
         try {
           sessionStorage.setItem(OrdersService.SEGUIMIENTO_KEY, JSON.stringify({ token: res.token, telefono }));
@@ -138,11 +135,7 @@ export class OrdersService {
       return throwError(() => new Error('Verifica tu celular para cancelar el pedido'));
     }
 
-    return this.http.post<BackendOrdenResponse>(
-      `${this.API_URL}/ordenes/seguimiento/${cleanId}/cancelar`,
-      {},
-      { headers: { 'X-Seguimiento-Token': seguimiento.token } }
-    ).pipe(
+    return this.api.cancelarSeguimiento(cleanId, seguimiento.token).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.myOrders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -199,7 +192,7 @@ export class OrdersService {
 
     const backendReq = OrderAdapter.toBackendCrearRequest(createReq);
 
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes`, backendReq).pipe(
+    return this.api.crear(backendReq).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(createdOrder => {
         this.isLoading.set(false);
@@ -224,7 +217,7 @@ export class OrdersService {
     const cleanId = this.extractNumericId(code);
 
     if (cleanId > 0) {
-      return this.http.get<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}`).pipe(
+      return this.api.obtener(cleanId).pipe(
         map(dto => OrderAdapter.toOrder(dto)),
         tap(found => {
           if (found) {
@@ -263,7 +256,7 @@ export class OrdersService {
       return throwError(() => new Error(`Id de orden inválido: ${id}`));
     }
 
-    return this.http.get<BackendOrdenResponse>(`${this.API_URL}/ordenes/${idNumerico}`).pipe(
+    return this.api.obtener(idNumerico).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudo cargar la orden'))))
     );
@@ -294,7 +287,7 @@ export class OrdersService {
       }))
     };
 
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/items`, body).pipe(
+    return this.api.agregarItems(cleanId, body).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -322,7 +315,7 @@ export class OrdersService {
       return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
     }
 
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/servir`, {}).pipe(
+    return this.api.servir(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -344,7 +337,7 @@ export class OrdersService {
    * RF19: Cargar órdenes (activas e históricas)
    */
   loadActiveOrders(): void {
-    this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes`).pipe(
+    this.api.listar().pipe(
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => {
         this.hasError.set(false);
@@ -359,7 +352,7 @@ export class OrdersService {
         }
       }),
       catchError(() => {
-        return this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/activos`).pipe(
+        return this.api.listarActivas().pipe(
           map(dtos => OrderAdapter.toOrderList(dtos)),
           tap(list => {
             this.hasError.set(false);
@@ -382,7 +375,7 @@ export class OrdersService {
    * RF19: Cargar órdenes para cocina
    */
   loadKitchenOrders(): void {
-    this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/cocina`).pipe(
+    this.api.listarCocina().pipe(
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => {
         if (list.length > 0) {
@@ -404,7 +397,7 @@ export class OrdersService {
    * el mensaje del backend.
    */
   listarDisponiblesParaEntrega(): Observable<Order[]> {
-    return this.http.get<BackendOrdenResponse[]>(`${this.API_URL}/ordenes/disponibles`).pipe(
+    return this.api.listarDisponibles().pipe(
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => this.pedidosDisponibles.set(list)),
       catchError(err => throwError(() => new Error(this.mensajeError(err, 'No se pudieron cargar los pedidos disponibles'))))
@@ -424,7 +417,7 @@ export class OrdersService {
       return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
     }
 
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/reclamo`, {}).pipe(
+    return this.api.reclamar(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         // Lo que confirmó el backend es la verdad: el pedido aparece asignado y deja de ofrecerse.
@@ -472,7 +465,7 @@ export class OrdersService {
         repartidorId: repartidorId
       };
 
-      return this.http.patch<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/estado`, payload).pipe(
+      return this.api.actualizarEstado(cleanId, payload).pipe(
         map(dto => OrderAdapter.toOrder(dto)),
         tap(updated => {
           this.orders.update(items =>
@@ -556,7 +549,7 @@ export class OrdersService {
    */
   confirmarLlamada(orderId: string | number): Observable<Order> {
     const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/confirmar-llamada`, {}).pipe(
+    return this.api.confirmarLlamada(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -569,7 +562,7 @@ export class OrdersService {
    */
   registrarIntentoLlamada(orderId: string | number, observaciones?: string): Observable<Order> {
     const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/intento-llamada`, { observaciones }).pipe(
+    return this.api.registrarIntentoLlamada(cleanId, observaciones).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -582,7 +575,7 @@ export class OrdersService {
    */
   marcarEnPuerta(orderId: string | number): Observable<Order> {
     const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/en-puerta`, {}).pipe(
+    return this.api.marcarEnPuerta(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
@@ -595,7 +588,7 @@ export class OrdersService {
    */
   declararPedidoFantasma(orderId: string | number, motivo?: string): Observable<Order> {
     const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
-    return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${cleanId}/pedido-fantasma`, { motivo }).pipe(
+    return this.api.declararPedidoFantasma(cleanId, motivo).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));

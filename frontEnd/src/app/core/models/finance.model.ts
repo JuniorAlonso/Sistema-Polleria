@@ -1,3 +1,8 @@
+/**
+ * Mapa de nombres (contratos tipados):
+ *  - Liquidacion de repartidor (DeliveryLiquidation) -> BackendLiquidacionResponse (api-contracts.model.ts)
+ *  - Arqueo/sesion de caja                           -> ArqueoCaja (alias CajaSesion)
+ */
 export type EstadoCaja = 'ABIERTA' | 'CERRADA';
 export type TipoMovimiento = 
   | 'INGRESO' 
@@ -82,3 +87,28 @@ export interface BalanceDiario {
 }
 
 export type CajaSesion = ArqueoCaja;
+
+export interface EmitirComprobanteRequest {
+  ordenId: number;
+  tipo: 'BOLETA' | 'FACTURA';
+  clienteTipoDoc?: string;
+  clienteNumDoc?: string;
+  clienteNombre: string;
+  clienteDireccion?: string;
+  total: number;
+  pagadoDigitalmente: boolean;
+  vueltoEstimado?: number;
+}
+
+export interface AbrirLiquidacionRequest {
+  repartidorId: number;
+  repartidorNombre: string;
+  fondoInicial: number;
+  observaciones?: string;
+}
+
+export interface CerrarLiquidacionRequest {
+  totalRendido: number;
+  totalCobradoEfectivo?: number;
+  observaciones?: string;
+}

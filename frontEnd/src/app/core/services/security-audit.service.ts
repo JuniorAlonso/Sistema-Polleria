@@ -1,19 +1,16 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { IncidentsApiService } from '../api/incidents-api.service';
 import { Observable, tap, catchError, of } from 'rxjs';
 import { Incidente, CrearIncidenteRequest, ResolverIncidenteRequest, IpBloqueada } from '../models/incident.model';
-import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class SecurityAuditService {
-  private http = inject(HttpClient);
+  private api = inject(IncidentsApiService);
   private notify = inject(NotificationService);
 
-  private readonly AUTH_URL = environment.authApiUrl || 'http://localhost:8081';
-  private readonly INCIDENT_URL = environment.incidentApiUrl || 'http://localhost:8088';
 
   readonly ipsBloqueadas = signal<IpBloqueada[]>([]);
   readonly incidentes = signal<Incidente[]>([]);
@@ -25,7 +22,7 @@ export class SecurityAuditService {
   }
 
   cargarIpsBloqueadas(): void {
-    this.http.get<IpBloqueada[]>(`${this.AUTH_URL}/auth/admin/ips-bloqueadas`).pipe(
+    this.api.listarIpsBloqueadas().pipe(
       tap(data => {
         const mapped = data.map(i => ({
           ...i,
@@ -40,7 +37,7 @@ export class SecurityAuditService {
   }
 
   desbloquearIp(ip: string): Observable<void> {
-    return this.http.delete<void>(`${this.AUTH_URL}/auth/admin/ips-bloqueadas/${ip}`).pipe(
+    return this.api.desbloquearIp(ip).pipe(
       tap(() => {
         this.ipsBloqueadas.update(prev => prev.filter(i => i.ip !== ip));
         this.notify.showSuccess(`IP ${ip} desbloqueada manualmente por el administrador`);
@@ -49,7 +46,7 @@ export class SecurityAuditService {
   }
 
   cargarIncidentes(): void {
-    this.http.get<Incidente[]>(`${this.INCIDENT_URL}/incidentes`).pipe(
+    this.api.listar().pipe(
       tap(data => {
         const mapped = data.map(inc => ({
           ...inc,
@@ -70,7 +67,7 @@ export class SecurityAuditService {
       descripcion: req.descripcion || req.causaRaiz || req.titulo,
       responsable: req.responsable || req.reportadoPor || 'Administrador'
     };
-    return this.http.post<Incidente>(`${this.INCIDENT_URL}/incidentes`, payload).pipe(
+    return this.api.registrar(payload).pipe(
       tap(inc => {
         this.incidentes.update(prev => [inc, ...prev]);
         this.notify.showSuccess(`Incidente #${inc.id} registrado: ${inc.titulo}`);
@@ -79,7 +76,7 @@ export class SecurityAuditService {
   }
 
   resolverIncidente(id: number, req: ResolverIncidenteRequest): Observable<Incidente> {
-    return this.http.patch<Incidente>(`${this.INCIDENT_URL}/incidentes/${id}/resolver`, req).pipe(
+    return this.api.resolver(id, req).pipe(
       tap(resuelto => {
         this.incidentes.update(prev => prev.map(i => i.id === id ? resuelto : i));
         this.notify.showSuccess(`Incidente #${id} resuelto y documentado`);

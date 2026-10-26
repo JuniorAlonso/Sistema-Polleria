@@ -1,47 +1,19 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
-import { PaymentTransaction } from '../models/payment.model';
+import { PaymentTransaction, PagoOrdenAdmin } from '../models/payment.model';
+import { PaymentsApiService } from '../api/payments-api.service';
 import { BackendPagoResponse } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
-import { environment } from '../../../environments/environment';
 
-/**
- * T6e (S6/S7) — estados de un pago de Yape devueltos por `payments-service`.
- * `PENDIENTE_VERIFICACION` no existe en `PaymentStatus` del modelo compartido: la verificación del
- * comprobante es exclusiva del panel del `ADMIN`, así que su contrato vive en este servicio.
- */
-export type EstadoPagoAdmin =
-  | 'PENDIENTE'
-  | 'PENDIENTE_VERIFICACION'
-  | 'APROBADO'
-  | 'RECHAZADO'
-  | 'CANCELADO';
-
-/**
- * T6e — pago de una orden con la evidencia de Yape que el `ADMIN` necesita para decidir.
- * `comprobanteUrl` es una URL firmada de MinIO de vida corta (300 s) que **solo** recibe un `ADMIN`;
- * no se cachea, porque reusarla mostraría una imagen rota.
- */
-export interface PagoOrdenAdmin {
-  id: number;
-  ordenId: number;
-  monto: number;
-  estado: EstadoPagoAdmin | string;
-  comprobanteUrl?: string | null;
-  motivoRechazo?: string | null;
-  detalle?: string | null;
-  creadoEn?: string;
-  actualizadoEn?: string;
-}
+export type { EstadoPagoAdmin, PagoOrdenAdmin } from '../models/payment.model';
 
 @Injectable({
   providedIn: 'root'
 })
 export class PaymentService {
-  private http = inject(HttpClient);
-  private readonly API_URL = environment.paymentsApiUrl || 'http://localhost:8083';
+  private api = inject(PaymentsApiService);
 
   readonly lastTransaction = signal<PaymentTransaction | null>(null);
   readonly isLoading = signal<boolean>(false);
@@ -59,7 +31,7 @@ export class PaymentService {
    * Carga todos los pagos registrados desde payments-service (:8083)
    */
   cargarPagos(): Observable<PaymentTransaction[]> {
-    return this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`).pipe(
+    return this.api.listar().pipe(
       map(dtos => (dtos || []).map(dto => PaymentAdapter.toPaymentTransaction(dto))),
       tap(lista => this.pagos.set(lista)),
       catchError(() => of([]))
@@ -78,7 +50,7 @@ export class PaymentService {
     this.isLoading.set(true);
     const backendReq = PaymentAdapter.toBackendIniciarRequest(ordenId, monto, metodo, telefonoYape);
 
-    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos`, backendReq).pipe(
+    return this.api.iniciar(backendReq).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       tap(tx => {
         this.isLoading.set(false);
@@ -98,7 +70,7 @@ export class PaymentService {
    */
   obtenerPorOrden(ordenId: number | string): Observable<PaymentTransaction | null> {
     const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
-    return this.http.get<BackendPagoResponse>(`${this.API_URL}/pagos/orden/${cleanId}`).pipe(
+    return this.api.obtenerPorOrden(cleanId).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       catchError(() => of(null))
     );
@@ -108,7 +80,7 @@ export class PaymentService {
    * RF23: Confirmar Pago Manualmente
    */
   confirmarPago(pagoId: number, referencia: string): Observable<PaymentTransaction | null> {
-    return this.http.patch<BackendPagoResponse>(`${this.API_URL}/pagos/${pagoId}/confirmar`, {
+    return this.api.confirmar(pagoId, {
       referenciaExterna: referencia,
       detalle: 'Pago confirmado'
     }).pipe(
@@ -122,7 +94,7 @@ export class PaymentService {
    */
   obtener(pagoId: number | string): Observable<PaymentTransaction | null> {
     const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
-    return this.http.get<BackendPagoResponse>(`${this.API_URL}/pagos/${cleanId}`).pipe(
+    return this.api.obtener(cleanId).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       catchError(() => of(null))
     );
@@ -137,7 +109,7 @@ export class PaymentService {
    */
   obtenerPagoParaVerificacion(ordenId: number | string): Observable<PagoOrdenAdmin> {
     const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
-    return this.http.get<PagoOrdenAdmin>(`${this.API_URL}/pagos/orden/${cleanId}`);
+    return this.api.obtenerPagoAdminPorOrden(cleanId);
   }
 
   /**
@@ -160,7 +132,7 @@ export class PaymentService {
     const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
     const body = aprobado ? { aprobado: true } : { aprobado: false, motivoRechazo: motivo };
 
-    return this.http.post<PagoOrdenAdmin>(`${this.API_URL}/pagos/${cleanId}/verificar`, body).pipe(
+    return this.api.verificar(cleanId, body).pipe(
       catchError((error: HttpErrorResponse) =>
         throwError(() => new Error(this.mensajeErrorVerificacion(error)))
       )
@@ -194,13 +166,7 @@ export class PaymentService {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const montoFinal = Math.round(monto * 100) / 100;
 
-    return this.http.post<{
-      preferenceId: string;
-      initPoint: string;
-      sandboxInitPoint: string;
-      pagoId: number;
-      ordenId: number;
-    }>(`${this.API_URL}/pagos/mercadopago/preferencia`, {
+    return this.api.crearPreferenciaMercadoPago({
       ordenId: cleanOrderId,
       monto: montoFinal,
       metodoPago: 'TARJETA'
@@ -226,7 +192,7 @@ export class PaymentService {
       email: email?.trim()
     };
 
-    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos/yape-otp`, body).pipe(
+    return this.api.pagarConYapeOtp(body).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       tap(tx => this.lastTransaction.set(tx))
     );
@@ -249,7 +215,7 @@ export class PaymentService {
       vueltoEntregado: vueltoEntregado ? Math.round(vueltoEntregado * 100) / 100 : undefined
     };
 
-    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos/cobro-efectivo`, body).pipe(
+    return this.api.registrarCobroEfectivo(body).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       tap(tx => this.lastTransaction.set(tx))
     );

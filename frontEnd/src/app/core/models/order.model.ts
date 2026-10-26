@@ -1,3 +1,4 @@
+/** Mapa de nombres: Order / OrderStatus (UI) <-> BackendOrdenResponse (api-contracts.model.ts) via OrderAdapter. */
 import { CartItem } from './product.model';
 
 export type OrderType = 'DELIVERY' | 'RECOJO_EN_TIENDA' | 'SALON';

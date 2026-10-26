@@ -1,25 +1,24 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { FinanceApiService } from '../api/finance-api.service';
 import { Observable, tap, catchError, of } from 'rxjs';
 import { 
   ArqueoCaja, AperturaCajaRequest, MovimientoCaja, MovimientoCajaRequest, 
-  CierreCajaRequest, BalanceDiario 
+  CierreCajaRequest, BalanceDiario, EmitirComprobanteRequest,
+  AbrirLiquidacionRequest, CerrarLiquidacionRequest
 } from '../models/finance.model';
 import { 
   BackendComprobanteResponse, 
   BackendLiquidacionResponse 
 } from '../models/api-contracts.model';
-import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class FinanceService {
-  private http = inject(HttpClient);
+  private api = inject(FinanceApiService);
   private notify = inject(NotificationService);
 
-  private readonly API_URL = environment.financeApiUrl || 'http://localhost:8087';
 
   readonly cajaActual = signal<ArqueoCaja | null>(null);
   readonly balanceDiario = signal<BalanceDiario | null>(null);
@@ -35,7 +34,7 @@ export class FinanceService {
   }
 
   obtenerCajaActual(): void {
-    this.http.get<ArqueoCaja>(`${this.API_URL}/finanzas/caja/actual`).pipe(
+    this.api.obtenerCajaActual().pipe(
       tap(caja => {
         if (caja) {
           caja.montoInicial = caja.montoApertura;
@@ -60,7 +59,7 @@ export class FinanceService {
       ? { montoApertura: reqOrMonto }
       : reqOrMonto;
 
-    return this.http.post<ArqueoCaja>(`${this.API_URL}/finanzas/caja/apertura`, req).pipe(
+    return this.api.abrirCaja(req).pipe(
       tap(caja => {
         if (caja) {
           caja.montoInicial = caja.montoApertura;
@@ -78,7 +77,7 @@ export class FinanceService {
       ...req,
       motivo: req.motivo || req.concepto || 'Movimiento de caja'
     };
-    return this.http.post<MovimientoCaja>(`${this.API_URL}/finanzas/caja/movimientos`, payload).pipe(
+    return this.api.registrarMovimiento(payload).pipe(
       tap(mov => {
         this.notify.showSuccess(`Movimiento de ${mov.tipo} registrado por S/ ${mov.monto.toFixed(2)}`);
         this.obtenerCajaActual();
@@ -88,7 +87,7 @@ export class FinanceService {
   }
 
   cargarMovimientos(): void {
-    this.http.get<MovimientoCaja[]>(`${this.API_URL}/finanzas/caja/movimientos`).pipe(
+    this.api.listarMovimientos().pipe(
       tap(m => {
         const mapped = m.map(item => ({
           ...item,
@@ -119,8 +118,7 @@ export class FinanceService {
       req = (typeof reqOrObs === 'object' && reqOrObs !== null ? reqOrObs : { montoCierreEfectivo: 0, montoCierrePos: 0 });
     }
 
-    const url = id ? `${this.API_URL}/finanzas/caja/cierre?arqueoId=${id}` : `${this.API_URL}/finanzas/caja/cierre`;
-    return this.http.post<ArqueoCaja>(url, req).pipe(
+    return this.api.cerrarCaja(req, id).pipe(
       tap(cerrada => {
         if (cerrada) {
           cerrada.montoInicial = cerrada.montoApertura;
@@ -137,8 +135,7 @@ export class FinanceService {
   }
 
   cargarBalanceDiario(fecha?: string): void {
-    const query = fecha ? `?fecha=${fecha}` : '';
-    this.http.get<BalanceDiario>(`${this.API_URL}/finanzas/balance/diario${query}`).pipe(
+    this.api.obtenerBalanceDiario(fecha).pipe(
       tap(b => {
         if (b) {
           b.totalVentas = b.ingresos?.totalIngresos || 0;
@@ -152,7 +149,7 @@ export class FinanceService {
   }
 
   cargarHistorial(): void {
-    this.http.get<ArqueoCaja[]>(`${this.API_URL}/finanzas/caja/historial`).pipe(
+    this.api.listarHistorial().pipe(
       tap(h => this.historial.set(h)),
       catchError(() => of([]))
     ).subscribe();
@@ -160,51 +157,32 @@ export class FinanceService {
 
   // --- Comprobantes Electrónicos (Boleta / Factura) ---
 
-  emitirComprobante(req: {
-    ordenId: number;
-    tipo: 'BOLETA' | 'FACTURA';
-    clienteTipoDoc?: string;
-    clienteNumDoc?: string;
-    clienteNombre: string;
-    clienteDireccion?: string;
-    total: number;
-    pagadoDigitalmente: boolean;
-    vueltoEstimado?: number;
-  }): Observable<BackendComprobanteResponse> {
-    return this.http.post<BackendComprobanteResponse>(`${this.API_URL}/finanzas/comprobantes`, req);
+  emitirComprobante(req: EmitirComprobanteRequest): Observable<BackendComprobanteResponse> {
+    return this.api.emitirComprobante(req);
   }
 
   obtenerComprobantePorOrden(ordenId: number | string): Observable<BackendComprobanteResponse> {
-    return this.http.get<BackendComprobanteResponse>(`${this.API_URL}/finanzas/comprobantes/orden/${ordenId}`);
+    return this.api.obtenerComprobantePorOrden(ordenId);
   }
 
   // --- Liquidaciones de Repartidores ---
 
-  abrirLiquidacion(req: {
-    repartidorId: number;
-    repartidorNombre: string;
-    fondoInicial: number;
-    observaciones?: string;
-  }): Observable<BackendLiquidacionResponse> {
-    return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/apertura`, req);
+  abrirLiquidacion(req: AbrirLiquidacionRequest): Observable<BackendLiquidacionResponse> {
+    return this.api.abrirLiquidacion(req);
   }
 
-  cerrarLiquidacion(id: number | string, req: {
-    totalRendido: number;
-    totalCobradoEfectivo?: number;
-    observaciones?: string;
-  }): Observable<BackendLiquidacionResponse> {
-    return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/${id}/cierre`, req);
+  cerrarLiquidacion(id: number | string, req: CerrarLiquidacionRequest): Observable<BackendLiquidacionResponse> {
+    return this.api.cerrarLiquidacion(id, req);
   }
 
   listarLiquidacionesPorRepartidor(repartidorId: number | string): Observable<BackendLiquidacionResponse[]> {
-    return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/repartidor/${repartidorId}`).pipe(
+    return this.api.listarLiquidacionesPorRepartidor(repartidorId).pipe(
       catchError(() => of([]))
     );
   }
 
   listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {
-    return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/abiertas`).pipe(
+    return this.api.listarLiquidacionesAbiertas().pipe(
       catchError(() => of([]))
     );
   }
