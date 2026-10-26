@@ -2,6 +2,7 @@ package com.sistema.polleria.finance.controller;
 
 import com.sistema.polleria.finance.dto.AperturaLiquidacionRequest;
 import com.sistema.polleria.finance.dto.CierreLiquidacionRequest;
+import com.sistema.polleria.finance.dto.EfectivoPendienteLiquidacionResponse;
 import com.sistema.polleria.finance.dto.LiquidacionResponse;
 import com.sistema.polleria.finance.service.LiquidacionService;
 import jakarta.validation.Valid;
@@ -35,15 +36,32 @@ public class LiquidacionController {
     public ResponseEntity<LiquidacionResponse> cerrar(
             @PathVariable Long id,
             @Valid @RequestBody CierreLiquidacionRequest req,
-            Authentication authentication) {
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
         Long usuarioId = extraerUserId(authentication);
-        return ResponseEntity.ok(liquidacionService.cerrar(id, req, usuarioId));
+        return ResponseEntity.ok(liquidacionService.cerrar(id, req, usuarioId, authorization));
     }
 
     @GetMapping("/repartidor/{repartidorId}")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'CAJERO', 'REPARTIDOR')")
     public ResponseEntity<List<LiquidacionResponse>> listarPorRepartidor(@PathVariable Long repartidorId) {
         return ResponseEntity.ok(liquidacionService.listarPorRepartidor(repartidorId));
+    }
+
+    /** Cash the courier must hand in (S6). A REPARTIDOR can only ask for his own id. */
+    @GetMapping("/repartidor/{repartidorId}/pendiente")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'CAJERO', 'REPARTIDOR')")
+    public ResponseEntity<EfectivoPendienteLiquidacionResponse> pendiente(
+            @PathVariable Long repartidorId,
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        boolean staff = authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
+        if (!staff && !repartidorId.equals(extraerUserId(authentication))) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Un repartidor solo puede consultar su propio efectivo");
+        }
+        return ResponseEntity.ok(liquidacionService.efectivoPendiente(repartidorId, authorization));
     }
 
     @GetMapping("/abiertas")

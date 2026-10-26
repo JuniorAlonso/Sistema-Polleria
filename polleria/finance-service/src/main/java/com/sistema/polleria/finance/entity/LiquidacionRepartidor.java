@@ -38,6 +38,14 @@ public class LiquidacionRepartidor {
     @Builder.Default
     private BigDecimal totalCobradoEfectivo = BigDecimal.ZERO;
 
+    /** Cash payments payments-service registered for this courier since the apertura (S6). Null until closed. */
+    @Column(name = "total_esperado_efectivo", precision = 10, scale = 2)
+    private BigDecimal totalEsperadoEfectivo;
+
+    /** Declared minus expected cash (negative = the cashier counted less than the app recorded). Null until closed. */
+    @Column(name = "diferencia_efectivo", precision = 10, scale = 2)
+    private BigDecimal diferenciaEfectivo;
+
     @Column(name = "total_rendido", nullable = false, precision = 10, scale = 2)
     @Builder.Default
     private BigDecimal totalRendido = BigDecimal.ZERO;

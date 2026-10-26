@@ -2,6 +2,7 @@ package com.sistema.polleria.payments.service;
 
 import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
+import com.sistema.polleria.payments.dto.EfectivoPendienteResponse;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
@@ -595,6 +596,13 @@ public class PagoService {
      */
     @Transactional
     public PagoResponse procesarCobroEfectivo(CobroEfectivoRequest request, Long operadorId, String bearerToken) {
+        return procesarCobroEfectivo(request, operadorId, null, bearerToken);
+    }
+
+    /** Same as above; {@code repartidorId} is set when the collecting operator is a courier (S6 settlement). */
+    @Transactional
+    public PagoResponse procesarCobroEfectivo(CobroEfectivoRequest request, Long operadorId, Long repartidorId,
+                                              String bearerToken) {
         log.info("Registrando cobro en efectivo para orden={}, monto=S/ {}, operadorId={}",
                 request.ordenId(), request.monto(), operadorId);
 
@@ -635,6 +643,7 @@ public class PagoService {
         pago.setDetalle(detalle);
         pago.setVerificadoPor("OPERADOR_" + operadorId);
         pago.setVerificadoEn(LocalDateTime.now());
+        pago.setRepartidorId(repartidorId);
         pago = pagoRepository.save(pago);
 
         // Notificar a orders-service para completar la entrega
@@ -642,5 +651,44 @@ public class PagoService {
         log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
 
         return PagoResponse.from(pago);
+    }
+
+    /**
+     * Cash a courier has collected and not yet handed in (S6): approved CONTRAENTREGA payments with his
+     * {@code repartidor_id}, verified at or after {@code desde}, not claimed by any settlement.
+     */
+    @Transactional(readOnly = true)
+    public EfectivoPendienteResponse efectivoPendiente(Long repartidorId, LocalDateTime desde) {
+        List<Pago> pagos = pagoRepository.efectivoPendienteDeRepartidor(
+                repartidorId, desde != null ? desde : LocalDateTime.of(2000, 1, 1, 0, 0));
+        BigDecimal total = pagos.stream().map(Pago::getMonto).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new EfectivoPendienteResponse(repartidorId, total, pagos.size(),
+                pagos.stream()
+                        .map(p -> new EfectivoPendienteResponse.Item(p.getId(), p.getOrdenId(), p.getMonto(), p.getVerificadoEn()))
+                        .toList());
+    }
+
+    /**
+     * Marks cash payments as handed in under a settlement. Idempotent for the same settlement; a payment
+     * already claimed by another settlement is rejected (409) and nothing is changed.
+     */
+    @Transactional
+    public int liquidarEfectivo(List<Long> pagoIds, Long liquidacionId) {
+        List<Pago> pagos = pagoRepository.findAllById(pagoIds);
+        if (pagos.size() != pagoIds.stream().distinct().count()) {
+            throw new NoSuchElementException("Alguno de los pagos a liquidar no existe");
+        }
+        for (Pago p : pagos) {
+            if (p.getMetodoPago() != MetodoPago.CONTRAENTREGA || p.getEstado() != EstadoPago.APROBADO) {
+                throw new IllegalStateException("El pago " + p.getId() + " no es un cobro en efectivo aprobado");
+            }
+            if (p.getLiquidacionId() != null && !p.getLiquidacionId().equals(liquidacionId)) {
+                throw new IllegalStateException("El pago " + p.getId() + " ya fue liquidado en la liquidación #"
+                        + p.getLiquidacionId());
+            }
+        }
+        pagos.forEach(p -> p.setLiquidacionId(liquidacionId));
+        pagoRepository.saveAll(pagos);
+        return pagos.size();
     }
 }

@@ -27,6 +27,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 
+    @ExceptionHandler(com.sistema.polleria.finance.service.PagosClient.PagosNoDisponibleException.class)
+    public ResponseEntity<Map<String, String>> handlePagosNoDisponible(
+            com.sistema.polleria.finance.service.PagosClient.PagosNoDisponibleException e) {
+        log.warn("payments-service unavailable: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Acceso denegado"));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException e) {
         log.warn("Bad request: {}", e.getMessage());

@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @Table(name = "pagos", indexes = {
     @Index(name = "idx_pagos_orden_id", columnList = "orden_id"),
     @Index(name = "idx_pagos_estado", columnList = "estado"),
-    @Index(name = "idx_pagos_cliente_id", columnList = "cliente_id")
+    @Index(name = "idx_pagos_cliente_id", columnList = "cliente_id"),
+    @Index(name = "idx_pagos_repartidor_id", columnList = "repartidor_id")
 })
 @Data
 @NoArgsConstructor
@@ -70,6 +71,14 @@ public class Pago {
     /** Motivo por el que el administrador rechazó el comprobante (T6c). Nullable. */
     @Column(name = "motivo_rechazo", length = 300)
     private String motivoRechazo;
+
+    /** Courier who collected the cash at the door (S6). Null for non-cash or cashier-collected payments. */
+    @Column(name = "repartidor_id")
+    private Long repartidorId;
+
+    /** Courier settlement (finance-service) that already accounted for this cash payment (S6). Nullable. */
+    @Column(name = "liquidacion_id")
+    private Long liquidacionId;
 
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();

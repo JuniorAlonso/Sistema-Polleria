@@ -287,6 +287,109 @@ class PagoServiceTest {
     }
 
     @Test
+    @DisplayName("S6: el cobro en efectivo de un repartidor guarda su repartidor_id")
+    void procesarCobroEfectivo_guardaRepartidor() {
+        when(ordenesClient.obtener(310L)).thenReturn(orden(310L, "DELIVERY", "EN_PUERTA", "70.00"));
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(310L)).thenReturn(Optional.empty());
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(310L, new BigDecimal("70.00"), null, null), 4L, 4L, "Bearer r");
+
+        org.mockito.ArgumentCaptor<Pago> captor = org.mockito.ArgumentCaptor.forClass(Pago.class);
+        verify(pagoRepository).save(captor.capture());
+        assertThat(captor.getValue().getRepartidorId()).isEqualTo(4L);
+        assertThat(captor.getValue().getLiquidacionId()).isNull();
+    }
+
+    @Test
+    @DisplayName("S6: el cobro en efectivo del cajero no deja repartidor_id")
+    void procesarCobroEfectivo_cajeroSinRepartidor() {
+        when(ordenesClient.obtener(311L)).thenReturn(orden(311L, "RECOJO", "LISTO", "30.00"));
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(311L)).thenReturn(Optional.empty());
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(311L, new BigDecimal("30.00"), null, null), 2L, "Bearer c");
+
+        org.mockito.ArgumentCaptor<Pago> captor = org.mockito.ArgumentCaptor.forClass(Pago.class);
+        verify(pagoRepository).save(captor.capture());
+        assertThat(captor.getValue().getRepartidorId()).isNull();
+    }
+
+    private static Pago efectivo(long id, long ordenId, String monto, Long liquidacionId) {
+        Pago p = new Pago();
+        p.setId(id);
+        p.setOrdenId(ordenId);
+        p.setMonto(new BigDecimal(monto));
+        p.setMetodoPago(MetodoPago.CONTRAENTREGA);
+        p.setEstado(EstadoPago.APROBADO);
+        p.setRepartidorId(4L);
+        p.setLiquidacionId(liquidacionId);
+        p.setVerificadoEn(LocalDateTime.of(2026, 1, 1, 12, 0));
+        return p;
+    }
+
+    @Test
+    @DisplayName("S6: efectivoPendiente suma los cobros del repartidor sin liquidar")
+    void efectivoPendiente_sumaYListaLosPagos() {
+        LocalDateTime desde = LocalDateTime.of(2026, 1, 1, 9, 0);
+        when(pagoRepository.efectivoPendienteDeRepartidor(4L, desde))
+                .thenReturn(java.util.List.of(efectivo(1L, 100L, "70.00", null), efectivo(2L, 101L, "30.50", null)));
+
+        var res = pagoService.efectivoPendiente(4L, desde);
+
+        assertThat(res.repartidorId()).isEqualTo(4L);
+        assertThat(res.total()).isEqualByComparingTo("100.50");
+        assertThat(res.cantidad()).isEqualTo(2);
+        assertThat(res.pagos()).extracting("pagoId").containsExactly(1L, 2L);
+    }
+
+    @Test
+    @DisplayName("S6: liquidarEfectivo marca los pagos y es idempotente para la misma liquidacion")
+    void liquidarEfectivo_marcaEIdempotente() {
+        Pago libre = efectivo(1L, 100L, "70.00", null);
+        Pago yaSuya = efectivo(2L, 101L, "30.00", 9L);
+        when(pagoRepository.findAllById(java.util.List.of(1L, 2L))).thenReturn(java.util.List.of(libre, yaSuya));
+
+        int n = pagoService.liquidarEfectivo(java.util.List.of(1L, 2L), 9L);
+
+        assertThat(n).isEqualTo(2);
+        assertThat(libre.getLiquidacionId()).isEqualTo(9L);
+        assertThat(yaSuya.getLiquidacionId()).isEqualTo(9L);
+        verify(pagoRepository).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("S6: liquidarEfectivo rechaza un pago ya liquidado por otra liquidacion y no cambia nada")
+    void liquidarEfectivo_rechazaPagoDeOtraLiquidacion() {
+        Pago libre = efectivo(1L, 100L, "70.00", null);
+        Pago ajeno = efectivo(2L, 101L, "30.00", 5L);
+        when(pagoRepository.findAllById(java.util.List.of(1L, 2L))).thenReturn(java.util.List.of(libre, ajeno));
+
+        assertThatThrownBy(() -> pagoService.liquidarEfectivo(java.util.List.of(1L, 2L), 9L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("#5");
+
+        assertThat(libre.getLiquidacionId()).isNull();
+        verify(pagoRepository, never()).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("S6: liquidarEfectivo rechaza pagos que no son efectivo aprobado o no existen")
+    void liquidarEfectivo_rechazaNoEfectivoOInexistente() {
+        Pago tarjeta = efectivo(1L, 100L, "70.00", null);
+        tarjeta.setMetodoPago(MetodoPago.TARJETA);
+        when(pagoRepository.findAllById(java.util.List.of(1L))).thenReturn(java.util.List.of(tarjeta));
+        assertThatThrownBy(() -> pagoService.liquidarEfectivo(java.util.List.of(1L), 9L))
+                .isInstanceOf(IllegalStateException.class);
+
+        when(pagoRepository.findAllById(java.util.List.of(7L))).thenReturn(java.util.List.of());
+        assertThatThrownBy(() -> pagoService.liquidarEfectivo(java.util.List.of(7L), 9L))
+                .isInstanceOf(java.util.NoSuchElementException.class);
+    }
+
+    @Test
     @DisplayName("Cobro en efectivo registra pago contraentrega y avanza orden a ENTREGADO")
     void procesarCobroEfectivo_registraYCompletaEntrega() {
         when(ordenesClient.obtener(303L)).thenReturn(orden(303L, "DELIVERY", "EN_PUERTA", "70.00"));

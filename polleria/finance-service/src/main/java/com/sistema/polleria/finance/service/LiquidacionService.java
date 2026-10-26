@@ -2,6 +2,7 @@ package com.sistema.polleria.finance.service;
 
 import com.sistema.polleria.finance.dto.AperturaLiquidacionRequest;
 import com.sistema.polleria.finance.dto.CierreLiquidacionRequest;
+import com.sistema.polleria.finance.dto.EfectivoPendienteLiquidacionResponse;
 import com.sistema.polleria.finance.dto.LiquidacionResponse;
 import com.sistema.polleria.finance.entity.*;
 import com.sistema.polleria.finance.repository.ArqueoCajaRepository;
@@ -25,6 +26,7 @@ public class LiquidacionService {
     private final LiquidacionRepartidorRepository liquidacionRepository;
     private final ArqueoCajaRepository arqueoRepository;
     private final MovimientoCajaRepository movimientoRepository;
+    private final PagosClient pagosClient;
 
     @Transactional
     public LiquidacionResponse abrir(AperturaLiquidacionRequest req, Long cajeroId) {
@@ -97,13 +99,18 @@ public class LiquidacionService {
     }
 
     @Transactional
-    public LiquidacionResponse cerrar(Long id, CierreLiquidacionRequest req, Long cajeroId) {
+    public LiquidacionResponse cerrar(Long id, CierreLiquidacionRequest req, Long cajeroId, String bearer) {
         LiquidacionRepartidor liq = liquidacionRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Liquidación no encontrada: " + id));
 
         if (liq.getEstado() == EstadoLiquidacion.CERRADA || liq.getEstado() == EstadoLiquidacion.DISCREPANCIA) {
             throw new IllegalStateException("La liquidación #" + id + " ya fue cerrada anteriormente (estado: " + liq.getEstado() + ").");
         }
+
+        // S6: expected cash comes from the payments the courier registered; fail closed if unreachable.
+        PagosClient.EfectivoPendiente pendiente =
+                pagosClient.obtenerPendiente(liq.getRepartidorId(), liq.getCreadoEn(), bearer);
+        BigDecimal totalEsperadoEfectivo = pendiente.total() != null ? pendiente.total() : BigDecimal.ZERO;
 
         BigDecimal totalCobrado = req.totalCobradoEfectivo() != null
                 ? req.totalCobradoEfectivo()
@@ -113,6 +120,8 @@ public class LiquidacionService {
         BigDecimal diferencia = req.totalRendido().subtract(esperado);
 
         liq.setTotalCobradoEfectivo(totalCobrado);
+        liq.setTotalEsperadoEfectivo(totalEsperadoEfectivo);
+        liq.setDiferenciaEfectivo(totalCobrado.subtract(totalEsperadoEfectivo));
         liq.setTotalRendido(req.totalRendido());
         liq.setDiferencia(diferencia);
         liq.setEstado(diferencia.compareTo(BigDecimal.ZERO) == 0 ? EstadoLiquidacion.CERRADA : EstadoLiquidacion.DISCREPANCIA);
@@ -123,6 +132,11 @@ public class LiquidacionService {
         liq.setCerradoPor(cajeroId);
 
         liq = liquidacionRepository.save(liq);
+
+        if (pendiente.pagos() != null && !pendiente.pagos().isEmpty()) {
+            pagosClient.liquidar(pendiente.pagos().stream().map(PagosClient.EfectivoPendiente.Item::pagoId).toList(),
+                    liq.getId(), bearer);
+        }
 
         // Registrar ingreso del efectivo total rendido en la caja activa del cajero
         var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
@@ -142,6 +156,19 @@ public class LiquidacionService {
                 liq.getId(), req.totalRendido(), esperado, diferencia, liq.getEstado());
 
         return LiquidacionResponse.from(liq);
+    }
+
+    /** Cash the courier must hand in: payments registered since the open liquidation's apertura (S6). */
+    @Transactional(readOnly = true)
+    public EfectivoPendienteLiquidacionResponse efectivoPendiente(Long repartidorId, String bearer) {
+        LiquidacionRepartidor liq = liquidacionRepository
+                .findFirstByRepartidorIdAndEstado(repartidorId, EstadoLiquidacion.ABIERTA)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "El repartidor " + repartidorId + " no tiene una liquidación abierta"));
+        PagosClient.EfectivoPendiente p = pagosClient.obtenerPendiente(repartidorId, liq.getCreadoEn(), bearer);
+        return new EfectivoPendienteLiquidacionResponse(repartidorId, liq.getId(), liq.getCreadoEn(),
+                p.total() != null ? p.total() : BigDecimal.ZERO, p.cantidad(),
+                p.pagos() != null ? p.pagos() : List.of());
     }
 
     @Transactional(readOnly = true)

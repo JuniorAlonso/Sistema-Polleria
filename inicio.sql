@@ -239,6 +239,13 @@ CREATE TABLE IF NOT EXISTS liquidaciones_repartidores (
 CREATE INDEX IF NOT EXISTS idx_liquidaciones_repartidor ON liquidaciones_repartidores(repartidor_id);
 CREATE INDEX IF NOT EXISTS idx_liquidaciones_estado ON liquidaciones_repartidores(estado);
 
+-- Courier cash settlement: expected cash comes from payments (cobro-efectivo) instead of typed by hand
+ALTER TABLE liquidaciones_repartidores ADD COLUMN IF NOT EXISTS total_esperado_efectivo NUMERIC(10, 2);
+ALTER TABLE liquidaciones_repartidores ADD COLUMN IF NOT EXISTS diferencia_efectivo NUMERIC(10, 2);
+ALTER TABLE pagos ADD COLUMN IF NOT EXISTS repartidor_id BIGINT;
+ALTER TABLE pagos ADD COLUMN IF NOT EXISTS liquidacion_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_pagos_repartidor_id ON pagos (repartidor_id);
+
 -- Sanciones y bloqueos permanentes de cliente (auth-service / incident-service)
 CREATE TABLE IF NOT EXISTS sanciones_cliente (
     id                   BIGSERIAL PRIMARY KEY,

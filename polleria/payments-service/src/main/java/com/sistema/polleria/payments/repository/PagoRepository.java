@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -34,4 +35,12 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Pago p WHERE p.id = :id")
     Optional<Pago> buscarConBloqueo(@Param("id") Long id);
+
+    /** Approved cash-on-delivery payments collected by a courier that no settlement has claimed yet. */
+    @Query("SELECT p FROM Pago p WHERE p.repartidorId = :repartidorId"
+            + " AND p.metodoPago = com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA"
+            + " AND p.estado = com.sistema.polleria.payments.entity.EstadoPago.APROBADO"
+            + " AND p.liquidacionId IS NULL AND p.verificadoEn >= :desde ORDER BY p.verificadoEn")
+    List<Pago> efectivoPendienteDeRepartidor(@Param("repartidorId") Long repartidorId,
+                                             @Param("desde") LocalDateTime desde);
 }

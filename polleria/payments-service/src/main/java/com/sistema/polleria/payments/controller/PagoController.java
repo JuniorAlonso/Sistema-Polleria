@@ -2,7 +2,9 @@ package com.sistema.polleria.payments.controller;
 
 import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
+import com.sistema.polleria.payments.dto.EfectivoPendienteResponse;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
+import com.sistema.polleria.payments.dto.LiquidarEfectivoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.VerificarPagoRequest;
 import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
@@ -86,10 +88,44 @@ public class PagoController {
     public PagoResponse registrarCobroEfectivo(
             @Valid @RequestBody CobroEfectivoRequest request,
             Principal principal,
+            Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
 
         Long operadorId = extractUserId(principal);
-        return pagoService.procesarCobroEfectivo(request, operadorId, authorization != null ? authorization : "");
+        Long repartidorId = tieneAutoridad(authentication, "REPARTIDOR") ? operadorId : null;
+        return pagoService.procesarCobroEfectivo(request, operadorId, repartidorId,
+                authorization != null ? authorization : "");
+    }
+
+    /**
+     * Cash a courier collected and has not handed in yet (S6). ADMIN, CAJERO and the internal key see any
+     * courier; a REPARTIDOR only his own id (403 otherwise). {@code desde} defaults to the beginning of time.
+     */
+    @GetMapping("/efectivo/repartidor/{repartidorId}")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','REPARTIDOR','INTERNAL')")
+    public EfectivoPendienteResponse efectivoPendiente(
+            @PathVariable Long repartidorId,
+            @RequestParam(value = "desde", required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
+            java.time.LocalDateTime desde,
+            Principal principal,
+            Authentication authentication) {
+        boolean soloPropio = tieneAutoridad(authentication, "REPARTIDOR")
+                && !tieneAutoridad(authentication, "ADMIN") && !tieneAutoridad(authentication, "CAJERO")
+                && !tieneAutoridad(authentication, "INTERNAL");
+        if (soloPropio && !repartidorId.equals(extractUserId(principal))) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Un repartidor solo puede consultar su propio efectivo");
+        }
+        return pagoService.efectivoPendiente(repartidorId, desde);
+    }
+
+    /** Marks cash payments as handed in by a settlement (S6). Idempotent; 409 if claimed by another settlement. */
+    @PostMapping("/efectivo/liquidar")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','INTERNAL')")
+    public java.util.Map<String, Object> liquidarEfectivo(@Valid @RequestBody LiquidarEfectivoRequest request) {
+        int liquidados = pagoService.liquidarEfectivo(request.pagoIds(), request.liquidacionId());
+        return java.util.Map.of("liquidacionId", request.liquidacionId(), "liquidados", liquidados);
     }
 
     /**
@@ -265,6 +301,12 @@ public class PagoController {
         return authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "ROLE_ADMIN".equals(a.getAuthority())
                         || "CAJERO".equals(a.getAuthority()) || "ROLE_CAJERO".equals(a.getAuthority()));
+    }
+
+    private boolean tieneAutoridad(Authentication authentication, String rol) {
+        return authentication != null && authentication.getAuthorities() != null
+                && authentication.getAuthorities().stream()
+                        .anyMatch(a -> rol.equals(a.getAuthority()) || ("ROLE_" + rol).equals(a.getAuthority()));
     }
 
     private Long extractUserId(Principal principal) {
