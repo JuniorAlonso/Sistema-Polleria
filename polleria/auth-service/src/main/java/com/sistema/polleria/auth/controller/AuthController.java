@@ -102,10 +102,11 @@ public class AuthController {
     }
 
     // GET /auth/admin/repartidores — Roster de motorizados para asignarlos a un pedido (RF18).
-    // Solo ADMIN: el listado expone nombre y teléfono de personas del negocio, así que
-    // cualquier otro rol autenticado (mozo, cliente) no puede enumerar al personal de reparto.
+    // ADMIN y CAJERO: el cajero abre y cierra la liquidación de efectivo de cada motorizado.
+    // El listado expone nombre y teléfono del personal, así que el resto de roles (mozo,
+    // cliente, repartidor) no puede enumerarlo.
     @GetMapping("/admin/repartidores")
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
     public ResponseEntity<List<RepartidorResponse>> listarRepartidores() {
         return ResponseEntity.ok(userRepository.findByRoleAndActiveTrueOrderByNameAsc(Role.REPARTIDOR)
                 .stream()

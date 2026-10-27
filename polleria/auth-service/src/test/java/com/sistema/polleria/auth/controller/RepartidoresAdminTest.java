@@ -35,19 +35,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * RF18 — El panel administrativo solo puede asignar un motorizado que exista.
  *
  * El roster de repartidores se expone en {@code GET /auth/admin/repartidores}. Es un listado de
- * personas (nombre y teléfono), así que la única autoridad que puede leerlo es el ADMIN: sin esa
- * guarda cualquier cliente autenticado podría enumerar a todo el personal de reparto.
+ * personas (nombre y teléfono), así que solo lo leen el ADMIN y el CAJERO (que liquida el efectivo de
+ * cada motorizado): sin esa guarda cualquier cliente autenticado podría enumerar al personal de reparto.
  *
  * El contrato verificado aquí es el que consume el modal de asignación del panel:
  * {@code [{ id, nombre, email, telefono }]} con los repartidores ACTIVOS y solo ellos.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@DisplayName("RF18 - GET /auth/admin/repartidores esta reservado al ADMIN")
+@DisplayName("RF18 - GET /auth/admin/repartidores esta reservado al ADMIN y al CAJERO")
 class RepartidoresAdminTest {
 
     private static final String EMAIL_ADMIN = "admin.roster.test@yopmail.com";
     private static final String EMAIL_MOZO = "mozo.roster.test@yopmail.com";
+    private static final String EMAIL_CAJERO = "cajero.roster.test@yopmail.com";
     private static final String EMAIL_REPARTIDOR_ACTIVO = "rider.activo.test@yopmail.com";
     private static final String EMAIL_REPARTIDOR_INACTIVO = "rider.inactivo.test@yopmail.com";
     private static final String EMAIL_REPARTIDOR_PRUEBAS = "repartidor.polleria@yopmail.com";
@@ -64,7 +65,7 @@ class RepartidoresAdminTest {
 
     @AfterEach
     void limpiarUsuariosDePrueba() {
-        for (String email : List.of(EMAIL_ADMIN, EMAIL_MOZO, EMAIL_REPARTIDOR_ACTIVO, EMAIL_REPARTIDOR_INACTIVO)) {
+        for (String email : List.of(EMAIL_ADMIN, EMAIL_MOZO, EMAIL_CAJERO, EMAIL_REPARTIDOR_ACTIVO, EMAIL_REPARTIDOR_INACTIVO)) {
             userRepository.findByEmail(email).ifPresent(userRepository::delete);
         }
     }
@@ -100,6 +101,22 @@ class RepartidoresAdminTest {
         assertNotNull(rider.get("id"), "El modal necesita el id para PATCH /ordenes/{id}/estado");
         assertEquals("Rider Activo Prueba", rider.get("nombre"), "El panel muestra el nombre del motorizado");
         assertEquals("977000001", rider.get("telefono"), "El panel muestra el telefono del motorizado");
+    }
+
+    @Test
+    @DisplayName("El CAJERO lee el roster para abrir la liquidacion de un repartidor (S6)")
+    void cajeroPuedeLeerElRosterParaLiquidar() {
+        crearUsuario(EMAIL_CAJERO, "Cajero Prueba", "977000021", Role.CAJERO, true);
+        crearUsuario(EMAIL_REPARTIDOR_ACTIVO, "Rider Activo Prueba", "977000022", Role.REPARTIDOR, true);
+
+        ResponseEntity<List<Map<String, Object>>> respuesta = rest.exchange(
+                RUTA, HttpMethod.GET, new HttpEntity<>(cabeceraConToken(EMAIL_CAJERO)), listaDeMapas()
+        );
+
+        assertEquals(HttpStatus.OK, respuesta.getStatusCode(), "El cajero liquida el efectivo de los repartidores");
+        List<String> correos = respuesta.getBody().stream().map(r -> String.valueOf(r.get("email"))).toList();
+        assertTrue(correos.contains(EMAIL_REPARTIDOR_ACTIVO), "Roster: " + correos);
+        assertFalse(correos.contains(EMAIL_CAJERO), "El cajero no es un motorizado. Roster: " + correos);
     }
 
     @Test
