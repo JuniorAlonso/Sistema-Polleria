@@ -23,10 +23,11 @@ public class NotificationService {
 
     private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_DELIVERY =
             Set.of(OrdenEstado.EN_PREPARACION, OrdenEstado.PREPARANDO, OrdenEstado.EN_CAMINO,
-                   OrdenEstado.EN_PUERTA, OrdenEstado.ENTREGADO);
+                   OrdenEstado.EN_PUERTA, OrdenEstado.ENTREGADO, OrdenEstado.CANCELADO);
 
     private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_RECOJO =
-            Set.of(OrdenEstado.LISTO, OrdenEstado.LISTO_PARA_ENTREGAR, OrdenEstado.ENTREGADO);
+            Set.of(OrdenEstado.PREPARANDO, OrdenEstado.LISTO, OrdenEstado.LISTO_PARA_ENTREGAR,
+                   OrdenEstado.ENTREGADO, OrdenEstado.CANCELADO);
 
     private final RestClient restClient;
     private final String notificationUrl;

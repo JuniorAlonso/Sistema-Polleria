@@ -3,10 +3,12 @@ const config = require('../config');
 const ESTADOS_DELIVERY = [
     'EN_PREPARACION',
     'PREPARANDO',
+    'LISTO',
     'LISTO_PARA_ENTREGAR',
     'EN_CAMINO',
     'EN_PUERTA',
-    'ENTREGADO'
+    'ENTREGADO',
+    'CANCELADO'
 ];
 
 const FIRMA = 'San Pollo de Ica';
@@ -94,6 +96,11 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
         case 'ENTREGADO':
             cuerpo = `Tu pedido N.° ${numero} fue entregado. ¡Muchas gracias por elegir San Pollo!\n\n` +
                 'Si tienes un momento, nos ayudaría mucho conocer tu opinión sobre el pedido.';
+            break;
+
+        case 'CANCELADO':
+            cuerpo = `Tu pedido N.° ${numero} fue cancelado. Si no llegaste a confirmar el pago o la llamada a tiempo, `
+                + 'puedes hacer un nuevo pedido escribiendo *hola* por este chat.';
             break;
 
         default:

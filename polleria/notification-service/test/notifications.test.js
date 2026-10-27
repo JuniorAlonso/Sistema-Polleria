@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { normalizarTelefono } = require('../src/notifications/phone');
-const { mensajePago, mensajeEstado, mensajeCodigo } = require('../src/notifications/messages');
+const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeCodigo } = require('../src/notifications/messages');
 const { ColaEnvios } = require('../src/notifications/queue');
 const { MemoryStore } = require('../src/notifications/store');
 const { NotificacionService } = require('../src/notifications/service');
@@ -218,4 +218,14 @@ test('mensajeEstado usa el texto personalizado de orders-service cuando viene y 
 
     const sinMensaje = mensajeEstado({ ordenId: 7, nombreCliente: 'Ana', estadoNuevo: 'LISTO_PARA_ENTREGAR', mensaje: '   ' });
     assert.ok(sinMensaje.includes('hasta 1 hora para retirarlo'));
+});
+
+test('CANCELADO avisa al cliente que su pedido se canceló y lo acepta el endpoint de estados', () => {
+    const mensaje = mensajeEstado({ ordenId: 9, numeroPedido: 4, nombreCliente: 'Ana', estadoNuevo: 'CANCELADO' });
+    assert.ok(mensaje, 'CANCELADO genera mensaje');
+    assert.match(mensaje, /N\.° 4/);
+    assert.match(mensaje, /cancelado/i);
+    assert.doesNotMatch(mensaje, /\p{Extended_Pictographic}/u);
+    assert.ok(ESTADOS_DELIVERY.includes('CANCELADO'), 'el endpoint de estado acepta CANCELADO');
+    assert.ok(ESTADOS_DELIVERY.includes('LISTO'), 'el endpoint de estado acepta LISTO (recojo)');
 });
