@@ -3,7 +3,7 @@ import { RenderMode, ServerRoute } from '@angular/ssr';
 /**
  * Modo de render por ruta.
  *
- * Las rutas de personal (`admin`, `mozo`, `cocina`, `delivery`) se renderizan **solo en el
+ * Las rutas de personal (`admin`, `mozo`, `cocina`, `delivery`, `cajero`, and their child routes) se renderizan **solo en el
  * cliente**. Con el modo por defecto las renderizaba el servidor, y ahí los guards devuelven
  * `true` a propósito (no hay navegador ni `localStorage`), así que el servidor montaba esos
  * componentes y sus servicios sin sesión: `SalonService` pedía `/mesas` sin token, el backend
@@ -14,8 +14,14 @@ import { RenderMode, ServerRoute } from '@angular/ssr';
  */
 export const serverRoutes: ServerRoute[] = [
   { path: 'admin', renderMode: RenderMode.Client },
+  { path: 'admin/**', renderMode: RenderMode.Client },
   { path: 'mozo', renderMode: RenderMode.Client },
+  { path: 'mozo/**', renderMode: RenderMode.Client },
   { path: 'cocina', renderMode: RenderMode.Client },
+  { path: 'cocina/**', renderMode: RenderMode.Client },
   { path: 'delivery', renderMode: RenderMode.Client },
+  { path: 'delivery/**', renderMode: RenderMode.Client },
+  { path: 'cajero', renderMode: RenderMode.Client },
+  { path: 'cajero/**', renderMode: RenderMode.Client },
   { path: '**', renderMode: RenderMode.Prerender },
 ];
