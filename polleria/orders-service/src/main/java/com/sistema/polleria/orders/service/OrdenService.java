@@ -29,6 +29,12 @@ public class OrdenService {
     private final NumeroPedidoService numeroPedidoService;
     private final SancionDispatcherService sancionDispatcherService;
 
+    private static final List<OrdenEstado> ESTADOS_INICIALES_PERMITIDOS = List.of(
+            OrdenEstado.RECIBIDO,
+            OrdenEstado.PENDIENTE_PAGO,
+            OrdenEstado.PENDIENTE_CONFIRMACION
+    );
+
     private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
             OrdenEstado.ENTREGADO,
             OrdenEstado.CANCELADO,
@@ -565,6 +571,12 @@ public class OrdenService {
             if (request.getDireccionEntrega() == null || request.getDireccionEntrega().isBlank()) {
                 throw new IllegalArgumentException("La dirección de entrega es obligatoria para delivery");
             }
+        }
+        // POST /ordenes is public: an order may only start waiting for its payment (capture or
+        // call). Any later state would send it to the kitchen without the cashier's validation.
+        if (request.getEstadoInicial() != null && !ESTADOS_INICIALES_PERMITIDOS.contains(request.getEstadoInicial())) {
+            throw new IllegalArgumentException("El estado inicial " + request.getEstadoInicial()
+                    + " no está permitido: use RECIBIDO, PENDIENTE_PAGO o PENDIENTE_CONFIRMACION");
         }
     }
 

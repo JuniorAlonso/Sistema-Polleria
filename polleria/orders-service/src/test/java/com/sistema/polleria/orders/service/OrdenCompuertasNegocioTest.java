@@ -272,6 +272,33 @@ class OrdenCompuertasNegocioTest {
         assertFalse(resp.getRequiereCobroEfectivo());
     }
 
+    // estadoInicial: POST /ordenes is public, so it can only open an order in a state that still
+    // waits for payment or for the cashier (S2). Anything further would skip both.
+    @Test
+    void crearConEstadoInicialQueSaltaElPagoSeRechaza() {
+        for (OrdenEstado estado : List.of(OrdenEstado.PREPARANDO, OrdenEstado.EN_PREPARACION,
+                OrdenEstado.LISTO_PARA_ENTREGAR, OrdenEstado.EN_CAMINO, OrdenEstado.ENTREGADO)) {
+            CrearOrdenRequest r = crearRequest(estado);
+
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> ordenService.crear(r, 5L), "estadoInicial " + estado + " must be rejected");
+            assertTrue(e.getMessage().contains("estado inicial"), e.getMessage());
+        }
+        verify(ordenRepository, never()).save(any(Orden.class));
+    }
+
+    @Test
+    void crearConPendientePagoQuedaEsperandoLaCapturaSinCobroEfectivo() {
+        CrearOrdenRequest r = crearRequest(OrdenEstado.PENDIENTE_PAGO);
+        ArgumentCaptor<Orden> guardada = guardar();
+
+        OrdenResponse resp = ordenService.crear(r, 5L);
+
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, guardada.getValue().getEstado());
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, resp.getEstado());
+        assertFalse(resp.getRequiereCobroEfectivo());
+    }
+
     private ArgumentCaptor<Orden> guardar() {
         Producto p = Producto.builder().id(10L).nombre("1/4 Pollo")
                 .precio(new BigDecimal("22.00")).disponible(true).build();
