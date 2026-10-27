@@ -37,6 +37,9 @@ const {
     PREGUNTA_MONTO_EFECTIVO,
     MENSAJE_SANCION_CONTRAPAGO,
     MENSAJE_EFECTIVO_SIN_CAPTURA,
+    mensajeTicket,
+    mensajeTicketNoValido,
+    MENSAJE_SIN_TICKET,
     formatearCarrito,
     formatearCatalogo,
     mensajePedidoCreado,
@@ -53,7 +56,7 @@ const {
     mensajeSinServicio,
     mensajeSinProductos
 } = require('./menu');
-const { MemoryConversationStore } = require('./conversation');
+const { MemoryConversationStore, liberarConservandoTicket } = require('./conversation');
 const { DedupMensajes } = require('./dedup');
 const { crearCatalogo } = require('../pedidos/catalogo');
 const { esImagen } = require('../pedidos/almacenamiento');
@@ -78,6 +81,13 @@ const RESPUESTAS_DELIVERY = ['1', 'delivery', 'a domicilio', 'domicilio', 'envio
 const RESPUESTAS_RECOJO = ['2', 'recojo', 'recoger', 'recojo en tienda', 'tienda', 'en tienda'];
 const RESPUESTAS_YAPE = ['1', 'yape', 'plin', 'yape o plin'];
 const RESPUESTAS_EFECTIVO = ['2', 'efectivo', 'contrapago', 'contra pago', 'contra entrega', 'contraentrega', 'cash'];
+
+// Asking for the ticket again works in any state (menu option 5 only from the main menu).
+const PALABRAS_TICKET = ['ticket', 'mi ticket', 'ver ticket', 'ver mi ticket', 'reenviar ticket',
+    'enviame mi ticket', 'envia mi ticket', 'mandame mi ticket', 'codigo de ticket', 'mi codigo de ticket'];
+
+/** Final states whose ticket can no longer be used at the counter. */
+const ESTADOS_TICKET_NO_VALIDO = ['CANCELADO', 'PEDIDO_FANTASMA'];
 
 /** Highest cash amount accepted for "paga con": a typo like 5000 should not become the change. */
 const MONTO_EFECTIVO_MAXIMO = 1000;
@@ -248,9 +258,13 @@ class BotPedidos {
             return this._resolverComprobante(msg, clave, guardado);
         }
 
+        if (PALABRAS_TICKET.includes(texto) || (texto === '5' && estado === ESTADO_MENU)) {
+            return this._enviarTicket(clave, guardado);
+        }
+
         // Cancelación en cualquier estado que no sea MENU
         if (esCancelacion(texto) && estado !== ESTADO_MENU) {
-            await this.conversacion.del(clave);
+            await liberarConservandoTicket(this.conversacion, clave);
             return '❌ Operación cancelada. Escribe *hola* o *menu* cuando desees iniciar un nuevo pedido o consultar algo. 🍗';
         }
 
@@ -258,12 +272,12 @@ class BotPedidos {
         if ((['menu', 'inicio', 'volver al menu', 'ver menu'].includes(texto) || esSaludo(texto)) &&
             [ESTADO_CONFIRMANDO_ICA, ESTADO_ESPERANDO_DIRECCION, ESTADO_ESPERANDO_REFERENCIA, ESTADO_ESPERANDO_CODIGO,
                 ESTADO_ESPERANDO_ENTREGA, ESTADO_ESPERANDO_METODO_PAGO, ESTADO_ESPERANDO_MONTO].includes(estado)) {
-            await this.conversacion.set(clave, { estado: ESTADO_MENU });
+            await this.conversacion.set(clave, { estado: ESTADO_MENU, ultimoPedido: guardado.ultimoPedido });
             return getMainMenu();
         }
 
         if (estado === ESTADO_ESPERANDO_CODIGO) {
-            await this.conversacion.del(clave);
+            await liberarConservandoTicket(this.conversacion, clave);
             const codigo = textoCrudo(msg);
             return this._consultarPedido(clave, codigo);
         }
@@ -611,6 +625,44 @@ class BotPedidos {
         }
     }
 
+    /**
+     * Sends the ticket of the last order made from this chat. The state is read from
+     * orders-service; an order of another number is never shown, a cancelled one is not
+     * presented as valid, and if the service is down the saved ticket goes out without a state.
+     */
+    async _enviarTicket(clave, guardado) {
+        const pedido = guardado.pedido || guardado.ultimoPedido;
+        if (!pedido || pedido.id === undefined || pedido.id === null) {
+            return MENSAJE_SIN_TICKET;
+        }
+        if (!this.ordenes || typeof this.ordenes.obtener !== 'function') {
+            return mensajeTicket(pedido);
+        }
+        try {
+            const orden = await this.ordenes.obtener(pedido.id);
+            if (!orden) return MENSAJE_SIN_TICKET;
+            const telOrden = normalizarTelefono(orden.telefonoCliente || '');
+            const telRemitente = normalizarTelefono(clave);
+            if (telOrden && telRemitente && telOrden !== telRemitente) {
+                logger.warn(`Ticket denegado por privacidad: ${clave} pidió la orden #${pedido.id} de ${telOrden}`);
+                return MENSAJE_SIN_TICKET;
+            }
+            if (ESTADOS_TICKET_NO_VALIDO.includes(orden.estado)) {
+                return mensajeTicketNoValido(pedido, orden.estado);
+            }
+            const actual = {
+                ...pedido,
+                numeroCliente: orden.numeroCliente != null ? orden.numeroCliente : pedido.numeroCliente,
+                total: orden.total != null ? orden.total : pedido.total,
+                tipo: orden.tipo || pedido.tipo
+            };
+            return mensajeTicket(actual, orden.estado);
+        } catch (error) {
+            logger.warn(`No se pudo consultar la orden #${pedido.id} para el ticket: ${error.message || error}`);
+            return mensajeTicket(pedido);
+        }
+    }
+
     async _quitarDelCarrito(clave, guardado, numero) {
         const carrito = (guardado.carrito || []).map(i => ({ ...i }));
         if (!Number.isInteger(numero) || numero < 1 || numero > carrito.length) {
@@ -690,7 +742,7 @@ class BotPedidos {
                 montoPagaCon: orden.montoPagaCon,
                 vueltoEstimado: orden.vueltoEstimado
             };
-            await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido });
+            await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido, ultimoPedido: pedido });
             logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
             return mensajePedidoCreado(pedido, this.ajustes);
         } catch (error) {

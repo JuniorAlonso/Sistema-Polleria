@@ -88,7 +88,8 @@ public class NotificationService {
     static String mensajeRecojoListo(Orden orden) {
         String numero = orden.getNumeroCliente() != null ? " #" + orden.getNumeroCliente() : "";
         return "Tu pedido" + numero + " está listo. Debes recogerlo en tienda dentro de 1 hora "
-                + "presentando tu ticket; pasado ese plazo se declarará pedido fantasma.";
+                + "presentando tu ticket con el código POL-" + orden.getId()
+                + "; pasado ese plazo se declarará pedido fantasma. Escribe *ticket* para verlo de nuevo.";
     }
 
     /** Código de 4 dígitos para ver los pedidos sin iniciar sesión. */

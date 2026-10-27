@@ -18,8 +18,9 @@ function getMainMenu() {
         '1️⃣.- Hacer un Pedido\n' +
         '2️⃣.- Consultar estado de mi Pedido\n' +
         '3️⃣.- Horarios de Atención y Ubicación\n' +
-        '4️⃣.- Hablar con un Asesor\n\n' +
-        '_Escribe un número del 1 al 4_'
+        '4️⃣.- Hablar con un Asesor\n' +
+        '5️⃣.- Ver mi ticket de pedido\n\n' +
+        '_Escribe un número del 1 al 5_'
     );
 }
 
@@ -207,7 +208,68 @@ function lineaSiguientePaso(pedido, ajustes) {
     );
 }
 
-/** Final confirmation: order number, total and the next payment step (Yape capture or call). */
+/** Ticket code: the same POL-<order id> the cashier checks at the pickup counter. */
+function codigoTicket(pedido) {
+    return `POL-${pedido.id}`;
+}
+
+const ESTADOS_TICKET = {
+    RECIBIDO: 'Recibido',
+    PENDIENTE_PAGO: 'Esperando la captura de tu Yape',
+    PENDIENTE_CONFIRMACION: 'Esperando nuestra llamada de confirmación',
+    EN_PREPARACION: 'En preparación',
+    PREPARANDO: 'En preparación',
+    LISTO: 'Listo',
+    LISTO_PARA_ENTREGAR: 'Listo',
+    EN_CAMINO: 'En camino',
+    EN_PUERTA: 'El repartidor está en tu puerta',
+    ENTREGADO: 'Entregado'
+};
+
+/**
+ * Ticket the customer shows at the counter (pickup) or to the courier. `estado` is the current
+ * state read from orders-service; without it (service down) no state is shown.
+ */
+function mensajeTicket(pedido, estado) {
+    const recojo = pedido.tipo === 'RECOJO';
+    let estadoTexto = estado ? ESTADOS_TICKET[estado] || estado : null;
+    if (recojo && (estado === 'LISTO' || estado === 'LISTO_PARA_ENTREGAR')) {
+        estadoTexto = 'Listo para recoger en tienda (tienes 1 hora)';
+    }
+    const lineas = [
+        '🎫 *TU TICKET DE PEDIDO*',
+        '',
+        `Código: *${codigoTicket(pedido)}*`,
+        `Pedido N.° *${numeroDePedido(pedido)}* — ${recojo ? 'Recojo en tienda' : 'Delivery'}`
+    ];
+    if (pedido.total !== undefined && pedido.total !== null) {
+        lineas.push(`Total: S/ ${formatearPrecio(pedido.total)}`);
+    }
+    if (pedido.metodoPago) {
+        lineas.push(`Pago: ${pedido.metodoPago === 'EFECTIVO' ? 'Efectivo' : 'Yape'}`);
+    }
+    if (estadoTexto) lineas.push(`Estado: ${estadoTexto}`);
+    lineas.push('');
+    lineas.push(recojo
+        ? 'Presenta este código en caja al recoger tu pedido. 🧾'
+        : 'Presenta este código si el repartidor te lo pide. 🧾');
+    lineas.push('Escribe *ticket* cuando quieras volver a verlo.');
+    return lineas.join('\n');
+}
+
+function mensajeTicketNoValido(pedido, estado) {
+    const motivo = estado === 'CANCELADO' ? 'fue cancelado' : 'se cerró como no recibido';
+    return (
+        `Tu último pedido (*${codigoTicket(pedido)}*) ${motivo}, así que su ticket ya no es válido.\n` +
+        'Escribe *1* para hacer un nuevo pedido.'
+    );
+}
+
+const MENSAJE_SIN_TICKET =
+    'No encontramos un pedido reciente hecho desde este WhatsApp, así que no hay ticket que enviarte.\n' +
+    'Escribe *1* para hacer un pedido o *2* para consultar uno con su número.';
+
+/** Final confirmation: order number, total, the next payment step and the ticket. */
 function mensajePedidoCreado(pedido, ajustes) {
     const numero = numeroDePedido(pedido);
     const entrega = pedido.tipo === 'RECOJO' ? 'para *recojo en tienda*' : 'para *delivery*';
@@ -215,7 +277,8 @@ function mensajePedidoCreado(pedido, ajustes) {
         '✅ *¡Pedido registrado!*\n\n' +
         `Tu pedido N.° *${numero}* ${entrega} quedó registrado por un total de *S/ ${formatearPrecio(pedido.total)}*.\n` +
         'El equipo de San Pollo coordina el pago contigo por este chat.\n\n' +
-        lineaSiguientePaso(pedido, ajustes)
+        lineaSiguientePaso(pedido, ajustes) + '\n\n' +
+        mensajeTicket(pedido)
     );
 }
 
@@ -260,6 +323,10 @@ module.exports = {
     MENSAJE_SANCION_CONTRAPAGO,
     MENSAJE_EFECTIVO_SIN_CAPTURA,
     MINUTOS_VALIDACION_PAGO,
+    codigoTicket,
+    mensajeTicket,
+    mensajeTicketNoValido,
+    MENSAJE_SIN_TICKET,
     CARRITO_VACIO,
     MENSAJE_PEDIDO_FALLIDO,
     MENSAJE_PIDE_IMAGEN_COMPROBANTE,

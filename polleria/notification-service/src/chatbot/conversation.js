@@ -120,7 +120,23 @@ function crearConversationStore(databaseUrl) {
     return databaseUrl ? new PostgresConversationStore(databaseUrl) : new MemoryConversationStore();
 }
 
+/**
+ * Ends the current conversation flow but keeps the customer's last order, so the ticket
+ * (POL-<id>) can still be sent again after a payment approval, a status change or a cancel.
+ * Without an order to keep, the conversation is deleted as before.
+ */
+async function liberarConservandoTicket(store, clave) {
+    const guardado = await store.get(clave);
+    const ultimoPedido = guardado && (guardado.pedido || guardado.ultimoPedido);
+    if (ultimoPedido) {
+        await store.set(clave, { estado: 'MENU', ultimoPedido });
+    } else {
+        await store.del(clave);
+    }
+}
+
 module.exports = {
+    liberarConservandoTicket,
     MemoryConversationStore,
     PostgresConversationStore,
     crearConversationStore,

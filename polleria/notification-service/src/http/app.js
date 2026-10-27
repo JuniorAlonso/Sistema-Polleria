@@ -5,6 +5,7 @@ const { requiereRol, requiereClaveInterna } = require('./auth');
 const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeComprobanteRechazado, mensajeCodigo } = require('../notifications/messages');
 const { ESTADOS_LOG } = require('../notifications/store');
 const { claveDeUsuario, ESTADO_PEDIDO_CONFIRMADO } = require('../chatbot/chatbot');
+const { liberarConservandoTicket } = require('../chatbot/conversation');
 const { crearLogger } = require('../logger');
 const logger = crearLogger('HttpApp');
 
@@ -103,7 +104,7 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
             if (conversacion && telefono) {
                 const clave = claveDeUsuario(telefono);
                 try {
-                    await conversacion.del(clave);
+                    await liberarConservandoTicket(conversacion, clave);
                     logger.info(`Conversación de ${clave} liberada tras confirmación de pago para orden #${ordenId}`);
                 } catch (e) {
                     logger.warn(`No se pudo limpiar conversación de ${clave}: ${e.message}`);
@@ -139,7 +140,7 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
             if (conversacion && telefono && (estadoNuevo === 'EN_PREPARACION' || estadoNuevo === 'EN_CAMINO' || estadoNuevo === 'ENTREGADO')) {
                 const clave = claveDeUsuario(telefono);
                 try {
-                    await conversacion.del(clave);
+                    await liberarConservandoTicket(conversacion, clave);
                 } catch (e) {}
             }
 
