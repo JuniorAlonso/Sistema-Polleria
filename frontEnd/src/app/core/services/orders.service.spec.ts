@@ -597,3 +597,51 @@ describe('OrdersService — disponibles y reclamo (S10)', () => {
     expect(mensaje).toContain('inválido');
   });
 });
+
+describe('OrdersService — createOrder desde un Order del checkout', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  const orderBase = (estado: Order['estado'], extra: Partial<Order> = {}): Order => ({
+    id: '0',
+    codigoSeguimiento: '',
+    cliente: { nombre: 'Ana', celular: '987654321', direccion: 'Av. Grau 123', referencia: 'Portón azul' },
+    items: [{ product: { id: 'prod-1' } as Order['items'][number]['product'], cantidad: 1 } as Order['items'][number]],
+    tipo: 'DELIVERY',
+    estado,
+    subtotal: 18,
+    costoEnvio: 6,
+    descuento: 0,
+    total: 24,
+    createdAt: '',
+    updatedAt: '',
+    ...extra
+  });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ providers: [provideHttpClient(), provideHttpClientTesting()] });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('ContraPago envía estadoInicial PENDIENTE_CONFIRMACION y el monto con el que paga', () => {
+    service.createOrder(orderBase('PENDIENTE_CONFIRMACION', { metodoPago: 'EFECTIVO_CONTRAENTREGA', montoPagaCon: 50 })).subscribe();
+
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+    expect(req.request.body.estadoInicial).toBe('PENDIENTE_CONFIRMACION');
+    expect(req.request.body.montoPagaCon).toBe(50);
+    req.flush({ id: 1, tipo: 'DELIVERY', estado: 'PENDIENTE_CONFIRMACION', total: 24, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+  });
+
+  it('un pago con tarjeta (estado local PENDIENTE) no envía estadoInicial: el backend decide (comportamiento previo)', () => {
+    service.createOrder(orderBase('RECIBIDO', { metodoPago: 'TARJETA' })).subscribe();
+
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+    expect(req.request.body.estadoInicial).toBeUndefined();
+    expect(req.request.body.montoPagaCon).toBeUndefined();
+    req.flush({ id: 2, tipo: 'DELIVERY', estado: 'RECIBIDO', total: 24, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+  });
+});

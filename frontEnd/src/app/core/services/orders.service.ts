@@ -7,6 +7,9 @@ import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/
 import { OrdersApiService } from '../api/orders-api.service';
 import { OrderAdapter } from '../adapters/order.adapter';
 
+/** Initial states a checkout may request; the backend rejects any other (S2). */
+const ESTADOS_INICIALES_CHECKOUT: OrderStatus[] = ['PENDIENTE_CONFIRMACION', 'PENDIENTE_PAGO'];
+
 @Injectable({
   providedIn: 'root'
 })
@@ -181,7 +184,11 @@ export class OrdersService {
             notas: it.notas
           })),
           metodoPago: orderRequest.metodoPago,
-          notasGenerales: orderRequest.notasGenerales
+          notasGenerales: orderRequest.notasGenerales,
+          // ContraPago / capture orders must open waiting for the cashier; dropping the state
+          // created them as RECIBIDO (straight to the kitchen) and skipped the sanction check.
+          estadoInicial: ESTADOS_INICIALES_CHECKOUT.includes(orderRequest.estado) ? orderRequest.estado : undefined,
+          montoPagaCon: orderRequest.montoPagaCon
         };
       } else {
         createReq = orderRequest as CreateOrderRequest;
