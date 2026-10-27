@@ -80,6 +80,8 @@ function estadoListo(telefono = CELULAR) {
         carrito: [{ productoId: 1, nombre: 'Cuarto de pollo + papas', precio: 18, cantidad: 1 }],
         direccion: 'Av. Grau 123, Ica',
         referencia: 'Portón azul frente al parque',
+        entrega: 'DELIVERY',
+        metodoPago: 'YAPE',
         telefono
     };
 }

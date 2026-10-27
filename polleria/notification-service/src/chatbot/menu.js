@@ -39,6 +39,33 @@ const PREGUNTA_REFERENCIA =
     '¿Tienes alguna *referencia* para llegar? (frente a, al lado de, color de la fachada)\n' +
     'Si no tienes, escribe *sin referencia*.';
 
+const PREGUNTA_ENTREGA =
+    '¿Cómo deseas recibir tu pedido?\n\n' +
+    '*1* - Delivery a tu dirección\n' +
+    '*2* - Recojo en tienda (Av. Principal 123, Ica)';
+
+/** Payment question. Cash is only offered as ContraPago: on delivery or when picking up. */
+function preguntaMetodoPago(entrega) {
+    const efectivo = entrega === 'RECOJO' ? 'Efectivo al recoger en tienda' : 'Efectivo contra entrega';
+    return (
+        '¿Cómo vas a pagar?\n\n' +
+        '*1* - Yape (envías la captura por este chat)\n' +
+        `*2* - ${efectivo} (te llamamos para confirmar)`
+    );
+}
+
+const PREGUNTA_MONTO_EFECTIVO =
+    '💵 ¿Con cuánto vas a pagar? Escribe el monto del billete (por ejemplo: *50*) para llevarte el vuelto, ' +
+    'o escribe *exacto* si pagarás el monto justo.';
+
+const MENSAJE_SANCION_CONTRAPAGO =
+    '⚠️ Tu número registra un *pedido no recibido* anteriormente, por eso no podemos aceptar pago en efectivo.\n\n' +
+    'Puedes completar tu pedido pagando con *Yape*: responde *1*. O escribe *cancelar* para salir.';
+
+const MENSAJE_EFECTIVO_SIN_CAPTURA =
+    'Tu pedido es con *pago en efectivo*, así que no necesitas enviar ninguna captura. ' +
+    'Te llamaremos para confirmarlo. 📞';
+
 const CARRITO_VACIO =
     '🛒 Tu carrito está vacío. Escribe *carta* para ver los productos y agrega uno con su número.';
 
@@ -148,22 +175,55 @@ function lineaPagoYape(ajustes) {
         + 'para que un administrador la revise. 📸';
 }
 
-/** Confirmación final: número de pedido, total y a qué Yape pagar. */
-function mensajePedidoCreado(pedido, ajustes) {
-    const numero = numeroDePedido(pedido);
+/** Minutes the customer has to send the Yape capture or answer the confirmation call (backend rule). */
+const MINUTOS_VALIDACION_PAGO = 15;
+
+/** Cash line: amount to pay and the change the courier/cashier will bring. */
+function lineaEfectivo(pedido) {
+    const lugar = pedido.tipo === 'RECOJO' ? 'al recoger tu pedido en tienda' : 'al repartidor cuando llegue';
+    let linea = `💵 Pagarás *S/ ${formatearPrecio(pedido.total)}* en efectivo ${lugar}.`;
+    const pagaCon = Number(pedido.montoPagaCon);
+    if (Number.isFinite(pagaCon) && pagaCon > 0) {
+        const vuelto = Number(pedido.vueltoEstimado);
+        linea += Number.isFinite(vuelto) && vuelto > 0
+            ? ` Pagas con S/ ${formatearPrecio(pagaCon)}: tu vuelto será *S/ ${formatearPrecio(vuelto)}*.`
+            : ` Ten en cuenta que el total es S/ ${formatearPrecio(pedido.total)}.`;
+    }
+    return linea;
+}
+
+/** Next payment step: cash orders wait for the cashier's call, Yape orders for the capture. */
+function lineaSiguientePaso(pedido, ajustes) {
+    if (pedido.metodoPago === 'EFECTIVO') {
+        return (
+            `📞 En los próximos ${MINUTOS_VALIDACION_PAGO} minutos te llamaremos para confirmar tu pedido; ` +
+            'si no logramos confirmarlo, se cancelará.\n\n' +
+            lineaEfectivo(pedido)
+        );
+    }
     return (
-        '✅ *¡Pedido registrado!*\n\n' +
-        `Tu pedido N.° *${numero}* quedó registrado por un total de *S/ ${formatearPrecio(pedido.total)}*.\n` +
-        'El equipo de San Pollo coordina el pago contigo por este chat.\n\n' +
-        lineaPagoYape(ajustes)
+        lineaPagoYape(ajustes) + '\n' +
+        `⏳ Tienes *${MINUTOS_VALIDACION_PAGO} minutos* para enviar la captura; pasado ese plazo el pedido se cancela.`
     );
 }
 
-/** El pedido ya se creó (idempotencia de T3b): se recuerda y se pide el comprobante (T6b/T6f). */
+/** Final confirmation: order number, total and the next payment step (Yape capture or call). */
+function mensajePedidoCreado(pedido, ajustes) {
+    const numero = numeroDePedido(pedido);
+    const entrega = pedido.tipo === 'RECOJO' ? 'para *recojo en tienda*' : 'para *delivery*';
+    return (
+        '✅ *¡Pedido registrado!*\n\n' +
+        `Tu pedido N.° *${numero}* ${entrega} quedó registrado por un total de *S/ ${formatearPrecio(pedido.total)}*.\n` +
+        'El equipo de San Pollo coordina el pago contigo por este chat.\n\n' +
+        lineaSiguientePaso(pedido, ajustes)
+    );
+}
+
+/** El pedido ya se creó (idempotencia de T3b): se recuerda el siguiente paso del pago. */
 function mensajePedidoYaConfirmado(pedido, ajustes) {
     return (
         `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado.\n\n` +
-        lineaPagoYape(ajustes)
+        lineaSiguientePaso(pedido, ajustes)
     );
 }
 
@@ -194,6 +254,12 @@ module.exports = {
     SOLO_ICA,
     PREGUNTA_DIRECCION,
     PREGUNTA_REFERENCIA,
+    PREGUNTA_ENTREGA,
+    preguntaMetodoPago,
+    PREGUNTA_MONTO_EFECTIVO,
+    MENSAJE_SANCION_CONTRAPAGO,
+    MENSAJE_EFECTIVO_SIN_CAPTURA,
+    MINUTOS_VALIDACION_PAGO,
     CARRITO_VACIO,
     MENSAJE_PEDIDO_FALLIDO,
     MENSAJE_PIDE_IMAGEN_COMPROBANTE,

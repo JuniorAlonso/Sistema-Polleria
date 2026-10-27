@@ -143,21 +143,31 @@ test('(c) confirmar con dirección crea una orden DELIVERY por WhatsApp con el t
     await bot.procesar(mensaje('nota sin cebolla', 'c2'));
     await bot.procesar(mensaje('mi nombre es Ana', 'c3'));
 
-    const pideDireccion = await bot.procesar(mensaje('confirmar', 'c4'));
-    assert.match(pideDireccion, /direcci[oó]n/i, 'primero pide la dirección de entrega');
+    const pideEntrega = await bot.procesar(mensaje('confirmar', 'c4'));
+    assert.match(pideEntrega, /Delivery/, 'primero pregunta delivery o recojo');
+    assert.match(pideEntrega, /Recojo en tienda/);
+    const pideDireccion = await bot.procesar(mensaje('1', 'c4b'));
+    assert.match(pideDireccion, /direcci[oó]n/i, 'para delivery pide la dirección de entrega');
     assert.strictEqual(cliente.llamadas.length, 0, 'todavía no crea la orden');
 
     const pideReferencia = await bot.procesar(mensaje('Av. Grau 123, Ica', 'c5'));
     assert.match(pideReferencia, /referencia/i, 'luego pide la referencia');
     assert.strictEqual(cliente.llamadas.length, 0, 'sin referencia todavía no crea la orden');
 
-    const final = await bot.procesar(mensaje('Portón azul frente al parque', 'c6'));
+    const pidePago = await bot.procesar(mensaje('Portón azul frente al parque', 'c6'));
+    assert.match(pidePago, /Yape/, 'luego pregunta el método de pago');
+    assert.match(pidePago, /Efectivo contra entrega/);
+    assert.strictEqual(cliente.llamadas.length, 0, 'sin método de pago todavía no crea la orden');
+
+    const final = await bot.procesar(mensaje('1', 'c7'));
 
     assert.strictEqual(cliente.llamadas.length, 1, 'crea exactamente una orden');
     const { url, cuerpo } = cliente.llamadas[0];
     assert.match(url, /\/ordenes$/);
     assert.strictEqual(cuerpo.tipo, 'DELIVERY');
     assert.strictEqual(cuerpo.canalOrigen, 'WHATSAPP');
+    assert.strictEqual(cuerpo.estadoInicial, 'PENDIENTE_PAGO', 'Yape espera la captura en la bandeja del cajero');
+    assert.strictEqual(cuerpo.montoPagaCon, undefined, 'Yape no manda monto en efectivo');
     assert.strictEqual(cuerpo.telefonoCliente, CELULAR, 'usa el celular normalizado del remitente');
     assert.strictEqual(cuerpo.direccionEntrega, 'Av. Grau 123, Ica');
     assert.strictEqual(cuerpo.referencia, 'Portón azul frente al parque');
@@ -174,6 +184,7 @@ test('(c) confirmar con dirección crea una orden DELIVERY por WhatsApp con el t
     // T3b, cuando la recepción todavía no existía; ahora se exige lo contrario, con el número.
     assert.match(final, /934 421 442/, 'le dice a qué Yape pagar');
     assert.match(final, /captura|comprobante/i, 'le pide la captura del pago');
+    assert.match(final, /15 minutos/, 'avisa el plazo para enviar la captura');
     assert.strictEqual((await store.get(CELULAR)).estado, 'PEDIDO_CONFIRMADO');
 });
 
@@ -183,15 +194,17 @@ test('(d) confirmar dos veces y la reentrega del mismo mensaje crean una sola or
     await entrarAlCatalogo(bot);
     await bot.procesar(mensaje('1', 'd1'));
     await bot.procesar(mensaje('confirmar', 'd2'));
+    await bot.procesar(mensaje('delivery', 'd2b'));
     await bot.procesar(mensaje('Av. Grau 123', 'd3'));
+    await bot.procesar(mensaje('Portón azul', 'd4a'));
 
-    const referencia = { from: FROM, body: 'Portón azul', id: 'd4' };
-    const final = await bot.procesar(referencia);
+    const pago = { from: FROM, body: 'yape', id: 'd4' };
+    const final = await bot.procesar(pago);
     assert.match(final, /N\.° \*?3\*?/);
     assert.strictEqual(cliente.llamadas.length, 1);
 
     // Reentrega exacta del mismo message.id: el dedup no vuelve a ejecutar el paso.
-    const reentrega = await bot.procesar({ from: FROM, body: 'Portón azul', id: 'd4' });
+    const reentrega = await bot.procesar({ from: FROM, body: 'yape', id: 'd4' });
     assert.strictEqual(reentrega, null, 'la reentrega no genera respuesta');
     assert.strictEqual(cliente.llamadas.length, 1, 'la reentrega no vuelve a crear la orden');
 
@@ -207,9 +220,11 @@ test('(e) si orders-service falla no hay número de pedido y el carrito queda pa
     await entrarAlCatalogo(bot);
     await bot.procesar(mensaje('1', 'e1'));
     await bot.procesar(mensaje('confirmar', 'e2'));
+    await bot.procesar(mensaje('1', 'e2b'));
     await bot.procesar(mensaje('Av. Grau 123', 'e3'));
+    await bot.procesar(mensaje('Portón azul', 'e3b'));
 
-    const fallo = await bot.procesar(mensaje('Portón azul', 'e4'));
+    const fallo = await bot.procesar(mensaje('1', 'e4'));
 
     assert.match(fallo, /no pudimos registrar tu pedido/i, 'dice que no pudo crear la orden');
     assert.doesNotMatch(fallo, /N\.°\s*\*?\d/, 'no inventa número de pedido');
@@ -233,7 +248,8 @@ test('(f) confirmar sin dirección no crea la orden y pide la dirección', async
     await entrarAlCatalogo(bot);
     await bot.procesar(mensaje('1', 'f1'));
 
-    const respuesta = await bot.procesar(mensaje('confirmar', 'f2'));
+    await bot.procesar(mensaje('confirmar', 'f2'));
+    const respuesta = await bot.procesar(mensaje('1', 'f3'));
 
     assert.match(respuesta, /direcci[oó]n/i);
     assert.strictEqual(cliente.llamadas.length, 0, 'no crea la orden sin dirección');

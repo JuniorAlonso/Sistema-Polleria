@@ -8,17 +8,22 @@
  * - CONFIRMANDO_ICA: primer paso OBLIGATORIO antes de tomar cualquier pedido (S12).
  * - CATALOGO: carta real de orders-service numerada; se agregan productos por número,
  *   se quitan, se ve el carrito y se confirma el pedido.
- * - ESPERANDO_DIRECCION / ESPERANDO_REFERENCIA: antes de crear la orden el bot pide la
- *   dirección y una referencia (el alta de delivery de orders-service exige dirección).
+ * - ESPERANDO_ENTREGA: al confirmar, el cliente elige Delivery o Recojo en tienda.
+ * - ESPERANDO_DIRECCION / ESPERANDO_REFERENCIA: solo para delivery (orders-service exige
+ *   dirección en el alta de delivery).
+ * - ESPERANDO_METODO_PAGO: Yape o efectivo (ContraPago: contra entrega o al recoger). Si
+ *   orders-service rechaza el efectivo por una sanción de pedido fantasma (409), solo queda Yape.
+ * - ESPERANDO_MONTO_EFECTIVO: con cuánto paga (o "exacto") para que lleven el vuelto.
  * - PEDIDO_CONFIRMADO: estado final que recuerda la orden creada (idempotencia T3b).
  * - ESPERANDO_CODIGO_PEDIDO: se conserva el flujo viejo de consulta de pedido.
  *
  * El estado se lee/escribe en un store persistido (misma base que el historial) y el
  * dedup por `message.id` evita ejecutar dos veces la reentrega de un mensaje.
  *
- * El alta (T3b) la hace `ordenes.crear()` contra `POST /ordenes` de orders-service con
- * `tipo: DELIVERY` y `canalOrigen: WHATSAPP`. El bot NO calcula el envío: el total que
- * muestra al confirmar es el que devolvió orders-service.
+ * El alta la hace `ordenes.crear()` contra `POST /ordenes` con `canalOrigen: WHATSAPP` y el
+ * estado inicial del pago: `PENDIENTE_PAGO` (Yape: la captura llega a la bandeja del cajero)
+ * o `PENDIENTE_CONFIRMACION` (efectivo: el cajero llama para confirmar). Ninguno pasa a cocina
+ * sin esa validación. El bot NO calcula el envío: el total que muestra es el de orders-service.
  */
 
 const {
@@ -27,6 +32,11 @@ const {
     SOLO_ICA,
     PREGUNTA_DIRECCION,
     PREGUNTA_REFERENCIA,
+    PREGUNTA_ENTREGA,
+    preguntaMetodoPago,
+    PREGUNTA_MONTO_EFECTIVO,
+    MENSAJE_SANCION_CONTRAPAGO,
+    MENSAJE_EFECTIVO_SIN_CAPTURA,
     formatearCarrito,
     formatearCatalogo,
     mensajePedidoCreado,
@@ -59,6 +69,18 @@ const ESTADO_ESPERANDO_REFERENCIA = 'ESPERANDO_REFERENCIA';
 const ESTADO_PEDIDO_CONFIRMADO = 'PEDIDO_CONFIRMADO';
 const ESTADO_COMPROBANTE_RECIBIDO = 'COMPROBANTE_RECIBIDO';
 const ESTADO_ESPERANDO_CODIGO = 'ESPERANDO_CODIGO_PEDIDO';
+const ESTADO_ESPERANDO_ENTREGA = 'ESPERANDO_ENTREGA';
+const ESTADO_ESPERANDO_METODO_PAGO = 'ESPERANDO_METODO_PAGO';
+const ESTADO_ESPERANDO_MONTO = 'ESPERANDO_MONTO_EFECTIVO';
+
+// Answers for the delivery mode and payment method questions (numbers or words).
+const RESPUESTAS_DELIVERY = ['1', 'delivery', 'a domicilio', 'domicilio', 'envio'];
+const RESPUESTAS_RECOJO = ['2', 'recojo', 'recoger', 'recojo en tienda', 'tienda', 'en tienda'];
+const RESPUESTAS_YAPE = ['1', 'yape', 'plin', 'yape o plin'];
+const RESPUESTAS_EFECTIVO = ['2', 'efectivo', 'contrapago', 'contra pago', 'contra entrega', 'contraentrega', 'cash'];
+
+/** Highest cash amount accepted for "paga con": a typo like 5000 should not become the change. */
+const MONTO_EFECTIVO_MAXIMO = 1000;
 
 const SALUDOS = ['hola', 'holi', 'buenas', 'menu', 'opciones'];
 const AFIRMATIVOS = ['si', 's', 'yes', 'claro', 'confirmo', 'correcto', 'soy de ica'];
@@ -234,7 +256,8 @@ class BotPedidos {
 
         // Volver al menú principal desde estados previos a confirmación
         if ((['menu', 'inicio', 'volver al menu', 'ver menu'].includes(texto) || esSaludo(texto)) &&
-            [ESTADO_CONFIRMANDO_ICA, ESTADO_ESPERANDO_DIRECCION, ESTADO_ESPERANDO_REFERENCIA, ESTADO_ESPERANDO_CODIGO].includes(estado)) {
+            [ESTADO_CONFIRMANDO_ICA, ESTADO_ESPERANDO_DIRECCION, ESTADO_ESPERANDO_REFERENCIA, ESTADO_ESPERANDO_CODIGO,
+                ESTADO_ESPERANDO_ENTREGA, ESTADO_ESPERANDO_METODO_PAGO, ESTADO_ESPERANDO_MONTO].includes(estado)) {
             await this.conversacion.set(clave, { estado: ESTADO_MENU });
             return getMainMenu();
         }
@@ -243,6 +266,18 @@ class BotPedidos {
             await this.conversacion.del(clave);
             const codigo = textoCrudo(msg);
             return this._consultarPedido(clave, codigo);
+        }
+
+        if (estado === ESTADO_ESPERANDO_ENTREGA) {
+            return this._resolverEntrega(texto, clave, guardado);
+        }
+
+        if (estado === ESTADO_ESPERANDO_METODO_PAGO) {
+            return this._resolverMetodoPago(texto, clave, guardado);
+        }
+
+        if (estado === ESTADO_ESPERANDO_MONTO) {
+            return this._resolverMonto(texto, clave, guardado);
         }
 
         if (estado === ESTADO_ESPERANDO_DIRECCION) {
@@ -343,12 +378,7 @@ class BotPedidos {
         const direccion = sanitizarTexto(crudo, 250);
         if (!direccion || direccion.length < 3) return PREGUNTA_DIRECCION;
 
-        const nuevo = { ...guardado, direccion };
-        if (!nuevo.referencia) {
-            await this.conversacion.set(clave, { ...nuevo, estado: ESTADO_ESPERANDO_REFERENCIA });
-            return PREGUNTA_REFERENCIA;
-        }
-        return this._crearPedido(clave, nuevo);
+        return this._confirmar(clave, { ...guardado, direccion });
     }
 
     async _resolverReferencia(msg, clave, guardado) {
@@ -357,8 +387,45 @@ class BotPedidos {
         if (!referencia) return PREGUNTA_REFERENCIA;
 
         // "sin referencia" y equivalentes quedan como texto explícito, no como dato faltante.
-        const nuevo = { ...guardado, referencia };
-        return this._crearPedido(clave, nuevo);
+        return this._confirmar(clave, { ...guardado, referencia });
+    }
+
+    async _resolverEntrega(texto, clave, guardado) {
+        let entrega = null;
+        if (RESPUESTAS_DELIVERY.includes(texto)) entrega = 'DELIVERY';
+        if (RESPUESTAS_RECOJO.includes(texto)) entrega = 'RECOJO';
+        if (!entrega) return PREGUNTA_ENTREGA;
+        return this._confirmar(clave, { ...guardado, entrega });
+    }
+
+    async _resolverMetodoPago(texto, clave, guardado) {
+        if (RESPUESTAS_YAPE.includes(texto)) {
+            return this._confirmar(clave, { ...guardado, metodoPago: 'YAPE', montoPagaCon: undefined });
+        }
+        if (RESPUESTAS_EFECTIVO.includes(texto)) {
+            // orders-service already refused cash for this number: do not ask again for the amount.
+            if (guardado.sancionContraPago) return MENSAJE_SANCION_CONTRAPAGO;
+            return this._confirmar(clave, { ...guardado, metodoPago: 'EFECTIVO' });
+        }
+        return preguntaMetodoPago(guardado.entrega);
+    }
+
+    /** "exacto" means no change is needed; otherwise the bill amount, so the courier brings the change. */
+    async _resolverMonto(texto, clave, guardado) {
+        if (['exacto', 'monto exacto', 'justo', 'sencillo'].includes(texto)) {
+            return this._confirmar(clave, { ...guardado, montoPagaCon: null });
+        }
+        const numero = texto.replace(',', '.').match(/(\d+(?:\.\d{1,2})?)/);
+        const monto = numero ? Number(numero[1]) : NaN;
+        const subtotal = (guardado.carrito || []).reduce((acc, i) => acc + Number(i.precio) * i.cantidad, 0);
+        if (!Number.isFinite(monto) || monto <= 0 || monto > MONTO_EFECTIVO_MAXIMO) {
+            return PREGUNTA_MONTO_EFECTIVO;
+        }
+        if (monto < subtotal) {
+            return `El monto debe cubrir tu pedido (subtotal S/ ${subtotal.toFixed(2)} más el envío si es delivery). ` +
+                PREGUNTA_MONTO_EFECTIVO;
+        }
+        return this._confirmar(clave, { ...guardado, montoPagaCon: monto });
     }
 
     async _resolverCatalogo(msg, texto, clave, guardado) {
@@ -503,11 +570,20 @@ class BotPedidos {
             }
 
             const estadosMap = {
-                PENDIENTE: '⏳ Pendiente de validación de pago',
+                RECIBIDO: '📥 Recibido',
+                PENDIENTE_PAGO: '⏳ Esperando la captura de tu Yape',
+                PENDIENTE_CONFIRMACION: '📞 Esperando nuestra llamada de confirmación',
                 EN_PREPARACION: '🍳 En preparación en cocina',
+                PREPARANDO: '🍳 En preparación en cocina',
+                LISTO: '📦 Listo para entregar',
+                LISTO_PARA_ENTREGAR: orden.tipo === 'RECOJO'
+                    ? '📦 Listo para recoger en tienda (tienes 1 hora; presenta tu ticket)'
+                    : '📦 Listo, esperando al repartidor',
                 EN_CAMINO: '🛵 En camino a tu dirección',
+                EN_PUERTA: '🚪 El repartidor está en tu puerta',
                 ENTREGADO: '✅ Entregado. ¡Esperamos que lo disfrutes!',
-                CANCELADO: '❌ Cancelado'
+                CANCELADO: '❌ Cancelado',
+                PEDIDO_FANTASMA: '⚠️ Cerrado como no recibido'
             };
             const estadoTexto = estadosMap[orden.estado] || orden.estado || 'En proceso';
             const numPedido = orden.numeroCliente != null ? orden.numeroCliente : orden.id;
@@ -545,18 +621,34 @@ class BotPedidos {
         return formatearCarrito(carrito);
     }
 
+    /**
+     * Checkout checklist: asks only for what is still missing, in order (delivery mode, address
+     * and reference for delivery, payment method, cash amount) and creates the order at the end.
+     * Every answer comes back here, so a retry after a failure goes straight to creation.
+     */
     async _confirmar(clave, guardado) {
         const carrito = guardado.carrito || [];
         if (!carrito.length) {
             return formatearCarrito(carrito);
         }
-        if (!guardado.direccion) {
-            await this.conversacion.set(clave, { ...guardado, estado: ESTADO_ESPERANDO_DIRECCION });
-            return PREGUNTA_DIRECCION;
+        const preguntar = async (estado, texto) => {
+            await this.conversacion.set(clave, { ...guardado, estado });
+            return texto;
+        };
+        if (!guardado.entrega) {
+            return preguntar(ESTADO_ESPERANDO_ENTREGA, PREGUNTA_ENTREGA);
         }
-        if (!guardado.referencia) {
-            await this.conversacion.set(clave, { ...guardado, estado: ESTADO_ESPERANDO_REFERENCIA });
-            return PREGUNTA_REFERENCIA;
+        if (guardado.entrega === 'DELIVERY' && !guardado.direccion) {
+            return preguntar(ESTADO_ESPERANDO_DIRECCION, PREGUNTA_DIRECCION);
+        }
+        if (guardado.entrega === 'DELIVERY' && !guardado.referencia) {
+            return preguntar(ESTADO_ESPERANDO_REFERENCIA, PREGUNTA_REFERENCIA);
+        }
+        if (!guardado.metodoPago) {
+            return preguntar(ESTADO_ESPERANDO_METODO_PAGO, preguntaMetodoPago(guardado.entrega));
+        }
+        if (guardado.metodoPago === 'EFECTIVO' && guardado.montoPagaCon === undefined) {
+            return preguntar(ESTADO_ESPERANDO_MONTO, PREGUNTA_MONTO_EFECTIVO);
         }
         return this._crearPedido(clave, guardado);
     }
@@ -567,25 +659,53 @@ class BotPedidos {
             return this._falloPedido(clave, guardado);
         }
 
+        const tipo = guardado.entrega === 'RECOJO' ? 'RECOJO' : 'DELIVERY';
+        const efectivo = guardado.metodoPago === 'EFECTIVO';
+        // Yape waits for the capture in the cashier inbox (PENDIENTE_PAGO); cash waits for the
+        // cashier's confirmation call (PENDIENTE_CONFIRMACION). Neither reaches the kitchen yet.
         const datos = {
-            tipo: 'DELIVERY',
+            tipo,
             canalOrigen: 'WHATSAPP',
-            direccionEntrega: guardado.direccion,
-            referencia: guardado.referencia,
+            estadoInicial: efectivo ? 'PENDIENTE_CONFIRMACION' : 'PENDIENTE_PAGO',
             telefonoCliente: clave,
             items: guardado.carrito.map(i => ({ productoId: i.productoId, cantidad: i.cantidad }))
         };
+        if (tipo === 'DELIVERY') {
+            datos.direccionEntrega = guardado.direccion;
+            datos.referencia = guardado.referencia;
+        }
+        if (efectivo && guardado.montoPagaCon) datos.montoPagaCon = guardado.montoPagaCon;
         if (guardado.nombre) datos.nombreCliente = guardado.nombre;
         if (guardado.observaciones) datos.observaciones = guardado.observaciones;
 
         try {
-            logger.info(`Creando pedido DELIVERY en orders-service para ${clave}...`);
+            logger.info(`Creando pedido ${tipo} (${datos.estadoInicial}) en orders-service para ${clave}...`);
             const orden = await this.ordenes.crear(datos);
-            const pedido = { id: orden.id, numeroCliente: orden.numeroCliente, total: orden.total };
+            const pedido = {
+                id: orden.id,
+                numeroCliente: orden.numeroCliente,
+                total: orden.total,
+                tipo,
+                metodoPago: efectivo ? 'EFECTIVO' : 'YAPE',
+                montoPagaCon: orden.montoPagaCon,
+                vueltoEstimado: orden.vueltoEstimado
+            };
             await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido });
             logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
             return mensajePedidoCreado(pedido, this.ajustes);
         } catch (error) {
+            if (error && error.status === 409 && efectivo) {
+                // orders-service refuses cash for a number sanctioned by a ghost order (S8).
+                logger.warn(`ContraPago rechazado para ${clave}: número sancionado por pedido fantasma`);
+                await this.conversacion.set(clave, {
+                    ...guardado,
+                    metodoPago: undefined,
+                    montoPagaCon: undefined,
+                    sancionContraPago: true,
+                    estado: ESTADO_ESPERANDO_METODO_PAGO
+                });
+                return MENSAJE_SANCION_CONTRAPAGO;
+            }
             logger.error(`Fallo al crear orden para ${clave} en orders-service: ${error.message || error}`);
             // Fallo explícito: no se inventa número de pedido y el carrito no se pierde.
             return this._falloPedido(clave, guardado);
@@ -807,6 +927,10 @@ class BotPedidos {
             return mensajeSinPedidoConfirmado();
         }
 
+        if (pedido.metodoPago === 'EFECTIVO') {
+            return MENSAJE_EFECTIVO_SIN_CAPTURA;
+        }
+
         logger.info(`Iniciando recepción de comprobante para orden #${pedido.id} (Total: S/ ${pedido.total}, Cliente: ${clave})`);
 
         if (!this.almacenamiento || !this.pagos) {
@@ -927,6 +1051,9 @@ module.exports = {
     ESTADO_PEDIDO_CONFIRMADO,
     ESTADO_COMPROBANTE_RECIBIDO,
     ESTADO_ESPERANDO_CODIGO,
+    ESTADO_ESPERANDO_ENTREGA,
+    ESTADO_ESPERANDO_METODO_PAGO,
+    ESTADO_ESPERANDO_MONTO,
     claveDeUsuario,
     idDeMensaje
 };

@@ -144,16 +144,22 @@ test('Escenario 1: Flujo completo de compra (pedido con cantidad, notas, direcci
     const r7 = await bot.procesar(msgTexto('Mi nombre es Roberto'));
     assert.match(r7, /Gracias, Roberto/i);
 
-    // 8. Confirmar pedido
+    // 8. Confirmar pedido: pregunta delivery o recojo
     const r8 = await bot.procesar(msgTexto('confirmar'));
-    assert.match(r8, /dirección/i);
+    assert.match(r8, /Delivery/i);
+    const r8b = await bot.procesar(msgTexto('1'));
+    assert.match(r8b, /dirección/i);
 
     // 9. Enviar dirección
     const r9 = await bot.procesar(msgTexto('Av. San Martín 450, Ica'));
     assert.match(r9, /referencia/i);
 
-    // 10. Enviar referencia
-    const r10 = await bot.procesar(msgTexto('Frente al parque Bolognesi'));
+    // 10. Enviar referencia: pregunta el método de pago
+    const r10a = await bot.procesar(msgTexto('Frente al parque Bolognesi'));
+    assert.match(r10a, /Yape/i);
+
+    // 11. Pagar con Yape
+    const r10 = await bot.procesar(msgTexto('yape'));
     assert.match(r10, /Pedido registrado/i);
     assert.match(r10, /Tu pedido N\.° \*1\*/i);
     assert.match(r10, /total de \*S\/ 55\.00\*/i);
@@ -196,7 +202,8 @@ test('Escenario 2: El cliente puede cancelar en cualquier paso sin que se cree u
     await bot3.procesar(msgTexto('1'));
     await bot3.procesar(msgTexto('si'));
     await bot3.procesar(msgTexto('1'));
-    await bot3.procesar(msgTexto('confirmar')); // Pasa a ESPERANDO_DIRECCION
+    await bot3.procesar(msgTexto('confirmar'));
+    await bot3.procesar(msgTexto('1')); // Delivery: pasa a ESPERANDO_DIRECCION
     const rCancel3 = await bot3.procesar(msgTexto('salir'));
     assert.match(rCancel3, /Operación cancelada/i);
     assert.strictEqual(llamadasOrdenes.length, 0, 'no crea orden');
@@ -207,6 +214,7 @@ test('Escenario 2: El cliente puede cancelar en cualquier paso sin que se cree u
     await bot4.procesar(msgTexto('si'));
     await bot4.procesar(msgTexto('1'));
     await bot4.procesar(msgTexto('confirmar'));
+    await bot4.procesar(msgTexto('1'));
     await bot4.procesar(msgTexto('Calle Lima 123')); // Pasa a ESPERANDO_REFERENCIA
     const rMenu = await bot4.procesar(msgTexto('menu'));
     assert.match(rMenu, /Bienvenido a San Pollo/i);
@@ -373,6 +381,7 @@ test('Escenario 9: Sanitización de scripts HTML, saltos de línea infinitos y r
     await bot.procesar(msgTexto('Mi nombre es <b>Juan</b> <iframe src="evil.com">'));
 
     await bot.procesar(msgTexto('confirmar'));
+    await bot.procesar(msgTexto('delivery'));
 
     // Dirección con tags HTML y excesivamente larga (>300 chars)
     const direccionLarga = 'Calle Las Flores 123 '.repeat(20) + '<script>bad()</script>';
@@ -380,6 +389,7 @@ test('Escenario 9: Sanitización de scripts HTML, saltos de línea infinitos y r
 
     // Referencia
     await bot.procesar(msgTexto('Portón verde <style>body{color:red}</style>'));
+    await bot.procesar(msgTexto('yape'));
 
     assert.strictEqual(llamadasOrdenes.length, 1);
     const orden = llamadasOrdenes[0];

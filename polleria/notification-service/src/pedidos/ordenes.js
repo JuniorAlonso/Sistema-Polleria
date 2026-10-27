@@ -33,7 +33,11 @@ class ClienteOrdenes {
                 signal: controlador.signal
             });
             if (!res || res.ok === false) {
-                throw new Error(`orders-service respondió ${res ? res.status : 'sin respuesta'}`);
+                // The status travels with the error: 409 means the customer is sanctioned for
+                // cash payment, which the bot answers differently from an outage.
+                const error = new Error(`orders-service respondió ${res ? res.status : 'sin respuesta'}`);
+                error.status = res ? res.status : null;
+                throw error;
             }
             const orden = await res.json();
             if (!orden || typeof orden !== 'object') {
