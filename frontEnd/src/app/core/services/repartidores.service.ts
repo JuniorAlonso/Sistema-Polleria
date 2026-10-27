@@ -14,7 +14,7 @@ export interface Repartidor {
 /**
  * Roster real de motorizados para el modal de asignación del panel.
  *
- * No se carga solo: el endpoint exige rol ADMIN, así que llamarlo desde una pantalla de otro rol
+ * No se carga solo: el endpoint exige rol ADMIN o CAJERO, así que llamarlo desde una pantalla de otro rol
  * (el panel del motorizado) devolvería 403. Cada pantalla que lo necesita lo pide explícitamente.
  */
 @Injectable({

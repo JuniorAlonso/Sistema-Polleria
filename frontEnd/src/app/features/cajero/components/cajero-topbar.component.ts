@@ -16,6 +16,16 @@ import { CajeroTab } from '../models/cajero.models';
                 <span>PUNTO DE COBRO & COMANDAS</span>
               } @else if (activeTab() === 'ARQUEO') {
                 <span>ARQUEO Y MOVIMIENTOS DE CAJA</span>
+              } @else if (activeTab() === 'CAPTURAS_PAGO') {
+                <span>VALIDACIÓN DE CAPTURAS DE PAGO</span>
+              } @else if (activeTab() === 'LLAMADAS_CONTRAPAGO') {
+                <span>LLAMADAS DE CONFIRMACIÓN CONTRAPAGO</span>
+              } @else if (activeTab() === 'RECOJO_TIENDA') {
+                <span>ENTREGA DE RECOJO EN TIENDA</span>
+              } @else if (activeTab() === 'LIQUIDACIONES') {
+                <span>LIQUIDACIÓN DE REPARTIDORES</span>
+              } @else if (activeTab() === 'MERMAS_FANTASMA') {
+                <span>PEDIDOS FANTASMA Y MERMAS</span>
               } @else {
                 <span>HISTORIAL DE COBROS REALIZADOS</span>
               }

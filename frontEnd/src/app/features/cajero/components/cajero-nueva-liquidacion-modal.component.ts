@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, model, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, model, output } from '@angular/core';
+import { Repartidor } from '../../../core/services/repartidores.service';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
@@ -14,8 +15,17 @@ import { FormsModule } from '@angular/forms';
             <h3 class="font-display text-xl font-bold text-white">Entregar Fondo de Vueltos a Repartidor</h3>
             <div class="space-y-3 text-xs">
               <div>
-                <label class="block text-slate-300 font-bold mb-1">Nombre del Repartidor:</label>
-                <input type="text" [(ngModel)]="repartidorNombre" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white font-medium" />
+                <label class="block text-slate-300 font-bold mb-1">Repartidor:</label>
+                @if (repartidores().length) {
+                  <select [(ngModel)]="repartidorId" class="w-full px-3 py-2 bg-black/50 border border-white/15 rounded-xl text-white font-medium">
+                    <option [ngValue]="null" disabled>Selecciona un repartidor</option>
+                    @for (r of repartidores(); track r.id) {
+                      <option [ngValue]="r.id">{{ r.nombre }}</option>
+                    }
+                  </select>
+                } @else {
+                  <p class="text-amber-300">No se pudo cargar el roster de repartidores.</p>
+                }
               </div>
               <div>
                 <label class="block text-slate-300 font-bold mb-1">Fondo Inicial de Sencillo (S/):</label>
@@ -28,14 +38,15 @@ import { FormsModule } from '@angular/forms';
             </div>
             <div class="flex justify-end gap-2 pt-3 border-t border-white/10">
               <button type="button" (click)="cancelar.emit()" class="px-4 py-2 rounded-xl bg-white/5 text-slate-300 font-bold text-xs uppercase">Cancelar</button>
-              <button type="button" (click)="aperturar.emit()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase">Aperturar</button>
+              <button type="button" (click)="aperturar.emit()" [disabled]="repartidorId() === null" class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase">Aperturar</button>
             </div>
           </div>
         </div>
   `
 })
 export class CajeroNuevaLiquidacionModalComponent {
-  readonly repartidorNombre = model<string>('');
+  readonly repartidores = input<Repartidor[]>([]);
+  readonly repartidorId = model<number | null>(null);
   readonly fondoInicial = model<number>(0);
   readonly observaciones = model<string>('');
 

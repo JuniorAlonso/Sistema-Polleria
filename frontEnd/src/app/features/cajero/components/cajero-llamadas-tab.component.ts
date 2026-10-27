@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 import { CommonModule } from '@angular/common';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { Order } from '../../../core/models/order.model';
+import { MINUTOS_VALIDACION_PAGO, minutosRestantes } from '../models/cajero-plazos.helpers';
 
 @Component({
   selector: 'app-cajero-llamadas-tab',
@@ -28,7 +29,10 @@ import { Order } from '../../../core/models/order.model';
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 @for (o of ordenes(); track o.id) {
-                  <div class="p-5 rounded-2xl bg-[#14161a] border border-amber-500/30 shadow-xl space-y-3">
+                  @let restantes = minutosRestantes(o.createdAt, plazo, now());
+                  @let vencido = restantes !== null && restantes <= 0;
+                  <div class="p-5 rounded-2xl bg-[#14161a] border shadow-xl space-y-3"
+                       [ngClass]="vencido ? 'border-rose-500/40' : 'border-amber-500/30'">
                     <div class="flex justify-between items-start border-b border-white/10 pb-2">
                       <div>
                         <span class="font-mono text-base font-black text-amber-300">#{{ o.codigoSeguimiento || o.id }}</span>
@@ -60,14 +64,19 @@ import { Order } from '../../../core/models/order.model';
                       </div>
                       <div class="flex justify-between items-center text-[11px] pt-1 text-slate-400">
                         <span>Intentos realizados: <strong class="text-white">{{ o.intentosLlamada || 0 }} / 2</strong></span>
-                        <span class="font-mono text-amber-300">⏱ Esperando respuesta</span>
+                        @if (restantes !== null) {
+                          <span class="font-mono font-bold" [ngClass]="vencido ? 'text-rose-400' : 'text-amber-300'">
+                            {{ vencido ? 'Plazo de 15 min vencido' : '⏱ ' + restantes + ' min restantes' }}
+                          </span>
+                        }
                       </div>
                     </div>
 
                     <div class="flex items-center gap-2 pt-2 border-t border-white/10">
                       <button 
                         (click)="confirmar.emit(o)"
-                        class="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                        [disabled]="vencido"
+                        class="flex-1 disabled:opacity-40 disabled:cursor-not-allowed py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
                       >
                         ✓ Confirmar y Cocinar
                       </button>
@@ -98,6 +107,10 @@ import { Order } from '../../../core/models/order.model';
 })
 export class CajeroLlamadasTabComponent {
   readonly ordenes = input.required<Order[]>();
+  readonly now = input.required<number>();
+
+  protected readonly plazo = MINUTOS_VALIDACION_PAGO;
+  protected readonly minutosRestantes = minutosRestantes;
 
   readonly confirmar = output<Order>();
   readonly noContesta = output<Order>();

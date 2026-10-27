@@ -75,6 +75,23 @@ import { CajeroTab } from '../models/cajero.models';
 
           <button 
             type="button"
+            (click)="tabChange.emit('CAPTURAS_PAGO')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'CAPTURAS_PAGO' ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+              <span>Capturas Yape / Plin</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="totalCapturas() > 0 ? 'bg-sky-500 text-slate-950 animate-pulse' : 'bg-slate-800 text-slate-400'">
+              {{ totalCapturas() }}
+            </span>
+          </button>
+
+          <button 
+            type="button"
             (click)="tabChange.emit('LLAMADAS_CONTRAPAGO')"
             class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
             [ngClass]="activeTab() === 'LLAMADAS_CONTRAPAGO' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
@@ -87,6 +104,23 @@ import { CajeroTab } from '../models/cajero.models';
             </div>
             <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="totalLlamadas() > 0 ? 'bg-amber-500 text-slate-950 animate-pulse' : 'bg-slate-800 text-slate-400'">
               {{ totalLlamadas() }}
+            </span>
+          </button>
+
+          <button 
+            type="button"
+            (click)="tabChange.emit('RECOJO_TIENDA')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'RECOJO_TIENDA' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+              <span>Recojo en Tienda</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="totalRecojo() > 0 ? 'bg-emerald-500 text-slate-950 animate-pulse' : 'bg-slate-800 text-slate-400'">
+              {{ totalRecojo() }}
             </span>
           </button>
 
@@ -191,6 +225,8 @@ export class CajeroSidebarComponent {
   readonly fondoApertura = input<number>(0);
   readonly totalPorCobrar = input<number>(0);
   readonly totalLlamadas = input<number>(0);
+  readonly totalCapturas = input<number>(0);
+  readonly totalRecojo = input<number>(0);
   readonly totalLiquidaciones = input<number>(0);
   readonly totalFantasma = input<number>(0);
   readonly totalCobros = input<number>(0);

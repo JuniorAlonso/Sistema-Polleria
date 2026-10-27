@@ -10,8 +10,13 @@ import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { TipoMovimiento } from '../../core/models/finance.model';
 import { InventoryService } from '../../core/services/inventory.service';
+import { RepartidoresService } from '../../core/services/repartidores.service';
 import { BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
-import { CajeroTab, MetodoCobro } from './models/cajero.models';
+import { CajeroTab, CapturaPendiente, EntregaRecojoEvent, MetodoCobro, RechazarCapturaEvent } from './models/cajero.models';
+import { normalizarCodigoTicket } from './models/cajero-plazos.helpers';
+import { PagoOrdenAdmin } from '../../core/models/payment.model';
+import { CajeroCapturasTabComponent } from './components/cajero-capturas-tab.component';
+import { CajeroRecojoTabComponent } from './components/cajero-recojo-tab.component';
 import { CajeroSidebarComponent } from './components/cajero-sidebar.component';
 import { CajeroTopbarComponent } from './components/cajero-topbar.component';
 import { CajeroPosTabComponent } from './components/cajero-pos-tab.component';
@@ -39,6 +44,8 @@ export type { CajeroTab, MetodoCobro };
     CajeroArqueoTabComponent,
     CajeroHistorialTabComponent,
     CajeroLlamadasTabComponent,
+    CajeroCapturasTabComponent,
+    CajeroRecojoTabComponent,
     CajeroLiquidacionesTabComponent,
     CajeroMermasTabComponent,
     CajeroCobroModalComponent,
@@ -59,6 +66,8 @@ export type { CajeroTab, MetodoCobro };
         [fondoApertura]="financeService.cajaActual()?.montoApertura || 0"
         [totalPorCobrar]="comandasPorCobrar().length"
         [totalLlamadas]="ordenesPendientesLlamada().length"
+        [totalCapturas]="capturasPendientes().length"
+        [totalRecojo]="ordenesRecojo().length"
         [totalLiquidaciones]="liquidacionesAbiertas().length"
         [totalFantasma]="ordenesFantasma().length"
         [totalCobros]="cobrosDelDia().length"
@@ -121,16 +130,38 @@ export type { CajeroTab, MetodoCobro };
           @if (activeTab() === 'LLAMADAS_CONTRAPAGO') {
             <app-cajero-llamadas-tab
               [ordenes]="ordenesPendientesLlamada()"
+              [now]="now()"
               (confirmar)="confirmarLlamadaPedido($event)"
               (noContesta)="intentoLlamadaPedido($event)"
               (cancelar)="cancelarPedidoContraPago($event)"
             />
           }
 
+          @if (activeTab() === 'CAPTURAS_PAGO') {
+            <app-cajero-capturas-tab
+              [capturas]="capturasPendientes()"
+              [now]="now()"
+              [procesando]="procesandoAccion()"
+              [error]="errorCapturas()"
+              (aprobar)="aprobarCaptura($event)"
+              (rechazar)="rechazarCaptura($event)"
+            />
+          }
+
+          @if (activeTab() === 'RECOJO_TIENDA') {
+            <app-cajero-recojo-tab
+              [ordenes]="ordenesRecojo()"
+              [now]="now()"
+              [procesando]="procesandoAccion()"
+              (entregar)="entregarRecojo($event)"
+              (fantasma)="declararFantasmaRecojo($event)"
+            />
+          }
+
           @if (activeTab() === 'LIQUIDACIONES') {
             <app-cajero-liquidaciones-tab
               [liquidaciones]="liquidacionesAbiertas()"
-              (nuevaLiquidacion)="mostrarModalNuevaLiquidacion.set(true)"
+              (nuevaLiquidacion)="abrirModalNuevaLiquidacion()"
               (rendir)="abrirModalCierreLiquidacion($event)"
             />
           }
@@ -201,7 +232,8 @@ export type { CajeroTab, MetodoCobro };
       <!-- MODAL APERTURA LIQUIDACIÓN MOTORIZADO -->
       @if (mostrarModalNuevaLiquidacion()) {
         <app-cajero-nueva-liquidacion-modal
-          [(repartidorNombre)]="repartidorNombreLiqInput"
+          [repartidores]="repartidoresService.repartidores()"
+          [(repartidorId)]="repartidorIdLiqInput"
           [(fondoInicial)]="fondoInicialLiqInput"
           [(observaciones)]="observacionesLiqInput"
           (cancelar)="mostrarModalNuevaLiquidacion.set(false)"
@@ -227,6 +259,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
   readonly inventoryService = inject(InventoryService);
+  readonly repartidoresService = inject(RepartidoresService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -272,6 +305,26 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.ordersService.orders().filter(o => o.estado === 'PENDIENTE_CONFIRMACION')
   );
 
+  /** Clock for the 15 min / 1 h countdowns, ticking with the header clock. */
+  readonly now = signal<number>(Date.now());
+
+  /** Payments with an uploaded capture, from the payments-service inbox (never cached locally). */
+  readonly pagosPorVerificar = signal<PagoOrdenAdmin[]>([]);
+  readonly errorCapturas = signal<string | null>(null);
+
+  /** PENDIENTE_PAGO orders joined with their capture; an order without capture keeps `pago: null`. */
+  readonly capturasPendientes = computed<CapturaPendiente[]>(() => {
+    const pagos = new Map(this.pagosPorVerificar().map(p => [String(p.ordenId), p]));
+    return this.ordersService.orders()
+      .filter(o => o.estado === 'PENDIENTE_PAGO')
+      .map(orden => ({ orden, pago: pagos.get(String(orden.id).replace(/^ord-/, '')) ?? null }));
+  });
+
+  /** Pickup orders ready in store (backend LISTO_PARA_ENTREGAR). */
+  readonly ordenesRecojo = computed(() =>
+    this.ordersService.orders().filter(o => o.tipo === 'RECOJO_EN_TIENDA' && o.estado === 'LISTO_COCINA')
+  );
+
   readonly ordenesFantasma = computed(() =>
     this.ordersService.orders().filter(o => o.estado === 'PEDIDO_FANTASMA')
   );
@@ -281,8 +334,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly mostrarModalCierreLiquidacion = signal<boolean>(false);
   readonly liquidacionSeleccionada = signal<BackendLiquidacionResponse | null>(null);
 
-  repartidorIdLiqInput = 4;
-  repartidorNombreLiqInput = 'Carlos Motorizado';
+  repartidorIdLiqInput: number | null = null;
   fondoInicialLiqInput = 50.0;
   totalRendidoLiqInput = 0;
   observacionesLiqInput = '';
@@ -397,6 +449,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   private actualizarReloj(): void {
     const ahora = new Date();
+    this.now.set(ahora.getTime());
     this.horaActual.set(ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   }
 
@@ -407,6 +460,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.financeService.obtenerCajaActual();
     this.financeService.cargarMovimientos();
     this.cargarLiquidaciones();
+    this.cargarCapturas();
     setTimeout(() => this.cargando.set(false), 800);
   }
 
@@ -681,21 +735,144 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     });
   }
 
+  cargarCapturas(): void {
+    this.paymentService.listarPendientesVerificacion().subscribe({
+      next: (pagos) => {
+        this.pagosPorVerificar.set(pagos || []);
+        this.errorCapturas.set(null);
+      },
+      error: (err: Error) => this.errorCapturas.set(err.message)
+    });
+  }
+
+  /** Approves the capture in payments-service; the order moves to PREPARANDO only on the backend answer. */
+  aprobarCaptura(pago: PagoOrdenAdmin): void {
+    this.procesandoAccion.set(true);
+    this.paymentService.verificarComprobante(pago.id, true).subscribe({
+      next: () => {
+        this.procesandoAccion.set(false);
+        this.notify.showSuccess(`Pago de la orden #${pago.ordenId} confirmado`, 'El pedido pasa a preparación en cocina.');
+        this.refrescarTodo();
+      },
+      error: (err: Error) => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo confirmar el pago', err.message);
+        this.refrescarTodo();
+      }
+    });
+  }
+
+  rechazarCaptura(event: RechazarCapturaEvent): void {
+    this.procesandoAccion.set(true);
+    this.paymentService.verificarComprobante(event.pago.id, false, event.motivo).subscribe({
+      next: () => {
+        this.procesandoAccion.set(false);
+        this.notify.showInfo('Captura rechazada', `Se notificó al cliente de la orden #${event.pago.ordenId}.`);
+        this.refrescarTodo();
+      },
+      error: (err: Error) => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo rechazar la captura', err.message);
+      }
+    });
+  }
+
+  /**
+   * Pickup hand-over: the ticket must match the order code. ContraPago orders register the cash in
+   * payments-service, which moves the order to ENTREGADO; paid orders go straight to ENTREGADO.
+   */
+  entregarRecojo(event: EntregaRecojoEvent): void {
+    const { orden } = event;
+    const esperado = normalizarCodigoTicket(orden.codigoSeguimiento);
+    const recibido = normalizarCodigoTicket(event.codigoTicket);
+    const numeroCliente = orden.numeroCliente != null ? normalizarCodigoTicket(orden.numeroCliente) : null;
+    if (!recibido || (recibido !== esperado && recibido !== numeroCliente)) {
+      this.notify.showError('Ticket no coincide', `El código no corresponde al pedido #${orden.codigoSeguimiento || orden.id}.`);
+      return;
+    }
+
+    this.procesandoAccion.set(true);
+    const codigo = orden.codigoSeguimiento || orden.id;
+    if (orden.requiereCobroEfectivo) {
+      const efectivo = Number(event.efectivoRecibido) || 0;
+      const vuelto = Math.max(0, Math.round((efectivo - orden.total) * 100) / 100);
+      this.paymentService.registrarCobroEfectivo(orden.id, orden.total, efectivo, vuelto).subscribe({
+        next: () => {
+          if (this.cajaAbierta()) {
+            this.financeService.registrarMovimiento({
+              tipo: 'INGRESO',
+              monto: orden.total,
+              motivo: `Cobro recojo #${codigo} (${orden.cliente.nombre})`
+            }).subscribe();
+          }
+          this.procesandoAccion.set(false);
+          this.notify.showSuccess(`Pedido #${codigo} cobrado y entregado`, `Vuelto: S/ ${vuelto.toFixed(2)}`);
+          this.refrescarTodo();
+        },
+        error: (err) => {
+          this.procesandoAccion.set(false);
+          this.notify.showError('No se pudo registrar el cobro en efectivo', this.mensajeError(err, err?.message || ''));
+        }
+      });
+      return;
+    }
+
+    this.ordersService.updateOrderStatus(orden.id, 'COMPLETADO').subscribe({
+      next: () => {
+        this.procesandoAccion.set(false);
+        this.notify.showSuccess(`Pedido #${codigo} entregado`);
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo entregar el pedido', this.mensajeError(err, err?.message || ''));
+      }
+    });
+  }
+
+  /** The backend rejects the declaration before 1 hour in store; the UI only offers it after the timer. */
+  declararFantasmaRecojo(orden: Order): void {
+    if (!confirm(`¿Declarar el pedido #${orden.codigoSeguimiento || orden.id} como PEDIDO FANTASMA? El cliente quedará bloqueado para ContraPago.`)) return;
+    this.procesandoAccion.set(true);
+    this.ordersService.declararPedidoFantasma(orden.id, 'NO_RECOGIDO: Cliente no recogió en 1 hora').subscribe({
+      next: () => {
+        this.procesandoAccion.set(false);
+        this.notify.showInfo('Pedido fantasma registrado', 'Clasifica el producto en la bandeja de Mermas / Fantasma.');
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo declarar el pedido fantasma', this.mensajeError(err, err?.message || ''));
+      }
+    });
+  }
+
   cargarLiquidaciones(): void {
     this.financeService.listarLiquidacionesAbiertas().subscribe({
       next: (list) => this.liquidacionesAbiertas.set(list || [])
     });
   }
 
+  abrirModalNuevaLiquidacion(): void {
+    this.repartidorIdLiqInput = null;
+    this.repartidoresService.cargar();
+    this.mostrarModalNuevaLiquidacion.set(true);
+  }
+
   ejecutarAperturaLiquidacion(): void {
+    const repartidor = this.repartidoresService.repartidores().find(r => r.id === this.repartidorIdLiqInput);
+    if (!repartidor) {
+      this.notify.showError('Selecciona un repartidor');
+      return;
+    }
     if (this.fondoInicialLiqInput < 0) {
       this.notify.showError('El fondo inicial no puede ser negativo');
       return;
     }
 
     this.financeService.abrirLiquidacion({
-      repartidorId: this.repartidorIdLiqInput,
-      repartidorNombre: this.repartidorNombreLiqInput,
+      repartidorId: repartidor.id,
+      repartidorNombre: repartidor.nombre,
       fondoInicial: this.fondoInicialLiqInput,
       observaciones: this.observacionesLiqInput || undefined
     }).subscribe({

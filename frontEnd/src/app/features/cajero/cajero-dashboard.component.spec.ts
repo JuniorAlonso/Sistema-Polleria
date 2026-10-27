@@ -93,7 +93,7 @@ describe('CajeroDashboardComponent', () => {
     component.seleccionarOrdenParaCobro(mockOrder);
     component.efectivoRecibidoInput = 30.0;
 
-    expect(component.vueltoCalculado()).toBe(-15.0);
+    expect(component.vueltoCalculado()).withContext('change is never negative').toBe(0);
     expect(component.esCobroValido()).toBeFalse();
   });
 
