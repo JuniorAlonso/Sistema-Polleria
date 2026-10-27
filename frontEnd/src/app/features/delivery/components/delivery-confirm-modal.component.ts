@@ -30,7 +30,7 @@ import { getCodeNum } from './delivery.utils';
                   </span>
                 </div>
 
-                @if (order().metodoPago === 'EFECTIVO_CONTRAENTREGA' || !order().metodoPago) {
+                @if (order().requiereCobroEfectivo) {
                   <div class="p-4 rounded-xl bg-black/40 border border-white/10 space-y-3">
                     <label class="font-bold text-slate-300 block">Calculadora de Vuelto:</label>
                     <div class="flex items-center gap-2">

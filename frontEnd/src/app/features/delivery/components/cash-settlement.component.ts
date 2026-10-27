@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
+import { BackendEfectivoPendienteLiquidacion } from '../../../core/models/api-contracts.model';
 
 @Component({
   selector: 'app-cash-settlement',
@@ -24,31 +25,35 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
               </div>
             </div>
 
-            <!-- Rendición Form Card -->
+            <!-- Pending cash, as computed by finance-service from registered cash payments -->
             <div class="bg-[#14161a] p-6 rounded-2xl border border-white/10 shadow-xl space-y-4">
               <div class="pb-3 border-b border-white/10">
-                <h3 class="text-base font-bold text-white">Hoja de Liquidación de Caja al Administrador</h3>
-                <p class="text-xs text-slate-400">Rinde los cobros en efectivo acumulados durante el turno para liberar tu cuenta.</p>
+                <h3 class="text-base font-bold text-white">Efectivo pendiente de liquidar</h3>
+                <p class="text-xs text-slate-400">La liquidación la cierra el Cajero al recibir el efectivo en caja.</p>
               </div>
 
-              <div class="space-y-3 text-xs">
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Total en Efectivo por Entregar en Caja:</span>
-                  <span class="font-display text-xl font-bold text-polleria-gold">{{ totalEfectivo() | currencyPEN }}</span>
+              @if (errorPendiente()) {
+                <p class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">{{ errorPendiente() }}</p>
+              }
+              @if (pendiente(); as p) {
+                <div class="space-y-3 text-xs">
+                  <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
+                    <span class="text-slate-300">Total en efectivo por entregar en caja:</span>
+                    <span class="font-display text-xl font-bold text-polleria-gold">{{ p.total | currencyPEN }}</span>
+                  </div>
+                  <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
+                    <span class="text-slate-300">Cobros en efectivo sin liquidar:</span>
+                    <span class="font-mono text-white font-bold">{{ p.cantidad }}</span>
+                  </div>
                 </div>
-
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Base / Fondo de Vueltos Inicial:</span>
-                  <span class="font-mono text-white font-bold">S/. 100.00</span>
-                </div>
-              </div>
+              } @else if (!errorPendiente()) {
+                <p class="text-xs text-slate-400">Cargando saldo pendiente...</p>
+              }
 
               <button
-                (click)="onSettle.emit()"
+                (click)="refrescar.emit()"
                 class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-              >
-                <svg class="w-4 h-4 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Rendir Efectivo y Cerrar Liquidación
-              </button>
+              >Actualizar saldo pendiente</button>
             </div>
 
           </main>
@@ -58,5 +63,8 @@ export class CashSettlementComponent {
   readonly totalEfectivo = input.required<number>();
   readonly totalDigital = input.required<number>();
   readonly completadasCount = input.required<number>();
-  readonly onSettle = output<void>();
+  /** Backend pending cash; null while loading or when it failed. */
+  readonly pendiente = input<BackendEfectivoPendienteLiquidacion | null>(null);
+  readonly errorPendiente = input<string | null>(null);
+  readonly refrescar = output<void>();
 }

@@ -9,7 +9,9 @@ import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { leerUserIdDelToken } from '../../core/utils/jwt.util';
 import { DeliveryTab, DeliverySubFilter } from './components/delivery.types';
-import { cantidadItems, getCodeNum } from './components/delivery.utils';
+import { cantidadItems, esContraPago, getCodeNum, mensajeBackend } from './components/delivery.utils';
+import { FinanceService } from '../../core/services/finance.service';
+import { BackendEfectivoPendienteLiquidacion } from '../../core/models/api-contracts.model';
 import { DeliverySidebarComponent } from './components/delivery-sidebar.component';
 import { DeliveryHeaderComponent } from './components/delivery-header.component';
 import { AvailableOrdersListComponent } from './components/available-orders-list.component';
@@ -49,7 +51,7 @@ export type { DeliveryTab, DeliverySubFilter };
         [entregasActivasCount]="misEntregasActivas().length"
         [completadasCount]="completedDeliveryOrders().length"
         [userName]="auth.currentUser()?.nombre"
-        (onTabChange)="activeTab.set($event)"
+        (onTabChange)="cambiarTab($event)"
         (onLogout)="cerrarSesion()"
       />
 
@@ -133,7 +135,9 @@ export type { DeliveryTab, DeliverySubFilter };
             [totalEfectivo]="totalEfectivoARendir()"
             [totalDigital]="totalDigitalCobrado()"
             [completadasCount]="completedDeliveryOrders().length"
-            (onSettle)="rendirCajaModal()"
+            [pendiente]="efectivoPendiente()"
+            [errorPendiente]="errorEfectivoPendiente()"
+            (refrescar)="cargarEfectivoPendiente()"
           />
         }
 
@@ -161,6 +165,9 @@ export type { DeliveryTab, DeliverySubFilter };
 export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly paymentService = inject(PaymentService);
+  private readonly financeService = inject(FinanceService);
+  readonly efectivoPendiente = signal<BackendEfectivoPendienteLiquidacion | null>(null);
+  readonly errorEfectivoPendiente = signal<string | null>(null);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -273,13 +280,13 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
 
   totalEfectivoARendir(): number {
     return this.completedDeliveryOrders()
-      .filter(o => o.metodoPago === 'EFECTIVO_CONTRAENTREGA' || !o.metodoPago)
+      .filter(o => esContraPago(o))
       .reduce((acc, o) => acc + o.total, 0);
   }
 
   totalDigitalCobrado(): number {
     return this.completedDeliveryOrders()
-      .filter(o => o.metodoPago && o.metodoPago !== 'EFECTIVO_CONTRAENTREGA')
+      .filter(o => !esContraPago(o))
       .reduce((acc, o) => acc + o.total, 0);
   }
 
@@ -429,7 +436,7 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     const order = this.selectedOrderModal();
     if (!order) return;
 
-    if (order.metodoPago === 'EFECTIVO_CONTRAENTREGA' || !order.metodoPago) {
+    if (esContraPago(order)) {
       // Registro obligatorio de cobro en efectivo en payments-service
       const vuelto = this.calcularVuelto();
       this.paymentService.registrarCobroEfectivo(order.id, order.total, this.montoPagaCliente, vuelto).subscribe({
@@ -456,13 +463,25 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     }
   }
 
-  rendirCajaModal(): void {
-    // No existe endpoint de rendición de caja para el repartidor: no se anuncia una
-    // acción que no ocurre.
-    this.notify.showInfo(
-      'Rendición de caja no disponible',
-      'El backend todavía no expone un endpoint para rendir el efectivo del repartidor. Coordina el arqueo con el administrador.'
-    );
+  cambiarTab(tab: DeliveryTab): void {
+    this.activeTab.set(tab);
+    if (tab === 'COBROS_RENDICION') this.cargarEfectivoPendiente();
+  }
+
+  /** Cash still to hand in, computed by finance-service from the registered cash payments (S6). */
+  cargarEfectivoPendiente(): void {
+    const miId = this.miIdMotorizado();
+    if (!miId) return;
+    this.errorEfectivoPendiente.set(null);
+    this.financeService.obtenerEfectivoPendienteLiquidacion(miId).subscribe({
+      next: (pendiente) => this.efectivoPendiente.set(pendiente),
+      error: (err) => {
+        this.efectivoPendiente.set(null);
+        this.errorEfectivoPendiente.set(err?.status === 404
+          ? 'No tienes una liquidación abierta. Pide al Cajero que la abra antes de salir a repartir.'
+          : mensajeBackend(err, 'No se pudo obtener el efectivo pendiente de liquidar'));
+      }
+    });
   }
 
   cerrarSesion(): void {

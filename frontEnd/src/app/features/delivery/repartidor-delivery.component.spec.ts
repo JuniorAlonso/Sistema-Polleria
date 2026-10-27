@@ -30,6 +30,7 @@ function orden(over: Partial<Order> & { id: string }): Order {
     tipo: 'DELIVERY',
     estado: 'LISTO_COCINA',
     metodoPago: 'EFECTIVO_CONTRAENTREGA',
+    requiereCobroEfectivo: true,
     subtotal: 50,
     costoEnvio: 0,
     descuento: 0,
@@ -244,12 +245,12 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     http.expectNone(r => r.method === 'POST' && r.url.includes('/reclamo'));
   });
 
-  it('mantiene «Entregar y Cobrar» para mis entregas activas (comportamiento previo)', () => {
-    ordersService.orders.set([orden({ id: '2', estado: 'EN_REPARTO', repartidorId: MI_ID })]);
+  it('mantiene «Cobrar y Entregar» para mis entregas activas (comportamiento previo)', () => {
+    ordersService.orders.set([orden({ id: '2', estado: 'EN_PUERTA', repartidorId: MI_ID })]);
     fixture.detectChanges();
 
     const boton = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
-      .find(b => (b.textContent || '').includes('Entregar y Cobrar'));
+      .find(b => (b.textContent || '').includes('Cobrar y Entregar'));
     expect(boton).withContext('el botón de cobro debe seguir disponible en mis entregas').not.toBeUndefined();
 
     boton!.click();

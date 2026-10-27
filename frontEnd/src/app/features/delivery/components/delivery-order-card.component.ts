@@ -90,7 +90,7 @@ import { getCodeNum } from './delivery.utils';
                   <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
                     <div class="text-xs text-slate-400">
                       <span>Método de pago: </span>
-                      <span class="font-bold text-white font-mono">{{ order().metodoPago || 'CONTRAENTREGA' }}</span>
+                      <span class="font-bold text-white font-mono">{{ order().requiereCobroEfectivo ? 'CONTRAENTREGA (cobrar efectivo)' : 'PAGADO' }}</span>
                     </div>
 
                     <div class="flex flex-wrap items-center gap-2">

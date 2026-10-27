@@ -10,6 +10,14 @@ export function cantidadItems(order: Order): number {
   return (order.items || []).reduce((acc, it) => acc + (it.cantidad || 0), 0);
 }
 
+/**
+ * ContraPago order: the courier must collect and register the cash before ENTREGADO.
+ * Uses the backend flag; the order listing does not carry the payment method.
+ */
+export function esContraPago(order: Order): boolean {
+  return order.requiereCobroEfectivo === true;
+}
+
 /** Minutes the courier must wait at the door before declaring a ghost order (backend rule). */
 export const MINUTOS_ESPERA_FANTASMA = 30;
 
