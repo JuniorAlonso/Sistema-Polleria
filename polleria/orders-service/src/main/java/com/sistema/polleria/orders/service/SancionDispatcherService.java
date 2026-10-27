@@ -2,6 +2,7 @@ package com.sistema.polleria.orders.service;
 
 import com.sistema.polleria.orders.entity.Orden;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class SancionDispatcherService {
     private final String incidentServiceUrl;
     private final String internalApiKey;
 
+    @Autowired
     public SancionDispatcherService(
             @Value("${auth.service.url:http://localhost:8081}") String authServiceUrl,
             @Value("${incident.service.url:http://localhost:8087}") String incidentServiceUrl,
