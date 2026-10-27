@@ -176,6 +176,14 @@ ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS motivo_fantasma VARCHAR(30);
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS ip_origen VARCHAR(45);
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS requiere_cobro_efectivo BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- ddl-auto=update freezes the estado CHECK with the enum values of the first start; without the
+-- payment/confirmation states every Yape and ContraPago order is rejected. orders-service also
+-- rebuilds it on start (InicializadorEstadoOrdenCheck); this keeps a manual load consistent.
+ALTER TABLE ordenes DROP CONSTRAINT IF EXISTS ordenes_estado_check;
+ALTER TABLE ordenes ADD CONSTRAINT ordenes_estado_check CHECK (estado IN (
+    'RECIBIDO', 'PENDIENTE_CONFIRMACION', 'PENDIENTE_PAGO', 'EN_PREPARACION', 'PREPARANDO', 'LISTO',
+    'LISTO_PARA_ENTREGAR', 'EN_CAMINO', 'EN_PUERTA', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'));
+
 -- Pagos (payments-service). comprobante_clave holds the object-storage key of the Yape/Plin capture.
 -- The estado CHECK is realigned at startup by InicializadorEstadoPago.
 CREATE TABLE IF NOT EXISTS pagos (
