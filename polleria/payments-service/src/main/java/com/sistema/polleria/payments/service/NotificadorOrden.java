@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -36,15 +37,34 @@ public class NotificadorOrden {
 
     @Async
     public void notificarEstado(Long ordenId, String nuevoEstado, String bearerToken) {
+        enviarEstado(ordenId, nuevoEstado, null, bearerToken);
+    }
+
+    /**
+     * Same as {@link #notificarEstado(Long, String, String)} but also sends the pickup ticket
+     * ({@code codigoTicket}), which orders-service requires to mark a RECOJO order ENTREGADO (S7).
+     */
+    @Async
+    public void notificarEstado(Long ordenId, String nuevoEstado, String codigoTicket, String bearerToken) {
+        enviarEstado(ordenId, nuevoEstado, codigoTicket, bearerToken);
+    }
+
+    private void enviarEstado(Long ordenId, String nuevoEstado, String codigoTicket, String bearerToken) {
         log.info("Notificando a orders-service para orden {} → nuevoEstado={}", ordenId, nuevoEstado);
         if (ordersRestClient == null) {
             return;
         }
         try {
+            Map<String, Object> cuerpo = new HashMap<>();
+            cuerpo.put("estado", nuevoEstado);
+            cuerpo.put("nuevoEstado", nuevoEstado);
+            if (codigoTicket != null) {
+                cuerpo.put("codigoTicket", codigoTicket);
+            }
             var spec = ordersRestClient.patch()
                     .uri("/ordenes/{id}/estado", ordenId)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("estado", nuevoEstado, "nuevoEstado", nuevoEstado));
+                    .body(cuerpo);
             if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
                 spec.header("X-Internal-Key", ordersInternalKey);
             }

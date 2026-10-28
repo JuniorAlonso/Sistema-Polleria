@@ -12,6 +12,7 @@ import com.sistema.polleria.payments.service.WhatsappNotificationClient;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,11 +87,21 @@ class VerificarComprobanteYapeTest {
     @MockitoBean
     private WhatsappNotificationClient whatsappNotificationClient;
 
-    /** Unstubbed: returns null, so the verification window falls back to the pago creation time. */
+    /** Stubbed per test (default: PENDIENTE_PAGO created now, see ordenActivaPorDefecto). */
     @MockitoBean
     private OrdenesClient ordenesClient;
 
     private final List<Long> pagosCreados = new ArrayList<>();
+
+
+    /** S2/S3: the WhatsApp capture path and the approval read the order; default to an active, unpaid one. */
+    @BeforeEach
+    void ordenActivaPorDefecto() {
+        org.mockito.Mockito.when(ordenesClient.obtener(org.mockito.ArgumentMatchers.anyLong()))
+                .thenAnswer(inv -> new OrdenesClient.OrdenInfo(
+                        inv.getArgument(0), "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"),
+                        null, java.time.LocalDateTime.now()));
+    }
 
     @AfterEach
     void limpiar() {

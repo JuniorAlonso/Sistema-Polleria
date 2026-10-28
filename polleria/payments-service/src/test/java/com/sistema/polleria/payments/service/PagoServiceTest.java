@@ -4,6 +4,8 @@ import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
+import com.sistema.polleria.payments.dto.VerificarPagoRequest;
 import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.MetodoPago;
@@ -310,7 +312,7 @@ class PagoServiceTest {
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
 
         pagoService.procesarCobroEfectivo(
-                new CobroEfectivoRequest(311L, new BigDecimal("30.00"), null, null), 2L, "Bearer c");
+                new CobroEfectivoRequest(311L, new BigDecimal("30.00"), null, null, "POL-311"), 2L, "Bearer c");
 
         org.mockito.ArgumentCaptor<Pago> captor = org.mockito.ArgumentCaptor.forClass(Pago.class);
         verify(pagoRepository).save(captor.capture());
@@ -439,7 +441,7 @@ class PagoServiceTest {
             when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
 
             PagoResponse res = pagoService.procesarCobroEfectivo(
-                    new CobroEfectivoRequest(305L, new BigDecimal("70.00"), null, null), 4L, "Bearer t");
+                    new CobroEfectivoRequest(305L, new BigDecimal("70.00"), null, null, "POL-305"), 4L, "Bearer t");
 
             assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
         }
@@ -468,5 +470,176 @@ class PagoServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("no coincide");
         verify(pagoRepository, never()).save(any(Pago.class));
+    }
+
+    // ─── flow-edge-cases T2 ─────────────────────────────────────────
+
+    private static Pago capturaPendiente(long id, long ordenId) {
+        Pago p = new Pago();
+        p.setId(id);
+        p.setOrdenId(ordenId);
+        p.setMonto(new BigDecimal("45.00"));
+        p.setMetodoPago(MetodoPago.YAPE_PLIN);
+        p.setEstado(EstadoPago.PENDIENTE_VERIFICACION);
+        p.setComprobanteClave("comprobantes/yape/" + ordenId + ".jpg");
+        return p;
+    }
+
+    @Test
+    @DisplayName("S2: aprobar una captura de una orden que ya no esta PENDIENTE_PAGO responde 409 y no avanza")
+    void verificar_ordenNoPendienteDePago_rechaza() {
+        when(pagoRepository.buscarConBloqueo(501L)).thenReturn(Optional.of(capturaPendiente(501L, 401L)));
+        when(ordenesClient.obtener(401L)).thenReturn(orden(401L, "DELIVERY", "CANCELADO", "45.00"));
+
+        assertThatThrownBy(() -> pagoService.verificar(
+                501L, new VerificarPagoRequest(true, null), "a@b", "Bearer t"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ya no está pendiente de pago");
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+    }
+
+    @Test
+    @DisplayName("S2: si orders-service no responde, aprobar la captura falla cerrado")
+    void verificar_ordersCaido_fallaCerrado() {
+        when(pagoRepository.buscarConBloqueo(502L)).thenReturn(Optional.of(capturaPendiente(502L, 402L)));
+        when(ordenesClient.obtener(402L)).thenThrow(new OrdenesClient.OrdenNoDisponibleException("caido", null));
+
+        assertThatThrownBy(() -> pagoService.verificar(
+                502L, new VerificarPagoRequest(true, null), "a@b", "Bearer t"))
+                .isInstanceOf(OrdenesClient.OrdenNoDisponibleException.class);
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+    }
+
+    @Test
+    @DisplayName("PRESERVE S2: aprobar una captura de una orden PENDIENTE_PAGO sigue funcionando")
+    void verificar_ordenPendienteDePago_aprueba() {
+        when(pagoRepository.buscarConBloqueo(503L)).thenReturn(Optional.of(capturaPendiente(503L, 403L)));
+        when(ordenesClient.obtener(403L)).thenReturn(orden(403L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.verificar(503L, new VerificarPagoRequest(true, null), "a@b", "Bearer t");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden).notificarPagoAprobado(eq(403L), eq("Bearer t"));
+    }
+
+    @Test
+    @DisplayName("PRESERVE S2: rechazar una captura no consulta el estado de la orden")
+    void verificar_rechazoSigueFuncionando() {
+        when(pagoRepository.buscarConBloqueo(504L)).thenReturn(Optional.of(capturaPendiente(504L, 404L)));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.verificar(
+                504L, new VerificarPagoRequest(false, "Captura ilegible"), "a@b", "Bearer t");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.RECHAZADO);
+        verify(ordenesClient, never()).obtener(any());
+    }
+
+    @Test
+    @DisplayName("S3: registrar una captura por WhatsApp de una orden cerrada responde 409 y no guarda nada")
+    void registrarComprobante_ordenCerrada_rechaza() {
+        for (String estado : new String[] {"CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA"}) {
+            when(ordenesClient.obtener(405L)).thenReturn(orden(405L, "DELIVERY", estado, "45.00"));
+
+            assertThatThrownBy(() -> pagoService.registrarComprobante(new RegistrarComprobanteRequest(
+                    405L, "999888777", new BigDecimal("45.00"), "comprobantes/yape/405.jpg")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("ya no está activo");
+        }
+        verify(pagoRepository, never()).saveAndFlush(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("PRESERVE S3: registrar una captura por WhatsApp de una orden activa sigue funcionando")
+    void registrarComprobante_ordenActiva_registra() {
+        when(ordenesClient.obtener(406L)).thenReturn(orden(406L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.findByOrdenId(406L)).thenReturn(Optional.empty());
+        when(pagoRepository.saveAndFlush(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.registrarComprobante(new RegistrarComprobanteRequest(
+                406L, "999888777", new BigDecimal("45.00"), "comprobantes/yape/406.jpg"));
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.PENDIENTE_VERIFICACION);
+    }
+
+    @Test
+    @DisplayName("S6: el monto cobrado distinto al total del pedido responde 400 con el total y no registra")
+    void procesarCobroEfectivo_montoDistintoAlTotal_rechaza() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(407L)).thenReturn(Optional.empty());
+        when(ordenesClient.obtener(407L)).thenReturn(orden(407L, "DELIVERY", "EN_PUERTA", "24"));
+
+        assertThatThrownBy(() -> pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(407L, new BigDecimal("20.00"), null, null), 4L, "Bearer t"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("El monto cobrado debe ser el total del pedido (S/ 24.00)");
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("S6: el monto recibido menor al total del pedido responde 400 con el total y no registra")
+    void procesarCobroEfectivo_montoRecibidoMenorAlTotal_rechaza() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(408L)).thenReturn(Optional.empty());
+        when(ordenesClient.obtener(408L)).thenReturn(orden(408L, "DELIVERY", "EN_PUERTA", "24.00"));
+
+        assertThatThrownBy(() -> pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(408L, new BigDecimal("24.00"), new BigDecimal("20.00"), null),
+                4L, "Bearer t"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("S/ 24.00");
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("S7: un cobro de RECOJO sin ticket o con un ticket incorrecto responde 400 y no registra")
+    void procesarCobroEfectivo_recojoTicketInvalido_rechaza() {
+        for (String ticket : new String[] {null, "", "POL-999", "51987654321"}) {
+            when(pagoRepository.buscarPorOrdenIdConBloqueo(409L)).thenReturn(Optional.empty());
+            when(ordenesClient.obtener(409L)).thenReturn(orden(409L, "RECOJO", "LISTO", "30.00"));
+
+            assertThatThrownBy(() -> pagoService.procesarCobroEfectivo(
+                    new CobroEfectivoRequest(409L, new BigDecimal("30.00"), null, null, ticket), 2L, "Bearer c"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("ticket");
+        }
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("S7: un cobro de RECOJO con el ticket correcto (sin distinguir mayusculas, espacios ni guiones) registra y lo reenvia")
+    void procesarCobroEfectivo_recojoTicketValido_registraYReenvia() {
+        for (String ticket : new String[] {"POL-410", "pol 410", " Pol410 "}) {
+            when(pagoRepository.buscarPorOrdenIdConBloqueo(410L)).thenReturn(Optional.empty());
+            when(ordenesClient.obtener(410L)).thenReturn(orden(410L, "RECOJO", "LISTO", "30.00"));
+            when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            PagoResponse res = pagoService.procesarCobroEfectivo(
+                    new CobroEfectivoRequest(410L, new BigDecimal("30.00"), new BigDecimal("50"), null, ticket),
+                    2L, "Bearer c");
+
+            assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+            verify(notificadorOrden).notificarEstado(eq(410L), eq("ENTREGADO"), eq(ticket), eq("Bearer c"));
+        }
+    }
+
+    @Test
+    @DisplayName("PRESERVE S7: un cobro de DELIVERY sin ticket sigue funcionando y no reenvia ticket")
+    void procesarCobroEfectivo_deliverySinTicket_sigueFuncionando() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(411L)).thenReturn(Optional.empty());
+        when(ordenesClient.obtener(411L)).thenReturn(orden(411L, "DELIVERY", "EN_CAMINO", "24.00"));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(411L, new BigDecimal("24"), new BigDecimal("24.00"), null), 4L, "Bearer t");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden).notificarEstado(eq(411L), eq("ENTREGADO"), eq("Bearer t"));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any(), any());
     }
 }

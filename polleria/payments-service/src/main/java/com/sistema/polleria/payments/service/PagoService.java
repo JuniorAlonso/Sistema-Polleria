@@ -136,6 +136,12 @@ public class PagoService {
      */
     @Transactional
     public PagoResponse registrarComprobante(RegistrarComprobanteRequest request) {
+        // S3: a WhatsApp capture for a closed order is rejected (fail closed if orders cannot answer).
+        OrdenesClient.OrdenInfo orden = obtenerOrden(request.ordenId());
+        if (orden.estado() != null && ESTADOS_ORDEN_TERMINALES.contains(orden.estado())) {
+            throw new IllegalStateException("El pedido #" + request.ordenId() + " ya no está activo (estado "
+                    + orden.estado() + "): no admite comprobantes de pago");
+        }
         return registrarComprobante(request, CLIENTE_ANONIMO);
     }
 
@@ -213,7 +219,8 @@ public class PagoService {
      * {@code CAJERO} (la autorización la aplica {@code PagoController} con {@code @PreAuthorize});
      * aquí solo se aplica la decisión. Aprobar exige una captura adjunta y que no hayan pasado
      * {@code pagos.comprobante.ventana-minutos} minutos desde la creación de la orden (HTTP 400);
-     * rechazar sigue permitido.
+     * rechazar sigue permitido. Aprobar también exige que orders-service informe la orden todavía
+     * en {@code PENDIENTE_PAGO} (S2, HTTP 409; si no responde, falla cerrado).
      *
      * <p><b>Aprobar</b>: el pago pasa a {@link EstadoPago#APROBADO} y el pedido avanza con el
      * **mismo mecanismo** que usa el pago aprobado de Mercado Pago
@@ -266,7 +273,14 @@ public class PagoService {
             throw new IllegalArgumentException(
                     "No se puede confirmar el pago: el cliente aún no adjuntó la captura del comprobante");
         }
-        LocalDateTime inicioVentana = inicioVentanaDeVerificacion(pago);
+        // S2: the order may have expired (or been cancelled) while the capture waited; approving it
+        // then would charge a dead order. Fail closed when orders-service cannot answer.
+        OrdenesClient.OrdenInfo orden = obtenerOrden(pago.getOrdenId());
+        if (!"PENDIENTE_PAGO".equals(orden.estado())) {
+            throw new IllegalStateException("El pedido #" + pago.getOrdenId() + " ya no está pendiente de pago "
+                    + "(estado " + orden.estado() + "): no se puede aprobar el comprobante");
+        }
+        LocalDateTime inicioVentana = orden.creadoEn() != null ? orden.creadoEn() : pago.getCreadoEn();
         if (LocalDateTime.now().isAfter(inicioVentana.plusMinutes(ventanaMinutos))) {
             throw new IllegalArgumentException(
                     "Pasaron más de " + ventanaMinutos + " minutos desde que se creó el pedido: "
@@ -333,21 +347,19 @@ public class PagoService {
         return pagos.stream().map(PagoResponse::from).toList();
     }
 
-    /**
-     * Start of the verification window: the order creation time when orders-service answers; if it
-     * cannot be read, the pago creation time (a degraded fallback: slightly more lenient, since the
-     * pago is created after the order).
-     */
-    private LocalDateTime inicioVentanaDeVerificacion(Pago pago) {
-        try {
-            OrdenesClient.OrdenInfo orden = ordenesClient.obtener(pago.getOrdenId());
-            if (orden != null && orden.creadoEn() != null) {
-                return orden.creadoEn();
-            }
-        } catch (OrdenesClient.OrdenNoDisponibleException | NoSuchElementException e) {
-            log.warn("Ventana de verificación del pago {}: se usa la fecha del pago ({})", pago.getId(), e.getMessage());
+    /** Reads the order from orders-service; an empty answer is treated as unavailable (fail closed). */
+    private OrdenesClient.OrdenInfo obtenerOrden(Long ordenId) {
+        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(ordenId);
+        if (orden == null) {
+            throw new OrdenesClient.OrdenNoDisponibleException(
+                    "No se pudo verificar la orden " + ordenId + " en este momento. Intenta nuevamente.", null);
         }
-        return pago.getCreadoEn();
+        return orden;
+    }
+
+    /** Pickup ticket comparison (S7): case-insensitive, ignoring spaces and dashes. */
+    private static String normalizarTicket(String ticket) {
+        return ticket == null ? "" : ticket.replaceAll("[\\s-]", "").toUpperCase(java.util.Locale.ROOT);
     }
 
     private static boolean cobroEfectivoPermitido(OrdenesClient.OrdenInfo orden) {
@@ -592,7 +604,9 @@ public class PagoService {
 
     /**
      * Cobro obligatorio en efectivo verificado por el repartidor o cajero (ContraPago).
-     * Registra el pago en efectivo y avanza la orden a ENTREGADO.
+     * Registra el pago en efectivo y avanza la orden a ENTREGADO. El monto debe ser el total del
+     * pedido y lo recibido no puede ser menor (S6); un pedido RECOJO exige su ticket POL-&lt;id&gt;,
+     * que se reenvía a orders-service al marcarlo ENTREGADO (S7).
      */
     @Transactional
     public PagoResponse procesarCobroEfectivo(CobroEfectivoRequest request, Long operadorId, String bearerToken) {
@@ -629,6 +643,28 @@ public class PagoService {
                             + " (delivery: EN_PUERTA/EN_CAMINO; recojo: LISTO/LISTO_PARA_ENTREGAR)");
         }
 
+        // S6: the cash registered is exactly the order total, never what the operator types.
+        if (orden.total() == null) {
+            throw new OrdenesClient.OrdenNoDisponibleException(
+                    "orders-service no informó el total de la orden " + request.ordenId(), null);
+        }
+        String total = orden.total().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+        if (orden.total().compareTo(request.monto()) != 0) {
+            throw new IllegalArgumentException("El monto cobrado debe ser el total del pedido (S/ " + total + ")");
+        }
+        if (request.montoRecibido() != null && request.montoRecibido().compareTo(orden.total()) < 0) {
+            throw new IllegalArgumentException(
+                    "El monto recibido no puede ser menor al total del pedido (S/ " + total + ")");
+        }
+
+        // S7: a pickup order is handed over only against its ticket POL-<id> (numeroCliente is not accepted).
+        boolean esRecojo = "RECOJO".equals(orden.tipo());
+        if (esRecojo && !normalizarTicket("POL-" + request.ordenId()).equals(normalizarTicket(request.codigoTicket()))) {
+            throw new IllegalArgumentException(
+                    "El código de ticket no corresponde al pedido #" + request.ordenId() + " (debe ser POL-"
+                            + request.ordenId() + ")");
+        }
+
         String detalle = "Cobro en efectivo verificado por operador #" + operadorId;
         if (request.montoRecibido() != null) {
             detalle += ". Recibido: S/ " + request.montoRecibido();
@@ -646,8 +682,12 @@ public class PagoService {
         pago.setRepartidorId(repartidorId);
         pago = pagoRepository.save(pago);
 
-        // Notificar a orders-service para completar la entrega
-        notificarOrdenEstadoAsync(request.ordenId(), "ENTREGADO", bearerToken);
+        // Notificar a orders-service para completar la entrega (RECOJO lleva el ticket, S7)
+        if (esRecojo) {
+            notificadorOrden.notificarEstado(request.ordenId(), "ENTREGADO", request.codigoTicket(), bearerToken);
+        } else {
+            notificarOrdenEstadoAsync(request.ordenId(), "ENTREGADO", bearerToken);
+        }
         log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
 
         return PagoResponse.from(pago);

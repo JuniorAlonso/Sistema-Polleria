@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.Pago;
 import com.sistema.polleria.payments.repository.PagoRepository;
+import com.sistema.polleria.payments.service.OrdenesClient;
 import com.sistema.polleria.payments.service.WhatsappNotificationClient;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -88,6 +90,19 @@ class AvisoRechazoComprobanteYapeTest {
     private WhatsappNotificationClient whatsappNotificationClient;
 
     private final List<Long> pagosCreados = new ArrayList<>();
+
+
+    @MockitoBean
+    private OrdenesClient ordenesClient;
+
+    /** S2/S3: the WhatsApp capture path and the approval read the order; default to an active, unpaid one. */
+    @BeforeEach
+    void ordenActivaPorDefecto() {
+        org.mockito.Mockito.when(ordenesClient.obtener(org.mockito.ArgumentMatchers.anyLong()))
+                .thenAnswer(inv -> new OrdenesClient.OrdenInfo(
+                        inv.getArgument(0), "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"),
+                        null, java.time.LocalDateTime.now()));
+    }
 
     @AfterEach
     void limpiar() {

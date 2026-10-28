@@ -3,7 +3,9 @@ package com.sistema.polleria.payments.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistema.polleria.payments.repository.PagoRepository;
+import com.sistema.polleria.payments.service.OrdenesClient;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -53,6 +56,19 @@ class RegistrarComprobantePagoTest {
 
     private Long pagoIdCreado;
 
+
+    @MockitoBean
+    private OrdenesClient ordenesClient;
+
+    /** S2/S3: the WhatsApp capture path and the approval read the order; default to an active, unpaid one. */
+    @BeforeEach
+    void ordenActivaPorDefecto() {
+        org.mockito.Mockito.when(ordenesClient.obtener(org.mockito.ArgumentMatchers.anyLong()))
+                .thenAnswer(inv -> new OrdenesClient.OrdenInfo(
+                        inv.getArgument(0), "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"),
+                        null, java.time.LocalDateTime.now()));
+    }
+
     @AfterEach
     void limpiar() {
         if (pagoIdCreado != null) {
@@ -77,6 +93,25 @@ class RegistrarComprobantePagoTest {
         assertThat(body.path("comprobanteClave").asText()).isEqualTo("comprobantes/yape/976001.jpg");
 
         assertThat(pagoRepository.findByOrdenId(ordenId)).isPresent();
+    }
+
+    @Test
+    @DisplayName("S3: una captura por WhatsApp de una orden CANCELADO responde 409 'ya no está activo' y no crea el pago")
+    void registrarLaCapturaDeUnaOrdenCanceladaResponde409() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433");
+        long ordenId = 976010L;
+        org.mockito.Mockito.when(ordenesClient.obtener(ordenId)).thenReturn(new OrdenesClient.OrdenInfo(
+                ordenId, "CANCELADO", "DELIVERY", new java.math.BigDecimal("45.50"), null,
+                java.time.LocalDateTime.now()));
+
+        ResponseEntity<String> respuesta = registrar(
+                cuerpo(ordenId, "\"999888777\"", "45.50", "\"comprobantes/yape/976010.jpg\""),
+                CLAVE_INTERNA);
+
+        assertThat(respuesta.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(respuesta.getBody()).contains("ya no está activo");
+        assertThat(pagoRepository.findByOrdenId(ordenId)).isEmpty();
     }
 
     @Test
