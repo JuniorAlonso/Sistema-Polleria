@@ -45,6 +45,8 @@ const {
     mensajePedidoCreado,
     mensajePedidoYaConfirmado,
     MENSAJE_PEDIDO_FALLIDO,
+    mensajePedidoRechazado,
+    MENSAJE_PEDIDO_NO_ACTIVO,
     MENSAJE_PIDE_IMAGEN_COMPROBANTE,
     MENSAJE_COMPROBANTE_FALLO_SUBIDA,
     MENSAJE_COMPROBANTE_FALLO_REGISTRO,
@@ -746,8 +748,11 @@ class BotPedidos {
             logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
             return mensajePedidoCreado(pedido, this.ajustes);
         } catch (error) {
-            if (error && error.status === 409 && efectivo) {
+            const status = error && error.status;
+            const detalle = (error && error.detalle) || '';
+            if (status === 409 && efectivo && /sanci[oó]n/i.test(detalle)) {
                 // orders-service refuses cash for a number sanctioned by a ghost order (S8).
+                // Only a 409 that mentions the sanction is one; any other 409 is a plain failure.
                 logger.warn(`ContraPago rechazado para ${clave}: número sancionado por pedido fantasma`);
                 await this.conversacion.set(clave, {
                     ...guardado,
@@ -758,8 +763,22 @@ class BotPedidos {
                 });
                 return MENSAJE_SANCION_CONTRAPAGO;
             }
+            if (status === 400 && efectivo && /no cubre/i.test(detalle)) {
+                // The cash amount does not cover the real total (delivery fee included): ask again.
+                logger.warn(`Monto de efectivo rechazado para ${clave}: ${detalle}`);
+                await this.conversacion.set(clave, {
+                    ...guardado,
+                    montoPagaCon: undefined,
+                    estado: ESTADO_ESPERANDO_MONTO
+                });
+                return `${detalle}\n\n${PREGUNTA_MONTO_EFECTIVO}`;
+            }
             logger.error(`Fallo al crear orden para ${clave} en orders-service: ${error.message || error}`);
             // Fallo explícito: no se inventa número de pedido y el carrito no se pierde.
+            if ((status === 400 || status === 409) && detalle) {
+                await this.conversacion.set(clave, { ...guardado, estado: ESTADO_CATALOGO });
+                return mensajePedidoRechazado(detalle);
+            }
             return this._falloPedido(clave, guardado);
         }
     }
@@ -1046,6 +1065,13 @@ class BotPedidos {
             });
             logger.success(`Comprobante orden #${pedido.id}: registrado exitosamente en payments-service.`);
         } catch (error) {
+            if (error && error.status === 409 && /ya no est[aá] activ/i.test(error.detalle || '')) {
+                // The order was cancelled or finished meanwhile: no capture can be registered,
+                // so free the conversation (keeping the ticket) for a new order.
+                logger.warn(`Comprobante orden #${pedido.id}: la orden ya no está activa (${error.detalle}). Se libera la conversación.`);
+                await liberarConservandoTicket(this.conversacion, clave);
+                return MENSAJE_PEDIDO_NO_ACTIVO;
+            }
             console.error(`❌ Comprobante orden #${pedido.id}: fallo al registrar en payments-service: ${error.message || error}`);
             return MENSAJE_COMPROBANTE_FALLO_REGISTRO;
         }

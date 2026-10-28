@@ -11,6 +11,8 @@
  * toquen la red real.
  */
 
+const { errorDeRespuesta } = require('./errorHttp');
+
 const URL_POR_DEFECTO = 'http://localhost:8082';
 
 class ClienteOrdenes {
@@ -33,11 +35,10 @@ class ClienteOrdenes {
                 signal: controlador.signal
             });
             if (!res || res.ok === false) {
-                // The status travels with the error: 409 means the customer is sanctioned for
-                // cash payment, which the bot answers differently from an outage.
-                const error = new Error(`orders-service respondió ${res ? res.status : 'sin respuesta'}`);
-                error.status = res ? res.status : null;
-                throw error;
+                // Status and backend message travel with the error: a 409 that mentions the
+                // sanction or a 400 for a cash amount below the total is answered differently
+                // from an outage.
+                throw await errorDeRespuesta('orders-service', res);
             }
             const orden = await res.json();
             if (!orden || typeof orden !== 'object') {

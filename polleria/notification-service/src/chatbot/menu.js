@@ -74,6 +74,16 @@ const MENSAJE_PEDIDO_FALLIDO =
     'No pudimos registrar tu pedido en este momento: el sistema de pedidos no respondió.\n' +
     'Tu carrito sigue guardado. Escribe *confirmar* para reintentar.';
 
+/** orders-service rejected the order with a business reason (400/409): say it, keep the cart. */
+function mensajePedidoRechazado(detalle) {
+    return `No pudimos registrar tu pedido: ${detalle}\n` +
+        'Tu carrito sigue guardado. Escribe *confirmar* para reintentar o *cancelar* para salir.';
+}
+
+const MENSAJE_PEDIDO_NO_ACTIVO =
+    '⚠️ Este pedido *ya no está activo* (fue cancelado o finalizado), así que no podemos registrar el comprobante.\n\n' +
+    'Escribe *ticket* para ver su estado o *1* para hacer un pedido nuevo.';
+
 // T6b: recepción del comprobante de Yape.
 const MENSAJE_PIDE_IMAGEN_COMPROBANTE =
     '📸 Necesito una *imagen*: envía una foto o captura de tu comprobante de Yape, por favor.';
@@ -329,6 +339,8 @@ module.exports = {
     MENSAJE_SIN_TICKET,
     CARRITO_VACIO,
     MENSAJE_PEDIDO_FALLIDO,
+    mensajePedidoRechazado,
+    MENSAJE_PEDIDO_NO_ACTIVO,
     MENSAJE_PIDE_IMAGEN_COMPROBANTE,
     MENSAJE_COMPROBANTE_FALLO_SUBIDA,
     MENSAJE_COMPROBANTE_FALLO_REGISTRO,

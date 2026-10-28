@@ -137,7 +137,9 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 });
             }
 
-            if (conversacion && telefono && (estadoNuevo === 'EN_PREPARACION' || estadoNuevo === 'EN_CAMINO' || estadoNuevo === 'ENTREGADO')) {
+            // CANCELADO also frees the chat (keeping the ticket) so "hola" starts a new order.
+            const liberaConversacion = ['EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
+            if (conversacion && telefono && liberaConversacion.includes(estadoNuevo)) {
                 const clave = claveDeUsuario(telefono);
                 try {
                     await liberarConservandoTicket(conversacion, clave);

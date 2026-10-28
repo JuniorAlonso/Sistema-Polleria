@@ -14,6 +14,7 @@
 
 const { crearLogger } = require('../logger');
 const logger = crearLogger('PagosClient');
+const { errorDeRespuesta } = require('./errorHttp');
 
 const URL_POR_DEFECTO = 'http://localhost:8083';
 
@@ -51,15 +52,11 @@ class ClientePagos {
             });
 
             if (!res || res.ok === false) {
-                let errorDetalle = '';
-                if (res && typeof res.text === 'function') {
-                    try {
-                        errorDetalle = await res.text();
-                    } catch (_) {}
-                }
-                const status = res ? res.status : 'sin respuesta';
-                logger.error(`payments-service respondió status HTTP ${status}: ${errorDetalle || 'sin cuerpo de error'}`);
-                throw new Error(`payments-service respondió ${status}${errorDetalle ? ': ' + errorDetalle : ''}`);
+                // Status and backend message travel with the error: a 409 "ya no está activo"
+                // means the order was cancelled or finished, not that the upload failed.
+                const error = await errorDeRespuesta('payments-service', res);
+                logger.error(`payments-service respondió status HTTP ${error.status === null ? 'sin respuesta' : error.status}: ${error.detalle || 'sin cuerpo de error'}`);
+                throw error;
             }
 
             logger.success(`Comprobante registrado exitosamente en payments-service para orden #${ordenId} (HTTP ${res.status})`);
