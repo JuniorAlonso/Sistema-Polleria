@@ -107,16 +107,18 @@ public class LiquidacionService {
             throw new IllegalStateException("La liquidación #" + id + " ya fue cerrada anteriormente (estado: " + liq.getEstado() + ").");
         }
 
-        // S6: expected cash comes from the payments the courier registered; fail closed if unreachable.
+        // S6/S8: expected cash is every cash payment of the courier not yet linked to a settlement, with no
+        // time cutoff (payments-service already excludes linked payments); fail closed if unreachable.
         PagosClient.EfectivoPendiente pendiente =
-                pagosClient.obtenerPendiente(liq.getRepartidorId(), liq.getCreadoEn(), bearer);
+                pagosClient.obtenerPendiente(liq.getRepartidorId(), null, bearer);
         BigDecimal totalEsperadoEfectivo = pendiente.total() != null ? pendiente.total() : BigDecimal.ZERO;
 
         BigDecimal totalCobrado = req.totalCobradoEfectivo() != null
                 ? req.totalCobradoEfectivo()
                 : liq.getTotalCobradoEfectivo();
 
-        BigDecimal esperado = liq.getFondoInicial().add(totalCobrado);
+        // S8: the courier must hand in the float plus the cash payments recorded, not the cashier-typed total.
+        BigDecimal esperado = liq.getFondoInicial().add(totalEsperadoEfectivo);
         BigDecimal diferencia = req.totalRendido().subtract(esperado);
 
         liq.setTotalCobradoEfectivo(totalCobrado);
@@ -158,14 +160,14 @@ public class LiquidacionService {
         return LiquidacionResponse.from(liq);
     }
 
-    /** Cash the courier must hand in: payments registered since the open liquidation's apertura (S6). */
+    /** Cash the courier must hand in: every cash payment not yet linked to a settlement (S6, S8). */
     @Transactional(readOnly = true)
     public EfectivoPendienteLiquidacionResponse efectivoPendiente(Long repartidorId, String bearer) {
         LiquidacionRepartidor liq = liquidacionRepository
                 .findFirstByRepartidorIdAndEstado(repartidorId, EstadoLiquidacion.ABIERTA)
                 .orElseThrow(() -> new NoSuchElementException(
                         "El repartidor " + repartidorId + " no tiene una liquidación abierta"));
-        PagosClient.EfectivoPendiente p = pagosClient.obtenerPendiente(repartidorId, liq.getCreadoEn(), bearer);
+        PagosClient.EfectivoPendiente p = pagosClient.obtenerPendiente(repartidorId, null, bearer);
         return new EfectivoPendienteLiquidacionResponse(repartidorId, liq.getId(), liq.getCreadoEn(),
                 p.total() != null ? p.total() : BigDecimal.ZERO, p.cantidad(),
                 p.pagos() != null ? p.pagos() : List.of());

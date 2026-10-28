@@ -80,7 +80,7 @@ class LiquidacionServiceTest {
                 .build();
 
         when(liquidacionRepository.findById(1L)).thenReturn(Optional.of(liq));
-        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(sinPendiente());
+        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(pendienteDe("150.00"));
         when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
 
         // Rinde exactamente 50 + 150 = 200
@@ -106,7 +106,7 @@ class LiquidacionServiceTest {
                 .build();
 
         when(liquidacionRepository.findById(2L)).thenReturn(Optional.of(liq));
-        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(sinPendiente());
+        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(pendienteDe("100.00"));
         when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
 
         // Esperado 150, pero rinde solo 140 (faltan S/ 10)
@@ -119,8 +119,48 @@ class LiquidacionServiceTest {
         assertEquals(new BigDecimal("-10.00"), res.diferencia());
     }
 
-    private static PagosClient.EfectivoPendiente sinPendiente() {
-        return new PagosClient.EfectivoPendiente(4L, BigDecimal.ZERO, 0, List.of());
+    private static PagosClient.EfectivoPendiente pendienteDe(String monto) {
+        return new PagosClient.EfectivoPendiente(4L, new BigDecimal(monto), 1,
+                List.of(new PagosClient.EfectivoPendiente.Item(90L, 900L, new BigDecimal(monto), null)));
+    }
+
+    @Test
+    void cerrarIncluyeEfectivoCobradoAntesDeAbrirLaLiquidacion() {
+        LiquidacionRepartidor liq = LiquidacionRepartidor.builder()
+                .id(20L).repartidorId(4L).repartidorNombre("Juan")
+                .fondoInicial(BigDecimal.ZERO).estado(EstadoLiquidacion.ABIERTA)
+                .creadoEn(LocalDateTime.of(2026, 1, 1, 9, 0)).build();
+        when(liquidacionRepository.findById(20L)).thenReturn(Optional.of(liq));
+        when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Cash collected at 08:00, before the 09:00 apertura, and still not linked to any settlement.
+        when(pagosClient.obtenerPendiente(4L, null, "Bearer t")).thenReturn(new PagosClient.EfectivoPendiente(
+                4L, new BigDecimal("40.00"), 1, List.of(new PagosClient.EfectivoPendiente.Item(
+                        30L, 300L, new BigDecimal("40.00"), LocalDateTime.of(2026, 1, 1, 8, 0)))));
+
+        LiquidacionResponse res = liquidacionService.cerrar(20L,
+                new CierreLiquidacionRequest(new BigDecimal("40.00"), null, null), 2L, "Bearer t");
+
+        assertEquals(new BigDecimal("40.00"), res.totalEsperadoEfectivo());
+        assertEquals(EstadoLiquidacion.CERRADA, res.estado());
+        verify(pagosClient).liquidar(List.of(30L), 20L, "Bearer t");
+    }
+
+    @Test
+    void cerrarCalculaLaDiscrepanciaContraElEfectivoDePaymentsYNoContraElTipeadoPorElCajero() {
+        LiquidacionRepartidor liq = LiquidacionRepartidor.builder()
+                .id(21L).repartidorId(4L).repartidorNombre("Juan")
+                .fondoInicial(new BigDecimal("50.00")).estado(EstadoLiquidacion.ABIERTA)
+                .creadoEn(LocalDateTime.of(2026, 1, 1, 9, 0)).build();
+        when(liquidacionRepository.findById(21L)).thenReturn(Optional.of(liq));
+        when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(pendienteDe("150.00"));
+
+        // The cashier typed 100 and the courier handed in 50 + 100, but payments recorded 150 in cash.
+        LiquidacionResponse res = liquidacionService.cerrar(21L,
+                new CierreLiquidacionRequest(new BigDecimal("150.00"), new BigDecimal("100.00"), null), 2L, "Bearer t");
+
+        assertEquals(EstadoLiquidacion.DISCREPANCIA, res.estado());
+        assertEquals(new BigDecimal("-50.00"), res.diferencia());
     }
 
     @Test
@@ -131,7 +171,7 @@ class LiquidacionServiceTest {
                 .creadoEn(LocalDateTime.of(2026, 1, 1, 9, 0)).build();
         when(liquidacionRepository.findById(7L)).thenReturn(Optional.of(liq));
         when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(pagosClient.obtenerPendiente(4L, liq.getCreadoEn(), "Bearer t")).thenReturn(new PagosClient.EfectivoPendiente(
+        when(pagosClient.obtenerPendiente(4L, null, "Bearer t")).thenReturn(new PagosClient.EfectivoPendiente(
                 4L, new BigDecimal("120.00"), 2, List.of(
                         new PagosClient.EfectivoPendiente.Item(11L, 100L, new BigDecimal("70.00"), null),
                         new PagosClient.EfectivoPendiente.Item(12L, 101L, new BigDecimal("50.00"), null))));
@@ -162,13 +202,13 @@ class LiquidacionServiceTest {
     }
 
     @Test
-    void efectivoPendienteUsaLaAperturaDeLaLiquidacionAbierta() {
+    void efectivoPendienteNoCortaPorLaAperturaDeLaLiquidacionAbierta() {
         LocalDateTime apertura = LocalDateTime.of(2026, 1, 1, 9, 0);
         LiquidacionRepartidor liq = LiquidacionRepartidor.builder()
                 .id(9L).repartidorId(4L).repartidorNombre("Juan").estado(EstadoLiquidacion.ABIERTA).creadoEn(apertura).build();
         when(liquidacionRepository.findFirstByRepartidorIdAndEstado(4L, EstadoLiquidacion.ABIERTA))
                 .thenReturn(Optional.of(liq));
-        when(pagosClient.obtenerPendiente(4L, apertura, "Bearer r")).thenReturn(new PagosClient.EfectivoPendiente(
+        when(pagosClient.obtenerPendiente(4L, null, "Bearer r")).thenReturn(new PagosClient.EfectivoPendiente(
                 4L, new BigDecimal("70.00"), 1,
                 List.of(new PagosClient.EfectivoPendiente.Item(11L, 100L, new BigDecimal("70.00"), null))));
 
