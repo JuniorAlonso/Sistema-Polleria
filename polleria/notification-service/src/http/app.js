@@ -22,6 +22,17 @@ function esIdValido(valor) {
     return Number.isInteger(Number(valor)) && Number(valor) > 0;
 }
 
+/**
+ * A notice about an order only changes the chat when it is about the order the chat holds
+ * (or the chat holds none): a notice for an older order must not reset or flag the current one.
+ * The WhatsApp message itself is always delivered.
+ */
+function esLaOrdenDelChat(guardado, ordenId) {
+    const pedido = guardado && guardado.pedido;
+    if (!pedido || pedido.id === undefined || pedido.id === null) return true;
+    return String(pedido.id) === String(ordenId);
+}
+
 function responderEncolado(res, log) {
     const status = log.estado === 'ERROR' ? 422 : 202;
     res.status(status).json({
@@ -104,8 +115,10 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
             if (conversacion && telefono) {
                 const clave = claveDeUsuario(telefono);
                 try {
-                    await liberarConservandoTicket(conversacion, clave);
-                    logger.info(`Conversación de ${clave} liberada tras confirmación de pago para orden #${ordenId}`);
+                    if (esLaOrdenDelChat(await conversacion.get(clave), ordenId)) {
+                        await liberarConservandoTicket(conversacion, clave);
+                        logger.info(`Conversación de ${clave} liberada tras confirmación de pago para orden #${ordenId}`);
+                    }
                 } catch (e) {
                     logger.warn(`No se pudo limpiar conversación de ${clave}: ${e.message}`);
                 }
@@ -137,12 +150,15 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 });
             }
 
-            // CANCELADO also frees the chat (keeping the ticket) so "hola" starts a new order.
-            const liberaConversacion = ['EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
+            // CANCELADO and PEDIDO_FANTASMA also free the chat (keeping the ticket) so "hola"
+            // starts a new order; PREPARANDO is the cashier's call confirmation of a cash order.
+            const liberaConversacion = ['EN_PREPARACION', 'PREPARANDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
             if (conversacion && telefono && liberaConversacion.includes(estadoNuevo)) {
                 const clave = claveDeUsuario(telefono);
                 try {
-                    await liberarConservandoTicket(conversacion, clave);
+                    if (esLaOrdenDelChat(await conversacion.get(clave), ordenId)) {
+                        await liberarConservandoTicket(conversacion, clave);
+                    }
                 } catch (e) {}
             }
 
@@ -175,7 +191,7 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 const clave = claveDeUsuario(telefono);
                 try {
                     const actual = await conversacion.get(clave);
-                    if (actual && actual.pedido) {
+                    if (actual && actual.pedido && esLaOrdenDelChat(actual, ordenId)) {
                         await conversacion.set(clave, {
                             ...actual,
                             estado: ESTADO_PEDIDO_CONFIRMADO,

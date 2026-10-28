@@ -8,7 +8,8 @@ const ESTADOS_DELIVERY = [
     'EN_CAMINO',
     'EN_PUERTA',
     'ENTREGADO',
-    'CANCELADO'
+    'CANCELADO',
+    'PEDIDO_FANTASMA'
 ];
 
 const FIRMA = 'San Pollo de Ica';
@@ -101,6 +102,12 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
         case 'CANCELADO':
             cuerpo = `Tu pedido N.° ${numero} fue cancelado. Si no llegaste a confirmar el pago o la llamada a tiempo, `
                 + 'puedes hacer un nuevo pedido escribiendo *hola* por este chat.';
+            break;
+
+        case 'PEDIDO_FANTASMA':
+            cuerpo = `Tu pedido N.° ${numero} se cerró como no recibido (no se pudo entregar o no se recogió a tiempo), `
+                + 'así que su ticket ya no es válido. Si crees que es un error, comunícate con nosotros al '
+                + `${config.telefonoContacto}. Para un nuevo pedido escribe *hola* por este chat.`;
             break;
 
         default:

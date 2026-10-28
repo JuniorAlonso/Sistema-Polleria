@@ -120,6 +120,33 @@ function esCancelacion(texto) {
     return CANCELACIONES.some(c => limpio === c || limpio.startsWith(c + ' ') || limpio.endsWith(' ' + c));
 }
 
+// Words that cancel an order already created. "volver", "salir" or "reiniciar" do not: an
+// accidental "volver" must never cancel a live (maybe already paid) order.
+const CANCELACIONES_DE_PEDIDO = ['cancelar', 'cancela', 'cancelar pedido', 'cancelar mi pedido', 'cancela mi pedido', 'anular', 'anular pedido', 'anular mi pedido'];
+
+/** Order states the customer can still cancel from the chat (before the kitchen starts). */
+const ESTADOS_CANCELABLES_DESDE_CHAT = ['PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION', 'RECIBIDO'];
+
+function esCancelacionDePedido(texto) {
+    if (!texto) return false;
+    const limpio = String(texto || '').toLowerCase().replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    return CANCELACIONES_DE_PEDIDO.includes(limpio);
+}
+
+/**
+ * Reads what the customer typed to look up an order. `POL-<id>` (any case, spaces, dashes)
+ * is the global order id printed on the ticket; a bare number is the customer's own order
+ * number (N.° 2), which is NOT a global id.
+ */
+function leerCodigoDePedido(codigo) {
+    const compacto = String(codigo || '').toLowerCase().replace(/[\s\-_#.:°º]/g, '');
+    const pol = compacto.match(/^pol(\d+)$/);
+    if (pol) return { ordenId: pol[1].replace(/^0+(?=\d)/, '') };
+    const numero = compacto.match(/^(?:n|nro|numero|pedido)?(\d+)$/);
+    if (numero) return { numeroCliente: numero[1].replace(/^0+(?=\d)/, '') };
+    return null;
+}
+
 function esSaludo(texto) {
     if (!texto) return false;
     const limpio = String(texto || '').toLowerCase().replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -264,8 +291,24 @@ class BotPedidos {
             return this._enviarTicket(clave, guardado);
         }
 
-        // Cancelación en cualquier estado que no sea MENU
-        if (esCancelacion(texto) && estado !== ESTADO_MENU) {
+        // With a created order, "cancelar" must cancel it in orders-service (or say it can't):
+        // only clearing the chat would leave the order alive while telling the customer otherwise.
+        const tienePedido = (estado === ESTADO_PEDIDO_CONFIRMADO || estado === ESTADO_COMPROBANTE_RECIBIDO) &&
+            guardado.pedido && guardado.pedido.id !== undefined && guardado.pedido.id !== null;
+        if (tienePedido && esCancelacionDePedido(texto)) {
+            return this._cancelarPedido(clave, guardado);
+        }
+
+        // Escape words (salir, volver...) with a created order: back to the menu as before, but
+        // without claiming a cancellation the order never had.
+        if (tienePedido && esCancelacion(texto)) {
+            await liberarConservandoTicket(this.conversacion, clave);
+            return `↩️ Volviste al menú. Tu pedido N.° *${numeroDePedido(guardado.pedido)}* sigue activo; ` +
+                'si deseas anularlo escribe *cancelar*. Escribe *hola* para ver el menú. 🍗';
+        }
+
+        // Cancelación en cualquier estado que no sea MENU (antes de crear el pedido)
+        if (esCancelacion(texto) && estado !== ESTADO_MENU && !tienePedido) {
             await liberarConservandoTicket(this.conversacion, clave);
             return '❌ Operación cancelada. Escribe *hola* o *menu* cuando desees iniciar un nuevo pedido o consultar algo. 🍗';
         }
@@ -281,7 +324,7 @@ class BotPedidos {
         if (estado === ESTADO_ESPERANDO_CODIGO) {
             await liberarConservandoTicket(this.conversacion, clave);
             const codigo = textoCrudo(msg);
-            return this._consultarPedido(clave, codigo);
+            return this._consultarPedido(clave, codigo, guardado);
         }
 
         if (estado === ESTADO_ESPERANDO_ENTREGA) {
@@ -347,8 +390,12 @@ class BotPedidos {
         }
 
         if (texto === '2') {
-            await this.conversacion.set(clave, { estado: ESTADO_ESPERANDO_CODIGO });
-            return 'Para consultar tu pedido, por favor envíanos tu *Código de Pedido* 🔎 (Ejemplo: #102).';
+            // Keep the last order: its customer number (N.° 2) resolves to its real id.
+            await this.conversacion.set(clave, {
+                estado: ESTADO_ESPERANDO_CODIGO,
+                ultimoPedido: guardado.pedido || guardado.ultimoPedido
+            });
+            return 'Para consultar tu pedido, por favor envíanos tu *Código de Pedido* 🔎, el de tu ticket (Ejemplo: *POL-102*), o el número de tu último pedido.';
         }
 
         if (texto === '3') {
@@ -549,12 +596,12 @@ class BotPedidos {
         return `✅ Agregué *${prefijo}${producto.nombre}* a tu carrito.\n\n${formatearCarrito(carrito)}`;
     }
 
-    async _consultarPedido(clave, codigo) {
-        const id = String(codigo || '').replace(/\D/g, '');
-        if (!id) {
+    async _consultarPedido(clave, codigo, guardado = {}) {
+        const leido = leerCodigoDePedido(codigo);
+        if (!leido) {
             return (
-                'No pude identificar el número de pedido en tu mensaje.\n' +
-                'Por favor escribe *2* en el menú y envíanos tu código numérico (ejemplo: *#102* o *102*).'
+                'No pude identificar el código de pedido en tu mensaje.\n' +
+                'Por favor escribe *2* en el menú y envíanos el código de tu ticket (ejemplo: *POL-102*).'
             );
         }
 
@@ -562,27 +609,44 @@ class BotPedidos {
             return `Recibí tu código de pedido: *${codigo}*`;
         }
 
+        // A bare number is the customer's own order number (N.° 2), not the global id: it only
+        // resolves to an order this chat created. Anything else needs the POL code.
+        let id = leido.ordenId;
+        if (!id) {
+            const propios = [guardado && guardado.pedido, guardado && guardado.ultimoPedido]
+                .filter(p => p && p.id !== undefined && p.id !== null);
+            const propio = propios.find(p => p.numeroCliente != null && String(p.numeroCliente) === leido.numeroCliente);
+            if (!propio) {
+                return (
+                    `🔍 No encontramos tu pedido N.° *${leido.numeroCliente}* en este chat.\n\n` +
+                    'Por favor envíanos el *código de tu ticket* (ejemplo: *POL-102*): aparece en los mensajes de tu pedido. ' +
+                    'Escribe *2* para intentarlo de nuevo o *ticket* para ver el de tu último pedido.'
+                );
+            }
+            id = String(propio.id);
+        }
+        const codigoVisible = `POL-${id}`;
+        const noEncontrado = () => (
+            `🔍 No encontramos ningún pedido con el código *${codigoVisible}* asociado a tu número de WhatsApp.\n\n` +
+            'Por favor verifica el código de tu ticket o escribe *4* para comunicarte con un asesor.\n\n' +
+            lineaContacto(this.ajustes)
+        );
+
         try {
             logger.info(`Consultando estado de pedido #${id} para ${clave}...`);
             const orden = await this.ordenes.obtener(id);
             if (!orden) {
-                return (
-                    `🔍 No encontramos ningún pedido con el número *#${id}*.\n\n` +
-                    'Por favor verifica el número o comunícate con un asesor escribiendo *4* en el menú.\n\n' +
-                    lineaContacto(this.ajustes)
-                );
+                return noEncontrado();
             }
 
-            // PRIVACIDAD: Si la orden tiene un teléfono de cliente registrado y no coincide
-            // con el remitente de este chat, no revelamos los datos de entrega de otro cliente.
+            // PRIVACIDAD: el bot consulta con la clave interna, así que la orden solo se muestra
+            // si su teléfono coincide con el del remitente. Sin alguno de los dos no hay forma de
+            // comprobarlo y se responde igual que si no existiera.
             const telOrdenNorm = normalizarTelefono(orden.telefonoCliente || '');
             const telRemitenteNorm = normalizarTelefono(clave);
-            if (telOrdenNorm && telRemitenteNorm && telOrdenNorm !== telRemitenteNorm) {
-                logger.warn(`Consulta denegada por privacidad: ${clave} intentó ver orden #${id} perteneciente a ${telOrdenNorm}`);
-                return (
-                    `🔍 No encontramos ningún pedido con el número *#${id}* asociado a tu número de WhatsApp.\n\n` +
-                    'Por favor verifica el código de tu pedido o escribe *4* para comunicarte con un asesor.'
-                );
+            if (!telOrdenNorm || !telRemitenteNorm || telOrdenNorm !== telRemitenteNorm) {
+                logger.warn(`Consulta denegada por privacidad: ${clave} intentó ver la orden #${id}`);
+                return noEncontrado();
             }
 
             const estadosMap = {
@@ -625,6 +689,64 @@ class BotPedidos {
                 lineaContacto(this.ajustes)
             );
         }
+    }
+
+    /**
+     * "cancelar" with an order already created: the current state is read from orders-service.
+     * Before the kitchen starts (PENDIENTE_PAGO, PENDIENTE_CONFIRMACION, RECIBIDO) the order is
+     * cancelled there and only then the chat is released; otherwise, or if the service refuses
+     * or does not answer, the customer is told and the conversation stays as it was.
+     */
+    async _cancelarPedido(clave, guardado) {
+        const pedido = guardado.pedido;
+        const numero = numeroDePedido(pedido);
+        const sinCancelar = (
+            `⚠️ No pudimos cancelar tu pedido N.° *${numero}* en este momento. ` +
+            'Por favor intenta de nuevo en unos minutos o comunícate con la pollería.\n\n' +
+            lineaContacto(this.ajustes)
+        );
+        if (!this.ordenes || typeof this.ordenes.obtener !== 'function' || typeof this.ordenes.cancelar !== 'function') {
+            return sinCancelar;
+        }
+
+        let orden;
+        try {
+            orden = await this.ordenes.obtener(pedido.id);
+        } catch (error) {
+            logger.warn(`No se pudo consultar la orden #${pedido.id} para cancelarla: ${error.message || error}`);
+            return sinCancelar;
+        }
+
+        if (!orden || ESTADOS_TICKET_NO_VALIDO.includes(orden.estado)) {
+            // Already cancelled or closed: nothing left to cancel, the chat is free again.
+            await liberarConservandoTicket(this.conversacion, clave);
+            return (
+                `Tu pedido N.° *${numero}* ya no está activo, así que no hay nada que cancelar.\n\n` +
+                'Escribe *hola* o *menu* cuando desees hacer un nuevo pedido. 🍗'
+            );
+        }
+
+        if (!ESTADOS_CANCELABLES_DESDE_CHAT.includes(orden.estado)) {
+            return (
+                `⚠️ Tu pedido N.° *${numero}* ya está en proceso, así que no se puede cancelar desde este chat.\n\n` +
+                'Si necesitas cancelarlo, comunícate con la pollería. ' +
+                lineaContacto(this.ajustes)
+            );
+        }
+
+        try {
+            await this.ordenes.cancelar(pedido.id);
+        } catch (error) {
+            logger.warn(`orders-service no canceló la orden #${pedido.id}: ${error.message || error}`);
+            return sinCancelar;
+        }
+
+        logger.info(`Orden #${pedido.id} cancelada por el cliente ${clave} desde el chat.`);
+        await liberarConservandoTicket(this.conversacion, clave);
+        return (
+            `❌ Tu pedido N.° *${numero}* fue cancelado.\n\n` +
+            'Escribe *hola* o *menu* cuando desees hacer un nuevo pedido o consultar algo. 🍗'
+        );
     }
 
     /**
@@ -1039,6 +1161,7 @@ class BotPedidos {
         }
 
         let claveObjeto;
+        let pagoRegistrado = null;
         try {
             const tamBytes = media.data ? Math.round(media.data.length * 0.75) : 0;
             logger.info(`Comprobante orden #${pedido.id}: subiendo imagen a MinIO (tamaño aprox: ~${Math.round(tamBytes / 1024)} KB, mimetype: "${media.mimetype}")...`);
@@ -1057,7 +1180,7 @@ class BotPedidos {
 
         try {
             logger.info(`Comprobante orden #${pedido.id}: registrando en payments-service (monto: S/ ${pedido.total}, teléfono: ${clave}, clave: "${claveObjeto}")...`);
-            await this.pagos.registrarComprobante({
+            pagoRegistrado = await this.pagos.registrarComprobante({
                 ordenId: pedido.id,
                 telefono: clave,
                 monto: pedido.total,
@@ -1074,6 +1197,17 @@ class BotPedidos {
             }
             console.error(`❌ Comprobante orden #${pedido.id}: fallo al registrar en payments-service: ${error.message || error}`);
             return MENSAJE_COMPROBANTE_FALLO_REGISTRO;
+        }
+
+        if (pagoRegistrado && pagoRegistrado.estado === 'APROBADO') {
+            // payments-service returns the payment it already has: an approved one means this
+            // capture is not needed and nothing is left to review.
+            logger.info(`Comprobante orden #${pedido.id}: el pago ya estaba APROBADO. Se libera la conversación.`);
+            await liberarConservandoTicket(this.conversacion, clave);
+            return (
+                `✅ El pago de tu pedido N.° *${numeroDePedido(pedido)}* ya está confirmado, no necesitas enviar otro comprobante.\n\n` +
+                'Te avisaremos por este chat cuando tu pedido avance. Escribe *ticket* para ver su estado. 🍗'
+            );
         }
 
         logger.success(`Comprobante orden #${pedido.id}: comprobante verificado y registrado. Notificando al cliente.`);

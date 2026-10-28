@@ -246,8 +246,8 @@ test('Escenario 4: Consultar estado de pedido existente y no existente', async (
     const r1 = await bot.procesar(msgTexto('2'));
     assert.match(r1, /Código de Pedido/i);
 
-    // 4.2 Enviar código existente #101
-    const r2 = await bot.procesar(msgTexto('#101'));
+    // 4.2 Enviar el código del ticket POL-101 (un número suelto es el N.° del cliente, no el id global)
+    const r2 = await bot.procesar(msgTexto('POL-101'));
     assert.match(r2, /ESTADO DE TU PEDIDO N\.° 1/i);
     assert.match(r2, /En preparación en cocina/i);
     assert.match(r2, /Total:\* S\/ 55\.00/i);
@@ -256,8 +256,8 @@ test('Escenario 4: Consultar estado de pedido existente y no existente', async (
 
     // 4.3 Consultar pedido inexistente
     await bot.procesar(msgTexto('2'));
-    const r404 = await bot.procesar(msgTexto('#9999'));
-    assert.match(r404, /No encontramos ningún pedido con el número \*#9999\*/i);
+    const r404 = await bot.procesar(msgTexto('POL-9999'));
+    assert.match(r404, /No encontramos ningún pedido con el código \*POL-9999\*/i);
 });
 
 // ─── Escenario 5: Cliente no es de Ica ─────────────────────────────────────────
@@ -358,7 +358,7 @@ test('Escenario 8: Protección de privacidad - Cliente A no puede consultar pedi
     await bot.procesar(msgTexto('2'));
 
     // Consultar pedido 202 que es de otro cliente
-    const rEspia = await bot.procesar(msgTexto('#202'));
+    const rEspia = await bot.procesar(msgTexto('POL-202'));
 
     // NO debe mostrar la dirección ajena
     assert.doesNotMatch(rEspia, /Av\. Privada Secreta/i);

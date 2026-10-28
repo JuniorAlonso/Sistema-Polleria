@@ -76,6 +76,37 @@ class ClienteOrdenes {
             clearTimeout(temporizador);
         }
     }
+
+    /**
+     * Cancels the order on behalf of the customer chatting with the bot (X-Internal-Key).
+     * orders-service validates the transition; a refusal (e.g. 409, kitchen already started)
+     * is thrown with its status and message so the bot never claims a cancellation.
+     */
+    async cancelar(id) {
+        const idLimpio = String(id || '').replace(/\D/g, '');
+        if (!idLimpio) throw new Error('ID de orden inválido');
+        const controlador = new AbortController();
+        const temporizador = setTimeout(() => controlador.abort(), this.timeoutMs);
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.internalKey) {
+                headers['X-Internal-Key'] = this.internalKey;
+            }
+            const res = await this.fetchImpl(`${this.baseUrl}/ordenes/${idLimpio}/estado`, {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({ estado: 'CANCELADO' }),
+                signal: controlador.signal
+            });
+            if (!res || res.ok === false) {
+                throw await errorDeRespuesta('orders-service', res);
+            }
+            const orden = typeof res.json === 'function' ? await res.json() : null;
+            return orden && typeof orden === 'object' ? orden : null;
+        } finally {
+            clearTimeout(temporizador);
+        }
+    }
 }
 
 function crearClienteOrdenes(opciones) {
