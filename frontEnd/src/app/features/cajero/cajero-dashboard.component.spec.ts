@@ -6,6 +6,10 @@ import { CajeroDashboardComponent } from './cajero-dashboard.component';
 import { OrdersService } from '../../core/services/orders.service';
 import { FinanceService } from '../../core/services/finance.service';
 import { Order } from '../../core/models/order.model';
+import { PaymentTransaction } from '../../core/models/payment.model';
+import { PaymentService } from '../../core/services/payment.service';
+import { NotificationService } from '../../core/services/notification.service';
+import { of, throwError } from 'rxjs';
 
 describe('CajeroDashboardComponent', () => {
   let component: CajeroDashboardComponent;
@@ -114,5 +118,80 @@ describe('CajeroDashboardComponent', () => {
 
     component.activeTab.set('HISTORIAL');
     expect(component.activeTab()).toBe('HISTORIAL');
+  });
+
+  describe('S1: bandeja de capturas', () => {
+    const porPagar = (id: string, canalOrigen?: Order['canalOrigen']): Order =>
+      ({ ...mockOrder, id, codigoSeguimiento: `POL-${id}`, tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', canalOrigen });
+
+    it('lista solo pedidos de WhatsApp o con captura; un pago web en pasarela no aparece', () => {
+      ordersService.orders.set([porPagar('1', 'WEB'), porPagar('2', 'WHATSAPP'), porPagar('3', 'WEB'), porPagar('4')]);
+      component.pagosPorVerificar.set([
+        { id: 9, ordenId: 3, monto: 45, estado: 'PENDIENTE', comprobanteUrl: 'https://img/3.jpg' }
+      ]);
+
+      expect(component.capturasPendientes().map(c => c.orden.id)).toEqual(['2', '3']);
+    });
+  });
+
+  describe('S7/S13: entrega de recojo', () => {
+    let notify: jasmine.SpyObj<NotificationService>;
+    let paymentService: PaymentService;
+
+    const recojo = (extra: Partial<Order> = {}): Order => ({
+      ...mockOrder,
+      id: '12',
+      codigoSeguimiento: 'POL-12',
+      numeroCliente: 7,
+      tipo: 'RECOJO_EN_TIENDA',
+      estado: 'LISTO_COCINA',
+      total: 30,
+      ...extra
+    });
+
+    beforeEach(() => {
+      notify = TestBed.inject(NotificationService) as jasmine.SpyObj<NotificationService>;
+      spyOn(notify, 'showError');
+      spyOn(notify, 'showSuccess');
+      paymentService = TestBed.inject(PaymentService);
+    });
+
+    it('rechaza el número de cliente como ticket: solo vale el código POL-<id>', () => {
+      const update = spyOn(ordersService, 'updateOrderStatus');
+
+      component.entregarRecojo({ orden: recojo(), codigoTicket: '7', efectivoRecibido: 0 });
+
+      expect(update).not.toHaveBeenCalled();
+      expect(notify.showError).toHaveBeenCalledWith('Ticket no coincide', jasmine.any(String));
+    });
+
+    it('envía el ticket al backend al entregar un recojo ya pagado', () => {
+      const update = spyOn(ordersService, 'updateOrderStatus').and.returnValue(of(recojo({ estado: 'COMPLETADO' })));
+
+      component.entregarRecojo({ orden: recojo(), codigoTicket: ' pol-12 ', efectivoRecibido: 0 });
+
+      expect(update).toHaveBeenCalledWith('12', 'COMPLETADO', undefined, 'POL-12');
+    });
+
+    it('envía el ticket al backend al cobrar un recojo ContraPago', () => {
+      const cobro = spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
+
+      component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: '12', efectivoRecibido: 50 });
+
+      expect(cobro).toHaveBeenCalledWith('12', 30, 50, 20, 'POL-12');
+    });
+
+    it('S13: avisa al cajero si el ingreso en caja falla después de cobrar', () => {
+      spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
+      financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
+      spyOn(financeService, 'registrarMovimiento').and.returnValue(throwError(() => new Error('caja caída')));
+
+      component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: 'POL-12', efectivoRecibido: 30 });
+
+      expect(financeService.registrarMovimiento).toHaveBeenCalled();
+      expect(notify.showError).toHaveBeenCalledWith(
+        'No se registró el ingreso en caja',
+        jasmine.stringMatching(/manualmente/));
+    });
   });
 });

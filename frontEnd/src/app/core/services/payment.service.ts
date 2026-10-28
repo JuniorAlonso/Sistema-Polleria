@@ -4,7 +4,7 @@ import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
 import { PaymentTransaction, PagoOrdenAdmin } from '../models/payment.model';
 import { PaymentsApiService } from '../api/payments-api.service';
-import { BackendPagoResponse } from '../models/api-contracts.model';
+import { BackendCobroEfectivoRequest, BackendPagoResponse } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
 
 export type { EstadoPagoAdmin, PagoOrdenAdmin } from '../models/payment.model';
@@ -230,14 +230,17 @@ export class PaymentService {
     ordenId: number | string,
     monto: number,
     montoRecibido?: number,
-    vueltoEntregado?: number
+    vueltoEntregado?: number,
+    codigoTicket?: string
   ): Observable<PaymentTransaction> {
     const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
-    const body = {
+    const body: BackendCobroEfectivoRequest = {
       ordenId: cleanId,
       monto: Math.round(monto * 100) / 100,
       montoRecibido: montoRecibido ? Math.round(montoRecibido * 100) / 100 : undefined,
-      vueltoEntregado: vueltoEntregado ? Math.round(vueltoEntregado * 100) / 100 : undefined
+      vueltoEntregado: vueltoEntregado ? Math.round(vueltoEntregado * 100) / 100 : undefined,
+      // Pickup collections send the ticket; the courier flow calls without it.
+      ...(codigoTicket ? { codigoTicket } : {})
     };
 
     return this.api.registrarCobroEfectivo(body).pipe(

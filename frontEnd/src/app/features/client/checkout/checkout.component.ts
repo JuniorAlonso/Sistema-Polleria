@@ -590,7 +590,8 @@ export class CheckoutComponent implements OnInit {
       },
       items: [...this.cart.items()],
       tipo: this.tipoPedido(),
-      estado: 'RECIBIDO',
+      // Opens waiting for payment; the backend expires it after 15 min if never paid.
+      estado: 'PENDIENTE_PAGO',
       metodoPago: 'YAPE_OTP',
       subtotal: this.cart.subtotal(),
       costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
@@ -662,7 +663,8 @@ export class CheckoutComponent implements OnInit {
       },
       items: [...this.cart.items()],
       tipo: this.tipoPedido(),
-      estado: 'RECIBIDO',
+      // Opens waiting for payment; the backend expires it after 15 min if never paid.
+      estado: 'PENDIENTE_PAGO',
       metodoPago: 'TARJETA',
       subtotal: this.cart.subtotal(),
       costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,

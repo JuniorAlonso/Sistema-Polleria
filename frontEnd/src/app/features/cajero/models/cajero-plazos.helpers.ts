@@ -17,7 +17,7 @@ export function minutosRestantes(desdeIso: string | undefined | null, plazoMinut
 
 /** Normalizes a ticket / tracking code so "POL-0042", "pol 42" and "0042" compare equal. */
 export function normalizarCodigoTicket(codigo: string | number | undefined | null): string {
-  return String(codigo ?? '')
+  return String(codigo ?? '').trim()
     .toUpperCase()
     .replace(/^POL/, '')
     .replace(/[^A-Z0-9]/g, '')

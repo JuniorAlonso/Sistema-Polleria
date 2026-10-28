@@ -90,6 +90,14 @@ describe('CheckoutComponent', () => {
       expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
     });
 
+    it('S1: creates the Yape OTP order waiting for payment, never RECIBIDO', () => {
+      payments.pagarConYapeOtp.and.returnValue(of(tx('APROBADO')));
+
+      component.confirmOrder();
+
+      expect((orders.createOrder.calls.mostRecent().args[0] as Order).estado).toBe('PENDIENTE_PAGO');
+    });
+
     it('shows the backend message of an HTTP error and keeps the cart', () => {
       payments.pagarConYapeOtp.and.returnValue(throwError(() => http400({ error: 'OTP vencido, genera otro' })));
 
@@ -127,6 +135,19 @@ describe('CheckoutComponent', () => {
   });
 
   describe('Mercado Pago', () => {
+    it('S1: creates the card order waiting for payment, never RECIBIDO', () => {
+      component.metodoPago.set('TARJETA');
+      payments.crearPreferenciaMercadoPago.and.returnValue(of({
+        preferenceId: 'x', initPoint: '', sandboxInitPoint: '', pagoId: 1, ordenId: 55
+      }));
+
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+      expect((orders.createOrder.calls.mostRecent().args[0] as Order).estado).toBe('PENDIENTE_PAGO');
+      expect(payments.crearPreferenciaMercadoPago).toHaveBeenCalledWith(55, 20);
+    });
+
     it('shows an error when the preference has no redirect url', () => {
       component.metodoPago.set('TARJETA');
       payments.crearPreferenciaMercadoPago.and.returnValue(of({

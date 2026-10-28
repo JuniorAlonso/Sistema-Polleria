@@ -201,4 +201,26 @@ describe('PaymentService — sin resultados de pago simulados', () => {
         .toBeTruthy();
     });
   });
+
+  describe('registrarCobroEfectivo', () => {
+    const pagoEfectivo = { ...pagoBackend, ordenId: 12, metodoPago: 'CONTRAENTREGA' as const, estado: 'APROBADO' as const };
+
+    it('S7: envía el codigoTicket de un recojo ContraPago', () => {
+      service.registrarCobroEfectivo(12, 30, 50, 20, 'POL-12').subscribe();
+
+      const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/pagos/cobro-efectivo'));
+      expect(req.request.body.codigoTicket).toBe('POL-12');
+      expect(req.request.body.ordenId).toBe(12);
+      req.flush(pagoEfectivo);
+    });
+
+    it('sin ticket (cobro del motorizado) no envía codigoTicket (comportamiento previo)', () => {
+      service.registrarCobroEfectivo(12, 30, 50, 20).subscribe();
+
+      const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/pagos/cobro-efectivo'));
+      expect(req.request.body.codigoTicket).toBeUndefined();
+      expect(req.request.body.montoRecibido).toBe(50);
+      req.flush(pagoEfectivo);
+    });
+  });
 });

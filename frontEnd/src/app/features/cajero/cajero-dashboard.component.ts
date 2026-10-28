@@ -312,12 +312,17 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly pagosPorVerificar = signal<PagoOrdenAdmin[]>([]);
   readonly errorCapturas = signal<string | null>(null);
 
-  /** PENDIENTE_PAGO orders joined with their capture; an order without capture keeps `pago: null`. */
+  /**
+   * PENDIENTE_PAGO orders joined with their capture; an order without capture keeps `pago: null`.
+   * Only WhatsApp orders (they pay by capture) or orders that already uploaded one belong here:
+   * a web order waiting for Mercado Pago / Yape OTP is paid by the gateway, not by the cashier.
+   */
   readonly capturasPendientes = computed<CapturaPendiente[]>(() => {
     const pagos = new Map(this.pagosPorVerificar().map(p => [String(p.ordenId), p]));
     return this.ordersService.orders()
       .filter(o => o.estado === 'PENDIENTE_PAGO')
-      .map(orden => ({ orden, pago: pagos.get(String(orden.id).replace(/^ord-/, '')) ?? null }));
+      .map(orden => ({ orden, pago: pagos.get(String(orden.id).replace(/^ord-/, '')) ?? null }))
+      .filter(({ orden, pago }) => orden.canalOrigen === 'WHATSAPP' || !!pago?.comprobanteUrl);
   });
 
   /** Pickup orders ready in store (backend LISTO_PARA_ENTREGAR). */
@@ -778,32 +783,40 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Pickup hand-over: the ticket must match the order code. ContraPago orders register the cash in
-   * payments-service, which moves the order to ENTREGADO; paid orders go straight to ENTREGADO.
+   * Pickup hand-over: the ticket must match the order code POL-<id> (the per-customer number is not
+   * accepted, it repeats across customers). ContraPago orders register the cash in payments-service,
+   * which moves the order to ENTREGADO; paid orders go straight to ENTREGADO. Both send the ticket,
+   * which the backend checks again.
    */
   entregarRecojo(event: EntregaRecojoEvent): void {
     const { orden } = event;
-    const esperado = normalizarCodigoTicket(orden.codigoSeguimiento);
+    const esperado = normalizarCodigoTicket(String(orden.id).replace(/^ord-/, ''));
     const recibido = normalizarCodigoTicket(event.codigoTicket);
-    const numeroCliente = orden.numeroCliente != null ? normalizarCodigoTicket(orden.numeroCliente) : null;
-    if (!recibido || (recibido !== esperado && recibido !== numeroCliente)) {
+    if (!recibido || recibido !== esperado) {
       this.notify.showError('Ticket no coincide', `El código no corresponde al pedido #${orden.codigoSeguimiento || orden.id}.`);
       return;
     }
 
     this.procesandoAccion.set(true);
     const codigo = orden.codigoSeguimiento || orden.id;
+    const codigoTicket = `POL-${recibido}`;
     if (orden.requiereCobroEfectivo) {
       const efectivo = Number(event.efectivoRecibido) || 0;
       const vuelto = Math.max(0, Math.round((efectivo - orden.total) * 100) / 100);
-      this.paymentService.registrarCobroEfectivo(orden.id, orden.total, efectivo, vuelto).subscribe({
+      this.paymentService.registrarCobroEfectivo(orden.id, orden.total, efectivo, vuelto, codigoTicket).subscribe({
         next: () => {
           if (this.cajaAbierta()) {
             this.financeService.registrarMovimiento({
               tipo: 'INGRESO',
               monto: orden.total,
               motivo: `Cobro recojo #${codigo} (${orden.cliente.nombre})`
-            }).subscribe();
+            }).subscribe({
+              // The cash is already collected: the cashier must record the income by hand.
+              error: (err) => this.notify.showError(
+                'No se registró el ingreso en caja',
+                `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${this.mensajeError(err, err?.message || '')}`.trim()
+              )
+            });
           }
           this.procesandoAccion.set(false);
           this.notify.showSuccess(`Pedido #${codigo} cobrado y entregado`, `Vuelto: S/ ${vuelto.toFixed(2)}`);
@@ -817,7 +830,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.ordersService.updateOrderStatus(orden.id, 'COMPLETADO').subscribe({
+    this.ordersService.updateOrderStatus(orden.id, 'COMPLETADO', undefined, codigoTicket).subscribe({
       next: () => {
         this.procesandoAccion.set(false);
         this.notify.showSuccess(`Pedido #${codigo} entregado`);

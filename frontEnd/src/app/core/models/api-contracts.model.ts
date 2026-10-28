@@ -161,6 +161,8 @@ export interface BackendOrdenResponse {
 export interface BackendActualizarEstadoRequest {
   estado: BackendOrdenEstado;
   repartidorId?: number;
+  /** Pickup ticket (POL-<id>), required by the backend for RECOJO -> ENTREGADO. */
+  codigoTicket?: string;
 }
 
 // --- 1.4 Pagos (:8083) ---
@@ -181,6 +183,8 @@ export interface BackendCobroEfectivoRequest {
   monto: number;
   montoRecibido?: number;
   vueltoEntregado?: number;
+  /** Pickup ticket (POL-<id>), required by the backend when the order is RECOJO. */
+  codigoTicket?: string;
 }
 
 // --- 1.5 Sanciones & Auditoría (:8081) ---

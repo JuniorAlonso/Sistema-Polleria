@@ -440,7 +440,7 @@ export class OrdersService {
   /**
    * RF19: Actualización de Estado de Orden
    */
-  updateOrderStatus(orderId: string, newStatus: OrderStatus, repartidorId?: number): Observable<Order> {
+  updateOrderStatus(orderId: string, newStatus: OrderStatus, repartidorId?: number, codigoTicket?: string): Observable<Order> {
     const cleanId = this.extractNumericId(orderId);
     const backendEstado = OrderAdapter.toBackendEstado(newStatus);
 
@@ -448,7 +448,9 @@ export class OrdersService {
     if (cleanId > 0) {
       const payload: BackendActualizarEstadoRequest = {
         estado: backendEstado,
-        repartidorId: repartidorId
+        repartidorId: repartidorId,
+        // Only pickup hand-overs carry the ticket; other transitions keep the previous body.
+        ...(codigoTicket ? { codigoTicket } : {})
       };
 
       return this.api.actualizarEstado(cleanId, payload).pipe(

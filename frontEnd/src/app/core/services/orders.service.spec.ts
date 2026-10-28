@@ -95,6 +95,24 @@ describe('OrdersService — updateOrderStatus', () => {
     expect(service.orders()[0].estado).toBe('CANCELADO');
   });
 
+  it('S7: envía el codigoTicket al entregar un pedido de recojo', () => {
+    service.updateOrderStatus('12', 'COMPLETADO', undefined, 'POL-12').subscribe({ next: () => undefined, error: () => undefined });
+
+    const req = http.expectOne(r => r.method === 'PATCH' && r.url.endsWith('/ordenes/12/estado'));
+    expect(req.request.body.estado).toBe('ENTREGADO');
+    expect(req.request.body.codigoTicket).toBe('POL-12');
+    req.flush({ message: 'x' }, { status: 400, statusText: 'Bad Request' });
+  });
+
+  it('S7: sin ticket (flujo de reparto) no envía codigoTicket (comportamiento previo)', () => {
+    service.updateOrderStatus('5', 'EN_REPARTO', 3).subscribe({ next: () => undefined, error: () => undefined });
+
+    const req = http.expectOne(r => r.method === 'PATCH');
+    expect(req.request.body.repartidorId).toBe(3);
+    expect(req.request.body.codigoTicket).toBeUndefined();
+    req.flush({ message: 'x' }, { status: 400, statusText: 'Bad Request' });
+  });
+
   describe('dispatchDeliveryOrder', () => {
     it('pasa primero por LISTO_COCINA cuando la orden está EN_PREPARACION y luego a EN_REPARTO con repartidorId', () => {
       service.orders.set([orden('EN_PREPARACION')]);
@@ -643,5 +661,16 @@ describe('OrdersService — createOrder desde un Order del checkout', () => {
     expect(req.request.body.estadoInicial).toBeUndefined();
     expect(req.request.body.montoPagaCon).toBeUndefined();
     req.flush({ id: 2, tipo: 'DELIVERY', estado: 'RECIBIDO', total: 24, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+  });
+
+  it('S1: una orden web por pagar (tarjeta / Yape OTP) se abre en PENDIENTE_PAGO, nunca en RECIBIDO', () => {
+    let creada: Order | null = null;
+    service.createOrder(orderBase('PENDIENTE_PAGO', { metodoPago: 'TARJETA' })).subscribe(o => (creada = o));
+
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+    expect(req.request.body.estadoInicial).toBe('PENDIENTE_PAGO');
+    req.flush({ id: 3, tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', total: 24, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+    expect(creada).not.toBeNull();
+    expect(creada!.estado).withContext('la vista muestra el pedido esperando pago').toBe('PENDIENTE_PAGO');
   });
 });
