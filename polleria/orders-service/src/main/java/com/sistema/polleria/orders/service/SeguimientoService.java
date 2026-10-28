@@ -1,10 +1,8 @@
 package com.sistema.polleria.orders.service;
 
-import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.CodigoSeguimiento;
 import com.sistema.polleria.orders.entity.Orden;
-import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.exception.DemasiadasSolicitudesException;
 import com.sistema.polleria.orders.repository.CodigoSeguimientoRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
@@ -150,9 +148,8 @@ public class SeguimientoService {
                 .filter(o -> numero.equals(TelefonoUtil.canonico(o.getTelefonoCliente())))
                 .orElseThrow(() -> new NoSuchElementException("Orden no encontrada: " + id));
 
-        ActualizarEstadoRequest cancelacion = new ActualizarEstadoRequest();
-        cancelacion.setEstado(OrdenEstado.CANCELADO);
-        return ordenService.actualizarEstado(orden.getId(), cancelacion, null);
+        // Same cancellation policy as the authenticated owner: only before the kitchen starts.
+        return ordenService.cancelarComoCliente(orden.getId(), null);
     }
 
     /**

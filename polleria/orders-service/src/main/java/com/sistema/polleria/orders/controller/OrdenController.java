@@ -55,7 +55,8 @@ public class OrdenController {
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ordenService.crear(request, extraerUserId(authentication)));
+                .body(ordenService.crear(request, extraerUserId(authentication),
+                        !esLlamadaInterna(claveInterna) && !esPersonal(authentication)));
     }
 
     /**
@@ -248,6 +249,11 @@ public class OrdenController {
                 && request.getEstado() != OrdenEstado.CANCELADO) {
             throw new AccessDeniedException(
                     "El flujo del pedido lo gestiona la pollería. Del tuyo solo puedes cancelarlo.");
+        }
+
+        // The owner's cancellation follows the customer policy (only before the kitchen starts).
+        if (!esLlamadaInterna(claveInterna) && !esPersonal(authentication)) {
+            return ResponseEntity.ok(ordenService.cancelarComoCliente(id, extraerUserId(authentication)));
         }
 
         return ResponseEntity.ok(ordenService.actualizarEstado(

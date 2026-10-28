@@ -73,7 +73,7 @@ class PertenenciaDeOrdenTest {
         // los pedidos. Es la misma convención que usa GET /ordenes/{id}.
         assertEquals(HttpStatus.NOT_FOUND, intento.getStatusCode(),
                 "un cliente no debe poder cambiar el estado del pedido de otro: " + intento.getBody());
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenId),
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(ordenId),
                 "el pedido ajeno debe quedar intacto tras el intento rechazado");
     }
 
@@ -95,8 +95,8 @@ class PertenenciaDeOrdenTest {
         assertEquals(HttpStatus.FORBIDDEN, intento.getStatusCode(),
                 "el dueño no debe poder avanzar el flujo operativo de su propio pedido: "
                         + intento.getBody());
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenId),
-                "el pedido debe seguir en RECIBIDO tras el intento rechazado");
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(ordenId),
+                "el pedido debe seguir en PENDIENTE_PAGO tras el intento rechazado");
     }
 
     @Test
@@ -122,13 +122,34 @@ class PertenenciaDeOrdenTest {
 
         Long ordenId = crearPedidoDeliveryDe(CLIENTE_DUENO, "911111113");
 
+        // The public checkout opens it in PENDIENTE_PAGO (S1); the payment gate keeps it out of the
+        // kitchen, but staff can still move it (here: cancel it).
         ResponseEntity<String> avance =
-                cambiarEstado(ordenId, "EN_PREPARACION", tokenDe(999L, "MOZO"));
+                cambiarEstado(ordenId, "CANCELADO", tokenDe(999L, "MOZO"));
 
         assertEquals(HttpStatus.OK, avance.getStatusCode(),
-                "el mozo debe poder avanzar cualquier pedido: " + avance.getBody());
-        assertEquals(OrdenEstado.EN_PREPARACION, estadoEnBaseDeDatos(ordenId),
-                "el avance del personal debe persistirse");
+                "el mozo debe poder cambiar el estado de cualquier pedido: " + avance.getBody());
+        assertEquals(OrdenEstado.CANCELADO, estadoEnBaseDeDatos(ordenId),
+                "el cambio del personal debe persistirse");
+    }
+
+    /** S4: the owner may cancel only before the kitchen starts; afterwards it answers 409. */
+    @Test
+    void elDuenoNoPuedeCancelarUnPedidoQueYaEstaEnCocina() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long ordenId = crearPedidoDeliveryDe(CLIENTE_DUENO, "911111115");
+        Orden orden = ordenRepository.findById(ordenId).orElseThrow();
+        orden.setEstado(OrdenEstado.EN_PREPARACION);
+        ordenRepository.save(orden);
+
+        ResponseEntity<String> intento =
+                cambiarEstado(ordenId, "CANCELADO", tokenDe(CLIENTE_DUENO, "CLIENTE"));
+
+        assertEquals(HttpStatus.CONFLICT, intento.getStatusCode(),
+                "el dueno no debe cancelar un pedido en cocina: " + intento.getBody());
+        assertEquals(OrdenEstado.EN_PREPARACION, estadoEnBaseDeDatos(ordenId));
     }
 
     private Long crearPedidoDeliveryDe(long clienteId, String telefono) throws Exception {

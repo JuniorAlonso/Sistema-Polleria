@@ -11,6 +11,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -64,6 +65,37 @@ class InicializadorEstadoOrdenCheckTest {
                         + "AND conname = 'ordenes_estado_check'",
                 Integer.class);
         assertTrue(checks != null && checks == 1, "exactly one estado check must remain");
+    }
+
+    /**
+     * A constraint that already lists every state is left alone: rebuilding it on every start takes
+     * an exclusive lock on {@code ordenes} and revalidates every row. The constraint is recreated
+     * with a distinctive (but complete) definition; a rebuild would replace it with the canonical one.
+     */
+    @Test
+    void unCheckYaCompletoNoSeReconstruye() {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        StringBuilder valores = new StringBuilder();
+        for (OrdenEstado estado : OrdenEstado.values()) {
+            valores.append("'").append(estado.name()).append("',");
+        }
+        jdbcTemplate.execute("ALTER TABLE ordenes DROP CONSTRAINT IF EXISTS ordenes_estado_check");
+        jdbcTemplate.execute("ALTER TABLE ordenes ADD CONSTRAINT ordenes_estado_check CHECK (estado IS NULL OR estado IN ("
+                + valores.substring(0, valores.length() - 1) + "))");
+        String antes = definicion();
+
+        inicializador.run(null);
+
+        assertEquals(antes, definicion(), "a complete constraint must not be rebuilt");
+    }
+
+    private String definicion() {
+        return jdbcTemplate.queryForObject(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        + "WHERE conrelid = 'ordenes'::regclass AND conname = 'ordenes_estado_check'",
+                String.class);
     }
 
     private boolean postgresDisponible() {

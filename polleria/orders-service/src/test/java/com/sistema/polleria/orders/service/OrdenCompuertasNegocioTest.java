@@ -144,8 +144,10 @@ class OrdenCompuertasNegocioTest {
         Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.LISTO);
         cargar(o);
         when(ordenRepository.save(any(Orden.class))).thenReturn(o);
+        ActualizarEstadoRequest entrega = req(OrdenEstado.ENTREGADO);
+        entrega.setCodigoTicket("POL-1"); // S7: pickup orders are handed over against their ticket
 
-        ordenService.actualizarEstado(1L, req(OrdenEstado.ENTREGADO), 7L, false);
+        ordenService.actualizarEstado(1L, entrega, 7L, false);
 
         assertEquals(OrdenEstado.ENTREGADO, o.getEstado());
     }

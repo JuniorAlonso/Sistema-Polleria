@@ -41,9 +41,22 @@ public class OrdenService {
             OrdenEstado.PEDIDO_FANTASMA
     );
 
+    /** Trusted creation (staff, internal callers): equivalent to {@code checkoutPublico = false}. */
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
+        return crear(request, usuarioId, false);
+    }
+
+    /**
+     * @param checkoutPublico true when the caller is neither staff nor an internal service. A public
+     *                        DELIVERY/RECOJO order cannot open in RECIBIDO: without an explicit state
+     *                        it waits for its payment (PENDIENTE_PAGO), so an abandoned payment
+     *                        expires and the kitchen never sees it before it is paid.
+     */
+    @Transactional
+    public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId, boolean checkoutPublico) {
         validarRequest(request);
+        OrdenEstado estadoInicial = resolverEstadoInicial(request, checkoutPublico);
 
         // Validación de sanciones en backend para ContraPago (Anti-Bypass de cliente)
         if (request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION) {
@@ -58,7 +71,7 @@ public class OrdenService {
         Orden orden = Orden.builder()
                 .tipo(request.getTipo())
                 .canalOrigen(resolverCanalOrigen(request))
-                .estado(request.getEstadoInicial() != null ? request.getEstadoInicial() : OrdenEstado.RECIBIDO)
+                .estado(estadoInicial)
                 .clienteId(usuarioId)
                 // En salón el usuario autenticado es el mozo que toma la comanda: se registra
                 // también en mozoId para que la ventana del mozo y el admin lo muestren.
@@ -106,6 +119,14 @@ public class OrdenService {
 
         orden.getItems().addAll(items);
         orden.recalcularTotal();
+        // ContraPago: the courier/cashier must be able to give change. An amount below the total
+        // (delivery fee included) would leave the order unpayable at the door.
+        if (estadoInicial == OrdenEstado.PENDIENTE_CONFIRMACION && orden.getMontoPagaCon() != null
+                && orden.getMontoPagaCon().compareTo(orden.getTotal()) < 0) {
+            throw new IllegalArgumentException("El monto con el que pagas (S/ "
+                    + soles(orden.getMontoPagaCon()) + ") no cubre el total del pedido (S/ "
+                    + soles(orden.getTotal()) + ")");
+        }
         if (orden.getMontoPagaCon() != null && orden.getMontoPagaCon().compareTo(orden.getTotal()) > 0) {
             orden.setVueltoEstimado(orden.getMontoPagaCon().subtract(orden.getTotal()));
         }
@@ -175,6 +196,25 @@ public class OrdenService {
             return request.getCanalOrigen();
         }
         return request.getTipo() == OrdenTipo.SALON ? CanalOrigen.SALON : CanalOrigen.WEB;
+    }
+
+    private OrdenEstado resolverEstadoInicial(CrearOrdenRequest request, boolean checkoutPublico) {
+        OrdenEstado pedido = request.getEstadoInicial();
+        if (!checkoutPublico) {
+            return pedido != null ? pedido : OrdenEstado.RECIBIDO;
+        }
+        if (pedido == OrdenEstado.RECIBIDO) {
+            throw new IllegalArgumentException("El checkout público no puede abrir un pedido en RECIBIDO: "
+                    + "use PENDIENTE_PAGO o PENDIENTE_CONFIRMACION");
+        }
+        if (pedido == null && (request.getTipo() == OrdenTipo.DELIVERY || request.getTipo() == OrdenTipo.RECOJO)) {
+            return OrdenEstado.PENDIENTE_PAGO;
+        }
+        return pedido != null ? pedido : OrdenEstado.RECIBIDO;
+    }
+
+    private static String soles(java.math.BigDecimal monto) {
+        return monto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
     /** Ítem de comanda validando que el producto exista y esté disponible. */
@@ -264,6 +304,7 @@ public class OrdenService {
         if (!llamadaInterna) {
             validarCompuertasDeNegocio(orden, request.getEstado());
         }
+        validarTicketDeRecojo(orden, request);
 
         boolean esDelivery = orden.getTipo() == OrdenTipo.DELIVERY;
         if (request.getEstado() == OrdenEstado.EN_CAMINO) {
@@ -318,6 +359,54 @@ public class OrdenService {
         }
 
         return OrdenResponse.from(orden);
+    }
+
+    /** States from which the customer (guest or owner) may still cancel: nothing was cooked yet. */
+    private static final List<OrdenEstado> ESTADOS_CANCELABLES_POR_CLIENTE = List.of(
+            OrdenEstado.RECIBIDO,
+            OrdenEstado.PENDIENTE_PAGO,
+            OrdenEstado.PENDIENTE_CONFIRMACION
+    );
+
+    /**
+     * Cancellation requested by the customer (guest tracking access or the authenticated owner).
+     * The state machine runs first, so a delivered or on-the-way order still answers 400; an order
+     * the kitchen already started answers 409. Cancelling an already CANCELADO order stays a no-op.
+     */
+    @Transactional
+    public OrdenResponse cancelarComoCliente(Long id, Long usuarioId) {
+        Orden orden = buscarOFallar(id);
+        if (orden.getEstado() != OrdenEstado.CANCELADO) {
+            validarTransicionEstado(orden.getEstado(), OrdenEstado.CANCELADO, orden.getTipo());
+            if (!ESTADOS_CANCELABLES_POR_CLIENTE.contains(orden.getEstado())) {
+                throw new ConflictoDeEstadoException(
+                        "El pedido #" + id + " ya está " + orden.getEstado()
+                        + " y no puede cancelarse; comunícate con la pollería.");
+            }
+        }
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.CANCELADO);
+        return actualizarEstado(id, req, usuarioId);
+    }
+
+    /**
+     * A RECOJO order is handed over only against its ticket (POL-&lt;order id&gt;), compared ignoring
+     * case, spaces and dashes. The customer number is not accepted: it is short and guessable.
+     */
+    private void validarTicketDeRecojo(Orden orden, ActualizarEstadoRequest request) {
+        if (orden.getTipo() != OrdenTipo.RECOJO || request.getEstado() != OrdenEstado.ENTREGADO
+                || orden.getEstado() == OrdenEstado.ENTREGADO) {
+            return;
+        }
+        String codigo = request.getCodigoTicket();
+        if (codigo == null || codigo.isBlank()) {
+            throw new IllegalArgumentException("El código de ticket es obligatorio para entregar el pedido de recojo #"
+                    + orden.getId() + ".");
+        }
+        String normalizado = codigo.replaceAll("[\\s-]", "").toUpperCase(java.util.Locale.ROOT);
+        if (!normalizado.equals("POL" + orden.getId())) {
+            throw new IllegalArgumentException("El código de ticket no corresponde al pedido #" + orden.getId() + ".");
+        }
     }
 
     /**
@@ -409,13 +498,25 @@ public class OrdenService {
     /**
      * Confirma la llamada de validación para un pedido en PENDIENTE_CONFIRMACION (ContraPago).
      * Pasa la orden a PREPARANDO para que cocina comience a elaborar.
+     *
+     * After the 15 min window the order is cancelled (as the scheduler would) and the call answers
+     * 409. {@code noRollbackFor} keeps that cancellation even though the method throws.
      */
-    @Transactional
+    @Transactional(noRollbackFor = ConflictoDeEstadoException.class)
     public OrdenResponse confirmarLlamada(Long id, Long cajeroId) {
         Orden orden = buscarOFallarConBloqueo(id);
         if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+        }
+        if (orden.getCreadoEn() != null
+                && LocalDateTime.now().isAfter(orden.getCreadoEn().plusMinutes(MINUTOS_PLAZO_CONFIRMACION))) {
+            log.warn("Pedido #{} cancelado: la llamada se confirmó fuera del plazo de {} min",
+                    id, MINUTOS_PLAZO_CONFIRMACION);
+            ActualizarEstadoRequest cancelacion = new ActualizarEstadoRequest();
+            cancelacion.setEstado(OrdenEstado.CANCELADO);
+            actualizarEstado(id, cancelacion, cajeroId);
+            throw new ConflictoDeEstadoException("El plazo de 15 minutos para confirmar la llamada venció");
         }
         orden.setLlamadaConfirmacionAt(LocalDateTime.now());
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
@@ -497,6 +598,8 @@ public class OrdenService {
         return actualizarEstado(id, req, usuarioId);
     }
 
+    /** Window to confirm a ContraPago call, counted from the order creation (same SLA as the scheduler). */
+    static final long MINUTOS_PLAZO_CONFIRMACION = 15;
     /** Plazo en puerta (delivery) antes de poder declarar el pedido fantasma. */
     static final long MINUTOS_ESPERA_PUERTA = 30;
     /** Plazo en tienda (recojo) antes de poder declarar el pedido fantasma. */
@@ -588,7 +691,15 @@ public class OrdenService {
             throw new IllegalArgumentException("Transición de estado inválida: " + actual + " → " + nuevo);
         }
 
-        // Any active order can be cancelled
+        // An order on its way or at the door has left the store: it ends as ENTREGADO or
+        // PEDIDO_FANTASMA, never cancelled (the food and the courier trip are already spent).
+        if (nuevo == OrdenEstado.CANCELADO
+                && (actual == OrdenEstado.EN_CAMINO || actual == OrdenEstado.EN_PUERTA)) {
+            throw new IllegalArgumentException("El pedido ya salió a reparto (" + actual
+                    + ") y no se puede cancelar: márcalo ENTREGADO o PEDIDO_FANTASMA.");
+        }
+
+        // Any other active order can be cancelled
         if (nuevo == OrdenEstado.CANCELADO) return;
 
         // Transitions to PEDIDO_FANTASMA

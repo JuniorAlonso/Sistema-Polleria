@@ -15,4 +15,7 @@ public class ActualizarEstadoRequest {
     private OrdenEstado estado;
 
     private Long repartidorId;
+
+    // Pickup ticket shown by the customer (POL-<order id>). Required to deliver a RECOJO order.
+    private String codigoTicket;
 }

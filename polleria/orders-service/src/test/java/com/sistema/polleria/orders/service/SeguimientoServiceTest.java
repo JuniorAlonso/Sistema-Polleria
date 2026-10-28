@@ -141,21 +141,20 @@ class SeguimientoServiceTest {
         Orden propia = Orden.builder().id(7L).tipo(OrdenTipo.DELIVERY)
                 .telefonoCliente("51 938 924 552").items(new ArrayList<>()).build();
         when(ordenRepository.findById(7L)).thenReturn(Optional.of(propia));
-        when(ordenService.actualizarEstado(eq(7L), any(), isNull())).thenReturn(OrdenResponse.from(propia));
+        when(ordenService.cancelarComoCliente(eq(7L), isNull())).thenReturn(OrdenResponse.from(propia));
 
         seguimientoService.cancelarPedido(7L, token);
 
-        ArgumentCaptor<ActualizarEstadoRequest> capturado = ArgumentCaptor.forClass(ActualizarEstadoRequest.class);
-        verify(ordenService).actualizarEstado(eq(7L), capturado.capture(), isNull());
-        assertEquals(OrdenEstado.CANCELADO, capturado.getValue().getEstado(),
-                "reutiliza el flujo del personal en vez de implementar su propia cancelación");
+        // S4: the guest goes through the customer cancellation policy, not the staff PATCH.
+        verify(ordenService).cancelarComoCliente(eq(7L), isNull());
+        verify(ordenService, never()).actualizarEstado(any(), any(), any());
 
         Orden ajena = Orden.builder().id(8L).telefonoCliente("911222333").items(new ArrayList<>()).build();
         when(ordenRepository.findById(8L)).thenReturn(Optional.of(ajena));
 
         assertThrows(NoSuchElementException.class, () -> seguimientoService.cancelarPedido(8L, token),
                 "el pedido de otro celular responde 404");
-        verify(ordenService, never()).actualizarEstado(eq(8L), any(), any());
+        verify(ordenService, never()).cancelarComoCliente(eq(8L), any());
     }
 
     private CodigoSeguimiento vigente(String valor) {

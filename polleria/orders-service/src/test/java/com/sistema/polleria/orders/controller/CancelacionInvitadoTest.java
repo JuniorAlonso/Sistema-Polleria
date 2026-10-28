@@ -99,7 +99,7 @@ class CancelacionInvitadoTest {
         // los pedidos de la pollería. Es la misma convención que GET /ordenes/{id}.
         assertEquals(HttpStatus.NOT_FOUND, intento.getStatusCode(),
                 "un celular no debe poder cancelar el pedido de otro: " + intento.getBody());
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenAjena),
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(ordenAjena),
                 "el pedido ajeno debe quedar intacto tras el intento rechazado");
     }
 
@@ -126,7 +126,7 @@ class CancelacionInvitadoTest {
         assertEquals(HttpStatus.BAD_REQUEST, tokenFalso.getStatusCode(),
                 "un acceso de seguimiento alterado debe rechazarse: " + tokenFalso.getBody());
 
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenId),
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(ordenId),
                 "el pedido debe seguir intacto tras los intentos rechazados");
 
         // El mismo pedido, con el acceso que sí corresponde, se cancela: los rechazos de arriba
@@ -144,9 +144,8 @@ class CancelacionInvitadoTest {
                 "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
 
         Long ordenId = crearPedidoInvitado("922000105");
-        avanzarComoPersonal(ordenId, "EN_PREPARACION");
-        avanzarComoPersonal(ordenId, "LISTO");
-        avanzarComoPersonal(ordenId, "ENTREGADO");
+        // The public order waits for its payment (S1); it is forced to ENTREGADO directly.
+        forzarEstado(ordenId, OrdenEstado.ENTREGADO);
 
         String token = tokenDeSeguimiento("922000105");
         ResponseEntity<String> intento = cancelar(ordenId, token);
@@ -157,6 +156,51 @@ class CancelacionInvitadoTest {
                 "el pedido entregado debe quedar intacto tras el intento rechazado");
     }
 
+
+    /** S4: once the kitchen started, the guest can no longer cancel (409). */
+    @Test
+    void unInvitadoNoPuedeCancelarUnPedidoQueYaEstaEnCocina() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long ordenId = crearPedidoInvitado("922000110");
+        forzarEstado(ordenId, OrdenEstado.EN_PREPARACION);
+        String token = tokenDeSeguimiento("922000110");
+
+        ResponseEntity<String> intento = cancelar(ordenId, token);
+
+        assertEquals(HttpStatus.CONFLICT, intento.getStatusCode(),
+                "un pedido en cocina no lo cancela el invitado: " + intento.getBody());
+        assertEquals(OrdenEstado.EN_PREPARACION, estadoEnBaseDeDatos(ordenId));
+    }
+
+    /**
+     * S1: the public checkout cannot open RECIBIDO (it would reach the kitchen before payment) and
+     * without a state it opens PENDIENTE_PAGO. Staff keep RECIBIDO as default.
+     */
+    @Test
+    void elCheckoutPublicoEsperaElPagoYElPersonalSigueAbriendoEnRecibido() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        Long publico = crearPedidoInvitado("922000111");
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(publico));
+
+        Map<String, Object> conRecibido = new java.util.HashMap<>(pedidoDelivery("922000111"));
+        conRecibido.put("estadoInicial", "RECIBIDO");
+        ResponseEntity<String> rechazado = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(conRecibido, jsonHeaders()), String.class);
+        assertEquals(HttpStatus.BAD_REQUEST, rechazado.getStatusCode(),
+                "el checkout publico no puede abrir RECIBIDO: " + rechazado.getBody());
+
+        HttpHeaders personal = jsonHeaders();
+        personal.setBearerAuth(tokenDePersonal(999L, "CAJERO"));
+        ResponseEntity<String> delPersonal = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(pedidoDelivery("922000112"), personal), String.class);
+        assertEquals(HttpStatus.CREATED, delPersonal.getStatusCode(), delPersonal.getBody());
+        assertEquals(OrdenEstado.RECIBIDO,
+                estadoEnBaseDeDatos(objectMapper.readTree(delPersonal.getBody()).path("id").asLong()));
+    }
 
     @Test
     void unAccesoDePersonalNoSirveComoTokenDeSeguimiento() throws Exception {
@@ -171,7 +215,7 @@ class CancelacionInvitadoTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, intento.getStatusCode(),
                 "un token de personal no debe servir para cancelar como invitado: " + intento.getBody());
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(ordenId),
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(ordenId),
                 "el pedido debe quedar intacto tras el intento rechazado");
     }
 
@@ -204,7 +248,7 @@ class CancelacionInvitadoTest {
 
         assertEquals(HttpStatus.OK, cancelar(primero, token).getStatusCode());
         assertEquals(OrdenEstado.CANCELADO, estadoEnBaseDeDatos(primero));
-        assertEquals(OrdenEstado.RECIBIDO, estadoEnBaseDeDatos(segundo),
+        assertEquals(OrdenEstado.PENDIENTE_PAGO, estadoEnBaseDeDatos(segundo),
                 "el otro pedido del mismo celular no se toca: la cancelación es por id");
     }
 
@@ -227,16 +271,8 @@ class CancelacionInvitadoTest {
         HttpHeaders cabeceras = new HttpHeaders();
         cabeceras.setContentType(MediaType.APPLICATION_JSON);
 
-        Map<String, Object> pedido = Map.of(
-                "tipo", "DELIVERY",
-                "direccionEntrega", "Av. Prueba 123",
-                "referencia", "Portón azul",
-                "nombreCliente", "Cliente San Pollo",
-                "telefonoCliente", telefono,
-                "items", List.of(Map.of("productoId", productoIdDisponible(), "cantidad", 1)));
-
         ResponseEntity<String> creada = rest.exchange("/ordenes", HttpMethod.POST,
-                new HttpEntity<>(pedido, cabeceras), String.class);
+                new HttpEntity<>(pedidoDelivery(telefono), cabeceras), String.class);
 
         assertEquals(HttpStatus.CREATED, creada.getStatusCode(),
                 "no se pudo preparar el pedido anónimo de la prueba: " + creada.getBody());
@@ -280,15 +316,20 @@ class CancelacionInvitadoTest {
                 HttpMethod.POST, new HttpEntity<>(null, cabeceras), String.class);
     }
 
-    private void avanzarComoPersonal(Long ordenId, String estado) {
-        HttpHeaders cabeceras = jsonHeaders();
-        cabeceras.setBearerAuth(tokenDePersonal(999L, "MOZO"));
+    private Map<String, Object> pedidoDelivery(String telefono) {
+        return Map.of(
+                "tipo", "DELIVERY",
+                "direccionEntrega", "Av. Prueba 123",
+                "referencia", "Portón azul",
+                "nombreCliente", "Cliente San Pollo",
+                "telefonoCliente", telefono,
+                "items", List.of(Map.of("productoId", productoIdDisponible(), "cantidad", 1)));
+    }
 
-        ResponseEntity<String> respuesta = rest.exchange("/ordenes/" + ordenId + "/estado",
-                HttpMethod.PATCH, new HttpEntity<>(Map.of("estado", estado), cabeceras), String.class);
-
-        assertEquals(HttpStatus.OK, respuesta.getStatusCode(),
-                "no se pudo preparar el pedido en " + estado + ": " + respuesta.getBody());
+    private void forzarEstado(Long ordenId, OrdenEstado estado) {
+        Orden orden = ordenRepository.findById(ordenId).orElseThrow();
+        orden.setEstado(estado);
+        ordenRepository.save(orden);
     }
 
     private HttpHeaders jsonHeaders() {
