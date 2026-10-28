@@ -6,7 +6,7 @@
 
 const MAX_DETALLE = 300;
 
-/** Reads the body safely: the `error`/`mensaje`/`message` field of a JSON body, or the plain text. */
+/** Reads the body safely: the `error`/`mensaje`/`message`/`detail` (Spring ProblemDetail) field of a JSON body, or the plain text. */
 async function leerDetalle(res) {
     if (!res) return '';
     let texto = '';
@@ -25,7 +25,7 @@ async function leerDetalle(res) {
     try {
         const cuerpo = JSON.parse(texto);
         if (cuerpo && typeof cuerpo === 'object') {
-            const campo = [cuerpo.error, cuerpo.mensaje, cuerpo.message].find(v => typeof v === 'string' && v.trim());
+            const campo = [cuerpo.error, cuerpo.mensaje, cuerpo.message, cuerpo.detail].find(v => typeof v === 'string' && v.trim());
             if (campo) texto = campo.trim();
         }
     } catch (_) {

@@ -315,3 +315,10 @@ test('S11 (preserva): EN_CAMINO sigue liberando y LISTO no toca la conversación
 
     assert.strictEqual((await conversacion.get(CELULAR)).estado, 'MENU');
 });
+
+test('lee el campo detail de un ProblemDetail de Spring (payments-service)', async () => {
+    const { leerDetalle } = require('../src/pedidos/errorHttp');
+    const cuerpo = JSON.stringify({ title: 'Operación no permitida', status: 409, detail: 'El pedido #95 ya no está activo (estado CANCELADO)' });
+    const detalle = await leerDetalle({ text: async () => cuerpo });
+    assert.strictEqual(detalle, 'El pedido #95 ya no está activo (estado CANCELADO)');
+});
