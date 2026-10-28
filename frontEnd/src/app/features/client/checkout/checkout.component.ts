@@ -1,4 +1,4 @@
-import { etiquetaPedido } from '../../../core/utils/pedido';
+import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -415,6 +415,8 @@ export class CheckoutComponent implements OnInit {
   readonly sancionNoVerificada = signal<boolean>(false);
   /** Order already created for a Yape OTP attempt, kept so a retry pays the SAME order. */
   private ordenYapePendiente: Order | null = null;
+  /** Order already created for a card attempt, kept so a retry asks Mercado Pago for the SAME order. */
+  private ordenTarjetaPendiente: Order | null = null;
 
   direccion = '';
   celular = '';
@@ -514,14 +516,18 @@ export class CheckoutComponent implements OnInit {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
   }
 
-  /** Backend message first (`error.error` / `error.message`); never the generic HttpErrorResponse text. */
+  /**
+   * Backend message first (`error.error` / `error.message`, then the Spring ProblemDetail `detail`);
+   * never the generic HttpErrorResponse text.
+   */
   private mensajeError(err: unknown, porDefecto: string): string {
     const cuerpo = (err as { error?: unknown })?.error;
     if (typeof cuerpo === 'string' && cuerpo.trim()) return cuerpo;
     if (cuerpo && typeof cuerpo === 'object') {
-      const c = cuerpo as { error?: unknown; message?: unknown };
+      const c = cuerpo as { error?: unknown; message?: unknown; detail?: unknown };
       if (typeof c.error === 'string' && c.error.trim()) return c.error;
       if (typeof c.message === 'string' && c.message.trim()) return c.message;
+      if (typeof c.detail === 'string' && c.detail.trim()) return c.detail;
     }
     if (err instanceof HttpErrorResponse) {
       return porDefecto;
@@ -631,7 +637,10 @@ export class CheckoutComponent implements OnInit {
         if (tx.estado === 'APROBADO') {
           this.ordenYapePendiente = null;
           this.cart.clearCart();
-          this.notify.showSuccess('¡Pago Yape aprobado!', 'Tu pedido ingresó directo a preparación en cocina.');
+          // A guest cannot read GET /ordenes/{id}: tracking falls back to this local copy, which
+          // must not keep saying the payment is pending.
+          this.ordersService.registerClientOrder({ ...createdOrder, estado: 'EN_PREPARACION', updatedAt: new Date().toISOString() });
+          this.notify.showSuccess('¡Pago Yape aprobado!', this.conTicket(createdOrder, 'Tu pedido ingresó directo a preparación en cocina.'));
           this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
         } else {
           // Not approved: keep the cart and the created order so the OTP can be retried.
@@ -675,39 +684,57 @@ export class CheckoutComponent implements OnInit {
       updatedAt: new Date().toISOString()
     };
 
+    // Retry after a preference failure: ask for the SAME order, never create a second one.
+    if (this.ordenTarjetaPendiente) {
+      this.pagarConTarjeta(this.ordenTarjetaPendiente);
+      return;
+    }
+
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        const realOrderId = typeof createdOrder.id === 'number'
-          ? createdOrder.id
-          : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
-
-        this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
-          next: (pref) => {
-            this.isProcessing.set(false);
-            const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
-            if (redirectUrl) {
-              this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
-              setTimeout(() => {
-                window.location.href = redirectUrl;
-              }, 800);
-            } else {
-              this.notify.showError(
-                'Mercado Pago no devolvió el enlace de pago',
-                'Tu pedido quedó registrado, pero no pudimos iniciar el pago. Intenta de nuevo o elige otro medio.'
-              );
-            }
-          },
-          error: (err) => {
-            this.isProcessing.set(false);
-            this.notify.showError('No se pudo conectar con Mercado Pago', this.mensajeError(err, 'Intenta nuevamente.'));
-          }
-        });
+        this.ordenTarjetaPendiente = createdOrder;
+        this.pagarConTarjeta(createdOrder);
       },
       error: (err) => {
         this.isProcessing.set(false);
         this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
       }
     });
+  }
+
+  private pagarConTarjeta(createdOrder: Order): void {
+    const realOrderId = typeof createdOrder.id === 'number'
+      ? createdOrder.id
+      : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
+
+    this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
+      next: (pref) => {
+        this.isProcessing.set(false);
+        const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
+        if (redirectUrl) {
+          this.ordenTarjetaPendiente = null;
+          this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+          setTimeout(() => {
+            window.location.href = redirectUrl;
+          }, 800);
+        } else {
+          this.notify.showError(
+            'Mercado Pago no devolvió el enlace de pago',
+            'Tu pedido quedó registrado, pero no pudimos iniciar el pago. Intenta de nuevo o elige otro medio.'
+          );
+        }
+      },
+      error: (err) => {
+        this.isProcessing.set(false);
+        this.notify.showError('No se pudo conectar con Mercado Pago', this.mensajeError(err, 'Intenta nuevamente.'));
+      }
+    });
+  }
+
+  /** Pickup orders are handed over only against POL-<id>: the customer learns it right away. */
+  private conTicket(order: Order, mensaje: string): string {
+    const ticket = ticketRecojo({ id: order.id, tipo: order.tipo || this.tipoPedido() });
+    return ticket ? `${mensaje} Tu ticket de recojo es ${ticket}.` : mensaje;
   }
 
   private procesarContraPago(celularCliente: string): void {
@@ -752,20 +779,27 @@ export class CheckoutComponent implements OnInit {
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
+        // The order is already registered at this point: the customer must always land on
+        // its tracking page. The PENDIENTE payment is optional (the cash collection creates it
+        // when missing), and POST /pagos requires a session, so guests skip it.
+        const finalizar = () => {
+          this.cart.clearCart();
+          this.isProcessing.set(false);
+          this.notify.showSuccess(
+            `¡${etiquetaPedido(createdOrder)} registrado!`,
+            this.conTicket(createdOrder, 'Te llamaremos en breve al ' + celularCliente + ' para confirmar tu pedido y vuelto.')
+          );
+          this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
+        };
+        if (!currentUser) {
+          finalizar();
+          return;
+        }
         this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, 'EFECTIVO_CONTRAENTREGA', celularCliente).subscribe({
-          next: () => {
-            this.cart.clearCart();
-            this.isProcessing.set(false);
-            this.notify.showSuccess(
-              `¡${etiquetaPedido(createdOrder)} registrado!`,
-              'Te llamaremos en breve al ' + celularCliente + ' para confirmar tu pedido y vuelto.'
-            );
-            this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
-          },
+          next: finalizar,
           error: (err) => {
-            // Keep the cart and stay here: the registration did not succeed.
-            this.isProcessing.set(false);
-            this.notify.showError('No se pudo registrar el pedido contra entrega', this.mensajeError(err, 'Intenta nuevamente.'));
+            console.warn('No se pudo pre-registrar el pago contra entrega; se registrará al cobrar.', err);
+            finalizar();
           }
         });
       },

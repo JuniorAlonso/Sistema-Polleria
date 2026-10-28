@@ -28,7 +28,7 @@ describe('CheckoutComponent', () => {
   const http400 = (cuerpo: unknown) => new HttpErrorResponse({ status: 400, error: cuerpo, statusText: 'Bad Request' });
 
   beforeEach(async () => {
-    orders = jasmine.createSpyObj<OrdersService>('OrdersService', ['createOrder']);
+    orders = jasmine.createSpyObj<OrdersService>('OrdersService', ['createOrder', 'registerClientOrder']);
     orders.createOrder.and.returnValue(of(creada));
     payments = jasmine.createSpyObj<PaymentService>('PaymentService', ['pagarConYapeOtp', 'iniciarPago', 'crearPreferenciaMercadoPago']);
     notify = jasmine.createSpyObj<NotificationService>('NotificationService', ['showError', 'showSuccess', 'showInfo']);
@@ -107,24 +107,64 @@ describe('CheckoutComponent', () => {
       expect(cart.isEmpty()).toBeFalse();
       expect(navigate).not.toHaveBeenCalled();
     });
+
+    it('shows the ProblemDetail detail sent by payments-service', () => {
+      payments.pagarConYapeOtp.and.returnValue(throwError(() => http400({
+        type: 'about:blank', title: 'Bad Request', status: 400, detail: 'La orden ya no espera pago'
+      })));
+
+      component.confirmOrder();
+
+      expect(notify.showError).toHaveBeenCalledWith('Pago Yape rechazado', 'La orden ya no espera pago');
+    });
+
+    it('marks the locally registered order as in preparation once Yape approves, before navigating', () => {
+      payments.pagarConYapeOtp.and.returnValue(of(tx('APROBADO')));
+      navigate.and.callFake(() => {
+        expect(orders.registerClientOrder).toHaveBeenCalledWith(jasmine.objectContaining({ id: '55', estado: 'EN_PREPARACION' }));
+        return Promise.resolve(true);
+      });
+
+      component.confirmOrder();
+
+      expect(navigate).toHaveBeenCalled();
+    });
+
+    it('does not touch the registered order when the OTP is rejected', () => {
+      payments.pagarConYapeOtp.and.returnValue(of(tx('RECHAZADO')));
+      component.confirmOrder();
+      expect(orders.registerClientOrder).not.toHaveBeenCalled();
+    });
   });
 
   describe('contra pago', () => {
     beforeEach(() => component.metodoPago.set('EFECTIVO_CONTRAENTREGA'));
 
-    it('does not swallow an iniciarPago failure: keeps the cart, shows the backend message, no navigation', () => {
-      payments.iniciarPago.and.returnValue(throwError(() => http400({ message: 'Teléfono bloqueado para efectivo' })));
+    it('the order already exists when iniciarPago fails: reports it registered, clears the cart and navigates', () => {
+      payments.iniciarPago.and.returnValue(throwError(() => http400({ message: 'Ya existe un pago' })));
 
       component.confirmOrder();
 
-      expect(notify.showError).toHaveBeenCalledWith(
-        'No se pudo registrar el pedido contra entrega', 'Teléfono bloqueado para efectivo');
-      expect(cart.isEmpty()).toBeFalse();
-      expect(navigate).not.toHaveBeenCalled();
+      expect(notify.showError).not.toHaveBeenCalled();
+      expect(notify.showSuccess).toHaveBeenCalled();
+      expect(cart.isEmpty()).toBeTrue();
+      expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
       expect(component.isProcessing()).toBeFalse();
     });
 
-    it('clears the cart and navigates only after iniciarPago succeeds', () => {
+    it('a guest never calls iniciarPago (POST /pagos requires a session) and still gets the tracking page', () => {
+      auth.currentUser = () => null;
+
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+      expect(payments.iniciarPago).not.toHaveBeenCalled();
+      expect(notify.showError).not.toHaveBeenCalled();
+      expect(cart.isEmpty()).toBeTrue();
+      expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
+    });
+
+    it('clears the cart and navigates after iniciarPago succeeds', () => {
       payments.iniciarPago.and.returnValue(of(tx('PENDIENTE')));
 
       component.confirmOrder();
@@ -132,9 +172,52 @@ describe('CheckoutComponent', () => {
       expect(cart.isEmpty()).toBeTrue();
       expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
     });
+
+    it('a pickup order tells the customer the ticket POL-<id> in the success toast', () => {
+      auth.currentUser = () => null;
+      component.confirmOrder();
+      expect(notify.showSuccess.calls.mostRecent().args[1]).toContain('POL-55');
+    });
+
+    it('a delivery order does not mention a pickup ticket', () => {
+      auth.currentUser = () => null;
+      component.tipoPedido.set('DELIVERY');
+      component.direccion = 'Av. Lima 1';
+      component.confirmOrder();
+      expect(notify.showSuccess.calls.mostRecent().args[1]).not.toContain('ticket');
+    });
   });
 
   describe('Mercado Pago', () => {
+    const sinUrl = { preferenceId: 'x', initPoint: '', sandboxInitPoint: '', pagoId: 1, ordenId: 55 };
+
+    it('a retry after a preference failure requests the preference for the SAME order', () => {
+      component.metodoPago.set('TARJETA');
+      payments.crearPreferenciaMercadoPago.and.returnValues(
+        throwError(() => http400({ detail: 'Mercado Pago no disponible' })),
+        of(sinUrl)
+      );
+
+      component.confirmOrder();
+      expect(notify.showError).toHaveBeenCalledWith('No se pudo conectar con Mercado Pago', 'Mercado Pago no disponible');
+
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+      expect(payments.crearPreferenciaMercadoPago).toHaveBeenCalledTimes(2);
+      expect(payments.crearPreferenciaMercadoPago.calls.mostRecent().args).toEqual([55, 20]);
+    });
+
+    it('a retry with no redirect url also reuses the SAME order', () => {
+      component.metodoPago.set('TARJETA');
+      payments.crearPreferenciaMercadoPago.and.returnValue(of(sinUrl));
+
+      component.confirmOrder();
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+    });
+
     it('S1: creates the card order waiting for payment, never RECIBIDO', () => {
       component.metodoPago.set('TARJETA');
       payments.crearPreferenciaMercadoPago.and.returnValue(of({

@@ -17,6 +17,8 @@ describe('OrderTrackingComponent', () => {
   let notify: jasmine.SpyObj<NotificationService>;
   const myOrders = signal<Order[]>([]);
   const token = signal<string | null>(null);
+  const userRole = signal<string | null>(null);
+  let ordersMock: { cancelarPedidoInvitado: jasmine.Spy; updateOrderStatus: jasmine.Spy; loadMyOrders: jasmine.Spy };
   const NOW = Date.parse('2026-05-01T12:00:00Z');
   const minAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
 
@@ -52,6 +54,7 @@ describe('OrderTrackingComponent', () => {
   beforeEach(async () => {
     myOrders.set([]);
     token.set(null);
+    userRole.set(null);
     payments = jasmine.createSpyObj<PaymentService>('PaymentService', ['subirComprobante']);
     notify = jasmine.createSpyObj<NotificationService>('NotificationService', ['showError', 'showSuccess', 'showInfo']);
 
@@ -61,13 +64,15 @@ describe('OrderTrackingComponent', () => {
         provideRouter([]),
         {
           provide: OrdersService,
-          useValue: {
+          useValue: ordersMock = {
             myOrders,
             seguimientoTelefono: signal<string | null>(null),
             loadMyOrders: jasmine.createSpy('loadMyOrders'),
             getOrderByTrackingCode: () => of(undefined),
-            registerClientOrder: () => undefined
-          }
+            registerClientOrder: () => undefined,
+            cancelarPedidoInvitado: jasmine.createSpy('cancelarPedidoInvitado').and.returnValue(of({})),
+            updateOrderStatus: jasmine.createSpy('updateOrderStatus').and.returnValue(of({}))
+          } as never
         },
         {
           provide: FeedbackService,
@@ -77,7 +82,7 @@ describe('OrderTrackingComponent', () => {
             obtenerReporteDeOrden: () => null
           }
         },
-        { provide: AuthService, useValue: { token } },
+        { provide: AuthService, useValue: { token, userRole } },
         { provide: PaymentService, useValue: payments },
         { provide: NotificationService, useValue: notify }
       ]
@@ -90,10 +95,20 @@ describe('OrderTrackingComponent', () => {
   afterEach(() => fixture.destroy());
 
   describe('cancel button', () => {
-    it('is offered to a guest while the order is still active', () => {
-      mostrar(orden({ estado: 'PREPARANDO' }));
-      expect(component.puedeCancelarPedido()).toBeTrue();
-    });
+    // Backend: the customer may cancel only in RECIBIDO (frontend PAGADO), PENDIENTE_PAGO, PENDIENTE_CONFIRMACION.
+    for (const estado of ['PAGADO', 'PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION'] as OrderStatus[]) {
+      it(`is offered to a guest in the cancellable state ${estado}`, () => {
+        mostrar(orden({ estado }));
+        expect(component.puedeCancelarPedido()).toBeTrue();
+      });
+    }
+
+    for (const estado of ['EN_PREPARACION', 'PREPARANDO', 'LISTO_COCINA', 'EN_REPARTO', 'EN_PUERTA'] as OrderStatus[]) {
+      it(`is not offered once the kitchen started (${estado})`, () => {
+        mostrar(orden({ estado }));
+        expect(component.puedeCancelarPedido()).toBeFalse();
+      });
+    }
 
     for (const estado of ['PEDIDO_FANTASMA', 'CANCELADO', 'ENTREGADO', 'COMPLETADO'] as OrderStatus[]) {
       it(`is not offered in the terminal state ${estado}`, () => {
@@ -101,6 +116,70 @@ describe('OrderTrackingComponent', () => {
         expect(component.puedeCancelarPedido()).toBeFalse();
       });
     }
+
+    it('is offered to the logged-in owner and cancels through PATCH estado CANCELADO', () => {
+      token.set('jwt');
+      userRole.set('CLIENTE');
+      mostrar(orden({ estado: 'PENDIENTE_PAGO' }));
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      expect(component.puedeCancelarPedido()).toBeTrue();
+      component.cancelarPedido();
+
+      expect(ordersMock.updateOrderStatus).toHaveBeenCalledWith('7', 'CANCELADO');
+      expect(ordersMock.cancelarPedidoInvitado).not.toHaveBeenCalled();
+      expect(ordersMock.loadMyOrders).toHaveBeenCalled();
+    });
+
+    it('shows the backend detail when the owner cancellation is rejected', () => {
+      token.set('jwt');
+      userRole.set('CLIENTE');
+      mostrar(orden({ estado: 'PAGADO' }));
+      spyOn(window, 'confirm').and.returnValue(true);
+      ordersMock.updateOrderStatus.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'Ya está EN_PREPARACION' } })));
+
+      component.cancelarPedido();
+
+      expect(notify.showError).toHaveBeenCalledWith('No se pudo cancelar el pedido', 'Ya está EN_PREPARACION');
+    });
+
+    it('the guest still cancels through the verified tracking access (previous behavior)', () => {
+      mostrar(orden({ estado: 'PAGADO' }));
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      component.cancelarPedido();
+
+      expect(ordersMock.cancelarPedidoInvitado).toHaveBeenCalledWith('7');
+      expect(ordersMock.updateOrderStatus).not.toHaveBeenCalled();
+    });
+
+    it('is not offered to logged-in staff', () => {
+      token.set('jwt');
+      userRole.set('ADMIN');
+      mostrar(orden({ estado: 'PAGADO' }));
+      expect(component.puedeCancelarPedido()).toBeFalse();
+    });
+  });
+
+  describe('pickup ticket', () => {
+    it('shows the pickup ticket POL-<id> to the customer of a RECOJO order', () => {
+      mostrar(orden({ tipo: 'RECOJO_EN_TIENDA', numeroCliente: 3 }));
+      fixture.detectChanges();
+      const ticket = fixture.nativeElement.querySelector('[data-testid="ticket-recojo"]');
+      expect(ticket).not.toBeNull();
+      expect(ticket.textContent).toContain('POL-7');
+    });
+
+    it('does not show a pickup ticket for a delivery order', () => {
+      mostrar(orden({ tipo: 'DELIVERY', numeroCliente: 3 }));
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-testid="ticket-recojo"]')).toBeNull();
+    });
+
+    it('a ready pickup order (LISTO_COCINA) names the ticket to show at the counter', () => {
+      mostrar(orden({ tipo: 'RECOJO_EN_TIENDA', estado: 'LISTO_COCINA', listoAt: minAgo(5) }));
+      expect(component.getSubtitle()).toContain('POL-7');
+    });
   });
 
   describe('status copy', () => {

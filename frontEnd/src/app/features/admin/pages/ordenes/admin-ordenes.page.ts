@@ -18,6 +18,7 @@ import { OrdersPreparingColumnComponent } from '../../components/ordenes/orders-
 import { OrdersDispatchedColumnComponent } from '../../components/ordenes/orders-dispatched-column.component';
 import { OrdersCompletedColumnComponent } from '../../components/ordenes/orders-completed-column.component';
 import { OrderDetailModalComponent } from '../../components/ordenes/order-detail-modal.component';
+import { normalizarCodigoTicket } from '../../../cajero/models/cajero-plazos.helpers';
 
 /**
  * Contenedor (smart) de la pestaña ÓRDENES: tablero Kanban en vivo. Cada acción llama al endpoint
@@ -345,11 +346,11 @@ export class AdminOrdenesPage implements OnInit {
   });
 
   private mensajeError(err: unknown, fallback: string): string {
-    const e = err as { error?: { error?: string; message?: string }; message?: string } | null;
-    return e?.error?.error || e?.error?.message || e?.message || fallback;
+    const e = err as { error?: { error?: string; message?: string; detail?: string }; message?: string } | null;
+    return e?.error?.error || e?.error?.message || e?.error?.detail || e?.message || fallback;
   }
 
-  advanceOrderStatus(order: Order, nextStatus: OrderStatus): void {
+  advanceOrderStatus(order: Order, nextStatus: OrderStatus, codigoTicket?: string): void {
     // Los estados con compuerta de negocio tienen su propio flujo: nada de PATCH genérico para saltarlos.
     if (order.estado === 'PENDIENTE_PAGO' || order.estado === 'PENDIENTE_CONFIRMACION' || nextStatus === 'PEDIDO_FANTASMA') {
       this.notify.showWarning(
@@ -359,7 +360,7 @@ export class AdminOrdenesPage implements OnInit {
       return;
     }
     const code = this.getCodeNum(order.codigoSeguimiento);
-    this.ordersService.updateOrderStatus(order.id, nextStatus).subscribe({
+    this.ordersService.updateOrderStatus(order.id, nextStatus, undefined, codigoTicket).subscribe({
       next: () => this.notify.showSuccess(`Orden #${code} actualizada a ${nextStatus}`),
       error: err => this.notify.showError(this.mensajeError(err, `Error al actualizar estado de la orden #${code}`))
     });
@@ -407,9 +408,28 @@ export class AdminOrdenesPage implements OnInit {
   advanceAfterReady(order: Order): void {
     if (order.tipo === 'DELIVERY') {
       this.store.abrirModalAsignarMotorizado(order);
+    } else if (order.tipo === 'RECOJO_EN_TIENDA') {
+      this.entregarRecojo(order);
     } else {
       this.advanceOrderStatus(order, 'COMPLETADO');
     }
+  }
+
+  /**
+   * A pickup order is handed over only against its ticket POL-<id> (same rule as the cashier
+   * dashboard); the backend checks it again and answers 409 when the cash must be collected at
+   * the cashier first, which is shown as is.
+   */
+  private entregarRecojo(order: Order): void {
+    const ingresado = prompt(`Ticket de recojo del cliente (orden #${this.getCodeNum(order.codigoSeguimiento)}):`);
+    if (ingresado === null) return;
+    const esperado = normalizarCodigoTicket(String(order.id).replace(/^ord-/, ''));
+    const recibido = normalizarCodigoTicket(ingresado);
+    if (!recibido || recibido !== esperado) {
+      this.notify.showError('Ticket no coincide', `El código no corresponde al pedido ${order.codigoSeguimiento || 'POL-' + order.id}.`);
+      return;
+    }
+    this.advanceOrderStatus(order, 'COMPLETADO', `POL-${recibido}`);
   }
 
   cancelarOrden(order: Order): void {

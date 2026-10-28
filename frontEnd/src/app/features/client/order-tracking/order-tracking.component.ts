@@ -9,12 +9,17 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { AuthService } from '../../../core/services/auth.service';
-import { etiquetaPedido } from '../../../core/utils/pedido';
+import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
 import { PaymentService } from '../../../core/services/payment.service';
 import { Subscription, interval } from 'rxjs';
 
 /** States in which the customer can no longer cancel or act on the order. */
 const ESTADOS_TERMINALES: OrderStatus[] = ['COMPLETADO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
+/**
+ * States in which orders-service lets the customer cancel (RECIBIDO, PENDIENTE_PAGO,
+ * PENDIENTE_CONFIRMACION): nothing was cooked yet. The adapter shows backend RECIBIDO as PAGADO.
+ */
+const ESTADOS_CANCELABLES_POR_CLIENTE: OrderStatus[] = ['PAGADO', 'RECIBIDO', 'PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION'];
 const TIPOS_COMPROBANTE = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
 
@@ -110,6 +115,14 @@ const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
             <p class="text-slate-300 text-sm sm:text-base font-normal tracking-wide max-w-xl mx-auto">
               {{ getSubtitle() }}
             </p>
+
+            @if (ticketRecojo(currentOrder()); as ticket) {
+              <div data-testid="ticket-recojo" class="max-w-sm mx-auto px-5 py-3 rounded-2xl bg-polleria-gold/10 border-2 border-dashed border-polleria-gold/60 space-y-1">
+                <p class="text-[11px] uppercase tracking-widest text-slate-300 font-bold">Tu ticket de recojo</p>
+                <p class="font-mono text-2xl sm:text-3xl font-black text-polleria-gold tracking-wider">{{ ticket }}</p>
+                <p class="text-xs text-slate-400">Muéstralo en caja para recoger tu pedido.</p>
+              </div>
+            }
 
             @if (getCuentaRegresiva()) {
               <p class="inline-block px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs sm:text-sm font-mono font-bold">
@@ -287,7 +300,7 @@ const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
               <span>VER DETALLES</span>
             </button>
 
-            <!-- Button 3: CANCELAR PEDIDO (S5, solo invitado sin sesión y pedido no terminal) -->
+            <!-- Button 3: CANCELAR PEDIDO (S5, invitado verificado o dueño con sesión, antes de cocina) -->
             @if (puedeCancelarPedido()) {
               <button
                 type="button"
@@ -966,14 +979,15 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   });
 
   /**
-   * S5: solo el invitado (sin sesión) puede cancelar desde el seguimiento, y solo mientras el
-   * pedido no esté en un estado terminal. Con sesión la cancelación la gestiona el flujo del
-   * cliente autenticado.
+   * S5: el cliente cancela desde el seguimiento solo en los estados que el backend acepta
+   * (antes de que la cocina empiece). Lo puede hacer el invitado con su celular verificado o el
+   * cliente con sesión (dueño del pedido); el personal no cancela desde esta pantalla.
    */
   readonly puedeCancelarPedido = computed(() => {
     const order = this.currentOrder();
-    if (!order || this.auth.token()) return false;
-    return !ESTADOS_TERMINALES.includes(order.estado);
+    if (!order) return false;
+    if (this.auth.token() && this.auth.userRole() !== 'CLIENTE') return false;
+    return ESTADOS_CANCELABLES_POR_CLIENTE.includes(order.estado);
   });
 
   readonly cancelandoPedido = signal<boolean>(false);
@@ -1026,6 +1040,8 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   private relojSub?: Subscription;
   private platformId = inject(PLATFORM_ID);
   readonly etiqueta = etiquetaPedido;
+  /** Pickup ticket POL-<id> the cashier asks for; empty for non-pickup orders. */
+  readonly ticketRecojo = ticketRecojo;
 
   readonly availableOrders = computed<Order[]>(() => {
     return this.ordersService.myOrders();
@@ -1213,7 +1229,12 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     if (!confirm(`¿Seguro que quieres cancelar el pedido ${this.etiqueta(order)}?`)) return;
 
     this.cancelandoPedido.set(true);
-    this.ordersService.cancelarPedidoInvitado(order.id).subscribe({
+    // With a session the owner's JWT authorizes PATCH /ordenes/{id}/estado; a guest uses the
+    // verified tracking access.
+    const cancelacion$ = this.auth.token()
+      ? this.ordersService.updateOrderStatus(order.id, 'CANCELADO')
+      : this.ordersService.cancelarPedidoInvitado(order.id);
+    cancelacion$.subscribe({
       next: () => {
         this.cancelandoPedido.set(false);
         this.notify.showSuccess('Pedido cancelado');
@@ -1221,9 +1242,18 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       },
       error: err => {
         this.cancelandoPedido.set(false);
-        this.notify.showError('No se pudo cancelar el pedido', err.message);
+        this.notify.showError('No se pudo cancelar el pedido', this.mensajeCancelacion(err));
       }
     });
+  }
+
+  /** Backend reason (`error`, `mensaje` or the ProblemDetail `detail`) before the generic text. */
+  private mensajeCancelacion(err: unknown): string {
+    const e = err as { error?: { error?: unknown; mensaje?: unknown; detail?: unknown }; message?: unknown } | null;
+    for (const m of [e?.error?.error, e?.error?.mensaje, e?.error?.detail, e?.message]) {
+      if (typeof m === 'string' && m.trim()) return m;
+    }
+    return 'Intenta nuevamente.';
   }
 
   formatearCelular(celular: string): string {
@@ -1388,7 +1418,10 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
           ? 'Tu pedido está listo. Recógelo con tu ticket dentro de 1 hora.'
           : 'Tu pedido está listo y será despachado inmediatamente.';
       case 'LISTO_COCINA':
-        return 'Tu pedido ha salido del horno y está listo para ser despachado inmediatamente.';
+        // The adapter shows backend LISTO as LISTO_COCINA, so this is the real "ready" state.
+        return this.esRecojo(order)
+          ? `Tu pedido está listo. Recógelo en caja con tu ticket ${ticketRecojo(order)} dentro de 1 hora.`
+          : 'Tu pedido ha salido del horno y está listo para ser despachado inmediatamente.';
       case 'EN_PREPARACION':
       case 'PREPARANDO':
         return 'Nuestros maestros polleros están dorando tu pedido a la leña con papas crujientes.';

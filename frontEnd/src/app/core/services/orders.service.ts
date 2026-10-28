@@ -52,10 +52,13 @@ export class OrdersService {
   }
 
   /**
-   * Registra en memoria una orden recién creada para mostrarla de inmediato en el seguimiento
+   * Registra en memoria una orden recién creada para mostrarla de inmediato en el seguimiento.
+   * Si la orden ya está en `orders()` (la copia que usa el seguimiento cuando el invitado recibe 404),
+   * se reemplaza ahí también para que no muestre un estado viejo.
    */
   registerClientOrder(order: Order): void {
     this.myOrders.update(prev => [order, ...prev.filter(o => o.id !== order.id)]);
+    this.orders.update(prev => prev.some(o => o.id === order.id) ? prev.map(o => o.id === order.id ? order : o) : prev);
     this.currentTrackingOrder.set(order);
   }
 
@@ -162,7 +165,7 @@ export class OrdersService {
 
   private mensajeError(err: any, porDefecto: string): string {
     if (err?.status === 0) return 'No se pudo conectar con el servicio de pedidos';
-    return err?.error?.error || err?.error?.mensaje || porDefecto;
+    return err?.error?.error || err?.error?.mensaje || err?.error?.detail || porDefecto;
   }
 
   /**

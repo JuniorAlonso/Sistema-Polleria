@@ -673,4 +673,26 @@ describe('OrdersService — createOrder desde un Order del checkout', () => {
     expect(creada).not.toBeNull();
     expect(creada!.estado).withContext('la vista muestra el pedido esperando pago').toBe('PENDIENTE_PAGO');
   });
+
+  it('S1: el invitado ve el estado actualizado en el seguimiento cuando el backend responde 404', () => {
+    let creada: Order | null = null;
+    service.createOrder(orderBase('PENDIENTE_PAGO', { metodoPago: 'YAPE_OTP' })).subscribe(o => (creada = o));
+    http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes'))
+      .flush({ id: 9, tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', total: 24, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+
+    service.registerClientOrder({ ...creada!, estado: 'EN_PREPARACION' });
+
+    let visto: Order | undefined;
+    service.getOrderByTrackingCode(creada!.codigoSeguimiento).subscribe(o => (visto = o));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/9')).flush(null, { status: 404, statusText: 'Not Found' });
+
+    expect(visto?.estado).toBe('EN_PREPARACION');
+    expect(service.myOrders()[0].estado).toBe('EN_PREPARACION');
+  });
+
+  it('registerClientOrder no agrega al listado del personal una orden que no estaba (comportamiento previo)', () => {
+    service.registerClientOrder(orderBase('PAGADO', { id: '77', codigoSeguimiento: 'POL-77' }));
+    expect(service.orders().some(o => o.id === '77')).toBeFalse();
+    expect(service.myOrders()[0].id).toBe('77');
+  });
 });

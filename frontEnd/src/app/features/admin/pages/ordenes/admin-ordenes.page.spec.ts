@@ -162,4 +162,59 @@ describe('AdminOrdenesPage — flujo real de pedidos', () => {
     expect(notify.showError).toHaveBeenCalledWith('Transición no permitida');
     expect(orders.orders()[0].estado).toBe('PAGADO');
   });
+
+  describe('hand-over of a ready pickup order', () => {
+    const lista = () => orden('9', 'LISTO_COCINA', { tipo: 'RECOJO_EN_TIENDA' });
+
+    it('asks for the ticket and sends it as codigoTicket POL-<id>', () => {
+      orders.orders.set([lista()]);
+      spyOn(window, 'prompt').and.returnValue(' pol 9 ');
+
+      component.advanceAfterReady(lista());
+
+      const req = http.expectOne(r => r.method === 'PATCH' && r.url.endsWith('/ordenes/9/estado'));
+      expect(req.request.body.estado).toBe('ENTREGADO');
+      expect(req.request.body.codigoTicket).toBe('POL-9');
+      req.flush({ id: 9, tipo: 'RECOJO', estado: 'ENTREGADO', total: 40, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+      expect(notify.showSuccess).toHaveBeenCalled();
+    });
+
+    it('does not call the backend when the operator cancels the prompt', () => {
+      spyOn(window, 'prompt').and.returnValue(null);
+      component.advanceAfterReady(lista());
+      http.expectNone(r => r.method === 'PATCH');
+    });
+
+    it('rejects a ticket of another order without calling the backend', () => {
+      spyOn(window, 'prompt').and.returnValue('POL-10');
+      component.advanceAfterReady(lista());
+      http.expectNone(r => r.method === 'PATCH');
+      expect(notify.showError).toHaveBeenCalledWith('Ticket no coincide', jasmine.stringContaining('POL-9'));
+    });
+
+    it('shows the backend ProblemDetail when the order must be collected at the cashier', () => {
+      orders.orders.set([lista()]);
+      spyOn(window, 'prompt').and.returnValue('POL-9');
+
+      component.advanceAfterReady(lista());
+
+      http.expectOne(r => r.method === 'PATCH').flush(
+        { type: 'about:blank', title: 'Conflict', status: 409, detail: 'Cobra el efectivo en caja antes de entregar' },
+        { status: 409, statusText: 'Conflict' });
+      expect(notify.showError).toHaveBeenCalledWith('Cobra el efectivo en caja antes de entregar');
+    });
+
+    it('a salon order is completed without asking for a ticket (previous behavior)', () => {
+      const salon = orden('8', 'LISTO_COCINA', { tipo: 'SALON' });
+      orders.orders.set([salon]);
+      const prompt = spyOn(window, 'prompt');
+
+      component.advanceAfterReady(salon);
+
+      const req = http.expectOne(r => r.method === 'PATCH');
+      expect(req.request.body.codigoTicket).toBeUndefined();
+      expect(prompt).not.toHaveBeenCalled();
+      req.flush({ id: 8, tipo: 'SALON', estado: 'ENTREGADO', total: 40, items: [], creadoEn: '2026-01-01T00:00:00Z' });
+    });
+  });
 });
