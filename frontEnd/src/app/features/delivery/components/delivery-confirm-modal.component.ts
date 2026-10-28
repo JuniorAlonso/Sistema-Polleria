@@ -16,7 +16,7 @@ import { getCodeNum } from './delivery.utils';
               <div class="flex justify-between items-start pb-3 border-b border-white/10">
                 <div>
                   <h3 class="font-display text-2xl font-bold text-white">Confirmar Entrega y Cobro</h3>
-                  <span class="text-xs text-slate-400">Orden #{{ getCodeNum(order().codigoSeguimiento || '') }} • {{ order().cliente?.nombre }}</span>
+                  <span class="text-xs text-slate-400">Orden #{{ getCodeNum(order().codigoSeguimiento || '') }} • {{ order().cliente.nombre }}</span>
                 </div>
                 <button (click)="onClose.emit()" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
               </div>

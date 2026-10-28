@@ -69,7 +69,7 @@ import { normalizarCodigoTicket } from '../../../cajero/models/cajero-plazos.hel
         (newOrder)="store.abrirModalNuevaOrden()"
       />
 
-          <div [ngClass]="orderStateFilter() === 'TODAS' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 min-w-[960px] h-[calc(100vh-175px)]' : 'grid grid-cols-1 max-w-xl mx-auto w-full gap-4 h-[calc(100vh-175px)]'">
+          <div [ngClass]="orderStateFilter() === 'TODAS' ? 'grid grid-cols-[repeat(6,minmax(300px,1fr))] gap-4 overflow-x-auto board-scrollbar pb-3 h-[calc(100vh-175px)]' : 'grid grid-cols-1 max-w-xl mx-auto w-full gap-4 h-[calc(100vh-175px)]'">
         @if (orderStateFilter() === 'TODAS' || orderStateFilter() === 'ATENCION') {
           <app-orders-attention-column
             [orders]="attentionOrders()"
