@@ -15,7 +15,7 @@ public interface SancionClienteRepository extends JpaRepository<SancionCliente, 
      */
     @Query("SELECT s FROM SancionCliente s WHERE " +
            "(:telefonoNorm IS NOT NULL AND s.telefonoNormalizado = :telefonoNorm) OR " +
-           "(:email IS NOT NULL AND LOWER(s.email) = LOWER(:email)) OR " +
+           "(:email IS NOT NULL AND LOWER(s.email) = LOWER(CAST(:email AS string))) OR " +
            "(:ip IS NOT NULL AND s.ipAddress = :ip) ORDER BY s.id ASC")
     List<SancionCliente> buscarCoincidencias(
             @Param("telefonoNorm") String telefonoNorm,
@@ -24,7 +24,7 @@ public interface SancionClienteRepository extends JpaRepository<SancionCliente, 
 
     @Query("SELECT COUNT(s) > 0 FROM SancionCliente s WHERE " +
            "(:telefonoNorm IS NOT NULL AND s.telefonoNormalizado = :telefonoNorm) OR " +
-           "(:email IS NOT NULL AND LOWER(s.email) = LOWER(:email)) OR " +
+           "(:email IS NOT NULL AND LOWER(s.email) = LOWER(CAST(:email AS string))) OR " +
            "(:ip IS NOT NULL AND s.ipAddress = :ip)")
     boolean existeSancion(
             @Param("telefonoNorm") String telefonoNorm,
