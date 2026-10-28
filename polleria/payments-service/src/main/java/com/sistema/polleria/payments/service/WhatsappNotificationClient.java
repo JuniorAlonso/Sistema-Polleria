@@ -14,13 +14,21 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * RF30 — Avisa al notification-service que el pago de un pedido DELIVERY fue aprobado.
+ * RF30 — Avisa al notification-service que el pago de un pedido DELIVERY o RECOJO fue aprobado.
  * Los datos de contacto (teléfono, nombre) se leen de la orden en orders-service.
  * Corre en segundo plano: si falla, el pago no se ve afectado.
  */
 @Slf4j
 @Component
 public class WhatsappNotificationClient {
+
+    /**
+     * T3 (S2): orders the customer placed remotely (web/WhatsApp) — DELIVERY and pickup (RECOJO) —
+     * get WhatsApp notices; SALON orders are served at the table and never do.
+     */
+    private static boolean avisaPorWhatsapp(Object tipo) {
+        return "DELIVERY".equals(tipo) || "RECOJO".equals(tipo);
+    }
 
     private final RestClient ordersRestClient;
     private final RestClient notificationRestClient;
@@ -50,7 +58,7 @@ public class WhatsappNotificationClient {
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            if (orden == null || !"DELIVERY".equals(orden.get("tipo"))) {
+            if (orden == null || !avisaPorWhatsapp(orden.get("tipo"))) {
                 return;
             }
 
@@ -67,7 +75,10 @@ public class WhatsappNotificationClient {
             body.put("nombreCliente", orden.getOrDefault("nombreCliente", "Cliente"));
             body.put("montoTotal", monto);
             body.put("metodoPago", metodoPago.name());
-            body.put("tiempoEstimado", tiempoEstimado);
+            if ("DELIVERY".equals(orden.get("tipo"))) {
+                // The notice reads "Tiempo estimado de entrega": it only applies to home delivery.
+                body.put("tiempoEstimado", tiempoEstimado);
+            }
 
             notificationRestClient.post()
                     .uri("/api/notificaciones/whatsapp/pago")
@@ -89,7 +100,7 @@ public class WhatsappNotificationClient {
      * comprobante válido, así que este aviso es lo único que cierra el circuito.
      *
      * <p>Resuelve el contacto igual que {@link #notificarPagoConfirmado}: lee la orden de
-     * orders-service y solo avisa si es DELIVERY y tiene teléfono. Corre en segundo plano y se traga
+     * orders-service y solo avisa si es DELIVERY o RECOJO y tiene teléfono. Corre en segundo plano y se traga
      * los fallos: una caída del notification-service nunca puede revertir el rechazo ni romper la
      * respuesta al admin.
      */
@@ -102,7 +113,7 @@ public class WhatsappNotificationClient {
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            if (orden == null || !"DELIVERY".equals(orden.get("tipo"))) {
+            if (orden == null || !avisaPorWhatsapp(orden.get("tipo"))) {
                 return;
             }
 

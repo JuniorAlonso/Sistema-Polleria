@@ -76,9 +76,10 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Webhook de pasarela: endpoint público para Mercado Pago
-                // /pagos/mercadopago/** requiere JWT (CLIENTE/MOZO/ADMIN)
+                // Pagos del checkout web de invitados (T3): el servicio valida la orden en orders-service.
                 .requestMatchers("/pagos/webhook/**").permitAll()
                 .requestMatchers("/pagos/yape-otp").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/pagos/mercadopago/preferencia").permitAll()
                 .anyRequest().authenticated()
             )
             .headers(headers -> headers

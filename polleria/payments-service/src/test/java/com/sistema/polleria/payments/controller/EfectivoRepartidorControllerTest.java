@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
 class EfectivoRepartidorControllerTest {
 
     private final PagoService pagoService = mock(PagoService.class);
-    private final PagoController controller = new PagoController(pagoService, null, null);
+    private final PagoController controller = new PagoController(pagoService, null);
 
     private static UsernamePasswordAuthenticationToken usuario(long id, String rol) {
         return new UsernamePasswordAuthenticationToken("u@x.com", id, List.of(new SimpleGrantedAuthority(rol)));

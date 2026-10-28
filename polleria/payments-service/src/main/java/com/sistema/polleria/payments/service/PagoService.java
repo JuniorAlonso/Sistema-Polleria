@@ -549,6 +549,42 @@ public class PagoService {
     }
 
     /**
+     * Preferencia de Mercado Pago (Checkout Pro) para el checkout web, también para invitados (T3/S1).
+     * Como el endpoint es público, nunca se confía en el llamador: la orden debe seguir en
+     * {@code PENDIENTE_PAGO} (409), el monto declarado debe ser su total (400) y se cobra el total que
+     * informa orders-service; si la orden no se puede leer, falla cerrado (503). Tampoco pisa un
+     * comprobante Yape que el cajero todavía tiene que verificar.
+     */
+    @Transactional
+    public com.sistema.polleria.payments.dto.PreferenceResponse crearPreferenciaMercadoPago(
+            IniciarPagoRequest request, Long clienteId) {
+        OrdenesClient.OrdenInfo orden = obtenerOrden(request.ordenId());
+        exigirPendienteDePago(request.ordenId(), orden);
+        if (orden.total() == null || orden.total().compareTo(request.monto()) != 0) {
+            throw new IllegalArgumentException(
+                    "El monto no coincide con el total del pedido (S/ " + orden.total() + ")");
+        }
+        pagoRepository.findByOrdenId(request.ordenId())
+                .filter(p -> p.getEstado() == EstadoPago.PENDIENTE_VERIFICACION)
+                .ifPresent(p -> {
+                    throw new IllegalStateException("El pedido #" + request.ordenId()
+                            + " tiene un comprobante Yape pendiente de verificación");
+                });
+        // Checkout Pro is always a card payment: a public caller must not rewrite the pago's method.
+        IniciarPagoRequest conTotal = new IniciarPagoRequest(request.ordenId(), orden.total(),
+                MetodoPago.TARJETA, request.tokenPasarela(), request.telefonoYape());
+        return mercadoPagoGateway.crearPreferencia(conTotal, clienteId != null ? clienteId : CLIENTE_ANONIMO);
+    }
+
+    /** Only an order still waiting for its online payment can be charged (S2/T3, HTTP 409). */
+    private static void exigirPendienteDePago(Long ordenId, OrdenesClient.OrdenInfo orden) {
+        if (!"PENDIENTE_PAGO".equals(orden.estado())) {
+            throw new IllegalStateException("El pedido #" + ordenId + " ya no está pendiente de pago "
+                    + "(estado " + orden.estado() + ")");
+        }
+    }
+
+    /**
      * Cobro directo mediante Yape integrado en Mercado Pago (Checkout transparente vía OTP).
      * Si es aprobado, avanza DIRECTO la orden a PREPARANDO en cocina.
      */
@@ -558,7 +594,7 @@ public class PagoService {
                 request.ordenId(), request.telefono(), request.monto());
 
         // S5: the amount charged must be the order total, never what the (public) caller declares.
-        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(request.ordenId());
+        OrdenesClient.OrdenInfo orden = obtenerOrden(request.ordenId());
         if (orden.total() == null || orden.total().compareTo(request.monto()) != 0) {
             throw new IllegalArgumentException(
                     "El monto no coincide con el total del pedido (S/ " + orden.total() + ")");
@@ -578,6 +614,10 @@ public class PagoService {
             log.info("La orden {} ya cuenta con un pago aprobado previamente", request.ordenId());
             return PagoResponse.from(pago);
         }
+
+        // T3: only a live order still waiting for its payment can be charged (not a terminal order,
+        // not a ContraPago order in PENDIENTE_CONFIRMACION). The approved retry above stays idempotent.
+        exigirPendienteDePago(request.ordenId(), orden);
 
         // Validación OTP: si el OTP es inválido (ej. "000000"), se rechaza
         if ("000000".equals(request.otp()) || request.otp().length() != 6) {
@@ -631,6 +671,7 @@ public class PagoService {
 
         if (pago.getEstado() == EstadoPago.APROBADO) {
             log.info("El cobro en efectivo para la orden {} ya estaba registrado como APROBADO", request.ordenId());
+            reenviarEntregaPendiente(request, bearerToken);
             return PagoResponse.from(pago);
         }
 
@@ -659,10 +700,8 @@ public class PagoService {
 
         // S7: a pickup order is handed over only against its ticket POL-<id> (numeroCliente is not accepted).
         boolean esRecojo = "RECOJO".equals(orden.tipo());
-        if (esRecojo && !normalizarTicket("POL-" + request.ordenId()).equals(normalizarTicket(request.codigoTicket()))) {
-            throw new IllegalArgumentException(
-                    "El código de ticket no corresponde al pedido #" + request.ordenId() + " (debe ser POL-"
-                            + request.ordenId() + ")");
+        if (esRecojo) {
+            validarTicketRecojo(request);
         }
 
         String detalle = "Cobro en efectivo verificado por operador #" + operadorId;
@@ -682,15 +721,54 @@ public class PagoService {
         pago.setRepartidorId(repartidorId);
         pago = pagoRepository.save(pago);
 
-        // Notificar a orders-service para completar la entrega (RECOJO lleva el ticket, S7)
+        notificarEntregado(request, esRecojo, bearerToken);
+        log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
+
+        return PagoResponse.from(pago);
+    }
+
+    /** S7: a pickup order is handed over only against its ticket POL-&lt;id&gt; (numeroCliente is not accepted). */
+    private static void validarTicketRecojo(CobroEfectivoRequest request) {
+        if (!normalizarTicket("POL-" + request.ordenId()).equals(normalizarTicket(request.codigoTicket()))) {
+            throw new IllegalArgumentException(
+                    "El código de ticket no corresponde al pedido #" + request.ordenId() + " (debe ser POL-"
+                            + request.ordenId() + ")");
+        }
+    }
+
+    /** Notifica a orders-service para completar la entrega (RECOJO lleva el ticket, S7). */
+    private void notificarEntregado(CobroEfectivoRequest request, boolean esRecojo, String bearerToken) {
         if (esRecojo) {
             notificadorOrden.notificarEstado(request.ordenId(), "ENTREGADO", request.codigoTicket(), bearerToken);
         } else {
             notificarOrdenEstadoAsync(request.ordenId(), "ENTREGADO", bearerToken);
         }
-        log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
+    }
 
-        return PagoResponse.from(pago);
+    /**
+     * T3: the ENTREGADO notification is async, so a failed one would leave a paid order undelivered until
+     * it rots into PEDIDO_FANTASMA. A retry of an already approved collection re-sends it while
+     * orders-service still reports the order as not ENTREGADO. If the order cannot be read, the retry
+     * keeps returning the approved pago (nothing would reach orders-service anyway).
+     */
+    private void reenviarEntregaPendiente(CobroEfectivoRequest request, String bearerToken) {
+        OrdenesClient.OrdenInfo orden;
+        try {
+            orden = ordenesClient.obtener(request.ordenId());
+        } catch (OrdenesClient.OrdenNoDisponibleException e) {
+            log.warn("No se pudo leer la orden {} para reenviar ENTREGADO: {}", request.ordenId(), e.getMessage());
+            return;
+        }
+        if (orden == null || "ENTREGADO".equals(orden.estado())) {
+            return;
+        }
+        boolean esRecojo = "RECOJO".equals(orden.tipo());
+        if (esRecojo) {
+            validarTicketRecojo(request);
+        }
+        log.info("Reenviando ENTREGADO de la orden #{} (cobro ya aprobado, orden en {})",
+                request.ordenId(), orden.estado());
+        notificarEntregado(request, esRecojo, bearerToken);
     }
 
     /**

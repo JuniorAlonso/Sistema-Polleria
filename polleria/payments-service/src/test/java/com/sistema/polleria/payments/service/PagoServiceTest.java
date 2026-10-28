@@ -4,6 +4,7 @@ import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.dto.PreferenceResponse;
 import com.sistema.polleria.payments.dto.RegistrarComprobanteRequest;
 import com.sistema.polleria.payments.dto.VerificarPagoRequest;
 import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
@@ -18,6 +19,7 @@ import com.sistema.polleria.payments.repository.PagoRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -640,6 +642,196 @@ class PagoServiceTest {
 
         assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
         verify(notificadorOrden).notificarEstado(eq(411L), eq("ENTREGADO"), eq("Bearer t"));
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any(), any());
+    }
+
+    // ─── flujo-pedido-web-whatsapp-e2e T3 ─────────────────────────────
+
+    private static Pago pagoAprobado(long ordenId, MetodoPago metodo) {
+        Pago p = new Pago();
+        p.setId(900L + ordenId);
+        p.setOrdenId(ordenId);
+        p.setMonto(new BigDecimal("45.00"));
+        p.setMetodoPago(metodo);
+        p.setEstado(EstadoPago.APROBADO);
+        return p;
+    }
+
+    private static IniciarPagoRequest preferencia(long ordenId, String monto) {
+        return new IniciarPagoRequest(ordenId, new BigDecimal(monto), MetodoPago.TARJETA, null, null);
+    }
+
+    @Test
+    @DisplayName("T3: Yape OTP de una orden que no espera pago (terminal o ContraPago) responde 409 y no cobra")
+    void procesarYapeOtp_ordenNoPendienteDePago_rechaza() {
+        for (String estado : new String[] {"CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA", "PENDIENTE_CONFIRMACION"}) {
+            when(ordenesClient.obtener(601L)).thenReturn(orden(601L, "DELIVERY", estado, "45.00"));
+            when(pagoRepository.buscarPorOrdenIdConBloqueo(601L)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> pagoService.procesarYapeOtp(
+                    new YapeOtpPagoRequest(601L, new BigDecimal("45.00"), "987654321", "123456", null), 10L, "Bearer t"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("ya no está pendiente de pago");
+        }
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: Yape OTP falla cerrado si orders-service devuelve una orden vacía")
+    void procesarYapeOtp_ordenNula_fallaCerrado() {
+        when(ordenesClient.obtener(602L)).thenReturn(null);
+
+        assertThatThrownBy(() -> pagoService.procesarYapeOtp(
+                new YapeOtpPagoRequest(602L, new BigDecimal("45.00"), "987654321", "123456", null), 10L, "Bearer t"))
+                .isInstanceOf(OrdenesClient.OrdenNoDisponibleException.class);
+        verify(pagoRepository, never()).save(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("PRESERVE T3: reintentar un Yape OTP ya aprobado sigue siendo idempotente aunque la orden avanzó")
+    void procesarYapeOtp_yaAprobado_esIdempotente() {
+        when(ordenesClient.obtener(603L)).thenReturn(orden(603L, "DELIVERY", "EN_PREPARACION", "45.00"));
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(603L))
+                .thenReturn(Optional.of(pagoAprobado(603L, MetodoPago.YAPE_PLIN)));
+
+        PagoResponse res = pagoService.procesarYapeOtp(
+                new YapeOtpPagoRequest(603L, new BigDecimal("45.00"), "987654321", "123456", null), 10L, "Bearer t");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: preferencia MP de invitado usa el total de la orden y el cliente anónimo")
+    void crearPreferenciaMercadoPago_invitado_ordenPendiente_delega() {
+        when(ordenesClient.obtener(611L)).thenReturn(orden(611L, "RECOJO", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.findByOrdenId(611L)).thenReturn(Optional.empty());
+        PreferenceResponse pref = new PreferenceResponse("PREF", "https://mp/init", null, 1L, 611L);
+        when(mercadoPagoGateway.crearPreferencia(any(IniciarPagoRequest.class), eq(0L))).thenReturn(pref);
+
+        PreferenceResponse res = pagoService.crearPreferenciaMercadoPago(preferencia(611L, "45"), null);
+
+        assertThat(res).isSameAs(pref);
+        ArgumentCaptor<IniciarPagoRequest> captor = ArgumentCaptor.forClass(IniciarPagoRequest.class);
+        verify(mercadoPagoGateway).crearPreferencia(captor.capture(), eq(0L));
+        assertThat(captor.getValue().monto()).isEqualTo(new BigDecimal("45.00"));
+        assertThat(captor.getValue().ordenId()).isEqualTo(611L);
+    }
+
+    @Test
+    @DisplayName("T6: la preferencia MP siempre es TARJETA aunque el llamador declare otro método")
+    void crearPreferenciaMercadoPago_ignoraElMetodoDelLlamador() {
+        when(ordenesClient.obtener(616L)).thenReturn(orden(616L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.findByOrdenId(616L)).thenReturn(Optional.empty());
+
+        pagoService.crearPreferenciaMercadoPago(
+                new IniciarPagoRequest(616L, new BigDecimal("45.00"), MetodoPago.CONTRAENTREGA, null, null), null);
+
+        ArgumentCaptor<IniciarPagoRequest> captor = ArgumentCaptor.forClass(IniciarPagoRequest.class);
+        verify(mercadoPagoGateway).crearPreferencia(captor.capture(), eq(0L));
+        assertThat(captor.getValue().metodoPago()).isEqualTo(MetodoPago.TARJETA);
+    }
+
+    @Test
+    @DisplayName("PRESERVE T3: preferencia MP de un cliente logueado conserva su clienteId")
+    void crearPreferenciaMercadoPago_logueado_conservaClienteId() {
+        when(ordenesClient.obtener(612L)).thenReturn(orden(612L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.findByOrdenId(612L)).thenReturn(Optional.empty());
+
+        pagoService.crearPreferenciaMercadoPago(preferencia(612L, "45.00"), 7L);
+
+        verify(mercadoPagoGateway).crearPreferencia(any(IniciarPagoRequest.class), eq(7L));
+    }
+
+    @Test
+    @DisplayName("T3: preferencia MP de una orden que no espera pago responde 409 y no crea nada")
+    void crearPreferenciaMercadoPago_ordenNoPendiente_rechaza() {
+        for (String estado : new String[] {
+                "CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA", "PENDIENTE_CONFIRMACION", "EN_PREPARACION"}) {
+            when(ordenesClient.obtener(613L)).thenReturn(orden(613L, "DELIVERY", estado, "45.00"));
+
+            assertThatThrownBy(() -> pagoService.crearPreferenciaMercadoPago(preferencia(613L, "45.00"), null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("ya no está pendiente de pago");
+        }
+        verify(mercadoPagoGateway, never()).crearPreferencia(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: preferencia MP con monto distinto al total responde 400")
+    void crearPreferenciaMercadoPago_montoDistinto_rechaza() {
+        when(ordenesClient.obtener(614L)).thenReturn(orden(614L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+
+        assertThatThrownBy(() -> pagoService.crearPreferenciaMercadoPago(preferencia(614L, "0.10"), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no coincide");
+        verify(mercadoPagoGateway, never()).crearPreferencia(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: preferencia MP falla cerrado si orders-service no informa la orden")
+    void crearPreferenciaMercadoPago_ordenNula_fallaCerrado() {
+        when(ordenesClient.obtener(615L)).thenReturn(null);
+
+        assertThatThrownBy(() -> pagoService.crearPreferenciaMercadoPago(preferencia(615L, "45.00"), null))
+                .isInstanceOf(OrdenesClient.OrdenNoDisponibleException.class);
+        verify(mercadoPagoGateway, never()).crearPreferencia(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: preferencia MP no pisa un comprobante Yape pendiente de verificación")
+    void crearPreferenciaMercadoPago_comprobanteEnVerificacion_rechaza() {
+        when(ordenesClient.obtener(616L)).thenReturn(orden(616L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
+        when(pagoRepository.findByOrdenId(616L)).thenReturn(Optional.of(capturaPendiente(516L, 616L)));
+
+        assertThatThrownBy(() -> pagoService.crearPreferenciaMercadoPago(preferencia(616L, "45.00"), null))
+                .isInstanceOf(IllegalStateException.class);
+        verify(mercadoPagoGateway, never()).crearPreferencia(any(), any());
+    }
+
+    @Test
+    @DisplayName("T3: reintentar un cobro en efectivo ya aprobado reenvía ENTREGADO si la orden no se entregó")
+    void procesarCobroEfectivo_yaAprobado_reenviaEntregado() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(621L))
+                .thenReturn(Optional.of(pagoAprobado(621L, MetodoPago.CONTRAENTREGA)));
+        when(ordenesClient.obtener(621L)).thenReturn(orden(621L, "DELIVERY", "EN_PUERTA", "45.00"));
+
+        PagoResponse res = pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(621L, new BigDecimal("45.00"), null, null), 4L, "Bearer r");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden).notificarEstado(eq(621L), eq("ENTREGADO"), eq("Bearer r"));
+        verify(pagoRepository, never()).save(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("T3: reintentar un cobro RECOJO ya aprobado reenvía ENTREGADO con el ticket")
+    void procesarCobroEfectivo_yaAprobadoRecojo_reenviaEntregadoConTicket() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(622L))
+                .thenReturn(Optional.of(pagoAprobado(622L, MetodoPago.CONTRAENTREGA)));
+        when(ordenesClient.obtener(622L)).thenReturn(orden(622L, "RECOJO", "LISTO", "45.00"));
+
+        pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(622L, new BigDecimal("45.00"), null, null, "POL-622"), 4L, "Bearer c");
+
+        verify(notificadorOrden).notificarEstado(eq(622L), eq("ENTREGADO"), eq("POL-622"), eq("Bearer c"));
+        verify(pagoRepository, never()).save(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("PRESERVE T3: reintentar un cobro ya aprobado de una orden ENTREGADO no vuelve a notificar")
+    void procesarCobroEfectivo_yaAprobadoYEntregado_noNotifica() {
+        when(pagoRepository.buscarPorOrdenIdConBloqueo(623L))
+                .thenReturn(Optional.of(pagoAprobado(623L, MetodoPago.CONTRAENTREGA)));
+        when(ordenesClient.obtener(623L)).thenReturn(orden(623L, "DELIVERY", "ENTREGADO", "45.00"));
+
+        PagoResponse res = pagoService.procesarCobroEfectivo(
+                new CobroEfectivoRequest(623L, new BigDecimal("45.00"), null, null), 4L, "Bearer r");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
         verify(notificadorOrden, never()).notificarEstado(any(), any(), any(), any());
     }
 }

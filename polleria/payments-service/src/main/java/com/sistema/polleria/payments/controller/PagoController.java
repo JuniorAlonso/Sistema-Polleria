@@ -19,7 +19,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import com.sistema.polleria.payments.dto.PreferenceResponse;
-import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
 import java.security.Principal;
 import java.util.List;
 
@@ -29,7 +28,6 @@ import java.util.List;
 public class PagoController {
 
     private final PagoService pagoService;
-    private final MercadoPagoGateway mercadoPagoGateway;
     private final FirmadorComprobantes firmadorComprobantes;
 
     /**
@@ -49,18 +47,18 @@ public class PagoController {
     }
 
     /**
-     * Crear Preferencia de Mercado Pago (Checkout Pro) — requiere usuario
-     * autenticado
+     * Crear Preferencia de Mercado Pago (Checkout Pro) — público como {@code /pagos/yape-otp}: el
+     * checkout web deja pagar con tarjeta a invitados (T3/S1). El servicio valida la orden en
+     * orders-service (PENDIENTE_PAGO y monto = total); un invitado queda como cliente anónimo.
      */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
     public PreferenceResponse crearPreferenciaMercadoPago(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal) {
 
         Long clienteId = extractUserId(principal);
-        return mercadoPagoGateway.crearPreferencia(request, clienteId);
+        return pagoService.crearPreferenciaMercadoPago(request, clienteId);
     }
 
     /**
