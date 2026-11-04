@@ -17,6 +17,7 @@ export interface Product {
   imagenUrl: string;
   categoria: ProductCategory;
   agotado: boolean; // RF08: Marcar producto como agotado
+  stock?: number | null; // Unidades que quedan; null = sin control de stock
   destacado?: boolean;
   tiempoEstimadoMin?: number;
 }

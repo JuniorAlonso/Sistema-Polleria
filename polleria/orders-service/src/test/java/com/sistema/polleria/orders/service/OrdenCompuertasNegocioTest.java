@@ -304,7 +304,7 @@ class OrdenCompuertasNegocioTest {
     private ArgumentCaptor<Orden> guardar() {
         Producto p = Producto.builder().id(10L).nombre("1/4 Pollo")
                 .precio(new BigDecimal("22.00")).disponible(true).build();
-        when(productoService.buscarOFallar(10L)).thenReturn(p);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(p);
         ArgumentCaptor<Orden> captor = ArgumentCaptor.forClass(Orden.class);
         when(ordenRepository.save(captor.capture())).thenAnswer(i -> {
             Orden o = i.getArgument(0);

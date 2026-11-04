@@ -214,7 +214,7 @@ class OrdenFlujoBordesTest {
         // 22.00 + delivery fee
         Producto p = Producto.builder().id(10L).nombre("1/4 Pollo")
                 .precio(new BigDecimal("22.00")).disponible(true).build();
-        when(productoService.buscarOFallar(10L)).thenReturn(p);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(p);
         CrearOrdenRequest r = crearRequest(OrdenTipo.DELIVERY, OrdenEstado.PENDIENTE_CONFIRMACION);
         r.setMontoPagaCon(new BigDecimal("20"));
 
@@ -317,7 +317,7 @@ class OrdenFlujoBordesTest {
     void a1CrearConProductoAgotadoSeRechaza() {
         Producto agotado = Producto.builder().id(10L).nombre("1/4 Pollo")
                 .precio(new BigDecimal("22.00")).disponible(false).build();
-        when(productoService.buscarOFallar(10L)).thenReturn(agotado);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(agotado);
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> ordenService.crear(crearRequest(OrdenTipo.DELIVERY, null), 0L, true));
@@ -327,7 +327,7 @@ class OrdenFlujoBordesTest {
 
     @Test
     void a1CrearConProductoInexistenteSeRechaza() {
-        when(productoService.buscarOFallar(10L)).thenThrow(new NoSuchElementException("Producto no encontrado: 10"));
+        when(productoService.buscarConBloqueo(10L)).thenThrow(new NoSuchElementException("Producto no encontrado: 10"));
 
         assertThrows(NoSuchElementException.class,
                 () -> ordenService.crear(crearRequest(OrdenTipo.DELIVERY, null), 0L, true));
@@ -422,7 +422,7 @@ class OrdenFlujoBordesTest {
     private ArgumentCaptor<Orden> guardar() {
         Producto p = Producto.builder().id(10L).nombre("1/4 Pollo")
                 .precio(new BigDecimal("22.00")).disponible(true).build();
-        lenient().when(productoService.buscarOFallar(10L)).thenReturn(p);
+        lenient().when(productoService.buscarConBloqueo(10L)).thenReturn(p);
         ArgumentCaptor<Orden> captor = ArgumentCaptor.forClass(Orden.class);
         lenient().when(ordenRepository.save(captor.capture())).thenAnswer(i -> {
             Orden o = i.getArgument(0);

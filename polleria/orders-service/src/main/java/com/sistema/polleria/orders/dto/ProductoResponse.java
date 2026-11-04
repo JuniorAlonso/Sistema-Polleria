@@ -18,6 +18,7 @@ public class ProductoResponse {
     private Categoria categoria;
     private String imagenUrl;
     private boolean disponible;
+    private Integer stock;
     private LocalDateTime creadoEn;
 
     public static ProductoResponse from(Producto p) {
@@ -29,6 +30,7 @@ public class ProductoResponse {
                 .categoria(p.getCategoria())
                 .imagenUrl(p.getImagenUrl())
                 .disponible(p.isDisponible())
+                .stock(p.getStock())
                 .creadoEn(p.getCreadoEn())
                 .build();
     }
