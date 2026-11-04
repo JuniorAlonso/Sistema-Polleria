@@ -1,5 +1,6 @@
 package com.sistema.polleria.orders.controller;
 
+import com.sistema.polleria.orders.dto.ActualizarStockProductoRequest;
 import com.sistema.polleria.orders.dto.ProductoRequest;
 import com.sistema.polleria.orders.dto.ProductoResponse;
 import com.sistema.polleria.orders.entity.Categoria;
@@ -58,6 +59,15 @@ public class ProductoController {
     @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<ProductoResponse> toggleDisponibilidad(@PathVariable Long id) {
         return ResponseEntity.ok(productoService.toggleDisponibilidad(id));
+    }
+
+    @PatchMapping("/{id}/stock")
+    @PreAuthorize("hasAuthority('ADMIN')")
+    public ResponseEntity<ProductoResponse> actualizarStock(
+            @PathVariable Long id,
+            @Valid @RequestBody ActualizarStockProductoRequest request
+    ) {
+        return ResponseEntity.ok(productoService.actualizarStock(id, request.getStock()));
     }
 
     @DeleteMapping("/{id}")

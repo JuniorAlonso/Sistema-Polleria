@@ -217,12 +217,16 @@ public class OrdenService {
         return monto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
-    /** Ítem de comanda validando que el producto exista y esté disponible. */
+    /**
+     * Ítem de comanda validando que el producto exista, esté disponible y tenga stock. El stock se
+     * descuenta aquí mismo, dentro de la transacción del pedido: si otro ítem falla, se revierte.
+     */
     private OrdenItem construirItem(Orden orden, OrdenItemRequest itemReq) {
-        Producto producto = productoService.buscarOFallar(itemReq.getProductoId());
+        Producto producto = productoService.buscarConBloqueo(itemReq.getProductoId());
         if (!producto.isDisponible()) {
             throw new IllegalArgumentException("El producto '" + producto.getNombre() + "' está agotado");
         }
+        descontarStock(producto, itemReq.getCantidad());
         return OrdenItem.builder()
                 .orden(orden)
                 .producto(producto)
@@ -231,6 +235,34 @@ public class OrdenService {
                 .subtotal(producto.getPrecio().multiply(java.math.BigDecimal.valueOf(itemReq.getCantidad())))
                 .notas(itemReq.getNotas())
                 .build();
+    }
+
+    private void descontarStock(Producto producto, int cantidad) {
+        Integer stock = producto.getStock();
+        if (stock == null) {
+            return;
+        }
+        if (cantidad > stock) {
+            throw new IllegalArgumentException(stock == 0
+                    ? "El producto '" + producto.getNombre() + "' está agotado"
+                    : "No hay stock suficiente de '" + producto.getNombre() + "': pediste " + cantidad
+                      + " y solo quedan " + stock + ".");
+        }
+        producto.setStock(stock - cantidad);
+        if (producto.getStock() == 0) {
+            producto.setDisponible(false);
+        }
+    }
+
+    /** Un pedido cancelado antes de que cocina lo empiece devuelve sus unidades al stock. */
+    private void devolverStock(Orden orden) {
+        for (OrdenItem item : orden.getItems()) {
+            Producto producto = productoService.buscarConBloqueo(item.getProducto().getId());
+            if (producto.getStock() != null) {
+                producto.setStock(producto.getStock() + item.getCantidad());
+                producto.setDisponible(true);
+            }
+        }
     }
 
     // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre. Fuera de una
@@ -335,7 +367,12 @@ public class OrdenService {
             orden.setMotivoFantasma(orden.getTipo() == OrdenTipo.DELIVERY ? "NO_ENTREGADO" : "ABANDONADO");
         }
 
+        boolean devolverStock = request.getEstado() == OrdenEstado.CANCELADO
+                && ESTADOS_CANCELABLES_POR_CLIENTE.contains(orden.getEstado());
         orden.setEstado(request.getEstado());
+        if (devolverStock) {
+            devolverStock(orden);
+        }
 
         // Liberar mesa cuando la orden termina en salón
         if (orden.getMesa() != null &&

@@ -64,6 +64,8 @@ export interface BackendProductoResponse {
   categoria: BackendCategoria;
   imagenUrl?: string;
   disponible: boolean;
+  /** Unidades que quedan; null = sin control de stock. */
+  stock?: number | null;
   creadoEn?: string;
   actualizadoEn?: string;
 }

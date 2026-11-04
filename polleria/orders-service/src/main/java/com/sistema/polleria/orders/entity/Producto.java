@@ -38,6 +38,12 @@ public class Producto {
     @Builder.Default
     private boolean disponible = true;
 
+    /**
+     * Unidades que quedan para vender. Al crear un pedido se descuentan y, si no alcanzan, el
+     * pedido se rechaza. {@code null} = el producto no lleva control de stock.
+     */
+    private Integer stock;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime creadoEn;
 

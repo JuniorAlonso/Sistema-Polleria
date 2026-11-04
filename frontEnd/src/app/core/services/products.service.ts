@@ -4,7 +4,7 @@ import { Product, ProductCategory } from '../models/product.model';
 import { BackendProductoResponse } from '../models/api-contracts.model';
 import { ProductAdapter } from '../adapters/product.adapter';
 import { environment } from '../../../environments/environment';
-import { catchError, of, tap } from 'rxjs';
+import { Observable, catchError, map, of, tap } from 'rxjs';
 
 @Injectable({
   providedIn: 'root'
@@ -112,6 +112,20 @@ export class ProductsService {
         })
       ).subscribe();
     }
+  }
+
+  /**
+   * Fija las unidades que quedan de un plato (PATCH /productos/{id}/stock). null quita el control.
+   * Sin actualización optimista: la carta cambia recién cuando el backend confirma.
+   */
+  updateStock(productId: string, stock: number | null): Observable<Product> {
+    const cleanId = this.extractNumericId(productId);
+    return this.http.patch<BackendProductoResponse>(`${this.API_URL}/productos/${cleanId}/stock`, { stock }).pipe(
+      map(res => ProductAdapter.toProduct(res)),
+      tap(updated => this._products.update(products =>
+        products.map(p => p.id === productId ? updated : p)
+      ))
+    );
   }
 
   /**

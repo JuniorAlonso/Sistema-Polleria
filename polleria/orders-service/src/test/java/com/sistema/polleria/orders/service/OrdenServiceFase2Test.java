@@ -85,7 +85,7 @@ class OrdenServiceFase2Test {
 
         when(mesaService.buscarOFallarConBloqueo(1L)).thenReturn(mesa);
         when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(1L), anyList())).thenReturn(List.of());
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenAnswer(i -> {
             Orden o = i.getArgument(0);
             o.setId(100L);
@@ -114,7 +114,7 @@ class OrdenServiceFase2Test {
 
         when(mesaService.buscarOFallarConBloqueo(1L)).thenReturn(mesa);
         when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(1L), anyList())).thenReturn(List.of());
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenAnswer(i -> {
             Orden o = i.getArgument(0);
             o.setId(101L);
@@ -143,7 +143,7 @@ class OrdenServiceFase2Test {
         itemReq.setCantidad(1);
         req.setItems(List.of(itemReq));
 
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenAnswer(i -> {
             Orden o = i.getArgument(0);
             o.setId(102L);
@@ -169,7 +169,7 @@ class OrdenServiceFase2Test {
         nuevo.setCantidad(2);
 
         when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
         when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
 
@@ -193,7 +193,7 @@ class OrdenServiceFase2Test {
         nuevo.setCantidad(1);
 
         when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
         when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
 
@@ -262,7 +262,7 @@ class OrdenServiceFase2Test {
         nuevo.setCantidad(1);
 
         when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
-        when(productoService.buscarOFallar(10L)).thenReturn(producto);
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));

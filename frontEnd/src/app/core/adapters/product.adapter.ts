@@ -110,6 +110,7 @@ export class ProductAdapter {
       imagenUrl: imagen,
       categoria: categoria,
       agotado: dto.disponible === false,
+      stock: dto.stock ?? null,
       destacado: categoria === 'POLLOS_A_LA_BRASA' || categoria === 'COMBOS_FAMILIARES',
       tiempoEstimadoMin: categoria === 'POLLOS_A_LA_BRASA' ? 20 : 15
     };

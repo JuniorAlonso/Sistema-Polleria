@@ -14,7 +14,7 @@ import { Product } from '../../../../core/models/product.model';
               <div class="flex justify-between items-center bg-[#1c1f24] p-4 rounded-xl border border-white/5">
                 <div>
                   <h3 class="font-bold text-white">Catálogo de la Carta</h3>
-                  <p class="text-xs text-slate-400">Los cambios de disponibilidad y precios se reflejan inmediatamente en la app del cliente.</p>
+                  <p class="text-xs text-slate-400">Los cambios de disponibilidad y precios se reflejan inmediatamente en la app del cliente. El stock se descuenta con cada pedido; vacío = sin límite.</p>
                 </div>
                 <button 
                   (click)="createRequested.emit()"
@@ -31,6 +31,7 @@ import { Product } from '../../../../core/models/product.model';
                       <th class="p-4">Plato / Combo</th>
                       <th class="p-4">Categoría</th>
                       <th class="p-4">Precio Regular</th>
+                      <th class="p-4 text-center">Stock</th>
                       <th class="p-4 text-center">Disponibilidad en Vivo</th>
                       <th class="p-4 text-center">Acciones</th>
                     </tr>
@@ -44,6 +45,27 @@ import { Product } from '../../../../core/models/product.model';
                         </td>
                         <td class="p-4 text-slate-400">{{ p.categoria }}</td>
                         <td class="p-4 font-mono font-bold text-polleria-gold">{{ p.precio | currencyPEN }}</td>
+                        <td class="p-4 text-center">
+                          <div class="inline-flex items-center gap-1.5">
+                            <input
+                              #stockInput
+                              type="number"
+                              min="0"
+                              [value]="p.stock ?? ''"
+                              placeholder="Sin límite"
+                              (keydown.enter)="emitirStock(p.id, stockInput.value)"
+                              class="w-24 px-2 py-1 bg-black/40 border rounded-lg text-center font-mono text-white"
+                              [ngClass]="p.stock === 0 ? 'border-rose-500/60' : 'border-white/10'"
+                            />
+                            <button
+                              (click)="emitirStock(p.id, stockInput.value)"
+                              class="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold transition cursor-pointer"
+                              title="Guardar stock"
+                            >
+                              OK
+                            </button>
+                          </div>
+                        </td>
                         <td class="p-4 text-center">
                           <button 
                             (click)="availabilityToggled.emit(p.id)"
@@ -78,4 +100,12 @@ export class ProductsTableComponent {
   readonly createRequested = output<void>();
   readonly availabilityToggled = output<Product['id']>();
   readonly productDeleted = output<Product['id']>();
+  readonly stockChanged = output<{ id: Product['id']; stock: number | null }>();
+
+  emitirStock(id: Product['id'], valor: string): void {
+    const limpio = valor.trim();
+    const stock = limpio === '' ? null : Math.max(0, Math.floor(Number(limpio)));
+    if (stock !== null && Number.isNaN(stock)) return;
+    this.stockChanged.emit({ id, stock });
+  }
 }

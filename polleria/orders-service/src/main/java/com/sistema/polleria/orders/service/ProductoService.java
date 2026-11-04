@@ -79,11 +79,32 @@ public class ProductoService {
         return ProductoResponse.from(producto);
     }
 
+    /**
+     * El admin fija las unidades que quedan. Reponer (stock &gt; 0) vuelve a mostrar el producto en
+     * la carta; {@code null} lo deja sin control de stock.
+     */
+    @Transactional
+    public ProductoResponse actualizarStock(Long id, Integer stock) {
+        Producto producto = buscarConBloqueo(id);
+        producto.setStock(stock);
+        if (stock != null) {
+            producto.setDisponible(stock > 0);
+        }
+        productoRepository.save(producto);
+        log.info("Stock del producto {} → {}", id, stock == null ? "sin control" : stock);
+        return ProductoResponse.from(producto);
+    }
+
     @Transactional
     public void eliminar(Long id) {
         buscarOFallar(id);
         productoRepository.deleteById(id);
         log.info("Producto eliminado: {}", id);
+    }
+
+    public Producto buscarConBloqueo(Long id) {
+        return productoRepository.findByIdConBloqueo(id)
+                .orElseThrow(() -> new NoSuchElementException("Producto no encontrado: " + id));
     }
 
     public Producto buscarOFallar(Long id) {
