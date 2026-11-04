@@ -13,13 +13,27 @@ Guía paso a paso para probar todos los endpoints de los microservicios desde un
 docker compose -f docker-compose.local.yml up -d
 ```
 
-Verificar que los 4 servicios estén arriba:
+Levanta **10 contenedores**: los 8 microservicios (7 Spring Boot + `notification-service`), `postgres` y `pgadmin`. Verificación rápida de los servicios de Fase 1:
 
 | Servicio | URL de prueba | Esperado |
 | :--- | :--- | :--- |
-| auth-service | `GET http://localhost:8081/auth/validate` | `401` (sin token) |
-| orders-service | `GET http://localhost:8082/productos` | `200` + lista |
-| payments-service | `GET http://localhost:8083/pagos` | `401` (sin token) |
+| auth-service | `GET http://localhost:8081/auth/validate` | `403` (sin token: el filtro exige autenticación; el `401` del controlador solo se alcanza con la cabecera presente) |
+| orders-service | `GET http://localhost:8082/productos` | `200` + lista (público) |
+| orders-service | `GET http://localhost:8082/mesas` | `403` (sin token) |
+| payments-service | `GET http://localhost:8083/pagos` | `403` (sin token) |
+| feedback-service | `GET http://localhost:8085/feedback/resenias` | `200` + lista (público) |
+| inventory-service | `GET http://localhost:8086/inventario/insumos` | `403` (sin token) |
+| finance-service | `GET http://localhost:8087/finanzas/caja/actual` | `403` (sin token) |
+| incident-service | `GET http://localhost:8088/incidentes` | `403` (sin token) |
+| notification-service | `GET http://localhost:3001/api/notificaciones/status` | `200` (público) |
+
+> Valores medidos contra el stack levantado, no deducidos del código. Los servicios tardan entre 21 y 27 segundos en arrancar: si consultas justo después de `docker compose up -d`, recibirás un error de conexión, no un `403`.
+>
+> Comprobación de la clave interna (debe devolver `403` con la clave pública antigua y `200` con la configurada en `INTERNAL_API_KEY`):
+> ```bash
+> curl -o /dev/null -w "%{http_code}\n" -H 'X-Internal-Key: polleria-dev-internal-key' http://localhost:8082/mesas
+> curl -o /dev/null -w "%{http_code}\n" -H "X-Internal-Key: $INTERNAL_API_KEY" http://localhost:8082/mesas
+> ```
 
 ### 1.2 Herramienta recomendada
 
@@ -743,7 +757,7 @@ Authorization: Bearer {{TOKEN}}
 > Sin body requerido.
 
 > 💡 *Para la guía de pruebas de Mercado Pago (Checkout Pro y Webhooks), consultar la [Fase 5](../fase_5_pagos_mercadopago/README.md).*  
-> 💡 *Para la guía de pruebas de Notificaciones WhatsApp (`notification-service`), consultar la [Fase 3](../fase_3_notificaciones_wasap/README.md).*
+> 💡 *Para la guía de pruebas de Notificaciones WhatsApp (`notification-service`), consultar la [Fase 3](../fase_3_notificaciones_whatsapp/README.md).*
 
 ---
 

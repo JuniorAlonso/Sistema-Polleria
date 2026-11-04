@@ -26,4 +26,19 @@ public final class TelefonoUtil {
         if (n == null) return List.of();
         return List.of(n, "51" + n, "+51" + n, "+51 " + n);
     }
+
+    /**
+     * Clave canónica del celular: la forma normalizada, o los últimos 9 dígitos cuando el
+     * formato no se puede normalizar. Se usa tanto para numerar pedidos como para el índice
+     * único, de modo que "(01) 987654321" y "987654321" compartan clave y no abran dos
+     * secuencias distintas para el mismo cliente.
+     */
+    public static String canonico(String telefono) {
+        String normalizado = normalizar(telefono);
+        if (normalizado != null) return normalizado;
+        if (telefono == null) return null;
+        String digitos = telefono.replaceAll("\\D", "");
+        if (digitos.isBlank()) return null;
+        return digitos.length() > 9 ? digitos.substring(digitos.length() - 9) : digitos;
+    }
 }

@@ -1,622 +1,127 @@
 import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
-import { CommonModule, isPlatformBrowser } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { RouterModule, Router } from '@angular/router';
+import { isPlatformBrowser } from '@angular/common';
+import { Router } from '@angular/router';
 import { OrdersService } from '../../core/services/orders.service';
 import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { SalonService, ZonaSalonConfig } from '../../core/services/salon.service';
-import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
+import { leerUserIdDelToken } from '../../core/utils/jwt.util';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
+import { Order, OrderStatus } from '../../core/models/order.model';
+import { AlertaPlatoListo, ComandaItem, MesaSalon, MozoTab } from './mozo.types';
+import {
+  esMesaParaCobrar as esMesaParaCobrarHelper,
+  esMiComanda as esMiComandaHelper,
+  etiquetaEstadoComanda as etiquetaEstadoComandaHelper,
+  getCodeNum as getCodeNumHelper,
+  horaDe as horaDeHelper,
+  resumenItems as resumenItemsHelper,
+  tiempoTranscurridoDesde as tiempoTranscurridoDesdeHelper
+} from './mozo.helpers';
+import { MozoSidebarComponent } from './components/mozo-sidebar.component';
+import { MozoHeaderComponent } from './components/mozo-header.component';
+import { MozoAlertBannerComponent } from './components/mozo-alert-banner.component';
+import { MozoMesasFiltersComponent } from './components/mozo-mesas-filters.component';
+import { MozoCroquisComponent } from './components/mozo-croquis.component';
+import { MozoMesasCardsComponent } from './components/mozo-mesas-cards.component';
+import { MozoMenuPickerComponent } from './components/mozo-menu-picker.component';
+import { MozoOrderSummaryComponent } from './components/mozo-order-summary.component';
+import { MozoAlertasListComponent } from './components/mozo-alertas-list.component';
+import { MozoHistorialComponent } from './components/mozo-historial.component';
+import { MozoMesaModalComponent } from './components/mozo-mesa-modal.component';
 
-export type MozoTab = 'MESAS' | 'TOMAR_COMANDA' | 'ALERTAS_COCINA' | 'HISTORIAL_TURNO';
-
-export interface MesaSalon {
-  id: number;
-  nombre: string;
-  zona: 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP' | string;
-  capacidad: number;
-  estado: TableStatus;
-  posicionX?: number;
-  posicionY?: number;
-  comensales?: number;
-  tiempoMinutos?: number;
-  totalConsumo: number;
-  mozo?: string;
-  platosListos?: boolean;
-  ordenId?: string;
-  items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
-}
-
-export interface AlertaPlatoListo {
-  id: string;
-  mesa: string;
-  plato: string;
-  cantidad: number;
-  hora: string;
-  atendido: boolean;
-}
+export type { MozoTab, MesaSalon, AlertaPlatoListo } from './mozo.types';
 
 @Component({
   selector: 'app-mozo-salon',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, CurrencyPENPipe],
+  imports: [
+    MozoSidebarComponent,
+    MozoHeaderComponent,
+    MozoAlertBannerComponent,
+    MozoMesasFiltersComponent,
+    MozoCroquisComponent,
+    MozoMesasCardsComponent,
+    MozoMenuPickerComponent,
+    MozoOrderSummaryComponent,
+    MozoAlertasListComponent,
+    MozoHistorialComponent,
+    MozoMesaModalComponent
+  ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
-      
-      <!-- ================= SIDEBAR LATERAL MOZO ================= -->
-      <aside class="w-full md:w-64 bg-[#14161a] border-r border-white/10 flex flex-col shrink-0 md:sticky md:top-0 md:h-screen z-40">
-        
-        <!-- Sidebar Brand Header -->
-        <div class="h-16 px-5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
-          <a routerLink="/" class="flex items-center gap-1.5 leading-none">
-            <span class="font-display text-2xl font-black text-polleria-crimson tracking-wider">
-              SAN POLLO
-            </span>
-            <span class="font-display text-2xl font-black text-polleria-gold tracking-wider">
-              MOZO
-            </span>
-          </a>
-        </div>
 
-        <!-- Sidebar Navigation Menu -->
-        <nav class="flex-1 p-3.5 space-y-1 overflow-y-auto no-scrollbar">
-          <div class="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3 py-1.5">
-            Salón & Atención
-          </div>
+      <app-mozo-sidebar
+        [activeTab]="activeTab()"
+        [mesasCount]="mesas().length"
+        [alertasCount]="alertasPendientes().length"
+        [userName]="auth.currentUser()?.nombre"
+        (tabChange)="activeTab.set($event)"
+        (logout)="cerrarSesion()"
+      />
 
-          <button 
-            type="button"
-            (click)="activeTab.set('MESAS')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'MESAS' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-              </svg>
-              <span>Mapa de Mesas</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-md bg-black/40 text-[11px] font-bold text-slate-300">
-              {{ mesas().length }}
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('TOMAR_COMANDA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'TOMAR_COMANDA' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-              </svg>
-              <span>Tomar Comanda</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-full bg-polleria-crimson text-[10px] font-bold text-white">
-              + Nuevo
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('ALERTAS_COCINA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'ALERTAS_COCINA' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-              </svg>
-              <span>Platos Listos</span>
-            </div>
-            @if (alertasPendientes().length > 0) {
-              <span class="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center animate-bounce">
-                {{ alertasPendientes().length }}
-              </span>
-            }
-          </button>
-
-          <div class="pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3">
-            Caja & Turno
-          </div>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('HISTORIAL_TURNO')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'HISTORIAL_TURNO' ? 'bg-polleria-gold/15 text-polleria-gold border border-polleria-gold/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span>Historial del Turno</span>
-            </div>
-          </button>
-        </nav>
-
-        <!-- Sidebar User Footer -->
-        <div class="p-3 border-t border-white/10 bg-[#101215] shrink-0">
-          <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-white/5">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <div class="w-8 h-8 rounded-full ring-2 ring-polleria-gold overflow-hidden bg-slate-800 flex items-center justify-center text-xs font-black text-polleria-gold shrink-0 shadow">
-                <span>{{ (auth.currentUser()?.nombre?.substring(0, 2) || 'MZ') | uppercase }}</span>
-              </div>
-              <div class="flex flex-col text-left leading-tight min-w-0">
-                <span class="text-xs font-bold text-white truncate">
-                  {{ auth.currentUser()?.nombre || 'Mozo Salón' }}
-                </span>
-                <span class="text-[10px] font-mono text-polleria-gold font-bold">
-                  MOZO / SALÓN
-                </span>
-              </div>
-            </div>
-            <button 
-              type="button"
-              (click)="cerrarSesion()"
-              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/20 transition cursor-pointer shrink-0"
-              title="Cerrar Sesión"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-      </aside>
-
-      <!-- ================= MAIN CONTENT WRAPPER ================= -->
       <div class="flex-1 flex flex-col min-w-0 min-h-screen bg-[#0d0e11] overflow-y-auto">
-        
-        <!-- Top Bar for Status & Actions -->
-        <header class="h-16 bg-[#14161a]/90 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
-          
-          <div class="flex items-center gap-2.5">
-            <h1 class="text-base sm:text-lg font-extrabold text-white tracking-wide uppercase">
-              {{ getActiveTabLabel() }}
-            </h1>
-          </div>
 
-          <div class="flex items-center gap-3">
-            <!-- Quick Alert Indicator -->
-            <button 
-              (click)="activeTab.set('ALERTAS_COCINA')"
-              class="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-              </svg>
-              <span>Avisos Cocina ({{ alertasPendientes().length }})</span>
-            </button>
+        <app-mozo-header
+          [tabLabel]="getActiveTabLabel()"
+          [alertasCount]="alertasPendientes().length"
+          (openAlertas)="activeTab.set('ALERTAS_COCINA')"
+          (nuevaComanda)="abrirModalComandaRapida()"
+        />
 
-            <button 
-              (click)="abrirModalComandaRapida()"
-              class="px-4 py-1.5 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-            >
-              <span>+ Tomar Comanda</span>
-            </button>
-          </div>
-
-        </header>
+        <!-- Aviso fijo de comanda lista: guía la vista en todas las pestañas sin bloquear clicks -->
+        @if (alertaPrincipal(); as a) {
+          <app-mozo-alert-banner [alerta]="a" [miUserId]="miUserId()" (servir)="servirAlerta($event)" />
+        }
 
         <!-- ================= TAB 1: MAPA DE MESAS ================= -->
         @if (activeTab() === 'MESAS') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
-            <!-- Summary Bar with View Switcher & Zone Filters -->
-            <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow-lg">
-              <div>
-                <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                  <span>Control del Salón y Comensales</span>
-                </h2>
-                <p class="text-xs text-slate-400">Toca una mesa en el croquis o catálogo para ver su cuenta, agregar platos, cobrar o liberarla.</p>
-              </div>
 
-              <div class="flex items-center gap-3 flex-wrap">
-                <!-- Toggle Vista Croquis vs Tarjetas -->
-                <div class="flex items-center gap-1 bg-black/50 p-1 rounded-xl border border-white/10 text-xs">
-                  <button 
-                    type="button"
-                    (click)="vistaMesas.set('CROQUIS')"
-                    class="px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer"
-                    [ngClass]="vistaMesas() === 'CROQUIS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-                    </svg>
-                    <span>Croquis Salón</span>
-                  </button>
-                  <button 
-                    type="button"
-                    (click)="vistaMesas.set('TARJETAS')"
-                    class="px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer"
-                    [ngClass]="vistaMesas() === 'TARJETAS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
-                    </svg>
-                    <span>Tarjetas</span>
-                  </button>
-                </div>
+            <app-mozo-mesas-filters
+              [vistaMesas]="vistaMesas()"
+              [selectedZone]="selectedZone()"
+              [zonasSalon]="zonasSalon"
+              [mesasCount]="mesas().length"
+              (vistaChange)="vistaMesas.set($event)"
+              (zoneChange)="selectedZone.set($event)"
+            />
 
-                <!-- Filter Zones -->
-                <div class="flex items-center gap-1 text-xs bg-black/40 p-1 rounded-xl border border-white/5">
-                  <button 
-                    (click)="selectedZone.set('TODAS')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'TODAS' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Todas ({{ mesas().length }})
-                  </button>
-                  <button 
-                    (click)="selectedZone.set('SALON_PRINCIPAL')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'SALON_PRINCIPAL' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Salón
-                  </button>
-                  <button 
-                    (click)="selectedZone.set('TERRAZA')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'TERRAZA' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    Terraza
-                  </button>
-                  <button 
-                    (click)="selectedZone.set('ZONA_VIP')"
-                    class="px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
-                    [ngClass]="selectedZone() === 'ZONA_VIP' ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                  >
-                    VIP
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- ================= CROQUIS MATRICIAL POR ZONAS (SLIDES) ================= -->
             @if (vistaMesas() === 'CROQUIS') {
-              <div class="relative bg-[#0d0f14] border border-white/10 rounded-2xl overflow-hidden shadow-2xl p-5 space-y-4">
-                
-                <!-- Overlay de Espera y Sincronización en la Cuadrícula -->
-                @if (isProcesandoMesa() || salonService.isLoading()) {
-                  <div class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm z-40 rounded-2xl flex flex-col items-center justify-center p-6 text-center animate-fade-in shadow-2xl border border-polleria-gold/30">
-                    <div class="relative flex items-center justify-center mb-3">
-                      <div class="w-16 h-16 rounded-full border-2 border-polleria-gold/20 animate-ping absolute"></div>
-                      <svg class="animate-spin w-12 h-12 text-polleria-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
-                        <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                    </div>
-                    <h4 class="font-display text-base font-bold text-white tracking-wide">
-                      {{ isProcesandoMesa() ? mensajeProcesandoMesa() : 'Cargando mesas del salón...' }}
-                    </h4>
-                    <p class="text-xs text-slate-400 mt-1 max-w-xs">
-                      Por favor espere un momento mientras se completa la sincronización con el servidor.
-                    </p>
-                  </div>
-                }
-
-                <!-- Barra de Navegación por Slides de Zona -->
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/10">
-                  <!-- Controles de Slide Anterior / Siguiente -->
-                  <div class="flex items-center gap-3">
-                    <button 
-                      type="button"
-                      (click)="prevZona()"
-                      class="p-2.5 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-                      title="Ver zona anterior"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                      </svg>
-                      <span class="hidden sm:inline">Anterior</span>
-                    </button>
-
-                    <div class="flex flex-col">
-                      <div class="flex items-center gap-2">
-                        <span class="font-display text-lg sm:text-xl font-black text-white tracking-wide">
-                          {{ currentZona().nombre }}
-                        </span>
-                        <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-polleria-gold/20 text-polleria-gold border border-polleria-gold/30">
-                          Slide {{ activeZonaIndex() + 1 }} de {{ zonasSalon.length }}
-                        </span>
-                      </div>
-                      <span class="text-[11px] text-slate-400">
-                        Cuadrícula de casillas: {{ currentZona().filas }} filas × {{ currentZona().columnas }} columnas
-                      </span>
-                    </div>
-
-                    <button 
-                      type="button"
-                      (click)="nextZona()"
-                      class="p-2.5 rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-                      title="Ver siguiente zona"
-                    >
-                      <span class="hidden sm:inline">Siguiente</span>
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                      </svg>
-                    </button>
-                  </div>
-
-                  <!-- Píldoras de Salto Directo a Zona -->
-                  <div class="flex items-center gap-1.5 bg-black/50 p-1.5 rounded-xl border border-white/10 overflow-x-auto max-w-full">
-                    @for (z of zonasSalon; track z.id; let idx = $index) {
-                      <button 
-                        type="button"
-                        (click)="setZonaIndex(idx)"
-                        class="px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5"
-                        [ngClass]="activeZonaIndex() === idx ? 'bg-polleria-gold text-slate-950 shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-                      >
-                        <span>{{ z.nombre }}</span>
-                      </button>
-                    }
-                  </div>
-                </div>
-
-                <!-- Barra de Personalización de Cuadrícula (Filas × Columnas) & Leyenda -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#121419] p-3 rounded-xl border border-white/5 text-xs">
-                  <div class="flex items-center gap-4 flex-wrap">
-                    <span class="text-slate-400 font-bold uppercase tracking-wider text-[11px]">Personalizar Cuadrícula:</span>
-                    
-                    <!-- Ajuste de Filas -->
-                    <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                      <span class="text-slate-400">Filas:</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarFilas(-1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Quitar fila"
-                      >-</button>
-                      <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().filas }}</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarFilas(1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Agregar fila"
-                      >+</button>
-                    </div>
-
-                    <!-- Ajuste de Columnas -->
-                    <div class="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-white/10">
-                      <span class="text-slate-400">Columnas:</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarColumnas(-1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Quitar columna"
-                      >-</button>
-                      <span class="font-mono font-bold text-polleria-gold px-1.5">{{ currentZona().columnas }}</span>
-                      <button 
-                        type="button" 
-                        (click)="ajustarColumnas(1)" 
-                        class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white font-bold flex items-center justify-center cursor-pointer"
-                        title="Agregar columna"
-                      >+</button>
-                    </div>
-                  </div>
-
-                  <!-- Leyenda de Estados para el Mozo -->
-                  <div class="flex items-center gap-3 text-[11px] flex-wrap">
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Libre</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Ocupada</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span> Cobrar</span>
-                    <span class="flex items-center gap-1 text-slate-400"><span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span> Limpieza</span>
-                  </div>
-                </div>
-
-                <!-- Estado de Movimiento Activo -->
-                @if (mesaEnMovimiento(); as mem) {
-                  <div class="flex items-center justify-between bg-amber-500/15 border border-amber-500/40 px-3 py-2 rounded-xl text-amber-300 text-xs animate-pulse">
-                    <div class="flex items-center gap-2">
-                      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                      </svg>
-                      <span>Moviendo <strong>{{ mem.nombre }}</strong>: Toca una casilla vacía para reubicarla</span>
-                    </div>
-                    <button 
-                      type="button" 
-                      (click)="mesaEnMovimiento.set(null)" 
-                      class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                }
-
-                <!-- Lienzo de la Cuadrícula Matricial -->
-                <div class="overflow-x-auto pb-4 select-none">
-                  <div 
-                    class="grid gap-3 p-4 bg-[#0a0c10] border border-white/10 rounded-2xl min-w-max mx-auto shadow-inner"
-                    [style.gridTemplateColumns]="'repeat(' + currentZona().columnas + ', minmax(110px, 1fr))'"
-                  >
-                    @for (r of getRowsArray(); track r) {
-                      @for (c of getColsArray(); track c) {
-                        @if (getMesaEnCasilla(r, c); as mesa) {
-                          <!-- CASILLA OCUPADA POR MESA -->
-                          <div 
-                            draggable="true"
-                            (dragstart)="onDragStartMesa($event, mesa)"
-                            (click)="onCasillaClick(r, c)"
-                            class="h-28 rounded-2xl p-2.5 border-2 flex flex-col justify-between items-center transition-all cursor-pointer relative select-none group shadow-lg"
-                            [ngClass]="{
-                              'bg-emerald-950/80 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/20 hover:scale-[1.02]': mesa.estado === 'LIBRE',
-                              'bg-rose-950/80 border-rose-500 text-rose-300 ring-2 ring-rose-500/20 hover:scale-[1.02]': mesa.estado === 'OCUPADA',
-                              'bg-amber-950/80 border-amber-500 text-amber-300 ring-4 ring-amber-500/30 animate-pulse': mesa.estado === 'POR_COBRAR',
-                              'bg-sky-950/80 border-sky-500 text-sky-300 ring-2 ring-sky-500/20 hover:scale-[1.02]': mesa.estado === 'EN_LIMPIEZA' || mesa.estado === 'LIMPIEZA',
-                              'bg-purple-950/80 border-purple-500 text-purple-300 hover:scale-[1.02]': mesa.estado === 'RESERVADA',
-
-                              'ring-4 ring-polleria-gold border-polleria-gold scale-[1.03] shadow-polleria-gold/30 z-20': selectedMesaModal()?.id === mesa.id,
-                              'ring-4 ring-amber-400 animate-bounce z-30': mesaEnMovimiento()?.id === mesa.id
-                            }"
-                          >
-                            <!-- Badge Alerta Plato Listo -->
-                            @if (mesa.platosListos) {
-                              <span class="absolute -top-3 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black uppercase tracking-wider animate-bounce shadow border border-white/20 whitespace-nowrap z-30">
-                                ¡Plato Listo!
-                              </span>
-                            }
-
-                            <!-- Coordenadas Casilla & Capacidad -->
-                            <div class="w-full flex justify-between items-center text-[10px]">
-                              <span class="font-mono text-slate-400 opacity-60">F{{ r }}:C{{ c }}</span>
-                              <span class="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-black/40">
-                                {{ mesa.capacidad }}p
-                              </span>
-                            </div>
-
-                            <!-- Nombre/Número de Mesa Central -->
-                            <div class="flex flex-col items-center my-auto">
-                              <span class="font-display text-base font-black text-white tracking-tight leading-none group-hover:text-polleria-gold transition">
-                                {{ mesa.nombre }}
-                              </span>
-                              <span class="text-[9px] font-bold uppercase tracking-wider opacity-80 mt-0.5">
-                                {{ mesa.estado }}
-                              </span>
-                            </div>
-
-                            <!-- Footer de Casilla: Total Consumo & Botón Reubicar -->
-                            <div class="w-full flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
-                              @if (mesa.totalConsumo && mesa.totalConsumo > 0) {
-                                <span class="font-mono font-bold text-polleria-gold">
-                                  {{ mesa.totalConsumo | currencyPEN }}
-                                </span>
-                              } @else {
-                                <span class="text-slate-400">Sin orden</span>
-                              }
-                              <button 
-                                type="button"
-                                (click)="iniciarMoverMesa(mesa, $event)"
-                                class="p-1 rounded bg-white/10 hover:bg-polleria-gold hover:text-slate-950 text-slate-300 transition cursor-pointer"
-                                title="Reubicar a otra casilla"
-                              >
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        } @else {
-                          <!-- CASILLA VACÍA -->
-                          <div 
-                            (click)="onCasillaClick(r, c)"
-                            (dragover)="onDragOverCasilla($event)"
-                            (drop)="onDropCasilla($event, r, c)"
-                            class="h-28 rounded-2xl border-2 border-dashed transition-all flex flex-col justify-between items-center p-2.5 cursor-pointer group"
-                            [ngClass]="mesaEnMovimiento() ? 'border-polleria-gold/50 bg-polleria-gold/10 hover:border-polleria-gold hover:bg-polleria-gold/20' : 'border-white/10 bg-[#0d0e12] hover:border-white/30 hover:bg-white/5'"
-                          >
-                            <div class="w-full flex justify-between items-center text-[10px] text-slate-500">
-                              <span class="font-mono">F{{ r }}:C{{ c }}</span>
-                              <span class="text-[9px] opacity-0 group-hover:opacity-100 text-slate-400 transition">Vacía</span>
-                            </div>
-
-                            <div class="flex flex-col items-center justify-center my-auto transition-transform group-hover:scale-110">
-                              @if (mesaEnMovimiento()) {
-                                <span class="text-xs font-bold text-polleria-gold flex items-center gap-1">
-                                  <svg class="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                                  </svg>
-                                  <span>Ubicar aquí</span>
-                                </span>
-                              } @else {
-                                <span class="w-6 h-6 rounded-full border border-dashed border-slate-700 flex items-center justify-center text-slate-600 group-hover:border-slate-500 group-hover:text-slate-400 transition">
-                                  <span class="text-[10px]">•</span>
-                                </span>
-                                <span class="text-[10px] text-slate-600 group-hover:text-slate-400 mt-1 transition">
-                                  Disponible
-                                </span>
-                              }
-                            </div>
-
-                            <div class="w-full text-center text-[9px] text-slate-600">
-                              Espacio libre
-                            </div>
-                          </div>
-                        }
-                      }
-                    }
-                  </div>
-                </div>
-
-              </div>
+              <app-mozo-croquis
+                [zonasSalon]="zonasSalon"
+                [currentZona]="currentZona()"
+                [activeZonaIndex]="activeZonaIndex()"
+                [mesas]="mesas()"
+                [hasError]="salonService.hasError()"
+                [isLoading]="salonService.isLoading()"
+                [isProcesandoMesa]="isProcesandoMesa()"
+                [mensajeProcesandoMesa]="mensajeProcesandoMesa()"
+                [isAdmin]="auth.isAdmin()"
+                [mesaEnMovimiento]="mesaEnMovimiento()"
+                [selectedMesaId]="selectedMesaModal()?.id"
+                [ahora]="tiempoActual()"
+                (reintentar)="salonService.cargarMesas()"
+                (prevZona)="prevZona()"
+                (nextZona)="nextZona()"
+                (zonaSelect)="setZonaIndex($event)"
+                (ajustarFilas)="ajustarFilas($event)"
+                (ajustarColumnas)="ajustarColumnas($event)"
+                (cancelarMovimiento)="mesaEnMovimiento.set(null)"
+                (casillaClick)="onCasillaClick($event.row, $event.col)"
+                (dragStartMesa)="onDragStartMesa($event.event, $event.mesa)"
+                (dragOverCasilla)="onDragOverCasilla($event)"
+                (dropCasilla)="onDropCasilla($event.event, $event.row, $event.col)"
+                (moverMesa)="iniciarMoverMesa($event.mesa, $event.event)"
+              />
             } @else {
-              <!-- ================= VISTA TARJETAS MOZO ================= -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                @for (m of filteredMesas(); track m.id) {
-                  <div 
-                    (click)="seleccionarMesa(m)"
-                    class="p-5 rounded-2xl border transition duration-200 cursor-pointer relative overflow-hidden flex flex-col justify-between group shadow-lg"
-                    [ngClass]="{
-                      'bg-[#102419] border-emerald-500/40 hover:border-emerald-400': m.estado === 'LIBRE',
-                      'bg-[#2d1217] border-rose-500/40 hover:border-rose-400': m.estado === 'OCUPADA',
-                      'bg-[#2d220f] border-amber-500/40 hover:border-amber-400': m.estado === 'POR_COBRAR',
-                      'bg-[#131f33] border-sky-500/40 hover:border-sky-400': m.estado === 'RESERVADA'
-                    }"
-                  >
-                    <!-- Platos Listos Badge -->
-                    @if (m.platosListos) {
-                      <div class="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black uppercase tracking-wider animate-pulse shadow">
-                        <svg class="w-3.5 h-3.5 text-amber-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>Plato Listo
-                      </div>
-                    }
-
-                    <div>
-                      <div class="flex items-center justify-between">
-                        <span class="font-display text-2xl font-black text-white group-hover:text-polleria-gold transition">
-                          {{ m.nombre }}
-                        </span>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                          [ngClass]="{
-                            'bg-emerald-500/20 text-emerald-300': m.estado === 'LIBRE',
-                            'bg-rose-500/20 text-rose-300': m.estado === 'OCUPADA',
-                            'bg-amber-500/20 text-amber-300': m.estado === 'POR_COBRAR',
-                            'bg-sky-500/20 text-sky-300': m.estado === 'RESERVADA'
-                          }"
-                        >
-                          {{ m.estado }}
-                        </span>
-                      </div>
-
-                      <p class="text-xs text-slate-400 mt-1">Capacidad: {{ m.capacidad }} personas • {{ m.zona }}</p>
-
-                      @if (m.estado === 'OCUPADA' || m.estado === 'POR_COBRAR') {
-                        <div class="mt-4 pt-3 border-t border-white/10 space-y-1 text-xs">
-                          <div class="flex justify-between text-slate-300">
-                            <span>Comensales:</span>
-                            <span class="font-bold text-white">{{ m.comensales }}</span>
-                          </div>
-                          <div class="flex justify-between text-slate-300">
-                            <span>Tiempo en mesa:</span>
-                            <span class="font-mono text-amber-400">{{ m.tiempoMinutos }} min</span>
-                          </div>
-                          <div class="flex justify-between text-slate-300">
-                            <span>Mozo:</span>
-                            <span class="font-bold text-slate-200">{{ m.mozo || 'Yovana M.' }}</span>
-                          </div>
-                        </div>
-                      } @else {
-                        <div class="mt-4 pt-3 border-t border-white/10 text-xs text-slate-500 flex items-center justify-center h-16">
-                          <span>Disponible para asignar</span>
-                        </div>
-                      }
-                    </div>
-
-                    <!-- Footer / Consumo -->
-                    <div class="mt-4 pt-3 border-t border-white/10 flex justify-between items-center">
-                      <span class="text-xs text-slate-400">Total acumulado:</span>
-                      <span class="font-display text-lg font-bold text-polleria-gold">
-                        {{ m.totalConsumo | currencyPEN }}
-                      </span>
-                    </div>
-
-                  </div>
-                }
-              </div>
+              <app-mozo-mesas-cards
+                [mesas]="filteredMesas()"
+                [ahora]="tiempoActual()"
+                (seleccionar)="seleccionarMesa($event)"
+              />
             }
 
           </main>
@@ -625,114 +130,28 @@ export interface AlertaPlatoListo {
         <!-- ================= TAB 2: TOMAR COMANDA RÁPIDA ================= -->
         @if (activeTab() === 'TOMAR_COMANDA') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              <!-- Left: Product Catalog Selection -->
-              <div class="lg:col-span-2 space-y-4">
-                <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                  <div>
-                    <h2 class="text-lg font-bold text-white">Carta Digital de Salón</h2>
-                    <p class="text-xs text-slate-400">Selecciona platos y bebidas para la mesa elegida.</p>
-                  </div>
-                  
-                  <!-- Mesa Target Selector -->
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-slate-300 font-bold">Mesa:</label>
-                    <select 
-                      [(ngModel)]="selectedMesaForOrder"
-                      class="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                    >
-                      @for (m of mesas(); track m.id) {
-                        <option [value]="m.id">{{ m.nombre }} ({{ m.estado }})</option>
-                      }
-                    </select>
-                  </div>
-                </div>
 
-                <!-- Products Grid -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  @for (prod of productsService.products(); track prod.id) {
-                    <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 flex flex-col justify-between gap-3 shadow hover:border-polleria-gold/40 transition">
-                      <div class="flex items-center gap-3">
-                        <img [src]="prod.imagenUrl" [alt]="prod.nombre" class="w-16 h-16 rounded-xl object-cover shrink-0 bg-slate-800"/>
-                        <div class="min-w-0">
-                          <h3 class="text-sm font-bold text-white truncate">{{ prod.nombre }}</h3>
-                          <p class="text-xs text-slate-400 line-clamp-1">{{ prod.descripcion }}</p>
-                          <span class="font-display text-sm font-bold text-polleria-gold">{{ prod.precio | currencyPEN }}</span>
-                        </div>
-                      </div>
-                      <button 
-                        (click)="agregarItemComanda(prod)"
-                        class="w-full py-2 rounded-xl bg-polleria-gold/10 hover:bg-polleria-gold text-polleria-gold hover:text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <span>+ Agregar a la comanda</span>
-                      </button>
-                    </div>
-                  }
-                </div>
-              </div>
+              <app-mozo-menu-picker
+                [mesas]="mesas()"
+                [products]="productsService.products()"
+                [selectedMesaForOrder]="selectedMesaForOrder"
+                (mesaChange)="selectedMesaForOrder = $any($event)"
+                (agregar)="agregarItemComanda($event)"
+              />
 
-              <!-- Right: Comanda Builder Drawer -->
-              <div class="bg-[#14161a] p-5 rounded-2xl border border-white/10 shadow flex flex-col justify-between h-[calc(100vh-175px)] sticky top-20">
-                <div>
-                  <div class="flex justify-between items-center pb-4 border-b border-white/10">
-                    <div>
-                      <h3 class="text-base font-extrabold text-white">Comanda Mesa #{{ selectedMesaForOrder }}</h3>
-                      <p class="text-xs text-slate-400">Mozo: {{ auth.currentUser()?.nombre || 'Yovana M.' }}</p>
-                    </div>
-                    <span class="px-2.5 py-1 rounded-full bg-polleria-crimson text-white text-xs font-bold">
-                      {{ comandaItems.length }} items
-                    </span>
-                  </div>
-
-                  <!-- Comanda Items List -->
-                  <div class="py-4 space-y-3 overflow-y-auto max-h-[360px] custom-scrollbar">
-                    @if (comandaItems.length === 0) {
-                      <div class="text-center py-12 text-slate-500 text-xs">
-                        No hay platos agregados a esta comanda.<br/>Selecciona productos de la carta.
-                      </div>
-                    }
-
-                    @for (item of comandaItems; track $index) {
-                      <div class="p-3 rounded-xl bg-white/5 border border-white/5 space-y-2">
-                        <div class="flex justify-between items-start">
-                          <div>
-                            <span class="text-xs font-bold text-white">{{ item.cantidad }}x {{ item.producto.nombre }}</span>
-                            <span class="block text-[11px] font-mono text-polleria-gold">{{ item.producto.precio * item.cantidad | currencyPEN }}</span>
-                          </div>
-                          <button (click)="eliminarItemComanda($index)" class="text-rose-400 hover:text-rose-300 cursor-pointer" aria-label="Eliminar"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-                        </div>
-                        <input 
-                          type="text" 
-                          [(ngModel)]="item.notas" 
-                          placeholder="Notas de cocina (ej: papas bien doradas, sin ají...)"
-                          class="w-full px-2.5 py-1 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                        />
-                      </div>
-                    }
-                  </div>
-                </div>
-
-                <!-- Footer Summary & Submit -->
-                <div class="pt-4 border-t border-white/10 space-y-3">
-                  <div class="flex justify-between items-center">
-                    <span class="text-xs text-slate-400 font-bold">Total Comanda:</span>
-                    <span class="font-display text-2xl font-black text-polleria-gold">
-                      {{ calcularTotalComanda() | currencyPEN }}
-                    </span>
-                  </div>
-
-                  <button 
-                    [disabled]="comandaItems.length === 0"
-                    (click)="enviarComandaACocina()"
-                    class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-                  >
-                    <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>Enviar a Cocina & Horno
-                  </button>
-                </div>
-
-              </div>
+              <app-mozo-order-summary
+                [mesaTitulo]="mesaParaComanda()?.numero ?? selectedMesaForOrder"
+                [userName]="auth.currentUser()?.nombre"
+                [ordenActivaId]="mesaParaComanda()?.ordenId"
+                [estadoComandaLabel]="comandaMesa()?.estado ? etiquetaEstadoComanda(comandaMesa()!.estado) : ''"
+                [items]="comandaItems"
+                [total]="calcularTotalComanda()"
+                (eliminar)="eliminarItemComanda($event)"
+                (notasChange)="actualizarNotasItem($event.index, $event.notas)"
+                (enviar)="enviarComandaACocina()"
+              />
 
             </div>
 
@@ -742,252 +161,44 @@ export interface AlertaPlatoListo {
         <!-- ================= TAB 3: ALERTAS DE COCINA ================= -->
         @if (activeTab() === 'ALERTAS_COCINA') {
           <main class="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full space-y-6">
-            
-            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow flex justify-between items-center">
-              <div>
-                <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                  <span>Avisos de Platos Listos en Cocina</span>
-                </h2>
-                <p class="text-xs text-slate-400">Notificaciones instantáneas de platos recién salidos del horno para servir a mesa.</p>
-              </div>
-
-              <button 
-                (click)="simularNuevoAvisoCocina()"
-                class="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold border border-white/10 transition cursor-pointer"
-              >
-                + Simular Aviso de Cocina
-              </button>
-            </div>
-
-            <!-- Alerts List -->
-            <div class="space-y-3">
-              @for (a of alertas; track a.id) {
-                <div 
-                  class="p-4 rounded-2xl border transition duration-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg"
-                  [ngClass]="a.atendido ? 'bg-white/5 border-white/5 opacity-60' : 'bg-amber-500/10 border-amber-500/40'"
-                >
-                  <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
-                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <span class="font-display text-lg font-black text-white">{{ a.mesa }}</span>
-                        <span class="text-xs text-slate-400">• {{ a.hora }}</span>
-                      </div>
-                      <p class="text-sm font-bold text-amber-300">{{ a.cantidad }}x {{ a.plato }}</p>
-                    </div>
-                  </div>
-
-                  <div>
-                    @if (!a.atendido) {
-                      <button 
-                        (click)="marcarPlatoServido(a)"
-                        class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
-                      >
-                        <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Marcar como Servido
-                      </button>
-                    } @else {
-                      <span class="text-xs text-emerald-400 font-bold">Servido en mesa</span>
-                    }
-                  </div>
-                </div>
-              }
-            </div>
-
+            <app-mozo-alertas-list
+              [alertas]="alertasPendientes()"
+              [miUserId]="miUserId()"
+              (servir)="servirAlerta($event)"
+            />
           </main>
         }
 
         <!-- ================= TAB 4: HISTORIAL & COBROS DEL TURNO ================= -->
         @if (activeTab() === 'HISTORIAL_TURNO') {
           <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Mesas Atendidas Hoy</span>
-                <p class="font-display text-3xl font-black text-white mt-1">14</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Total Cobrado en Turno</span>
-                <p class="font-display text-3xl font-black text-polleria-gold mt-1">S/. 1,840.50</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Propinas Digitales Estimadas</span>
-                <p class="font-display text-3xl font-black text-emerald-400 mt-1">S/. 92.00</p>
-              </div>
-            </div>
-
-            <!-- Cobros Realizados Table -->
-            <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow">
-              <div class="p-4 border-b border-white/10 flex justify-between items-center">
-                <h3 class="text-sm font-bold text-white">Transacciones y Cierres de Mesa de Salón</h3>
-                <span class="text-xs text-slate-400">Turno Almuerzo / Cena</span>
-              </div>
-              <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs text-slate-300">
-                  <thead class="bg-black/40 text-[11px] uppercase tracking-wider text-slate-400 border-b border-white/10">
-                    <tr>
-                      <th class="p-3">Mesa</th>
-                      <th class="p-3">Comanda / Detalle</th>
-                      <th class="p-3">Método Pago</th>
-                      <th class="p-3">Monto</th>
-                      <th class="p-3">Hora</th>
-                      <th class="p-3">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-white/5">
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 01</td>
-                      <td class="p-3">1x Pollo Entero, 1x Chicha 1L</td>
-                      <td class="p-3 font-mono text-emerald-400">YAPE</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 89.00</td>
-                      <td class="p-3 text-slate-400">14:35</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 04</td>
-                      <td class="p-3">1/2 Pollo a la Brasa, 1x Salchipapa</td>
-                      <td class="p-3 font-mono text-sky-400">TARJETA VISA</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 65.00</td>
-                      <td class="p-3 text-slate-400">15:10</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
-                    <tr class="hover:bg-white/5">
-                      <td class="p-3 font-bold text-white">Mesa 03</td>
-                      <td class="p-3">2x Combo Familiar, 1x Tequeños</td>
-                      <td class="p-3 font-mono text-amber-400">EFECTIVO</td>
-                      <td class="p-3 font-display font-bold text-polleria-gold">S/. 154.00</td>
-                      <td class="p-3 text-slate-400">15:45</td>
-                      <td class="p-3"><span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Cobrado</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
+            <app-mozo-historial
+              [historialSalon]="historialSalon()"
+              [mesasAtendidasHoy]="mesasAtendidasHoy()"
+              [totalCobradoTurno]="totalCobradoTurno()"
+              [comandasActivasSalon]="comandasActivasSalon()"
+            />
           </main>
         }
 
         <!-- ================= MODAL DETALLE DE MESA & COBRO ================= -->
-        @if (selectedMesaModal()) {
-          <div class="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <div class="bg-[#14161a] w-full max-w-lg rounded-3xl border border-white/15 p-6 space-y-4 shadow-2xl">
-              
-              <div class="flex justify-between items-start pb-3 border-b border-white/10">
-                <div>
-                  <h3 class="font-display text-2xl font-bold text-white">{{ selectedMesaModal()?.nombre }}</h3>
-                  <span class="text-xs text-slate-400">{{ selectedMesaModal()?.zona }} • Capacidad {{ selectedMesaModal()?.capacidad }} pers.</span>
-                </div>
-                <button (click)="selectedMesaModal.set(null)" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-              </div>
-
-              <!-- Estado de la Mesa -->
-              <div class="space-y-3 text-xs">
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Estado Actual:</span>
-                  <span class="font-bold uppercase" [ngClass]="{
-                    'text-emerald-400': selectedMesaModal()?.estado === 'LIBRE',
-                    'text-rose-400': selectedMesaModal()?.estado === 'OCUPADA',
-                    'text-amber-400': selectedMesaModal()?.estado === 'POR_COBRAR'
-                  }">
-                    {{ selectedMesaModal()?.estado }}
-                  </span>
-                </div>
-
-                <!-- Detalle de Consumo -->
-                <div class="p-3 rounded-xl bg-black/40 space-y-2 border border-white/5">
-                  <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
-                  <div class="space-y-1 text-slate-400">
-                    <p class="flex justify-between"><span>1x Pollo a la Brasa Entero</span> <span class="font-mono text-white">S/. 65.00</span></p>
-                    <p class="flex justify-between"><span>1x Jarra Chicha Morada 1L</span> <span class="font-mono text-white">S/. 14.00</span></p>
-                    <p class="flex justify-between"><span>1x Porción Tequeños Criollos</span> <span class="font-mono text-white">S/. 19.50</span></p>
-                  </div>
-                  <div class="pt-2 border-t border-white/10 flex justify-between font-bold text-sm text-polleria-gold">
-                    <span>Total a Cobrar:</span>
-                    <span>S/. 98.50</span>
-                  </div>
-                </div>
-
-                <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
-                <div class="space-y-2 pt-2">
-                  <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
-                  <div class="grid grid-cols-2 gap-2">
-                    <button 
-                      (click)="cambiarEstadoMesa('OCUPADA')"
-                      class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                      <span>Ocupar Mesa</span>
-                    </button>
-                    <button 
-                      (click)="cambiarEstadoMesa('POR_COBRAR')"
-                      class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                      <span>Por Cobrar</span>
-                    </button>
-                    <button 
-                      (click)="cambiarEstadoMesa('EN_LIMPIEZA')"
-                      class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-                      <span>En Limpieza</span>
-                    </button>
-                    <button 
-                      (click)="cambiarEstadoMesa('LIBRE')"
-                      class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                    >
-                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                      <span>Liberar Mesa</span>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Casilla en Cuadrícula de Salón -->
-                <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
-                  <span class="text-[11px] font-bold text-slate-400 block">Casilla en Cuadrícula (Columna X, Fila Y):</span>
-                  <div class="grid grid-cols-2 gap-2">
-                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                      <span class="text-[10px] text-slate-400 font-bold">Col X:</span>
-                      <input 
-                        type="number" 
-                        [(ngModel)]="selectedMesaModal()!.posicionX" 
-                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                      />
-                    </div>
-                    <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/10">
-                      <span class="text-[10px] text-slate-400 font-bold">Fila Y:</span>
-                      <input 
-                        type="number" 
-                        [(ngModel)]="selectedMesaModal()!.posicionY" 
-                        class="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <button 
-                    (click)="guardarPosicionMesaModal()"
-                    class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                    <span>Guardar Casilla en Cuadrícula</span>
-                  </button>
-                </div>
-
-                <!-- Cobro Inmediato -->
-                <div class="pt-2 border-t border-white/10">
-                  <button 
-                    (click)="cobrarMesaModal()"
-                    class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
-                  >
-                    <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Emitir Pre-Cuenta</span>
-                  </button>
-                </div>
-              </div>
-
-            </div>
-          </div>
+        @if (selectedMesaModal(); as mesaModal) {
+          <app-mozo-mesa-modal
+            [mesa]="mesaModal"
+            [comandaMesa]="comandaMesa()"
+            [cargandoComanda]="cargandoComanda()"
+            [errorComanda]="errorComanda()"
+            [isAdmin]="auth.isAdmin()"
+            [ahora]="tiempoActual()"
+            (cerrar)="cerrarModalMesa()"
+            (iniciarComanda)="iniciarComandaParaMesa($event)"
+            (cambiarEstado)="cambiarEstadoMesa($event)"
+            (posicionXChange)="mesaModal.posicionX = $event"
+            (posicionYChange)="mesaModal.posicionY = $event"
+            (guardarPosicion)="guardarPosicionMesaModal()"
+            (servirMesa)="servirMesaSeleccionada()"
+            (cobrar)="cobrarMesaModal()"
+          />
         }
 
       </div>
@@ -1004,8 +215,12 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   private platformId = inject(PLATFORM_ID);
 
   readonly activeTab = signal<MozoTab>('MESAS');
-  readonly selectedZone = signal<'TODAS' | 'SALON_PRINCIPAL' | 'TERRAZA' | 'ZONA_VIP'>('TODAS');
+  readonly selectedZone = signal<string>('TODAS');
   readonly selectedMesaModal = signal<MesaSalon | null>(null);
+  readonly comandaMesa = signal<Order | null>(null);
+  readonly cargandoComanda = signal<boolean>(false);
+  readonly errorComanda = signal<string | null>(null);
+  private comandaRequestId = 0;
   readonly vistaMesas = signal<'CROQUIS' | 'TARJETAS'>('CROQUIS');
 
   // Croquis Virtual por Zonas (Slides) & Cuadrícula Personalizable
@@ -1021,61 +236,78 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   readonly isProcesandoMesa = signal<boolean>(false);
   readonly mensajeProcesandoMesa = signal<string>('Sincronizando con el servidor...');
 
+  private timerInterval: any = null;
+  readonly tiempoActual = signal<number>(Date.now());
+
   selectedMesaForOrder = 1;
-  comandaItems: { producto: Product; cantidad: number; notas: string }[] = [];
+  comandaItems: ComandaItem[] = [];
 
-  // Default mesas fallback si el backend recién inicia
-  private defaultMesas: MesaSalon[] = [
-    { id: 1, nombre: 'Mesa 01', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'OCUPADA', posicionX: 1, posicionY: 1, comensales: 3, tiempoMinutos: 35, totalConsumo: 89.00, mozo: 'Yovana M.' },
-    { id: 2, nombre: 'Mesa 02', zona: 'SALON_PRINCIPAL', capacidad: 4, estado: 'LIBRE', posicionX: 2, posicionY: 1, totalConsumo: 0 },
-    { id: 3, nombre: 'Mesa 03', zona: 'SALON_PRINCIPAL', capacidad: 6, estado: 'OCUPADA', posicionX: 3, posicionY: 1, comensales: 5, tiempoMinutos: 42, totalConsumo: 154.00, platosListos: true, mozo: 'Yovana M.' },
-    { id: 4, nombre: 'Mesa 04', zona: 'SALON_PRINCIPAL', capacidad: 2, estado: 'POR_COBRAR', posicionX: 1, posicionY: 2, comensales: 2, tiempoMinutos: 55, totalConsumo: 65.00, mozo: 'Yovana M.' },
-    { id: 5, nombre: 'Mesa 05', zona: 'TERRAZA', capacidad: 8, estado: 'LIBRE', posicionX: 2, posicionY: 2, totalConsumo: 0 }
-  ];
-
-  // Mesas sincronizadas de SalonService
+  // Mesas sincronizadas de SalonService (sin fallbacks mock)
   readonly mesas = computed<MesaSalon[]>(() => {
     const backendMesas = this.salonService.mesas();
-    if (backendMesas.length > 0) {
-      return backendMesas.map(bm => ({
-        id: Number(bm.id),
-        nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
-        zona: bm.zona || (bm.numero > 8 ? 'ZONA_VIP' : (bm.numero > 4 ? 'TERRAZA' : 'SALON_PRINCIPAL')),
-        capacidad: bm.capacidad,
-        estado: bm.estado,
-        posicionX: bm.posicionX || 1,
-        posicionY: bm.posicionY || 1,
-        comensales: bm.ordenActiva ? bm.capacidad : 0,
-        tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
-        totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
-        platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' : false,
-        mozo: bm.mozoAsignado || 'Mozo Salón',
-        ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined
-      }));
-    }
-    return this.defaultMesas;
+    return backendMesas.map(bm => ({
+      id: Number(bm.id),
+      numero: bm.numero,
+      nombre: `Mesa ${bm.numero.toString().padStart(2, '0')}`,
+      zona: bm.zona || 'SALON_PRINCIPAL',
+      capacidad: bm.capacidad,
+      estado: bm.estado,
+      posicionX: bm.posicionX || 1,
+      posicionY: bm.posicionY || 1,
+      comensales: bm.ordenActiva ? bm.capacidad : 0,
+      tiempoMinutos: bm.ordenActiva ? bm.ordenActiva.tiempoEsperaMinutos : 0,
+      totalConsumo: bm.ordenActiva ? bm.ordenActiva.total : 0,
+      platosListos: bm.ordenActiva ? bm.ordenActiva.estadoOrden === 'LISTO' && !bm.ordenActiva.servidoEn : false,
+      mozoId: bm.ordenActiva?.mozoId,
+      mozo: bm.mozoAsignado || 'Mozo Salón',
+      ordenId: bm.ordenActiva ? String(bm.ordenActiva.ordenId) : undefined,
+      servidoEn: bm.ordenActiva?.servidoEn ?? null,
+      creadoEn: bm.ordenActiva?.creadoEn ?? null
+    }));
   });
 
-  // Alertas de Cocina
-  alertas: AlertaPlatoListo[] = [
-    { id: 'ALT-1', mesa: 'Mesa 03', plato: '1x Pollo Entero a la Brasa con Papas Doradas', cantidad: 1, hora: '16:10', atendido: false },
-    { id: 'ALT-2', mesa: 'Mesa 01', plato: '1x Jarra de Chicha Morada Casera', cantidad: 1, hora: '16:05', atendido: false }
-  ];
+  esMesaParaCobrar(mesa: MesaSalon | null | undefined): boolean {
+    return esMesaParaCobrarHelper(mesa);
+  }
 
-  readonly alertasPendientes = computed(() => {
-    const list = [...this.alertas.filter(a => !a.atendido)];
-    this.salonService.alertasCocina().forEach(ac => {
-      list.unshift({
-        id: `ALT-LIVE-${ac.ordenId}`,
-        mesa: `Mesa ${ac.mesaNumero || ac.mesaId}`,
-        plato: ac.mensaje,
+  tiempoTranscurridoDesde(fechaIso?: string | null): string {
+    return tiempoTranscurridoDesdeHelper(fechaIso, this.tiempoActual());
+  }
+
+  iniciarComandaParaMesa(mesa: MesaSalon): void {
+    this.selectedMesaForOrder = mesa.id;
+    this.cerrarModalMesa();
+    this.activeTab.set('TOMAR_COMANDA');
+    this.notify.showInfo(`Mesa ${mesa.nombre} seleccionada`, 'Seleccioná los platos de la carta para registrar la comanda.');
+  }
+
+  /**
+   * La alerta se deriva del estado real de la mesa (LISTO y sin `servidoEn`), no de un log local:
+   * al servir la comanda desaparece y no vuelve al recargar.
+   */
+  readonly alertasPendientes = computed<AlertaPlatoListo[]>(() =>
+    this.mesas()
+      .filter(m => !!m.ordenId && !!m.platosListos)
+      .map(m => ({
+        id: `MESA-${m.id}`,
+        ordenId: m.ordenId,
+        mozoId: m.mozoId,
+        mesa: m.nombre,
+        plato: 'Comanda lista para servir',
         cantidad: 1,
-        hora: ac.timestamp,
+        hora: '',
         atendido: false
-      });
-    });
-    return list;
-  });
+      }))
+  );
+
+  /** Alerta que alimenta el banner fijo visible en todas las pestañas. */
+  readonly alertaPrincipal = computed(() => this.alertasPendientes()[0] ?? null);
+
+  readonly miUserId = computed(() => leerUserIdDelToken(this.auth.token()));
+
+  esMiComanda(alerta: AlertaPlatoListo): boolean {
+    return esMiComandaHelper(alerta, this.miUserId());
+  }
 
   readonly filteredMesas = computed(() => {
     const zone = this.selectedZone();
@@ -1083,12 +315,30 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     return this.mesas().filter(m => m.zona === zone);
   });
 
+  // S4.6: historial del turno con los datos reales de /ordenes (sin filas ni totales inventados).
+  readonly historialSalon = computed(() =>
+    this.ordersService.orders().filter(o => o.tipo === 'SALON' && o.estado === 'COMPLETADO')
+  );
+  readonly mesasAtendidasHoy = computed(() => this.historialSalon().length);
+  readonly totalCobradoTurno = computed(() =>
+    this.historialSalon().reduce((acc, o) => acc + (o.total || 0), 0)
+  );
+  readonly comandasActivasSalon = computed(() =>
+    this.ordersService.orders().filter(o =>
+      o.tipo === 'SALON' && !['COMPLETADO', 'CANCELADO'].includes(o.estado)
+    )
+  );
+
   ngOnInit(): void {
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
+    this.ordersService.loadActiveOrders();
+    if (isPlatformBrowser(this.platformId)) {
+      this.timerInterval = setInterval(() => {
+        this.tiempoActual.set(Date.now());
+      }, 30000);
+    }
   }
-
-  ngOnDestroy(): void {}
 
   getActiveTabLabel(): string {
     switch (this.activeTab()) {
@@ -1102,6 +352,48 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
 
   seleccionarMesa(m: MesaSalon): void {
     this.selectedMesaModal.set({ ...m });
+    this.cargarComandaMesa(m.ordenId);
+  }
+
+  /**
+   * S6.5: lee del backend la comanda real de la mesa seleccionada (solo lectura).
+   * Los tres estados del bloque «Comanda Acumulada» son cargando, comanda real y error.
+   */
+  private cargarComandaMesa(ordenId?: string): void {
+    const requestId = ++this.comandaRequestId;
+    this.comandaMesa.set(null);
+    this.errorComanda.set(null);
+
+    if (!ordenId) {
+      this.cargandoComanda.set(false);
+      return;
+    }
+
+    this.cargandoComanda.set(true);
+    this.ordersService.obtenerOrden(ordenId).subscribe({
+      next: (orden) => {
+        if (requestId !== this.comandaRequestId) return;
+        this.cargandoComanda.set(false);
+        this.comandaMesa.set(orden);
+      },
+      error: (err) => {
+        if (requestId !== this.comandaRequestId) return;
+        this.cargandoComanda.set(false);
+        this.errorComanda.set(err?.message || 'No se pudo cargar la comanda de la mesa');
+      }
+    });
+  }
+
+  cerrarModalMesa(): void {
+    this.comandaRequestId++;
+    this.comandaMesa.set(null);
+    this.errorComanda.set(null);
+    this.cargandoComanda.set(false);
+    this.selectedMesaModal.set(null);
+  }
+
+  etiquetaEstadoComanda(estado: OrderStatus): string {
+    return etiquetaEstadoComandaHelper(estado);
   }
 
   // ================= CROQUIS POR ZONAS (SLIDES) & CUADRÍCULA MATRICIAL =================
@@ -1124,6 +416,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   ajustarFilas(delta: number): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la cuadrícula del salón.');
+      return;
+    }
     const z = this.currentZona();
     if (z) {
       this.isProcesandoMesa.set(true);
@@ -1134,6 +430,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   ajustarColumnas(delta: number): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la cuadrícula del salón.');
+      return;
+    }
     const z = this.currentZona();
     if (z) {
       this.isProcesandoMesa.set(true);
@@ -1161,6 +461,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   iniciarMoverMesa(mesa: MesaSalon, event?: Event): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden reubicar mesas en la cuadrícula.');
+      return;
+    }
     if (event) event.stopPropagation();
     if (this.mesaEnMovimiento()?.id === mesa.id) {
       this.mesaEnMovimiento.set(null);
@@ -1182,6 +486,10 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     }
 
     if (this.mesaEnMovimiento()) {
+      if (!this.auth.isAdmin()) {
+        this.mesaEnMovimiento.set(null);
+        return;
+      }
       const enMovimiento = this.mesaEnMovimiento()!;
       this.isProcesandoMesa.set(true);
       this.mensajeProcesandoMesa.set(`Reubicando ${enMovimiento.nombre} a F${row}:C${col}...`);
@@ -1197,13 +505,14 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         error: () => {
           this.isProcesandoMesa.set(false);
           this.mesaEnMovimiento.set(null);
-          this.notify.showSuccess(`${enMovimiento.nombre} reubicada en ${this.currentZona().nombre} (F${row}:C${col})`);
+          this.salonService.cargarMesas();
         }
       });
     }
   }
 
   onDragStartMesa(event: DragEvent, mesa: MesaSalon): void {
+    if (!this.auth.isAdmin()) return;
     if (event.dataTransfer) {
       event.dataTransfer.setData('text/plain', String(mesa.id));
       this.mesaEnMovimiento.set(mesa);
@@ -1211,10 +520,12 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   onDragOverCasilla(event: DragEvent): void {
+    if (!this.auth.isAdmin()) return;
     event.preventDefault();
   }
 
   onDropCasilla(event: DragEvent, row: number, col: number): void {
+    if (!this.auth.isAdmin()) return;
     event.preventDefault();
     if (this.getMesaEnCasilla(row, col)) {
       this.notify.showWarning(`La casilla ya está ocupada`);
@@ -1226,9 +537,6 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
     if (mesa) {
       this.isProcesandoMesa.set(true);
       this.mensajeProcesandoMesa.set(`Reubicando ${mesa.nombre} a F${row}:C${col}...`);
-      mesa.posicionX = col;
-      mesa.posicionY = row;
-      mesa.zona = this.currentZona().id;
       this.salonService.actualizarPosicion(mesa.id, col, row).subscribe({
         next: () => {
           this.isProcesandoMesa.set(false);
@@ -1238,7 +546,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         error: () => {
           this.isProcesandoMesa.set(false);
           this.mesaEnMovimiento.set(null);
-          this.notify.showSuccess(`${mesa.nombre} reubicada en ${this.currentZona().nombre} (F${row}:C${col})`);
+          this.salonService.cargarMesas();
         }
       });
     }
@@ -1251,24 +559,59 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   agregarItemComanda(prod: Product): void {
     const exist = this.comandaItems.find(i => i.producto.id === prod.id);
     if (exist) {
-      exist.cantidad += 1;
+      this.comandaItems = this.comandaItems.map(i =>
+        i === exist ? { ...i, cantidad: i.cantidad + 1 } : i
+      );
     } else {
-      this.comandaItems.push({ producto: prod, cantidad: 1, notas: '' });
+      this.comandaItems = [...this.comandaItems, { producto: prod, cantidad: 1, notas: '' }];
     }
     this.notify.showSuccess(`Agregado: ${prod.nombre}`);
   }
 
   eliminarItemComanda(index: number): void {
-    this.comandaItems.splice(index, 1);
+    this.comandaItems = this.comandaItems.filter((_, i) => i !== index);
+  }
+
+  actualizarNotasItem(index: number, notas: string): void {
+    this.comandaItems = this.comandaItems.map((item, i) => (i === index ? { ...item, notas } : item));
   }
 
   calcularTotalComanda(): number {
     return this.comandaItems.reduce((acc, i) => acc + (i.producto.precio * i.cantidad), 0);
   }
 
+  /** Mesa elegida en la pestaña Tomar Comanda (selectedMesaForOrder es un valor plano de ngModel). */
+  mesaParaComanda(): MesaSalon | undefined {
+    const mesaId = Number(this.selectedMesaForOrder);
+    return this.mesas().find(m => m.id === mesaId);
+  }
+
+  /** «1x Chaufa de Pollo, 2x Inca Kola» a partir de los ítems reales de la orden. */
+  resumenItems(o: Order): string {
+    return resumenItemsHelper(o);
+  }
+
+  horaDe(iso: string): string {
+    return horaDeHelper(iso);
+  }
+
+  getCodeNum(code: string): string {
+    return getCodeNumHelper(code);
+  }
+
+  /**
+   * S4.5: si la mesa elegida ya tiene comanda activa, los platos se agregan a ESA orden
+   * (`POST /ordenes/{id}/items`); si no, se abre la comanda de salón.
+   */
   enviarComandaACocina(): void {
     const mesaId = Number(this.selectedMesaForOrder);
     const mesa = this.mesas().find(m => m.id === mesaId);
+    if (!mesa) {
+      this.notify.showError('Seleccioná una mesa válida');
+      return;
+    }
+
+    if (this.comandaItems.length === 0) return;
 
     const itemsReq = this.comandaItems.map(item => ({
       productoId: item.producto.id,
@@ -1276,86 +619,214 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       notas: item.notas
     }));
 
+    const alTerminar = (): void => {
+      // El backend ya dejó la mesa ocupada y con la comanda actualizada: recargamos el salón.
+      this.salonService.cargarMesas();
+      this.comandaItems = [];
+      this.activeTab.set('MESAS');
+    };
+
+    if (mesa.ordenId) {
+      this.ordersService.agregarItemsAOrden(mesa.ordenId, itemsReq).subscribe({
+        next: () => {
+          const platos = itemsReq.reduce((acc, i) => acc + i.cantidad, 0);
+          this.notify.showSuccess(`${platos} platos agregados a la comanda de ${mesa.nombre}`);
+          alTerminar();
+        },
+        error: (err) => {
+          const mensaje = err?.message || 'El servidor rechazó los platos nuevos';
+          this.notify.showError('No se pudieron agregar los platos', mensaje);
+        }
+      });
+      return;
+    }
+
+    const numeroMesa = mesa.numero ?? mesa.id;
     this.ordersService.createOrder({
       tipo: 'SALON',
+      mesaId,
       metodoPago: 'EFECTIVO_CONTRAENTREGA',
       cliente: {
-        nombre: `Mesa #${mesaId}`,
-        celular: '999999999',
-        mesaNumero: mesaId
+        // La comanda de salón no tiene celular del cliente: no se inventa uno.
+        nombre: `Mesa ${String(numeroMesa).padStart(2, '0')}`,
+        celular: '',
+        mesaNumero: numeroMesa
       },
       items: itemsReq
     }).subscribe({
       next: (created) => {
-        this.notify.showSuccess(`Comanda creada en cocina para Mesa #${mesaId} (Orden #${created.codigoSeguimiento})`);
-        this.salonService.actualizarEstado(mesaId, 'OCUPADA').subscribe();
-        this.comandaItems = [];
-        this.activeTab.set('MESAS');
+        this.notify.showSuccess(`Comanda creada en cocina para ${mesa.nombre} (Orden #${created.codigoSeguimiento})`);
+        alTerminar();
       },
       error: (err) => {
-        this.notify.showError(`Error al enviar comanda: ${err?.error?.message || 'Compruebe conexión con orders-service'}`);
+        const mensaje = err?.message || err?.error?.error || err?.error?.message
+          || 'Compruebe conexión con orders-service';
+        this.notify.showError('Error al enviar comanda', mensaje);
       }
     });
   }
 
-  marcarPlatoServido(alerta: AlertaPlatoListo): void {
-    alerta.atendido = true;
-    const mesa = this.mesas().find(m => m.nombre === alerta.mesa);
-    if (mesa) {
-      mesa.platosListos = false;
+  /**
+   * S3.3: «Servir en mesa» se persiste con POST /ordenes/{id}/servir. La orden sigue en LISTO:
+   * la mesa se libera recién al cobrar.
+   */
+  servirAlerta(alerta: AlertaPlatoListo): void {
+    if (!alerta.ordenId) {
+      this.notify.showWarning('Comanda no disponible',
+        'La mesa no tiene una comanda activa para marcar como servida.');
+      return;
     }
-    this.notify.showSuccess(`Plato servido en ${alerta.mesa}`);
+
+    this.ordersService.marcarServido(alerta.ordenId).subscribe({
+      next: () => {
+        this.quitarAvisoDeCocina(alerta.ordenId!);
+        const mesa = this.mesas().find(m => m.ordenId === alerta.ordenId);
+        if (mesa) {
+          this.salonService.actualizarEstado(mesa.id, 'POR_COBRAR').subscribe({
+            next: () => this.salonService.cargarMesas(),
+            error: () => this.salonService.cargarMesas()
+          });
+        } else {
+          this.salonService.cargarMesas();
+        }
+        this.notify.showSuccess(`${alerta.mesa}: comanda servida, mesa lista para cobrar`);
+      },
+      error: (err) => {
+        this.notify.showError('No se pudo marcar la comanda como servida',
+          err?.message || 'Compruebe conexión con orders-service');
+      }
+    });
   }
 
-  simularNuevoAvisoCocina(): void {
-    this.alertas.unshift({
-      id: `ALT-${Date.now()}`,
-      mesa: 'Mesa 06',
-      plato: '1x Combo Familiar San Pollo',
-      cantidad: 1,
-      hora: new Date().toLocaleTimeString().slice(0, 5),
-      atendido: false
+  /** Misma marca persistida, desde el inspector de mesa (modal). */
+  servirMesaSeleccionada(): void {
+    const m = this.selectedMesaModal();
+    const ordenId = m?.ordenId;
+    if (!ordenId || !m) {
+      this.notify.showWarning('Comanda no disponible',
+        'La mesa no tiene una comanda activa para marcar como servida.');
+      return;
+    }
+
+    this.ordersService.marcarServido(ordenId).subscribe({
+      next: () => {
+        this.quitarAvisoDeCocina(ordenId);
+        this.salonService.actualizarEstado(m.id, 'POR_COBRAR').subscribe({
+          next: () => {
+            this.salonService.cargarMesas();
+            this.cargarComandaMesa(ordenId);
+          },
+          error: () => {
+            this.salonService.cargarMesas();
+            this.cargarComandaMesa(ordenId);
+          }
+        });
+        this.notify.showSuccess(`${m?.nombre ?? 'Mesa'}: comanda servida, mesa lista para cobrar`);
+      },
+      error: (err) => {
+        this.notify.showError('No se pudo marcar la comanda como servida',
+          err?.message || 'Compruebe conexión con orders-service');
+      }
     });
-    this.notify.showInfo('Nuevo Plato Listo', 'Mesa 06: Combo Familiar listo para servir.');
   }
+
+  private quitarAvisoDeCocina(ordenId: string): void {
+    this.salonService.alertasCocina.update(prev =>
+      prev.filter(ac => String(ac.ordenId) !== String(ordenId))
+    );
+  }
+
+  /** userId del JWT (payload sin verificar firma: el backend ya la validó). */
+  /**
+   * El claim `userId` lo decodifica el util compartido (con su propio spec); acá solo se consume.
+   */
 
   cambiarEstadoMesa(estado: TableStatus): void {
     const m = this.selectedMesaModal();
-    if (m) {
-      this.salonService.actualizarEstado(m.id, estado).subscribe({
-        next: (upd) => {
-          m.estado = upd.estado;
-          this.selectedMesaModal.set(null);
-        },
-        error: () => {
-          m.estado = estado;
-          this.selectedMesaModal.set(null);
-        }
-      });
+    if (!m) return;
+
+    if (estado === 'LIBRE' || estado === 'EN_LIMPIEZA') {
+      const comanda = this.comandaMesa();
+      const comandaActiva = comanda && !['COMPLETADO', 'CANCELADO'].includes(comanda.estado)
+        ? comanda.id
+        : undefined;
+      const ordenId = comandaActiva ?? m.ordenId;
+      if (ordenId) {
+        this.notify.showWarning('Comanda activa',
+          `Cobrá o cancelá la comanda #${this.getCodeNum(String(ordenId))} antes de pasar la mesa a ${estado}.`);
+        return;
+      }
     }
+
+    this.salonService.actualizarEstado(m.id, estado).subscribe({
+      next: (upd) => {
+        m.estado = upd.estado;
+        this.cerrarModalMesa();
+      },
+      error: () => {
+        this.cerrarModalMesa();
+        this.salonService.cargarMesas();
+      }
+    });
   }
 
   guardarPosicionMesaModal(): void {
+    if (!this.auth.isAdmin()) {
+      this.notify.showWarning('Acción no permitida', 'Solo los administradores pueden modificar la posición de las mesas.');
+      return;
+    }
     const m = this.selectedMesaModal();
     if (m && m.posicionX !== undefined && m.posicionY !== undefined) {
       this.salonService.actualizarPosicion(m.id, m.posicionX, m.posicionY).subscribe();
     }
   }
 
+  /**
+   * S6.4: si la mesa tiene comanda activa, el cobro cierra la orden (ENTREGADO en el backend,
+   * que además libera la mesa). Sin comanda activa se conserva la liberación directa de la mesa.
+   * Un rechazo del backend se muestra tal cual y nunca anuncia un éxito inexistente.
+   */
   cobrarMesaModal(): void {
     const m = this.selectedMesaModal();
-    if (m) {
-      this.salonService.actualizarEstado(m.id, 'LIBRE').subscribe({
+    if (!m) return;
+
+    if (m.ordenId) {
+      const estadoActual = this.comandaMesa()?.estado;
+      this.ordersService.completarOrdenSalon(m.ordenId, estadoActual).subscribe({
         next: () => {
-          this.selectedMesaModal.set(null);
-          this.notify.showSuccess(`Cuenta cobrada y Pre-Cuenta emitida para ${m.nombre}`);
+          this.salonService.cargarMesas();
+          this.ordersService.loadActiveOrders();
+          this.cerrarModalMesa();
+          this.notify.showSuccess(`Cuenta cobrada para ${m.nombre}. La comanda quedó cerrada.`);
         },
-        error: () => {
-          this.selectedMesaModal.set(null);
-          this.notify.showSuccess(`Pre-Cuenta impresa para ${m.nombre}`);
+        error: (err) => {
+          const motivo = err?.error?.error || err?.error?.mensaje || err?.error?.message
+            || err?.message || 'El backend rechazó el cierre de la comanda';
+          this.notify.showError('No se pudo cobrar la cuenta', motivo);
         }
       });
+      return;
     }
+
+    this.salonService.actualizarEstado(m.id, 'LIBRE').subscribe({
+      next: () => {
+        this.cerrarModalMesa();
+        this.notify.showSuccess(`Mesa ${m.nombre} liberada`);
+      },
+      error: () => {
+        this.cerrarModalMesa();
+        this.salonService.cargarMesas();
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+    this.mesaEnMovimiento.set(null);
+    this.cerrarModalMesa();
   }
 
   cerrarSesion(): void {

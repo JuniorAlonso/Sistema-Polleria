@@ -17,6 +17,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -28,8 +29,32 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
 
-    @Value("${cors.allowed-origins:*}")
+    @Value("${cors.allowed-origins}")
     private String allowedOrigins;
+
+    /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
+    static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
+    static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
+    static final String LOOPBACK_IPV6 = "http://[::1]:[*]";
+
+    /**
+     * Orígenes CORS: los configurados más cualquier puerto de loopback. El panel corre en la misma
+     * máquina que el servicio y `ng serve` cambia de puerto cuando 4200 está ocupado (o el usuario abre
+     * la app por 127.0.0.1 / [::1]). Con la lista exacta el preflight respondía 403 sin
+     * `Access-Control-Allow-Origin`, el navegador no enviaba la petición y el login nunca llegaba al
+     * backend. Un origen externo sigue sin habilitarse.
+     */
+    static List<String> origenesPermitidos(String configurados) {
+        List<String> origenes = new ArrayList<>(Arrays.stream(configurados.split(","))
+                .map(String::trim)
+                .map(o -> o.replaceAll("/+$", ""))
+                .filter(o -> !o.isEmpty())
+                .toList());
+        origenes.add(LOOPBACK_LOCALHOST);
+        origenes.add(LOOPBACK_IPV4);
+        origenes.add(LOOPBACK_IPV6);
+        return origenes;
+    }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -41,6 +66,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias/producto/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias").permitAll()
                         .requestMatchers(HttpMethod.GET, "/feedback/evidencias/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/feedback/reportes/orden/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers
@@ -54,11 +80,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        List<String> origins = Arrays.stream(allowedOrigins.split(","))
-                .map(String::trim)
-                .map(o -> o.replaceAll("/+$", ""))
-                .filter(o -> !o.isEmpty())
-                .toList();
+        List<String> origins = origenesPermitidos(allowedOrigins);
         config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));

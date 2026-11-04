@@ -21,6 +21,7 @@ public class MesaResponse {
     private String qrUrl;
     private String zona;
     private Boolean activo;
+    private Long version;
     private OrdenActivaResponse ordenActiva;
 
     public static MesaResponse from(Mesa m) {
@@ -39,6 +40,7 @@ public class MesaResponse {
                 .posicionX(m.getPosicionX() != null ? m.getPosicionX() : 0)
                 .posicionY(m.getPosicionY() != null ? m.getPosicionY() : 0)
                 .qrUrl(m.getQrUrl())
+                .version(m.getVersion())
                 .ordenActiva(ordenActiva)
                 .build();
     }

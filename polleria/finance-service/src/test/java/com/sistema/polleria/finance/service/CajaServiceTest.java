@@ -149,4 +149,30 @@ class CajaServiceTest {
         assertThat(res.getMontoCierrePos()).isEqualByComparingTo("350.00");
         verify(arqueoRepository).save(activa);
     }
+
+    @Test
+    @DisplayName("Debe listar los movimientos de la caja abierta")
+    void listarMovimientos_devuelveLosDeLaCajaAbierta() {
+        ArqueoCaja abierta = ArqueoCaja.builder().id(7L).estado(EstadoCaja.ABIERTA).build();
+        MovimientoCaja egreso = MovimientoCaja.builder().id(2L).arqueoId(7L).monto(new BigDecimal("20.00")).build();
+
+        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+                .thenReturn(Optional.of(abierta));
+        when(movimientoRepository.findByArqueoIdOrderByFechaDesc(7L)).thenReturn(List.of(egreso));
+
+        List<MovimientoCaja> movimientos = cajaService.listarMovimientosDeCajaAbierta();
+
+        assertThat(movimientos).containsExactly(egreso);
+        verify(movimientoRepository).findByArqueoIdOrderByFechaDesc(7L);
+    }
+
+    @Test
+    @DisplayName("Sin caja abierta el listado de movimientos es vacío, no un error")
+    void listarMovimientos_sinCajaAbiertaDevuelveVacio() {
+        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+                .thenReturn(Optional.empty());
+
+        assertThat(cajaService.listarMovimientosDeCajaAbierta()).isEmpty();
+        verifyNoInteractions(movimientoRepository);
+    }
 }

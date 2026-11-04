@@ -9,8 +9,19 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { AuthService } from '../../../core/services/auth.service';
-import { etiquetaPedido } from '../../../core/utils/pedido';
+import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
+import { PaymentService } from '../../../core/services/payment.service';
 import { Subscription, interval } from 'rxjs';
+
+/** States in which the customer can no longer cancel or act on the order. */
+const ESTADOS_TERMINALES: OrderStatus[] = ['COMPLETADO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
+/**
+ * States in which orders-service lets the customer cancel (RECIBIDO, PENDIENTE_PAGO,
+ * PENDIENTE_CONFIRMACION): nothing was cooked yet. The adapter shows backend RECIBIDO as PAGADO.
+ */
+const ESTADOS_CANCELABLES_POR_CLIENTE: OrderStatus[] = ['PAGADO', 'RECIBIDO', 'PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION'];
+const TIPOS_COMPROBANTE = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
 
 @Component({
   selector: 'app-order-tracking',
@@ -60,11 +71,12 @@ import { Subscription, interval } from 'rxjs';
                       <span 
                         class="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide"
                         [ngClass]="{
-                          'bg-amber-500/20 text-amber-400 border border-amber-500/30': order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO',
-                          'bg-purple-500/20 text-purple-300 border border-purple-500/30': order.estado === 'LISTO_COCINA',
-                          'bg-sky-500/20 text-sky-300 border border-sky-500/30': order.estado === 'EN_REPARTO',
-                          'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30': order.estado === 'COMPLETADO',
-                          'bg-rose-500/20 text-rose-300 border border-rose-500/30': order.estado === 'CANCELADO'
+                          'bg-amber-500/20 text-amber-400 border border-amber-500/30': order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO' || order.estado === 'PREPARANDO' || order.estado === 'PENDIENTE_CONFIRMACION' || order.estado === 'PENDIENTE_PAGO',
+                          'bg-purple-500/20 text-purple-300 border border-purple-500/30': order.estado === 'LISTO_COCINA' || order.estado === 'LISTO' || order.estado === 'LISTO_PARA_ENTREGAR',
+                          'bg-sky-500/20 text-sky-300 border border-sky-500/30': order.estado === 'EN_REPARTO' || order.estado === 'EN_CAMINO',
+                          'bg-sky-400 text-slate-950 font-black animate-bounce': order.estado === 'EN_PUERTA',
+                          'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30': order.estado === 'COMPLETADO' || order.estado === 'ENTREGADO',
+                          'bg-rose-500/20 text-rose-300 border border-rose-500/30': order.estado === 'CANCELADO' || order.estado === 'PEDIDO_FANTASMA'
                         }"
                       >
                         {{ getStatusLabel(order.estado) }}
@@ -103,6 +115,46 @@ import { Subscription, interval } from 'rxjs';
             <p class="text-slate-300 text-sm sm:text-base font-normal tracking-wide max-w-xl mx-auto">
               {{ getSubtitle() }}
             </p>
+
+            @if (ticketRecojo(currentOrder()); as ticket) {
+              <div data-testid="ticket-recojo" class="max-w-sm mx-auto px-5 py-3 rounded-2xl bg-polleria-gold/10 border-2 border-dashed border-polleria-gold/60 space-y-1">
+                <p class="text-[11px] uppercase tracking-widest text-slate-300 font-bold">Tu ticket de recojo</p>
+                <p class="font-mono text-2xl sm:text-3xl font-black text-polleria-gold tracking-wider">{{ ticket }}</p>
+                <p class="text-xs text-slate-400">Muéstralo en caja para recoger tu pedido.</p>
+              </div>
+            }
+
+            @if (getCuentaRegresiva()) {
+              <p class="inline-block px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs sm:text-sm font-mono font-bold">
+                {{ getCuentaRegresiva() }}
+              </p>
+            }
+
+            @if (puedeSubirComprobante()) {
+              <div class="max-w-md mx-auto p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2 text-left">
+                @if (comprobanteRecibido()) {
+                  <p class="text-sm font-bold text-emerald-300">Comprobante recibido, en espera de verificación.</p>
+                } @else {
+                  <p class="text-xs text-slate-300">Envía la captura de tu pago (JPG, PNG o WEBP, máximo 5 MB).</p>
+                }
+                <label class="block">
+                  <span class="sr-only">Enviar comprobante de pago</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    [disabled]="subiendoComprobante()"
+                    (change)="onComprobanteSeleccionado($event)"
+                    class="block w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-polleria-gold file:text-slate-950 file:font-bold disabled:opacity-50"
+                  />
+                </label>
+                @if (subiendoComprobante()) {
+                  <p class="text-xs text-amber-300">Enviando comprobante...</p>
+                }
+                @if (errorComprobante()) {
+                  <p class="text-xs text-rose-300" role="alert">{{ errorComprobante() }}</p>
+                }
+              </div>
+            }
 
           </div>
 
@@ -184,7 +236,7 @@ import { Subscription, interval } from 'rxjs';
                       class="font-display text-lg sm:text-xl tracking-wide uppercase transition-colors"
                       [ngClass]="getStepTextClass(3)"
                     >
-                      {{ currentOrder()?.tipo === 'SALON' ? 'Listo en Mesa' : 'En camino' }}
+                      {{ getStep3Title() }}
                     </h3>
                     <p class="text-xs font-mono mt-0.5" [ngClass]="isStepActive(3) ? 'text-sky-300 font-bold' : 'text-slate-400'">
                       {{ getStepSubtitle(3) }}
@@ -248,6 +300,21 @@ import { Subscription, interval } from 'rxjs';
               <span>VER DETALLES</span>
             </button>
 
+            <!-- Button 3: CANCELAR PEDIDO (S5, invitado verificado o dueño con sesión, antes de cocina) -->
+            @if (puedeCancelarPedido()) {
+              <button
+                type="button"
+                (click)="cancelarPedido()"
+                [disabled]="cancelandoPedido()"
+                class="w-full sm:col-span-2 py-4 px-6 rounded-xl border-2 border-rose-500/60 bg-[#141618] hover:bg-rose-500/10 active:scale-98 text-rose-300 font-display text-lg sm:text-xl tracking-wider uppercase font-bold transition duration-200 shadow-lg flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg class="w-5 h-5 text-rose-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                <span>{{ cancelandoPedido() ? 'CANCELANDO...' : 'CANCELAR PEDIDO' }}</span>
+              </button>
+            }
+
           </div>
 
           <!-- ================= SECCIÓN DE CALIFICACIÓN Y FEEDBACK (FASE 4) ================= -->
@@ -260,18 +327,158 @@ import { Subscription, interval } from 'rxjs';
                   </h3>
                   <p class="text-xs text-slate-400">¿Cómo estuvo tu pedido de San Pollo? Tu opinión nos ayuda a mejorar.</p>
                 </div>
-                <button 
-                  type="button"
-                  (click)="showReportModal.set(true)"
-                  class="text-xs text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
-                >
-                  ¿Tuviste un inconveniente? Reportar reclamo
-                </button>
+
+                @if (reclamoDeOrdenActual(); as reclamo) {
+                  @if (reclamo.estado === 'RESUELTO') {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-500/25 transition cursor-pointer"
+                    >
+                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      <span>✓ Reclamo Atendido (RESUELTO)</span>
+                    </button>
+                  } @else if (reclamo.estado === 'RECHAZADO') {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-500/15 border border-slate-500/30 text-slate-300 text-xs font-bold hover:bg-slate-500/25 transition cursor-pointer"
+                    >
+                      <span>Reclamo No Procedente (RECHAZADO)</span>
+                    </button>
+                  } @else {
+                    <button 
+                      type="button"
+                      (click)="abrirModalReclamo()"
+                      class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold hover:bg-rose-500/25 transition cursor-pointer"
+                    >
+                      <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                      <span>Reclamo en curso ({{ reclamo.estado || 'ABIERTO' }})</span>
+                    </button>
+                  }
+                } @else {
+                  <button 
+                    type="button"
+                    (click)="abrirModalReclamo()"
+                    class="text-xs text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
+                  >
+                    ¿Tuviste un inconveniente? Reportar reclamo
+                  </button>
+                }
               </div>
 
-              @if (ratingSent()) {
-                <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center">
-                  <svg class="w-5 h-5 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> ¡Muchas gracias por tu calificación y reseña! Tu opinión ha sido registrada en el sistema.
+              <!-- Banner si este pedido ya tiene reclamo -->
+              @if (reclamoDeOrdenActual(); as reclamo) {
+                @if (reclamo.estado === 'RESUELTO') {
+                  <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2 font-bold text-emerald-300">
+                        <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        <span>Reclamo Resuelto para el {{ etiqueta(currentOrder()) }}</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                          RESUELTO
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-300">
+                        Motivo: <strong class="text-white">{{ getMotivoLabel(reclamo.motivo) }}</strong>
+                      </p>
+                      @if (reclamo.respuestaAdmin || reclamo.resolucion) {
+                        <p class="text-[11px] text-emerald-200 bg-black/40 p-2.5 rounded-xl border border-emerald-500/20 italic mt-1">
+                          "{{ reclamo.respuestaAdmin || reclamo.resolucion }}"
+                        </p>
+                      }
+                      @if (reclamo.reembolsoProcedente && reclamo.montoReembolso) {
+                        <p class="text-[11px] text-polleria-gold font-bold">
+                          ✓ Reembolso de S/ {{ reclamo.montoReembolso | number:'1.2-2' }} aprobado hacia tu método de pago original.
+                        </p>
+                      }
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-emerald-300 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver resolución completa
+                    </button>
+                  </div>
+                } @else if (reclamo.estado === 'RECHAZADO') {
+                  <div class="p-4 rounded-2xl bg-slate-800/80 border border-white/10 text-slate-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2 font-bold text-slate-200">
+                        <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        <span>Reclamo Atendido — No Procedente</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-rose-500/20 border border-rose-500/40 text-rose-300">
+                          RECHAZADO
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-400">
+                        Motivo: {{ getMotivoLabel(reclamo.motivo) }}
+                      </p>
+                      @if (reclamo.respuestaAdmin || reclamo.resolucion) {
+                        <p class="text-[11px] text-slate-300 bg-black/40 p-2 rounded-xl italic mt-1">
+                          "{{ reclamo.respuestaAdmin || reclamo.resolucion }}"
+                        </p>
+                      }
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-slate-400 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver detalles
+                    </button>
+                  </div>
+                } @else {
+                  <div class="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                    <div class="space-y-0.5">
+                      <div class="flex items-center gap-2 font-bold text-rose-200">
+                        <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span>Reclamo registrado para el {{ etiqueta(currentOrder()) }}</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-rose-500/20 border border-rose-500/40">
+                          {{ reclamo.estado || 'ABIERTO' }}
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-300">
+                        Motivo: <strong class="text-white">{{ getMotivoLabel(reclamo.motivo) }}</strong> — "{{ reclamo.descripcion }}"
+                      </p>
+                    </div>
+                    <button 
+                      type="button" 
+                      (click)="abrirModalReclamo()" 
+                      class="text-xs font-bold text-rose-300 underline hover:text-white cursor-pointer shrink-0"
+                    >
+                      Ver detalles del reclamo
+                    </button>
+                  </div>
+                }
+              }
+
+              <!-- Estado de la calificación específica de este pedido -->
+              @if (reseniaDeOrdenActual(); as resenia) {
+                <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs space-y-2 animate-fade-in">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 font-bold text-sm">
+                      <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                      <span>¡Calificación enviada para el {{ etiqueta(currentOrder()) }}!</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-amber-400 font-bold text-sm">
+                      @for (star of [1, 2, 3, 4, 5]; track star) {
+                        <span [ngClass]="(resenia.calificacion || 5) >= star ? 'text-amber-400' : 'text-slate-600'">★</span>
+                      }
+                      <span class="ml-1 text-xs text-slate-300 font-mono">({{ resenia.calificacion || 5 }}/5)</span>
+                    </div>
+                  </div>
+                  @if (resenia.comentario) {
+                    <p class="text-xs text-slate-300 bg-black/40 p-3 rounded-xl border border-white/5 italic">
+                      "{{ resenia.comentario }}"
+                    </p>
+                  }
+                  <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-emerald-500/20">
+                    <span>Tu reseña ya fue registrada para esta orden y no se puede duplicar.</span>
+                    @if (resenia.fecha) {
+                      <span class="font-mono text-[10px] text-emerald-400/80">{{ resenia.fecha }}</span>
+                    }
+                  </div>
                 </div>
               } @else {
                 <div class="space-y-3">
@@ -293,20 +500,43 @@ import { Subscription, interval } from 'rxjs';
                   </div>
 
                   <!-- Comment text -->
-                  <div class="flex gap-2">
-                    <input 
-                      type="text" 
-                      [(ngModel)]="reviewComment" 
-                      placeholder="Escribe un comentario breve sobre el sabor, temperatura o entrega..."
-                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                    />
-                    <button 
-                      type="button"
-                      (click)="enviarCalificacion()"
-                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition cursor-pointer shadow"
-                    >
-                      Enviar
-                    </button>
+                  <div class="space-y-1">
+                    <div class="flex gap-2">
+                      <input 
+                        type="text" 
+                        [(ngModel)]="reviewComment" 
+                        placeholder="Escribe tu opinión sobre el pedido (mínimo 10 caracteres)..."
+                        class="flex-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-polleria-gold"
+                      />
+                      <button 
+                        type="button"
+                        (click)="enviarCalificacion()"
+                        [disabled]="reviewComment.trim().length < 10 || isSubmittingRating()"
+                        class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase transition shadow disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
+                      >
+                        @if (isSubmittingRating()) {
+                          <svg class="animate-spin w-3.5 h-3.5 text-slate-950" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                          </svg>
+                          <span>Enviando...</span>
+                        } @else {
+                          <span>Enviar</span>
+                        }
+                      </button>
+                    </div>
+                    @if (reviewComment.trim().length < 10) {
+                      <div class="flex items-center gap-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl mt-1.5">
+                        <span class="text-amber-400">⚠️</span>
+                        <span>
+                          @if (reviewComment.length === 0) {
+                            Escribe una opinión sobre tu pedido (mínimo 10 caracteres) para habilitar el envío.
+                          } @else {
+                            Opinión muy corta: faltan {{ 10 - reviewComment.trim().length }} caracteres para habilitar el envío.
+                          }
+                        </span>
+                      </div>
+                    }
                   </div>
                 </div>
               }
@@ -493,71 +723,225 @@ import { Subscription, interval } from 'rxjs';
               </button>
             </div>
 
-            <!-- Form -->
-            <div class="space-y-4 text-xs">
-              <div>
-                <label class="block text-slate-300 font-bold mb-1">Motivo del Reclamo</label>
-                <select 
-                  [(ngModel)]="reportMotivo"
-                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+            @if (reclamoDeOrdenActual(); as reclamoExistente) {
+              <!-- Vista de Reclamo Ya Registrado para este Pedido -->
+              <div class="space-y-4">
+                <div 
+                  class="p-5 rounded-2xl text-xs space-y-3"
+                  [ngClass]="{
+                    'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300': reclamoExistente.estado === 'RESUELTO',
+                    'bg-slate-800/80 border border-white/10 text-slate-300': reclamoExistente.estado === 'RECHAZADO',
+                    'bg-rose-500/10 border border-rose-500/30 text-rose-300': reclamoExistente.estado !== 'RESUELTO' && reclamoExistente.estado !== 'RECHAZADO'
+                  }"
                 >
-                  <option value="PEDIDO_INCOMPLETO">Pedido Incompleto o Faltan Items</option>
-                  <option value="DEMORA_EXCESIVA">Demora Excesiva en la Entrega</option>
-                  <option value="PRODUCTO_FRIO">Producto Frío o en Mal Estado</option>
-                  <option value="COBRO_ERRONEO">Cobro Erróneo / Error de Pago</option>
-                  <option value="MALA_ATENCION">Mala Atención del Repartidor / Personal</option>
-                  <option value="OTRO">Otro Motivo</option>
-                </select>
-              </div>
+                  <div class="flex items-center justify-between pb-2 border-b border-white/10">
+                    <span class="font-bold text-sm text-white">
+                      {{ reclamoExistente.estado === 'RESUELTO' ? 'Reclamo Resuelto' : (reclamoExistente.estado === 'RECHAZADO' ? 'Reclamo No Procedente' : 'Reclamo en Curso') }}
+                    </span>
+                    <span 
+                      class="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase"
+                      [ngClass]="{
+                        'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40': reclamoExistente.estado === 'RESUELTO',
+                        'bg-rose-500/20 text-rose-400 border border-rose-500/40': reclamoExistente.estado === 'RECHAZADO',
+                        'bg-amber-500/20 text-amber-300 border border-amber-500/40': reclamoExistente.estado !== 'RESUELTO' && reclamoExistente.estado !== 'RECHAZADO'
+                      }"
+                    >
+                      {{ reclamoExistente.estado || 'ABIERTO' }}
+                    </span>
+                  </div>
 
-              <div>
-                <label class="block text-slate-300 font-bold mb-1">Descripción detallada</label>
-                <textarea 
-                  [(ngModel)]="reportDescripcion"
-                  rows="3"
-                  placeholder="Detalla qué sucedió para proceder con la investigación o compensación..."
-                  class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                ></textarea>
-              </div>
+                  <div>
+                    <span class="text-slate-400 block text-[11px]">Motivo registrado:</span>
+                    <strong class="text-white text-xs">{{ getMotivoLabel(reclamoExistente.motivo) }}</strong>
+                  </div>
 
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-slate-300 font-bold mb-1">Monto solicitado (S/)</label>
-                  <input 
-                    type="number" 
-                    [(ngModel)]="reportMonto" 
-                    placeholder="0.00"
-                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  />
+                  <div>
+                    <span class="text-slate-400 block text-[11px]">Tu descripción:</span>
+                    <p class="text-xs text-slate-200 bg-black/40 p-3 rounded-xl border border-white/5 mt-1 italic">
+                      "{{ reclamoExistente.descripcion }}"
+                    </p>
+                  </div>
+
+                  <!-- Resolución de la Administración si ya está atendido -->
+                  @if (reclamoExistente.respuestaAdmin || reclamoExistente.resolucion) {
+                    <div class="pt-2 border-t border-white/10 space-y-1">
+                      <span class="text-emerald-400 font-bold block text-[11px]">Respuesta de la Administración:</span>
+                      <p class="text-xs text-white bg-black/50 p-3 rounded-xl border border-emerald-500/30">
+                        {{ reclamoExistente.respuestaAdmin || reclamoExistente.resolucion }}
+                      </p>
+                    </div>
+                  }
+
+                  <!-- Detalle de Reembolso si aplica -->
+                  @if (reclamoExistente.reembolsoProcedente && reclamoExistente.montoReembolso) {
+                    <div class="p-3 rounded-xl bg-polleria-gold/10 border border-polleria-gold/30 text-polleria-gold flex items-center justify-between">
+                      <span class="font-bold text-[11px]">Reembolso Aprobado:</span>
+                      <span class="font-mono font-bold text-sm">S/ {{ reclamoExistente.montoReembolso | number:'1.2-2' }}</span>
+                    </div>
+                  }
+
+                  @if (reclamoExistente.fecha) {
+                    <p class="text-[10px] text-slate-400 font-mono text-right pt-1">
+                      Registrado: {{ reclamoExistente.fecha }}
+                      @if (reclamoExistente.resueltoEn) {
+                        • Resuelto: {{ reclamoExistente.resueltoEn | date:'dd/MM/yyyy HH:mm' }}
+                      }
+                    </p>
+                  }
                 </div>
+
+                @if (reclamoExistente.estado === 'RESUELTO') {
+                  <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+                    <span class="text-base">✓</span>
+                    <span>Tu reclamo ha sido atendido satisfactoriamente por nuestro equipo de atención al cliente.</span>
+                  </div>
+                } @else if (reclamoExistente.estado === 'RECHAZADO') {
+                  <div class="p-3.5 rounded-xl bg-slate-800 border border-white/10 text-slate-300 text-xs flex items-center gap-2">
+                    <span class="text-base">ℹ️</span>
+                    <span>El reclamo fue revisado y concluido como no procedente. Para mayores consultas puedes comunicarte con el local.</span>
+                  </div>
+                } @else {
+                  <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+                    <span class="text-base">ℹ️</span>
+                    <span>Tu solicitud está en cola de revisión por administración. En breve verás la resolución aquí.</span>
+                  </div>
+                }
+
+                <button 
+                  type="button"
+                  (click)="showReportModal.set(false)"
+                  class="w-full py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase transition cursor-pointer"
+                >
+                  Entendido / Cerrar
+                </button>
+              </div>
+            } @else {
+              <!-- Form -->
+              <div class="space-y-4 text-xs">
                 <div>
-                  <label class="block text-slate-300 font-bold mb-1">URL Evidencia (Foto)</label>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="reportEvidenciaUrl" 
-                    placeholder="https://..."
-                    class="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  />
+                  <label class="block text-slate-300 font-bold mb-1">Motivo del Reclamo</label>
+                  <select 
+                    [(ngModel)]="reportMotivo"
+                    class="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-rose-400"
+                  >
+                    <option value="PEDIDO_INCOMPLETO">Pedido Incompleto o Faltan Items</option>
+                    <option value="DEMORA_EXCESIVA">Demora Excesiva en la Entrega</option>
+                    <option value="PRODUCTO_FRIO">Producto Frío o en Mal Estado</option>
+                    <option value="COBRO_ERRONEO">Cobro Erróneo / Error de Pago</option>
+                    <option value="MALA_ATENCION">Mala Atención del Repartidor / Personal</option>
+                    <option value="OTRO">Otro Motivo</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div class="flex justify-between items-center mb-1">
+                    <label class="block text-slate-300 font-bold">Descripción detallada</label>
+                    <span 
+                      class="text-[10px] font-mono transition-colors"
+                      [ngClass]="{
+                        'text-rose-500 font-bold': reportDescripcion.length > 2000,
+                        'text-amber-400': reportDescripcion.trim().length < 10 && reportDescripcion.length > 0,
+                        'text-slate-400': reportDescripcion.trim().length >= 10 && reportDescripcion.length <= 2000
+                      }"
+                    >
+                      {{ reportDescripcion.length }} / 2000 caracteres
+                    </span>
+                  </div>
+                  <textarea 
+                    [(ngModel)]="reportDescripcion"
+                    rows="3"
+                    maxlength="2050"
+                    placeholder="Detalla qué sucedió con tu pedido (mínimo 10 caracteres)..."
+                    class="w-full px-4 py-2.5 rounded-xl bg-black/50 border text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 resize-none"
+                    [ngClass]="reportDescripcion.length > 2000 ? 'border-rose-500 focus:ring-rose-500' : 'border-white/10 focus:ring-rose-400'"
+                  ></textarea>
+                  @if (reportDescripcion.length > 0 && reportDescripcion.trim().length < 10) {
+                    <p class="text-[10px] text-amber-400 mt-0.5">La descripción debe tener al menos 10 caracteres.</p>
+                  }
+                </div>
+
+                <!-- Evidencia Fotográfica con Previsualización (Obligatoria) -->
+                <div>
+                  <label class="block text-slate-300 font-bold mb-1">
+                    Evidencia Fotográfica <span class="text-rose-400 font-bold">*</span>
+                  </label>
+                  @if (!evidenciaPreview()) {
+                    <label class="flex flex-col items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 cursor-pointer hover:bg-white/5 hover:border-rose-400/50 transition">
+                      <span class="text-rose-400 text-xl mb-1">📸</span>
+                      <span class="text-xs text-white font-medium">Adjuntar foto del pedido dañado/faltante</span>
+                      <span class="text-[10px] text-slate-400">JPG, PNG o WEBP (Máx 5MB) — Requerido para reclamos</span>
+                      <input type="file" accept="image/jpeg,image/png,image/webp" (change)="onEvidenciaFileSelected($event)" class="hidden">
+                    </label>
+                  } @else {
+                    <div class="relative rounded-2xl overflow-hidden border border-white/20 max-h-40 bg-black/40">
+                      <img [src]="evidenciaPreview()" alt="Previsualización evidencia" class="w-full h-40 object-cover">
+                      <button 
+                        type="button" 
+                        (click)="removerEvidencia()" 
+                        title="Eliminar y cambiar foto"
+                        class="absolute top-2 right-2 bg-slate-900/90 hover:bg-rose-600 text-white rounded-full p-1.5 shadow-xl transition cursor-pointer border border-white/20 flex items-center justify-center w-7 h-7"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  }
                 </div>
               </div>
-            </div>
 
-            <div class="flex gap-3 pt-2">
-              <button 
-                type="button"
-                (click)="showReportModal.set(false)"
-                class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase cursor-pointer transition"
-              >
-                Cancelar
-              </button>
-              <button 
-                type="button"
-                (click)="enviarReclamo()"
-                class="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase cursor-pointer transition shadow-lg shadow-rose-600/30"
-              >
-                Enviar Reclamo
-              </button>
-            </div>
+              <!-- Aviso dinámico de requisitos faltantes para habilitar el envío -->
+              @if (!isFormReclamoValido()) {
+                <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs space-y-1.5 animate-fade-in">
+                  <div class="font-bold flex items-center gap-1.5 text-amber-400">
+                    <span class="text-sm">⚠️</span>
+                    <span>Faltan requisitos para habilitar el envío:</span>
+                  </div>
+                  <ul class="list-disc list-inside space-y-1 text-[11px] text-slate-300 pl-1">
+                    @if (reportDescripcion.trim().length < 10) {
+                      <li class="text-amber-200">
+                        Descripción: ingresa al menos 10 caracteres (actualmente llevas {{ reportDescripcion.trim().length }}).
+                      </li>
+                    }
+                    @if (reportDescripcion.length > 2000) {
+                      <li class="text-rose-400 font-bold">
+                        Descripción: excede el límite máximo de 2000 caracteres (elimina {{ reportDescripcion.length - 2000 }} caracteres).
+                      </li>
+                    }
+                    @if (!selectedEvidenciaFile) {
+                      <li class="text-amber-200">
+                        Foto de evidencia: debes adjuntar una foto del pedido dañado o faltante (obligatorio).
+                      </li>
+                    }
+                  </ul>
+                </div>
+              }
+
+              <div class="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  (click)="showReportModal.set(false)"
+                  [disabled]="isSubmittingReport()"
+                  class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold uppercase cursor-pointer transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button"
+                  (click)="enviarReclamo()"
+                  [disabled]="!isFormReclamoValido() || isSubmittingReport()"
+                  class="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase transition shadow-lg shadow-rose-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  @if (isSubmittingReport()) {
+                    <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                    </svg>
+                    <span>Enviando...</span>
+                  } @else {
+                    <span>Enviar Reclamo</span>
+                  }
+                </button>
+              </div>
+            }
 
           </div>
         </div>
@@ -572,19 +956,79 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
-  private feedbackService = inject(FeedbackService);
+  readonly feedbackService = inject(FeedbackService);
+  private paymentService = inject(PaymentService);
 
   readonly currentOrder = signal<Order | null>(null);
   readonly showDetailsModal = signal<boolean>(false);
   readonly showReportModal = signal<boolean>(false);
-  readonly ratingSent = signal<boolean>(false);
   readonly selectedStars = signal<number>(5);
+
+  readonly reseniaDeOrdenActual = computed(() => {
+    const order = this.currentOrder();
+    if (!order) return null;
+    const orderId = Number(order.id);
+    return this.feedbackService.obtenerReseniaDeOrden(orderId);
+  });
+
+  readonly reclamoDeOrdenActual = computed(() => {
+    const order = this.currentOrder();
+    if (!order) return null;
+    const orderId = Number(order.id);
+    return this.feedbackService.obtenerReporteDeOrden(orderId);
+  });
+
+  /**
+   * S5: el cliente cancela desde el seguimiento solo en los estados que el backend acepta
+   * (antes de que la cocina empiece). Lo puede hacer el invitado con su celular verificado o el
+   * cliente con sesión (dueño del pedido); el personal no cancela desde esta pantalla.
+   */
+  readonly puedeCancelarPedido = computed(() => {
+    const order = this.currentOrder();
+    if (!order) return false;
+    if (this.auth.token() && this.auth.userRole() !== 'CLIENTE') return false;
+    return ESTADOS_CANCELABLES_POR_CLIENTE.includes(order.estado);
+  });
+
+  readonly cancelandoPedido = signal<boolean>(false);
+
+  // Time windows enforced by the backend (minutes)
+  readonly VENTANA_CONFIRMACION_MIN = 15;
+  readonly VENTANA_PAGO_MIN = 15;
+  readonly VENTANA_PUERTA_MIN = 30;
+  readonly VENTANA_RECOJO_MIN = 60;
+
+  /** Clock tick so the countdowns re-render without a backend call. */
+  readonly ahora = signal<number>(Date.now());
+
+  // Payment proof upload (PENDIENTE_PAGO)
+  readonly subiendoComprobante = signal<boolean>(false);
+  readonly errorComprobante = signal<string>('');
+  readonly comprobantesEnviados = signal<ReadonlySet<string>>(new Set());
+
+  /** The proof control is for the customer's own wallet/transfer order awaiting payment. */
+  readonly puedeSubirComprobante = computed(() => {
+    const order = this.currentOrder();
+    if (!order || order.estado !== 'PENDIENTE_PAGO') return false;
+    if (order.metodoPago === 'TARJETA' || order.metodoPago === 'YAPE_OTP' || order.metodoPago === 'EFECTIVO_CONTRAENTREGA') {
+      return false;
+    }
+    return this.availableOrders().some(o => o.id === order.id);
+  });
+
+  readonly comprobanteRecibido = computed(() => {
+    const order = this.currentOrder();
+    return !!order && this.comprobantesEnviados().has(String(order.id));
+  });
 
   reviewComment = '';
   reportMotivo: MotivoReclamo = 'PEDIDO_INCOMPLETO';
   reportDescripcion = '';
   reportMonto = 0;
-  reportEvidenciaUrl = '';
+  selectedEvidenciaFile: File | null = null;
+  readonly evidenciaPreview = signal<string | null>(null);
+  readonly isSubmittingRating = signal<boolean>(false);
+  readonly isSubmittingReport = signal<boolean>(false);
 
   // Seguimiento sin cuenta
   readonly pasoSeguimiento = signal<'CELULAR' | 'CODIGO'>('CELULAR');
@@ -593,8 +1037,11 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   codigoSeguimiento = '';
 
   private refrescoSub?: Subscription;
+  private relojSub?: Subscription;
   private platformId = inject(PLATFORM_ID);
   readonly etiqueta = etiquetaPedido;
+  /** Pickup ticket POL-<id> the cashier asks for; empty for non-pickup orders. */
+  readonly ticketRecojo = ticketRecojo;
 
   readonly availableOrders = computed<Order[]>(() => {
     return this.ordersService.myOrders();
@@ -613,6 +1060,9 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       if (refrescado && refrescado !== actual) {
         this.currentOrder.set(refrescado);
       }
+      if (actual?.id) {
+        this.feedbackService.consultarReporteDeOrden(Number(actual.id)).subscribe();
+      }
     });
   }
 
@@ -620,7 +1070,14 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     // 1. Cargar los pedidos del cliente y refrescarlos para ver los cambios de estado
     this.ordersService.loadMyOrders();
     if (isPlatformBrowser(this.platformId)) {
-      this.refrescoSub = interval(15000).subscribe(() => this.ordersService.loadMyOrders());
+      this.relojSub = interval(30000).subscribe(() => this.ahora.set(Date.now()));
+      this.refrescoSub = interval(15000).subscribe(() => {
+        this.ordersService.loadMyOrders();
+        const current = this.currentOrder();
+        if (current?.id) {
+          this.feedbackService.consultarReporteDeOrden(Number(current.id)).subscribe();
+        }
+      });
     }
 
     // 2. Comprobar parámetros de la URL (soporta códigos internos y retornos de Mercado Pago)
@@ -649,10 +1106,67 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.refrescoSub?.unsubscribe();
+    this.relojSub?.unsubscribe();
+    this.removerEvidencia();
+  }
+
+  /** Validates and uploads the payment proof; the state shown comes from the backend response. */
+  onComprobanteSeleccionado(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    const order = this.currentOrder();
+    if (!file || !order || this.subiendoComprobante()) return;
+
+    if (!TIPOS_COMPROBANTE.includes(file.type)) {
+      this.errorComprobante.set('El comprobante debe ser una imagen JPG, PNG o WEBP.');
+      return;
+    }
+    if (file.size > MAX_COMPROBANTE_BYTES) {
+      this.errorComprobante.set('El comprobante supera el máximo de 5 MB.');
+      return;
+    }
+
+    this.errorComprobante.set('');
+    this.subiendoComprobante.set(true);
+    this.paymentService.subirComprobante(order.id, file).subscribe({
+      next: () => {
+        this.subiendoComprobante.set(false);
+        this.comprobantesEnviados.update(prev => new Set(prev).add(String(order.id)));
+        this.notify.showSuccess('Comprobante recibido', 'Estamos verificando tu pago.');
+        this.ordersService.loadMyOrders();
+      },
+      error: (err: Error) => {
+        this.subiendoComprobante.set(false);
+        this.errorComprobante.set(err?.message || 'No se pudo enviar el comprobante.');
+      }
+    });
   }
 
   selectOrder(order: Order): void {
     this.currentOrder.set(order);
+    this.reviewComment = '';
+    this.selectedStars.set(5);
+    this.reportDescripcion = '';
+    this.removerEvidencia();
+    if (order?.id) {
+      this.feedbackService.consultarReporteDeOrden(Number(order.id)).subscribe();
+    }
+  }
+
+  abrirModalReclamo(): void {
+    this.showReportModal.set(true);
+  }
+
+  getMotivoLabel(motivo?: string): string {
+    switch (motivo) {
+      case 'PEDIDO_INCOMPLETO': return 'Pedido Incompleto o Faltan Items';
+      case 'DEMORA_EXCESIVA': return 'Demora Excesiva en la Entrega';
+      case 'PRODUCTO_FRIO': return 'Producto Frío o en Mal Estado';
+      case 'COBRO_ERRONEO': return 'Cobro Erróneo / Error de Pago';
+      case 'MALA_ATENCION': return 'Mala Atención del Repartidor / Personal';
+      default: return motivo || 'Otro Motivo';
+    }
   }
 
   // ================= SEGUIMIENTO SIN CUENTA =================
@@ -705,6 +1219,43 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     this.pasoSeguimiento.set('CELULAR');
   }
 
+  /**
+   * S5: el invitado cancela su pedido con el acceso de seguimiento y recarga la lista para ver el
+   * nuevo estado sin esperar al siguiente refresco automático.
+   */
+  cancelarPedido(): void {
+    const order = this.currentOrder();
+    if (!order || !this.puedeCancelarPedido() || this.cancelandoPedido()) return;
+    if (!confirm(`¿Seguro que quieres cancelar el pedido ${this.etiqueta(order)}?`)) return;
+
+    this.cancelandoPedido.set(true);
+    // With a session the owner's JWT authorizes PATCH /ordenes/{id}/estado; a guest uses the
+    // verified tracking access.
+    const cancelacion$ = this.auth.token()
+      ? this.ordersService.updateOrderStatus(order.id, 'CANCELADO')
+      : this.ordersService.cancelarPedidoInvitado(order.id);
+    cancelacion$.subscribe({
+      next: () => {
+        this.cancelandoPedido.set(false);
+        this.notify.showSuccess('Pedido cancelado');
+        this.ordersService.loadMyOrders();
+      },
+      error: err => {
+        this.cancelandoPedido.set(false);
+        this.notify.showError('No se pudo cancelar el pedido', this.mensajeCancelacion(err));
+      }
+    });
+  }
+
+  /** Backend reason (`error`, `mensaje` or the ProblemDetail `detail`) before the generic text. */
+  private mensajeCancelacion(err: unknown): string {
+    const e = err as { error?: { error?: unknown; mensaje?: unknown; detail?: unknown }; message?: unknown } | null;
+    for (const m of [e?.error?.error, e?.error?.mensaje, e?.error?.detail, e?.message]) {
+      if (typeof m === 'string' && m.trim()) return m;
+    }
+    return 'Intenta nuevamente.';
+  }
+
   formatearCelular(celular: string): string {
     return celular.replace(/^(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3');
   }
@@ -738,20 +1289,107 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   // ================= DYNAMIC STATUS HELPERS =================
 
-  getMainTitle(): string {
-    const status = this.currentOrder()?.estado;
+  /**
+   * Stepper stage of an order status: 0 = waiting for call/payment verification, 1 = received,
+   * 2 = preparing, 3 = ready / on the way / at the door, 4 = delivered, -1 = closed without delivery.
+   */
+  etapaPedido(status?: OrderStatus): number {
     switch (status) {
+      case 'PENDIENTE_CONFIRMACION':
+      case 'PENDIENTE_PAGO':
+        return 0;
+      case 'RECIBIDO':
+      case 'PAGADO':
+        return 1;
+      case 'PREPARANDO':
+      case 'EN_PREPARACION':
+        return 2;
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+      case 'LISTO_COCINA':
+      case 'EN_CAMINO':
+      case 'EN_REPARTO':
+      case 'EN_PUERTA':
+        return 3;
+      case 'ENTREGADO':
       case 'COMPLETADO':
+        return 4;
+      case 'CANCELADO':
+      case 'PEDIDO_FANTASMA':
+        return -1;
+      default:
+        return 1;
+    }
+  }
+
+  /** Whole minutes left of a window that started at `desde`; null when there is no start time. */
+  minutosRestantes(desde: string | undefined, ventanaMin: number): number | null {
+    if (!desde) return null;
+    const inicio = Date.parse(desde);
+    if (Number.isNaN(inicio)) return null;
+    const restanteMs = inicio + ventanaMin * 60_000 - this.ahora();
+    return Math.max(0, Math.ceil(restanteMs / 60_000));
+  }
+
+  private esRecojo(order: Order | null): boolean {
+    return order?.tipo === 'RECOJO_EN_TIENDA';
+  }
+
+  /** Short countdown line shown under the subtitle; empty when the status has no running window. */
+  getCuentaRegresiva(): string {
+    const order = this.currentOrder();
+    if (!order) return '';
+    switch (order.estado) {
+      case 'PENDIENTE_CONFIRMACION': {
+        const min = this.minutosRestantes(order.createdAt, this.VENTANA_CONFIRMACION_MIN);
+        return min === null ? '' : `Tiempo restante para confirmar: ${min} min`;
+      }
+      case 'PENDIENTE_PAGO': {
+        const min = this.minutosRestantes(order.createdAt, this.VENTANA_PAGO_MIN);
+        return min === null ? '' : `Tiempo restante para verificar el pago: ${min} min`;
+      }
+      case 'EN_PUERTA': {
+        const min = this.minutosRestantes(order.enPuertaAt, this.VENTANA_PUERTA_MIN);
+        return min === null ? '' : `Tu repartidor te espera: ${min} min`;
+      }
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR': {
+        if (!this.esRecojo(order)) return '';
+        const min = this.minutosRestantes(order.listoAt, this.VENTANA_RECOJO_MIN);
+        return min === null ? '' : `Tiempo para recoger: ${min} min`;
+      }
+      default:
+        return '';
+    }
+  }
+
+  getMainTitle(): string {
+    const order = this.currentOrder();
+    switch (order?.estado) {
+      case 'COMPLETADO':
+      case 'ENTREGADO':
         return '¡PEDIDO ENTREGADO CON ÉXITO!';
+      case 'EN_PUERTA':
+        return 'TU REPARTIDOR ESTÁ EN LA PUERTA';
+      case 'EN_CAMINO':
       case 'EN_REPARTO':
         return 'EL FUEGO ESTÁ EN CAMINO';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
       case 'LISTO_COCINA':
-        return '¡PEDIDO LISTO EN SALIDA!';
+        return this.esRecojo(order) ? '¡LISTO PARA RECOGER!' : '¡PEDIDO LISTO EN SALIDA!';
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'EL FUEGO ESTÁ EN LA COCINA';
-      case 'PAGADO':
+      case 'PENDIENTE_CONFIRMACION':
+        return 'TE LLAMAREMOS PARA CONFIRMAR';
       case 'PENDIENTE_PAGO':
-        return 'PEDIDO RECIBIDO Y CONFIRMADO';
+        return 'PAGO PENDIENTE DE VERIFICACIÓN';
+      case 'PAGADO':
+      case 'RECIBIDO':
+        return 'PEDIDO RECIBIDO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO NO ENTREGADO';
       case 'CANCELADO':
         return 'PEDIDO CANCELADO';
       default:
@@ -760,19 +1398,46 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   }
 
   getSubtitle(): string {
-    const status = this.currentOrder()?.estado;
-    switch (status) {
+    const order = this.currentOrder();
+    switch (order?.estado) {
       case 'COMPLETADO':
+      case 'ENTREGADO':
         return 'Tu pedido ha sido entregado. ¡Buen provecho y gracias por elegir San Pollo!';
+      case 'EN_PUERTA': {
+        const min = this.minutosRestantes(order?.enPuertaAt, this.VENTANA_PUERTA_MIN);
+        return min === 0
+          ? 'Tu repartidor superó los 30 minutos de espera en tu puerta; el pedido puede darse por no entregado.'
+          : 'Tu repartidor llegó a tu dirección. Sal a recibir tu pedido; te esperará hasta 30 minutos.';
+      }
+      case 'EN_CAMINO':
       case 'EN_REPARTO':
-        return 'Tu repartidor va en ruta a tu dirección. Tiempo estimado de entrega: 10 - 15 min.';
+        return 'Tu repartidor va en ruta a tu dirección.';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+        return this.esRecojo(order)
+          ? 'Tu pedido está listo. Recógelo con tu ticket dentro de 1 hora.'
+          : 'Tu pedido está listo y será despachado inmediatamente.';
       case 'LISTO_COCINA':
-        return 'Tu pedido ha salido del horno y está listo para ser despachado inmediatamente.';
+        // The adapter shows backend LISTO as LISTO_COCINA, so this is the real "ready" state.
+        return this.esRecojo(order)
+          ? `Tu pedido está listo. Recógelo en caja con tu ticket ${ticketRecojo(order)} dentro de 1 hora.`
+          : 'Tu pedido ha salido del horno y está listo para ser despachado inmediatamente.';
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'Nuestros maestros polleros están dorando tu pedido a la leña con papas crujientes.';
-      case 'PAGADO':
+      case 'PENDIENTE_CONFIRMACION': {
+        const min = this.minutosRestantes(order?.createdAt, this.VENTANA_CONFIRMACION_MIN);
+        return min === 0
+          ? 'Terminó el tiempo de confirmación. Si no recibiste la llamada, el pedido se cancelará automáticamente.'
+          : 'Te llamaremos al celular que registraste para confirmar tu pedido antes de enviarlo a cocina.';
+      }
       case 'PENDIENTE_PAGO':
-        return 'Hemos registrado tu pedido y entra a comanda en cocina.';
+        return 'Aún no confirmamos tu pago. Cuando lo verifiquemos, el pedido pasará a cocina; si pasan 15 minutos sin pago verificado, se cancela.';
+      case 'PAGADO':
+      case 'RECIBIDO':
+        return 'Hemos registrado tu pedido.';
+      case 'PEDIDO_FANTASMA':
+        return 'Tu pedido fue marcado como no entregado porque no pudo ser recibido a tiempo.';
       case 'CANCELADO':
         return 'Este pedido ha sido cancelado.';
       default:
@@ -782,59 +1447,40 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   getProgressWidth(): string {
     const status = this.currentOrder()?.estado;
-    switch (status) {
-      case 'PENDIENTE_PAGO':
-        return '10%';
-      case 'PAGADO':
-        return '25%';
-      case 'EN_PREPARACION':
-        return '50%';
-      case 'LISTO_COCINA':
-        return '65%';
-      case 'EN_REPARTO':
-        return '75%';
-      case 'COMPLETADO':
-        return '100%';
-      case 'CANCELADO':
-        return '0%';
-      default:
-        return '50%';
+    if (status === 'EN_PUERTA') return '90%';
+    switch (this.etapaPedido(status)) {
+      case 0: return '10%';
+      case 1: return '25%';
+      case 2: return '50%';
+      case 3: return '75%';
+      case 4: return '100%';
+      default: return '0%';
     }
   }
 
   isStepCompleted(step: number): boolean {
     const status = this.currentOrder()?.estado;
     if (!status) return false;
-
+    const etapa = this.etapaPedido(status);
     switch (step) {
-      case 1:
-        return ['PAGADO', 'EN_PREPARACION', 'LISTO_COCINA', 'EN_REPARTO', 'COMPLETADO'].includes(status);
-      case 2:
-        return ['LISTO_COCINA', 'EN_REPARTO', 'COMPLETADO'].includes(status);
-      case 3:
-        return ['COMPLETADO'].includes(status);
-      case 4:
-        return status === 'COMPLETADO';
-      default:
-        return false;
+      case 1: return etapa >= 1;
+      case 2: return etapa >= 3;
+      case 3: return etapa >= 4;
+      case 4: return etapa === 4;
+      default: return false;
     }
   }
 
   isStepActive(step: number): boolean {
     const status = this.currentOrder()?.estado;
     if (!status) return false;
-
+    const etapa = this.etapaPedido(status);
     switch (step) {
-      case 1:
-        return status === 'PENDIENTE_PAGO' || status === 'PAGADO';
-      case 2:
-        return status === 'EN_PREPARACION';
-      case 3:
-        return status === 'LISTO_COCINA' || status === 'EN_REPARTO';
-      case 4:
-        return status === 'COMPLETADO';
-      default:
-        return false;
+      case 1: return etapa === 0 || etapa === 1;
+      case 2: return etapa === 2;
+      case 3: return etapa === 3;
+      case 4: return etapa === 4;
+      default: return false;
     }
   }
 
@@ -861,17 +1507,29 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     return 'text-slate-500';
   }
 
+  getStep3Title(): string {
+    const order = this.currentOrder();
+    if (order?.tipo === 'SALON') return 'Listo en Mesa';
+    return this.esRecojo(order) ? 'Listo para recoger' : 'En camino';
+  }
+
   getStepSubtitle(step: number): string {
-    const status = this.currentOrder()?.estado;
+    const order = this.currentOrder();
+    const status = order?.estado;
     switch (step) {
       case 1:
+        if (status === 'PENDIENTE_CONFIRMACION') return 'Esperando llamada';
+        if (status === 'PENDIENTE_PAGO') return 'Pago por verificar';
+        if (status === 'RECIBIDO') return 'Recibido';
         return this.isStepCompleted(1) ? 'Confirmado' : 'Pendiente';
       case 2:
         return this.isStepActive(2) ? 'En el horno...' : (this.isStepCompleted(2) ? 'Listo' : 'Pendiente');
       case 3:
-        return this.isStepActive(3) ? 'En ruta' : (this.isStepCompleted(3) ? 'Entregado' : 'Pendiente');
+        if (status === 'EN_PUERTA') return 'En tu puerta';
+        if (this.isStepActive(3)) return this.esRecojo(order) ? 'Listo' : 'En ruta';
+        return this.isStepCompleted(3) ? 'Entregado' : 'Pendiente';
       case 4:
-        return status === 'COMPLETADO' ? '¡Entregado!' : '--:--';
+        return this.etapaPedido(status) === 4 ? '¡Entregado!' : '--:--';
       default:
         return '';
     }
@@ -879,13 +1537,22 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   getStatusLabel(status: OrderStatus): string {
     switch (status) {
-      case 'PENDIENTE_PAGO': return 'Pendiente';
+      case 'PENDIENTE_CONFIRMACION': return 'Llamada Pendiente';
+      case 'PENDIENTE_PAGO': return 'Pendiente de Pago';
+      case 'RECIBIDO': return 'Recibido';
       case 'PAGADO': return 'Pagado';
+      case 'PREPARANDO':
       case 'EN_PREPARACION': return 'En Preparación';
-      case 'LISTO_COCINA': return 'Listo Cocina';
+      case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
+      case 'LISTO_COCINA': return 'Listo';
+      case 'EN_CAMINO':
       case 'EN_REPARTO': return 'En Camino';
+      case 'EN_PUERTA': return '¡En tu Puerta!';
+      case 'ENTREGADO':
       case 'COMPLETADO': return 'Completado';
       case 'CANCELADO': return 'Cancelado';
+      case 'PEDIDO_FANTASMA': return 'No Entregado';
       default: return status;
     }
   }
@@ -895,59 +1562,134 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   }
 
   contactRider(): void {
-    const repartidor = this.currentOrder()?.repartidorAsignado;
-    const nombre = repartidor?.nombre || 'Carlos M.';
-    const cel = repartidor?.celular || '+51 987 112 233';
+    // El backend solo guarda el id del repartidor, y su nombre vive en el roster de auth-service,
+    // que exige rol ADMIN: un cliente no puede leerlo. Sin nombre real no se inventa uno.
+    if (!this.currentOrder()?.repartidorId) {
+      this.notify.showInfo(
+        'Motorizado aún sin asignar',
+        'Todavía no se asignó un motorizado a tu pedido. Aparecerá aquí cuando salga a reparto.'
+      );
+      return;
+    }
 
     this.notify.showInfo(
-      'Contacto con Motorizado',
-      `Llamando al Rider: ${nombre} (${cel}) asignado a tu entrega.`
+      'Motorizado asignado',
+      'Un motorizado está a cargo de tu entrega. Te contactará al llegar.'
     );
+  }
+
+  onEvidenciaFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const validMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validMimes.includes(file.type)) {
+      this.notify.showWarning('Formato no permitido', 'Solo puedes adjuntar fotos en formato JPG, PNG o WEBP.');
+      input.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      this.notify.showWarning('Archivo muy pesado', 'La imagen no debe superar los 5 MB.');
+      input.value = '';
+      return;
+    }
+    this.selectedEvidenciaFile = file;
+    if (this.evidenciaPreview()) {
+      URL.revokeObjectURL(this.evidenciaPreview()!);
+    }
+    this.evidenciaPreview.set(URL.createObjectURL(file));
+  }
+
+  removerEvidencia(): void {
+    if (this.evidenciaPreview()) {
+      URL.revokeObjectURL(this.evidenciaPreview()!);
+    }
+    this.selectedEvidenciaFile = null;
+    this.evidenciaPreview.set(null);
+  }
+
+  isFormReclamoValido(): boolean {
+    const desc = this.reportDescripcion.trim();
+    return !!this.reportMotivo &&
+      desc.length >= 10 &&
+      desc.length <= 2000 &&
+      this.selectedEvidenciaFile !== null;
   }
 
   enviarCalificacion(): void {
     const order = this.currentOrder();
-    if (!order) return;
+    if (!order || this.reviewComment.trim().length < 10 || this.isSubmittingRating()) return;
     const orderIdNum = Number(order.id) || 1;
+    const estrellas = this.selectedStars();
+    const comentario = this.reviewComment.trim();
+
+    this.isSubmittingRating.set(true);
     this.feedbackService.calificarPedido({
       ordenId: orderIdNum,
-      estrellas: this.selectedStars(),
-      comentario: this.reviewComment
+      estrellas,
+      comentario
     }).subscribe({
       next: () => {
-        this.ratingSent.set(true);
+        this.isSubmittingRating.set(false);
+        this.feedbackService.guardarReseniaLocal(orderIdNum, estrellas, comentario);
+        this.reviewComment = '';
         this.notify.showSuccess('¡Muchas gracias por calificar tu pedido!');
       },
-      error: () => {
-        this.ratingSent.set(true);
-        this.notify.showSuccess('Calificación registrada con éxito.');
+      error: (err) => {
+        this.isSubmittingRating.set(false);
+        if (err.status === 409) {
+          this.feedbackService.guardarReseniaLocal(orderIdNum, estrellas, comentario);
+          this.reviewComment = '';
+          this.notify.showInfo('Calificación ya registrada', 'Ya habías enviado una calificación para esta orden.');
+        } else {
+          this.notify.showError('No se pudo registrar la calificación', err.error?.message || 'Intente nuevamente más tarde.');
+        }
       }
     });
   }
 
   enviarReclamo(): void {
     const order = this.currentOrder();
-    if (!order) return;
-    if (!this.reportDescripcion.trim()) {
-      this.notify.showWarning('Por favor explica brevemente lo sucedido en la descripción.');
-      return;
-    }
+    if (!order || !this.isFormReclamoValido() || this.isSubmittingReport()) return;
+
+    this.isSubmittingReport.set(true);
     const orderIdNum = Number(order.id) || 1;
-    this.feedbackService.registrarReclamo({
-      ordenId: orderIdNum,
-      motivo: this.reportMotivo,
-      descripcion: this.reportDescripcion,
-      montoReclamado: this.reportMonto > 0 ? this.reportMonto : undefined,
-      evidenciaUrl: this.reportEvidenciaUrl || undefined
-    }).subscribe({
-      next: () => {
+    const motivo = this.reportMotivo;
+    const desc = this.reportDescripcion.trim();
+
+    this.feedbackService.crearReporteMultipart(
+      orderIdNum,
+      motivo,
+      desc,
+      this.selectedEvidenciaFile || undefined
+    ).subscribe({
+      next: (nuevo) => {
+        this.isSubmittingReport.set(false);
+        this.feedbackService.guardarReporteLocal(orderIdNum, {
+          id: nuevo.id,
+          motivo,
+          descripcion: desc,
+          estado: nuevo.estado
+        });
         this.showReportModal.set(false);
         this.reportDescripcion = '';
+        this.removerEvidencia();
         this.notify.showSuccess('Tu reclamo fue registrado en el libro de reclamaciones.');
       },
-      error: () => {
-        this.showReportModal.set(false);
-        this.notify.showSuccess('Reclamo registrado correctamente.');
+      error: (err) => {
+        this.isSubmittingReport.set(false);
+        if (err.status === 409) {
+          this.feedbackService.guardarReporteLocal(orderIdNum, {
+            motivo,
+            descripcion: desc,
+            estado: 'ABIERTO'
+          });
+          this.showReportModal.set(false);
+          this.removerEvidencia();
+          this.notify.showInfo('Reclamo ya registrado', 'Ya existe un reclamo en proceso para esta orden.');
+        } else {
+          this.notify.showError('No se pudo registrar el reclamo', err.error?.message || 'Error al procesar el reclamo.');
+        }
       }
     });
   }

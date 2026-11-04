@@ -30,6 +30,7 @@ public class DataInitializer {
                     new SeedUser("Mozo Principal", "mozo.polleria@yopmail.com", "990000002", "Password123!", Role.MOZO),
                     new SeedUser("Jefe de Cocina", "cocina.polleria@yopmail.com", "990000003", "Password123!", Role.COCINA),
                     new SeedUser("Repartidor Motorizado", "repartidor.polleria@yopmail.com", "990000004", "Password123!", Role.REPARTIDOR),
+                    new SeedUser("Cajero de Turno", "cajero.polleria@yopmail.com", "990000006", "Password123!", Role.CAJERO),
                     new SeedUser("Cliente Frecuente", "cliente.polleria@yopmail.com", "990000005", "Password123!", Role.CLIENTE)
             );
 

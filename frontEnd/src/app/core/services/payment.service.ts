@@ -1,21 +1,42 @@
-import { Injectable, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, catchError, map, of, tap } from 'rxjs';
+import { Injectable, inject, signal, computed } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
-import { PaymentTransaction } from '../models/payment.model';
-import { BackendPagoResponse } from '../models/api-contracts.model';
+import { PaymentTransaction, PagoOrdenAdmin } from '../models/payment.model';
+import { PaymentsApiService } from '../api/payments-api.service';
+import { BackendCobroEfectivoRequest, BackendPagoResponse } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
-import { environment } from '../../../environments/environment';
+
+export type { EstadoPagoAdmin, PagoOrdenAdmin } from '../models/payment.model';
 
 @Injectable({
   providedIn: 'root'
 })
 export class PaymentService {
-  private http = inject(HttpClient);
-  private readonly API_URL = environment.paymentsApiUrl || 'http://localhost:8083';
+  private api = inject(PaymentsApiService);
 
   readonly lastTransaction = signal<PaymentTransaction | null>(null);
   readonly isLoading = signal<boolean>(false);
+  readonly pagos = signal<PaymentTransaction[]>([]);
+
+  readonly pagosPorOrdenMap = computed(() => {
+    const map = new Map<string, PaymentTransaction>();
+    for (const p of this.pagos()) {
+      map.set(String(p.orderId), p);
+    }
+    return map;
+  });
+
+  /**
+   * Carga todos los pagos registrados desde payments-service (:8083)
+   */
+  cargarPagos(): Observable<PaymentTransaction[]> {
+    return this.api.listar().pipe(
+      map(dtos => (dtos || []).map(dto => PaymentAdapter.toPaymentTransaction(dto))),
+      tap(lista => this.pagos.set(lista)),
+      catchError(() => of([]))
+    );
+  }
 
   /**
    * RF21: Iniciar Pago en payments-service (:8083)
@@ -29,26 +50,17 @@ export class PaymentService {
     this.isLoading.set(true);
     const backendReq = PaymentAdapter.toBackendIniciarRequest(ordenId, monto, metodo, telefonoYape);
 
-    return this.http.post<BackendPagoResponse>(`${this.API_URL}/pagos`, backendReq).pipe(
+    return this.api.iniciar(backendReq).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       tap(tx => {
         this.isLoading.set(false);
         this.lastTransaction.set(tx);
       }),
-      catchError(() => {
+      catchError((error: HttpErrorResponse) => {
+        // Sin respuesta del backend no hay pago que registrar: el error sube al llamador
+        // en vez de fabricar una transacción aprobada.
         this.isLoading.set(false);
-        // Fallback simulado para no interrumpir el flujo si el servicio de pagos estuviese ocupado
-        const fallbackTx: PaymentTransaction = {
-          id: 'pay-' + Date.now(),
-          orderId: String(ordenId),
-          metodo: metodo,
-          monto: monto,
-          estado: metodo === 'EFECTIVO_CONTRAENTREGA' ? 'PENDIENTE' : 'APROBADO',
-          numeroOperacion: 'TXN-MOCK-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
-          fechaTransaccion: new Date().toISOString()
-        };
-        this.lastTransaction.set(fallbackTx);
-        return of(fallbackTx);
+        return throwError(() => error);
       })
     );
   }
@@ -58,7 +70,7 @@ export class PaymentService {
    */
   obtenerPorOrden(ordenId: number | string): Observable<PaymentTransaction | null> {
     const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
-    return this.http.get<BackendPagoResponse>(`${this.API_URL}/pagos/orden/${cleanId}`).pipe(
+    return this.api.obtenerPorOrden(cleanId).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
       catchError(() => of(null))
     );
@@ -68,7 +80,7 @@ export class PaymentService {
    * RF23: Confirmar Pago Manualmente
    */
   confirmarPago(pagoId: number, referencia: string): Observable<PaymentTransaction | null> {
-    return this.http.patch<BackendPagoResponse>(`${this.API_URL}/pagos/${pagoId}/confirmar`, {
+    return this.api.confirmar(pagoId, {
       referenciaExterna: referencia,
       detalle: 'Pago confirmado'
     }).pipe(
@@ -78,9 +90,96 @@ export class PaymentService {
   }
 
   /**
-   * Mercado Pago Checkout Pro: Crear Preferencia en payments-service (:8083).
-   * El Access Token de Mercado Pago vive solo en el backend; el navegador nunca
-   * llama directo a la API de Mercado Pago.
+   * RF22: Obtener Pago por ID de Pago
+   */
+  obtener(pagoId: number | string): Observable<PaymentTransaction | null> {
+    const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
+    return this.api.obtener(cleanId).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      catchError(() => of(null))
+    );
+  }
+
+  /**
+   * T6e (S6/S7) — pago de una orden para que el `ADMIN` verifique el comprobante de Yape.
+   *
+   * Se pide **al abrir el detalle** y no se cachea: la URL del comprobante es una firma de vida
+   * corta (300 s), así que reusarla mostraría una imagen rota. El error del backend (por ejemplo el
+   * 404 de una orden sin pago) se propaga tal cual.
+   */
+  obtenerPagoParaVerificacion(ordenId: number | string): Observable<PagoOrdenAdmin> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    return this.api.obtenerPagoAdminPorOrden(cleanId);
+  }
+
+  /**
+   * Cashier/admin inbox: payments waiting for proof verification, with the signed proof URL.
+   * Never cached (the URL lives 5 minutes). Errors propagate with the backend message.
+   */
+  listarPendientesVerificacion(): Observable<PagoOrdenAdmin[]> {
+    return this.api.listarPorEstado('PENDIENTE_VERIFICACION').pipe(
+      map(list => list as PagoOrdenAdmin[]),
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+    );
+  }
+
+  /** Uploads the payment proof image of an order; the returned state comes from the backend. */
+  subirComprobante(ordenId: number | string, file: File): Observable<PagoOrdenAdmin> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('POL-', '').replace('ord-', ''), 10);
+    if (!Number.isFinite(cleanId) || cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
+    return this.api.subirComprobante(cleanId, file).pipe(
+      map(dto => dto as PagoOrdenAdmin),
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+    );
+  }
+
+  /**
+   * T6e (S6) — decisión del `ADMIN` sobre el comprobante de Yape.
+   *
+   * Rechazar exige motivo: sin motivo no se dispara ninguna llamada (el backend respondería 400 y el
+   * cliente no tendría nada que leer en su WhatsApp). Un error del backend se propaga con su mensaje
+   * y **sin** reportar éxito: el estado que se muestra es el que devuelve el backend, nunca uno local.
+   */
+  verificarComprobante(
+    pagoId: number | string,
+    aprobado: boolean,
+    motivoRechazo?: string
+  ): Observable<PagoOrdenAdmin> {
+    const motivo = (motivoRechazo ?? '').trim();
+    if (!aprobado && !motivo) {
+      return throwError(() => new Error('El motivo de rechazo es obligatorio'));
+    }
+
+    const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
+    const body = aprobado ? { aprobado: true } : { aprobado: false, motivoRechazo: motivo };
+
+    return this.api.verificar(cleanId, body).pipe(
+      catchError((error: HttpErrorResponse) =>
+        throwError(() => new Error(this.mensajeErrorVerificacion(error)))
+      )
+    );
+  }
+
+  /** Mensaje del backend tal cual; solo hay un texto propio cuando no vino ninguno. */
+  private mensajeErrorVerificacion(error: HttpErrorResponse): string {
+    const cuerpo = error?.error;
+    const mensaje = typeof cuerpo === 'string'
+      ? cuerpo
+      : cuerpo?.error || cuerpo?.mensaje || cuerpo?.message;
+    return typeof mensaje === 'string' && mensaje.trim()
+      ? mensaje
+      : 'No se pudo verificar el comprobante de Yape.';
+  }
+
+  /**
+   * Mercado Pago Checkout Pro: Crear Preferencia
+   * 1. Llama al microservicio de pagos propio (:8083), unico que habla con Mercado Pago.
+   * 2. Si la pasarela no responde, el error sube al llamador: no se simula un cobro.
+   * El access token de Mercado Pago nunca viaja al navegador.
    */
   crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<{
     preferenceId: string;
@@ -92,16 +191,61 @@ export class PaymentService {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const montoFinal = Math.round(monto * 100) / 100;
 
-    return this.http.post<{
-      preferenceId: string;
-      initPoint: string;
-      sandboxInitPoint: string;
-      pagoId: number;
-      ordenId: number;
-    }>(`${this.API_URL}/pagos/mercadopago/preferencia`, {
+    return this.api.crearPreferenciaMercadoPago({
       ordenId: cleanOrderId,
       monto: montoFinal,
       metodoPago: 'TARJETA'
     });
+  }
+
+  /**
+   * Cobro directo con Yape integrado en Mercado Pago (OTP 6 dígitos).
+   */
+  pagarConYapeOtp(
+    ordenId: number | string,
+    monto: number,
+    telefono: string,
+    otp: string,
+    email?: string
+  ): Observable<PaymentTransaction> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const body = {
+      ordenId: cleanId,
+      monto: Math.round(monto * 100) / 100,
+      telefono: telefono.replace(/\D/g, ''),
+      otp: otp.trim(),
+      email: email?.trim()
+    };
+
+    return this.api.pagarConYapeOtp(body).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      tap(tx => this.lastTransaction.set(tx))
+    );
+  }
+
+  /**
+   * Registro obligatorio de cobro en efectivo antes de completar la entrega (ContraPago).
+   */
+  registrarCobroEfectivo(
+    ordenId: number | string,
+    monto: number,
+    montoRecibido?: number,
+    vueltoEntregado?: number,
+    codigoTicket?: string
+  ): Observable<PaymentTransaction> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const body: BackendCobroEfectivoRequest = {
+      ordenId: cleanId,
+      monto: Math.round(monto * 100) / 100,
+      montoRecibido: montoRecibido ? Math.round(montoRecibido * 100) / 100 : undefined,
+      vueltoEntregado: vueltoEntregado ? Math.round(vueltoEntregado * 100) / 100 : undefined,
+      // Pickup collections send the ticket; the courier flow calls without it.
+      ...(codigoTicket ? { codigoTicket } : {})
+    };
+
+    return this.api.registrarCobroEfectivo(body).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      tap(tx => this.lastTransaction.set(tx))
+    );
   }
 }

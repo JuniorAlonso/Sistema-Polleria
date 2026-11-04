@@ -27,6 +27,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 
+    @ExceptionHandler(com.sistema.polleria.finance.service.PagosClient.PagosNoDisponibleException.class)
+    public ResponseEntity<Map<String, String>> handlePagosNoDisponible(
+            com.sistema.polleria.finance.service.PagosClient.PagosNoDisponibleException e) {
+        log.warn("payments-service unavailable: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Acceso denegado"));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException e) {
         log.warn("Bad request: {}", e.getMessage());
@@ -38,6 +51,29 @@ public class GlobalExceptionHandler {
         Map<String, String> errors = new HashMap<>();
         e.getBindingResult().getFieldErrors().forEach(err -> errors.put(err.getField(), err.getDefaultMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Validación fallida", "detalles", errors));
+    }
+
+    /**
+     * Una ruta que no existe debe responder 404, nunca 500. Antes caía en el manejador genérico
+     * y devolvía "error interno" con traza completa de Tomcat para una petición normal.
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNoResourceFound(
+            org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        log.warn("Ruta no encontrada: {}", e.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Ruta no encontrada: " + e.getResourcePath()));
+    }
+
+    /**
+     * Un método HTTP no soportado en una ruta existente debe responder 405, no 500.
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, String>> handleMethodNotAllowed(
+            org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        log.warn("Método {} no permitido: {}", e.getMethod(), e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Map.of("error", "Método " + e.getMethod() + " no permitido en esta ruta"));
     }
 
     @ExceptionHandler(Exception.class)

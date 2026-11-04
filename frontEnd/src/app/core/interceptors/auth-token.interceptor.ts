@@ -30,8 +30,20 @@ export const authTokenInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown
     });
   }
 
+  // ¿La petición salió identificada? Distingue "la sesión ya no existe" (sin cabecera) de un
+  // rechazo legítimo de permisos con sesión válida (403 con el rol equivocado).
+  const salioIdentificada = authReq.headers.has('Authorization');
+
   return next(authReq).pipe(
     catchError((error: HttpErrorResponse) => {
+      // Sesión perdida: algún componente ya montado sigue llamando y el backend responde 401/403.
+      // El 403 de una petición anónima llega con cuerpo vacío, así que aquí no hay nada que
+      // reintentar: se cierra la sesión, se navega a /login y se corta el bucle de errores.
+      if (!salioIdentificada && (error.status === 401 || error.status === 403) && !isAuthEndpoint) {
+        authService.forceLogout();
+        return throwError(() => error);
+      }
+
       // Capturar 401 para renovación silenciosa mediante Refresh Token
       if (error.status === 401 && !isAuthEndpoint) {
         return handle401Error(authReq, next, authService);

@@ -1,9 +1,10 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
 import { Observable, tap, catchError, throwError, map } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
-import { BackendAuthResponse } from '../models/api-contracts.model';
+import { BackendAuthResponse, BackendVerificarSancionResponse } from '../models/api-contracts.model';
 import { AuthAdapter } from '../adapters/auth.adapter';
 import { environment } from '../../../environments/environment';
 
@@ -13,6 +14,7 @@ import { environment } from '../../../environments/environment';
 export class AuthService {
   private http = inject(HttpClient);
   private platformId = inject(PLATFORM_ID);
+  private router = inject(Router);
   private readonly API_URL = environment.authApiUrl || 'http://localhost:8081';
 
   // Reactive State Signals
@@ -28,6 +30,7 @@ export class AuthService {
   readonly isChef = computed(() => this.currentUser()?.rol === 'CHEF');
   readonly isMozo = computed(() => this.currentUser()?.rol === 'MOZO');
   readonly isRepartidor = computed(() => this.currentUser()?.rol === 'REPARTIDOR');
+  readonly isCajero = computed(() => this.currentUser()?.rol === 'CAJERO');
   readonly isStaff = computed(() => {
     const rol = this.currentUser()?.rol;
     return !!rol && rol !== 'CLIENTE';
@@ -45,6 +48,17 @@ export class AuthService {
     return this.refreshToken();
   }
 
+  private isTokenExpired(token: string): boolean {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return true;
+      const payload = JSON.parse(atob(parts[1]));
+      return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now();
+    } catch {
+      return true;
+    }
+  }
+
   private restoreSession(): void {
     if (isPlatformBrowser(this.platformId)) {
       const savedUser = localStorage.getItem('polleria_user');
@@ -52,12 +66,23 @@ export class AuthService {
       const savedRefreshToken = localStorage.getItem('polleria_refresh_token');
 
       if (savedUser && savedToken) {
+        if (this.isTokenExpired(savedToken)) {
+          if (savedRefreshToken) {
+            this.refreshTokens(savedRefreshToken).subscribe({
+              error: () => this.limpiarSesion()
+            });
+          } else {
+            this.limpiarSesion();
+          }
+          return;
+        }
+
         try {
           this.currentUser.set(JSON.parse(savedUser));
           this.token.set(savedToken);
           this.refreshToken.set(savedRefreshToken || null);
         } catch {
-          this.forceLogout();
+          this.limpiarSesion();
         }
       }
     }
@@ -168,9 +193,19 @@ export class AuthService {
   }
 
   /**
-   * Cierre forzado de sesión en caso de expiración irreversible o detección de reuso
+   * Cierre forzado de sesión: limpia las credenciales **y saca al usuario de la página**.
+   *
+   * La navegación es imprescindible: los guards solo se evalúan al navegar, así que un componente
+   * ya montado (por ejemplo `SalonService`, que carga mesas en su constructor y luego cada 6 s)
+   * seguiría llamando a endpoints protegidos sin sesión y llenaría la consola de errores 403.
    */
   forceLogout(): void {
+    this.limpiarSesion();
+    this.volverAlLogin();
+  }
+
+  /** Limpia las credenciales sin navegar. */
+  private limpiarSesion(): void {
     this.currentUser.set(null);
     this.token.set(null);
     this.refreshToken.set(null);
@@ -179,8 +214,21 @@ export class AuthService {
       localStorage.removeItem('polleria_user');
       localStorage.removeItem('polleria_token');
       localStorage.removeItem('polleria_refresh_token');
-      localStorage.removeItem('polleria_my_order_ids');
     }
+  }
+
+  /**
+   * No navega al arrancar (`restoreSession`): descartar una sesión vieja en el constructor del
+   * servicio no debe expulsar a un visitante anónimo de una página pública como la carta.
+   */
+  private volverAlLogin(): void {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
+    if (this.router.url.startsWith('/login')) {
+      return;
+    }
+    this.router.navigate(['/login']);
   }
 
   private setSession(auth: AuthResponse): void {
@@ -196,7 +244,22 @@ export class AuthService {
       if (auth.refreshToken) {
         localStorage.setItem('polleria_refresh_token', auth.refreshToken);
       }
-      localStorage.removeItem('polleria_my_order_ids');
     }
+  }
+
+  /**
+   * Consulta pública de verificación de sanciones para bloquear pagos en efectivo / ContraPago.
+   * Si la consulta falla, el error se propaga (no se asume que el cliente está limpio).
+   */
+  verificarSancion(telefono?: string, email?: string, ip?: string): Observable<BackendVerificarSancionResponse> {
+    const params: string[] = [];
+    if (telefono) params.push(`telefono=${encodeURIComponent(telefono)}`);
+    if (email) params.push(`email=${encodeURIComponent(email)}`);
+    if (ip) params.push(`ip=${encodeURIComponent(ip)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : '';
+
+    // A failed check is not a clean record: the error reaches the caller, which must not assume
+    // the customer is clear. The real enforcement stays server side when the order is created.
+    return this.http.get<BackendVerificarSancionResponse>(`${this.API_URL}/auth/sanciones/verificar${query}`);
   }
 }

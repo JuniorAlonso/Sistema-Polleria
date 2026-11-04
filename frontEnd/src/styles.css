@@ -54,6 +54,30 @@
   scrollbar-width: none;
 }
 
+/* Prominent horizontal scrollbar for kanban-style boards */
+.board-scrollbar::-webkit-scrollbar {
+  height: 12px;
+}
+.board-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+}
+.board-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  border: 3px solid #0d0e11;
+  border-radius: 9999px;
+}
+.board-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #fbbf24;
+}
+@supports not selector(::-webkit-scrollbar) {
+  .board-scrollbar {
+    scrollbar-width: auto;
+    scrollbar-color: #f59e0b rgba(255, 255, 255, 0.06);
+  }
+}
+
 .bg-radial-vignette {
   background: radial-gradient(
     circle at center,

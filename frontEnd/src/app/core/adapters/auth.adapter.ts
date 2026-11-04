@@ -17,6 +17,7 @@ export class AuthAdapter {
     if (roleUpper === 'ADMIN') return 'ADMIN';
     if (roleUpper === 'MOZO') return 'MOZO';
     if (roleUpper === 'REPARTIDOR') return 'REPARTIDOR';
+    if (roleUpper === 'CAJERO') return 'CAJERO';
     return 'CLIENTE';
   }
 
@@ -30,6 +31,7 @@ export class AuthAdapter {
     if (roleUpper === 'ADMIN') return 'ADMIN';
     if (roleUpper === 'MOZO') return 'MOZO';
     if (roleUpper === 'REPARTIDOR') return 'REPARTIDOR';
+    if (roleUpper === 'CAJERO') return 'CAJERO';
     return 'CLIENTE';
   }
 

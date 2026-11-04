@@ -1,7 +1,7 @@
 export type TableStatus = 'LIBRE' | 'OCUPADA' | 'POR_COBRAR' | 'EN_LIMPIEZA' | 'LIMPIEZA' | 'RESERVADA';
 
 export type MesaEstado = TableStatus;
-export type SalonZona = 'TERRAZA' | 'ZONA_VIP' | 'SALON_PRINCIPAL' | 'SEGUNDO_PISO';
+export type SalonZona = string;
 
 export interface OrdenActivaMesa {
   ordenId: number;
@@ -9,6 +9,9 @@ export interface OrdenActivaMesa {
   total: number;
   estadoOrden: string;
   tiempoEsperaMinutos: number;
+  /** ISO timestamp de cuando el mozo confirmó que la comanda ya se sirvió en mesa. */
+  servidoEn?: string | null;
+  creadoEn?: string | null;
   codigoSeguimiento?: string;
   itemsResumen?: string;
 }

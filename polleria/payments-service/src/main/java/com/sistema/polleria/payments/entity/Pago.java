@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @Table(name = "pagos", indexes = {
     @Index(name = "idx_pagos_orden_id", columnList = "orden_id"),
     @Index(name = "idx_pagos_estado", columnList = "estado"),
-    @Index(name = "idx_pagos_cliente_id", columnList = "cliente_id")
+    @Index(name = "idx_pagos_cliente_id", columnList = "cliente_id"),
+    @Index(name = "idx_pagos_repartidor_id", columnList = "repartidor_id")
 })
 @Data
 @NoArgsConstructor
@@ -36,7 +37,7 @@ public class Pago {
     private MetodoPago metodoPago;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private EstadoPago estado = EstadoPago.PENDIENTE;
 
     /** Referencia externa de la pasarela (código de transacción, código Yape, etc.) */
@@ -51,11 +52,47 @@ public class Pago {
     @Column(name = "checkout_url", length = 500)
     private String checkoutUrl;
 
+    /**
+     * Referencia opaca al comprobante de Yape en el bucket (la clave del objeto), no el archivo.
+     * payments-service no guarda la imagen: la sube el notification-service (T6b) y el admin la
+     * verifica (T6c). Nullable: los pagos que ya existen no se rompen.
+     */
+    @Column(name = "comprobante_clave", length = 300)
+    private String comprobanteClave;
+
+    /** Administrador que aprobó o rechazó el comprobante (T6c). Nullable. */
+    @Column(name = "verificado_por", length = 100)
+    private String verificadoPor;
+
+    /** Momento de la verificación del comprobante (T6c). Nullable. */
+    @Column(name = "verificado_en")
+    private LocalDateTime verificadoEn;
+
+    /** Motivo por el que el administrador rechazó el comprobante (T6c). Nullable. */
+    @Column(name = "motivo_rechazo", length = 300)
+    private String motivoRechazo;
+
+    /** Courier who collected the cash at the door (S6). Null for non-cash or cashier-collected payments. */
+    @Column(name = "repartidor_id")
+    private Long repartidorId;
+
+    /** Courier settlement (finance-service) that already accounted for this cash payment (S6). Nullable. */
+    @Column(name = "liquidacion_id")
+    private Long liquidacionId;
+
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();
 
     @Column(name = "actualizado_en")
     private LocalDateTime actualizadoEn;
+
+    /**
+     * Bloqueo optimista: dos transiciones simultáneas sobre el mismo pago (por ejemplo un
+     * webhook de Mercado Pago y una confirmación manual del cajero) provocaban
+     * actualizaciones perdidas. Con @Version la segunda recibe un conflicto.
+     */
+    @Version
+    private Long version;
 
     @PreUpdate
     void preUpdate() {

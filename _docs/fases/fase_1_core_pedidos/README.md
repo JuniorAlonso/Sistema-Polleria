@@ -60,7 +60,7 @@ Alineada 1:1 con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../B
 | **RF02** | Inicio de sesión mediante correo o celular y contraseña | `auth-service` | `POST /auth/login` | ✅ |
 | **RF03** | Cierre de sesión activa e invalidación de tokens | `auth-service` | `POST /auth/logout` | ✅ |
 | **RF04** | Verificación en dos pasos (2FA) para personal y administradores | `auth-service` | `POST /auth/verify-2fa` (Spring Mail) | ✅ |
-| **RF05** | Bloqueo temporal tras múltiples intentos fallidos (protección IP) | `auth-service` | `IpBlockingService` (5 intentos = 15m) | ✅ |
+| **RF05** | Bloqueo temporal tras múltiples intentos fallidos (protección IP) | `auth-service` | `IpBlacklistService` (5 intentos = 15m) | ✅ |
 | **RF06** | Administrador gestiona (CRUD) los productos de la carta | `orders-service` | `/productos` (POST, PUT, DELETE) | ✅ |
 | **RF07** | Visualizar carta de productos con precios e imágenes | `orders-service` | `GET /productos` (Público / QR) | ✅ |
 | **RF08** | Marcar productos como "agotados" ocultándolos de la carta | `orders-service` | `PATCH /productos/{id}/disponibilidad` | ✅ |
@@ -71,7 +71,7 @@ Alineada 1:1 con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../B
 | **RF15** | Máquina de estados robusta para el ciclo de vida del pedido | `orders-service` | `RECIBIDO → EN_PREP → LISTO → EN_CAMINO → ENTREGADO` | ✅ |
 | **RF16** | Personal de cocina y admin actualiza estado de pedidos | `orders-service` | `PATCH /ordenes/{id}/estado` | ✅ |
 | **RF17** | Clientes consultan el estado actual de su pedido | `orders-service` | `GET /ordenes/{id}` | ✅ |
-| **RF18** | Asignación de repartidor a pedidos de delivery | `orders-service` | Campo `repartidorId` en `PATCH /ordenes/{id}/estado` | ✅ (Manual) |
+| **RF18** | Asignación de repartidor a pedidos de delivery | `auth-service` + `orders-service` | Roster real en `GET /auth/admin/repartidores` + `repartidorId` en `PATCH /ordenes/{id}/estado` (modal del panel) | ✅ |
 | **RF19** | Métodos de pago (contraentrega, tarjeta, monederos Yape/Plin) | `payments-service` | `POST /pagos` (`CONTRAENTREGA` y simulación mock de desarrollo) | ✅ |
 | **RF20** | Registrar cada transacción con su estado | `payments-service` | `EstadoPago` (`PENDIENTE, APROBADO, RECHAZADO, CANCELADO`) | ✅ |
 | **RF21** | Actualización automática de estado según pasarela | `payments-service` | Feign/REST hacia `orders-service` al confirmar cobro (*Pasarela Mercado Pago migrada a Fase 5*) | ✅ |
@@ -86,7 +86,7 @@ Alineada 1:1 con la especificación de [REQUERIMIENTOS_DEL_SISTEMA.docx](../../B
 | **RNF02** | Cifrado seguro de contraseñas | `BCryptPasswordEncoder` con factor de coste estándar en `auth-service` |
 | **RNF03** | Comunicación protegida y validación JWT | HTTPS en edge / TLS y `JwtAuthFilter` validando cada petición |
 | **RNF04** | Políticas CORS restrictivas | `cors.allowed-origins` configurado por entorno en cada backend |
-| **RNF05** | Bloqueo automático de IPs sospechosas | `IpBlockingService` sin intervención manual |
+| **RNF05** | Bloqueo automático de IPs sospechosas | `IpBlacklistService` sin intervención manual |
 | **RNF07** | Actualización de pedidos en tiempo cuasi-real | Polling corto en frontend (Fase 1) y eventos automáticos |
 | **RNF08** | Arquitectura desacoplada en microservicios | Servicios independientes (`auth`, `orders`, `payments`) |
 | **RNF09** | Registro automático de cancelación de pagos | Manejo de cancelaciones de pago y transiciones en `payments-service` |

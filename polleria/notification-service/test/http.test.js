@@ -62,7 +62,7 @@ test('POST /whatsapp/pago sin clave interna responde 401', async () => {
 });
 
 test('POST /whatsapp/estado valida el estado', async () => {
-    const malo = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'LISTO' });
+    const malo = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'RECIBIDO' });
     assert.strictEqual(malo.status, 400);
 
     const bueno = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'EN_CAMINO' });

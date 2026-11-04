@@ -36,6 +36,7 @@ export class PaymentAdapter {
   static toPaymentStatus(backendEstado: BackendEstadoPago | string): PaymentStatus {
     if (!backendEstado) return 'PENDIENTE';
     const e = backendEstado.toUpperCase();
+    if (e === 'PENDIENTE_VERIFICACION') return 'PENDIENTE_VERIFICACION';
     if (e === 'APROBADO') return 'APROBADO';
     if (e === 'RECHAZADO') return 'RECHAZADO';
     if (e === 'CANCELADO') return 'CANCELADO';
@@ -53,7 +54,7 @@ export class PaymentAdapter {
       monto: typeof dto.monto === 'number' ? dto.monto : parseFloat(String(dto.monto)) || 0,
       estado: this.toPaymentStatus(dto.estado),
       numeroOperacion: dto.referenciaExterna || undefined,
-      comprobanteUrl: undefined,
+      comprobanteUrl: dto.comprobanteUrl || undefined,
       fechaTransaccion: dto.creadoEn || new Date().toISOString()
     };
   }
@@ -70,17 +71,13 @@ export class PaymentAdapter {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const backendMetodo = this.toBackendMetodoPago(metodo);
 
-    let tokenPasarela: string | undefined = undefined;
-    if (backendMetodo === 'TARJETA') {
-      tokenPasarela = 'tok_mock_' + Math.random().toString(36).substring(2, 10);
-    }
-
+    // Sin teléfono no se inventa uno: YapePlinGateway rechaza la operación cuando
+    // telefonoYape llega vacío, que es la verdad si el cliente no lo dio.
     return {
       ordenId: cleanOrderId,
       monto: Math.round(monto * 100) / 100,
       metodoPago: backendMetodo,
-      tokenPasarela: tokenPasarela,
-      telefonoYape: backendMetodo === 'YAPE_PLIN' ? (telefonoYape || '987654321') : undefined
+      telefonoYape: backendMetodo === 'YAPE_PLIN' ? telefonoYape : undefined
     };
   }
 }

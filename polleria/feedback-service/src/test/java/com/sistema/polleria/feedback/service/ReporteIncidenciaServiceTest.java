@@ -14,6 +14,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -33,6 +34,9 @@ class ReporteIncidenciaServiceTest {
 
     @Mock
     private PaymentsClient paymentsClient;
+
+    @Mock
+    private OrdersClient ordersClient;
 
     @InjectMocks
     private ReporteIncidenciaService reporteService;
@@ -67,6 +71,7 @@ class ReporteIncidenciaServiceTest {
         assertEquals(MotivoReclamo.PEDIDO_INCOMPLETO, response.getMotivo());
         assertEquals("/feedback/evidencias/test.jpg", response.getFotoEvidenciaUrl());
         assertEquals(EstadoReclamo.ABIERTO, response.getEstado());
+        verify(ordersClient).obtenerYValidarOrden(55L, 7L, false);
         verify(fileStorageService).guardarArchivo(foto);
     }
 
@@ -99,7 +104,7 @@ class ReporteIncidenciaServiceTest {
         assertNotNull(response.getResueltoEn());
 
         verify(paymentsClient).emitirReembolsoPorOrden(
-                eq(55L), eq(new BigDecimal("15.00")), eq("Reembolso autorizado por las papas faltantes"), eq("Bearer test-token"));
+                eq(55L), eq(1L), eq(new BigDecimal("15.00")), eq("Reembolso autorizado por las papas faltantes"), eq("Bearer test-token"));
     }
 
     @Test
@@ -126,6 +131,36 @@ class ReporteIncidenciaServiceTest {
 
         assertEquals(EstadoReclamo.RECHAZADO, response.getEstado());
         assertFalse(response.getReembolsoProcedente());
-        verify(paymentsClient, never()).emitirReembolsoPorOrden(any(), any(), any(), any());
+        verify(paymentsClient, never()).emitirReembolsoPorOrden(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void testResolverReporteYaResueltoLanzaError() {
+        ReporteIncidencia reporte = ReporteIncidencia.builder()
+                .id(1L)
+                .ordenId(55L)
+                .clienteId(7L)
+                .estado(EstadoReclamo.RESUELTO)
+                .build();
+
+        when(reporteRepository.findById(1L)).thenReturn(Optional.of(reporte));
+
+        ResolverReporteRequest resolverReq = ResolverReporteRequest.builder()
+                .estado(EstadoReclamo.RESUELTO)
+                .build();
+
+        assertThrows(IllegalStateException.class, () -> reporteService.resolver(1L, resolverReq, null));
+    }
+
+    @Test
+    void testObtenerPorIdSeguroDeniegaAccesoAOtroCliente() {
+        ReporteIncidencia reporte = ReporteIncidencia.builder()
+                .id(1L)
+                .clienteId(7L)
+                .build();
+
+        when(reporteRepository.findById(1L)).thenReturn(Optional.of(reporte));
+
+        assertThrows(AccessDeniedException.class, () -> reporteService.obtenerPorIdSeguro(1L, 99L, false));
     }
 }

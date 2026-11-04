@@ -6,7 +6,9 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,7 +16,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/mesas")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class MesaController {
 
     private final MesaService mesaService;
@@ -75,9 +76,22 @@ public class MesaController {
     @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
     public ResponseEntity<MesaResponse> actualizarEstado(
             @PathVariable Long id,
-            @Valid @RequestBody ActualizarEstadoMesaRequest request
+            @Valid @RequestBody ActualizarEstadoMesaRequest request,
+            Authentication authentication
     ) {
+        // `forzar` saltea las guardas de estado y de comanda activa: es una contingencia de
+        // administración, no una operación de mozo. Sin esta restricción, un mozo podía dejar
+        // una mesa LIBRE con una comanda activa (la orden quedaba huérfana e inutilizable).
+        if (Boolean.TRUE.equals(request.getForzar()) && !esAdmin(authentication)) {
+            throw new AccessDeniedException(
+                    "Solo un administrador puede forzar un cambio de estado de mesa.");
+        }
         return ResponseEntity.ok(mesaService.actualizarEstado(id, request.getEstado(), request.getForzar()));
+    }
+
+    private boolean esAdmin(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()));
     }
 
     @RequestMapping(value = "/{id}/posicion", method = {RequestMethod.PATCH, RequestMethod.PUT})

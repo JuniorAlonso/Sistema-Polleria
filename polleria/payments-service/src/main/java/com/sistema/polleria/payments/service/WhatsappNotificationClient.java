@@ -14,13 +14,21 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * RF30 — Avisa al notification-service que el pago de un pedido DELIVERY fue aprobado.
+ * RF30 — Avisa al notification-service que el pago de un pedido DELIVERY o RECOJO fue aprobado.
  * Los datos de contacto (teléfono, nombre) se leen de la orden en orders-service.
  * Corre en segundo plano: si falla, el pago no se ve afectado.
  */
 @Slf4j
 @Component
 public class WhatsappNotificationClient {
+
+    /**
+     * T3 (S2): orders the customer placed remotely (web/WhatsApp) — DELIVERY and pickup (RECOJO) —
+     * get WhatsApp notices; SALON orders are served at the table and never do.
+     */
+    private static boolean avisaPorWhatsapp(Object tipo) {
+        return "DELIVERY".equals(tipo) || "RECOJO".equals(tipo);
+    }
 
     private final RestClient ordersRestClient;
     private final RestClient notificationRestClient;
@@ -50,7 +58,7 @@ public class WhatsappNotificationClient {
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            if (orden == null || !"DELIVERY".equals(orden.get("tipo"))) {
+            if (orden == null || !avisaPorWhatsapp(orden.get("tipo"))) {
                 return;
             }
 
@@ -67,7 +75,10 @@ public class WhatsappNotificationClient {
             body.put("nombreCliente", orden.getOrDefault("nombreCliente", "Cliente"));
             body.put("montoTotal", monto);
             body.put("metodoPago", metodoPago.name());
-            body.put("tiempoEstimado", tiempoEstimado);
+            if ("DELIVERY".equals(orden.get("tipo"))) {
+                // The notice reads "Tiempo estimado de entrega": it only applies to home delivery.
+                body.put("tiempoEstimado", tiempoEstimado);
+            }
 
             notificationRestClient.post()
                     .uri("/api/notificaciones/whatsapp/pago")
@@ -80,6 +91,56 @@ public class WhatsappNotificationClient {
             log.info("WhatsApp de pago encolado — orden #{}", ordenId);
         } catch (Exception e) {
             log.warn("No se pudo encolar WhatsApp de pago para orden #{}: {}", ordenId, e.getMessage());
+        }
+    }
+
+    /**
+     * T6d (S6/S13) — Avisa al cliente que su comprobante de Yape fue rechazado por el admin y que
+     * puede enviar uno nuevo por el mismo chat. El rechazo deja el pedido impago esperando un
+     * comprobante válido, así que este aviso es lo único que cierra el circuito.
+     *
+     * <p>Resuelve el contacto igual que {@link #notificarPagoConfirmado}: lee la orden de
+     * orders-service y solo avisa si es DELIVERY o RECOJO y tiene teléfono. Corre en segundo plano y se traga
+     * los fallos: una caída del notification-service nunca puede revertir el rechazo ni romper la
+     * respuesta al admin.
+     */
+    @Async
+    public void notificarComprobanteRechazado(Long ordenId, String motivo) {
+        try {
+            Map<String, Object> orden = ordersRestClient.get()
+                    .uri("/ordenes/{id}", ordenId)
+                    .header("X-Internal-Key", ordersInternalKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+
+            if (orden == null || !avisaPorWhatsapp(orden.get("tipo"))) {
+                return;
+            }
+
+            Object telefono = orden.get("telefonoCliente");
+            if (telefono == null || telefono.toString().isBlank()) {
+                log.debug("Orden #{} sin teléfono, omitiendo WhatsApp de rechazo", ordenId);
+                return;
+            }
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("ordenId", ordenId);
+            body.put("numeroPedido", orden.get("numeroCliente"));
+            body.put("telefono", telefono.toString());
+            body.put("nombreCliente", orden.getOrDefault("nombreCliente", "Cliente"));
+            body.put("motivo", motivo);
+
+            notificationRestClient.post()
+                    .uri("/api/notificaciones/whatsapp/comprobante-rechazado")
+                    .header("Content-Type", "application/json")
+                    .header("X-Internal-Key", internalKey)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+
+            log.info("WhatsApp de rechazo de comprobante encolado — orden #{}", ordenId);
+        } catch (Exception e) {
+            log.warn("No se pudo encolar WhatsApp de rechazo para orden #{}: {}", ordenId, e.getMessage());
         }
     }
 }

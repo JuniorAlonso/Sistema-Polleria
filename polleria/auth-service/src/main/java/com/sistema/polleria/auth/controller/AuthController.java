@@ -3,7 +3,10 @@ package com.sistema.polleria.auth.controller;
 import com.sistema.polleria.auth.dto.AuthResponse;
 import com.sistema.polleria.auth.dto.LoginRequest;
 import com.sistema.polleria.auth.dto.RegisterRequest;
+import com.sistema.polleria.auth.dto.RepartidorResponse;
 import com.sistema.polleria.auth.dto.TwoFactorRequest;
+import com.sistema.polleria.auth.entity.Role;
+import com.sistema.polleria.auth.repository.UserRepository;
 import com.sistema.polleria.auth.service.AuthService;
 import com.sistema.polleria.auth.service.JwtService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,6 +18,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -26,6 +30,7 @@ public class AuthController {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final com.sistema.polleria.auth.service.IpBlacklistService ipBlacklistService;
+    private final UserRepository userRepository;
 
     // POST /auth/register
     @PostMapping("/register")
@@ -94,6 +99,19 @@ public class AuthController {
 
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(Map.of("valid", false, "message", "Token inválido o expirado"));
+    }
+
+    // GET /auth/admin/repartidores — Roster de motorizados para asignarlos a un pedido (RF18).
+    // ADMIN y CAJERO: el cajero abre y cierra la liquidación de efectivo de cada motorizado.
+    // El listado expone nombre y teléfono del personal, así que el resto de roles (mozo,
+    // cliente, repartidor) no puede enumerarlo.
+    @GetMapping("/admin/repartidores")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
+    public ResponseEntity<List<RepartidorResponse>> listarRepartidores() {
+        return ResponseEntity.ok(userRepository.findByRoleAndActiveTrueOrderByNameAsc(Role.REPARTIDOR)
+                .stream()
+                .map(RepartidorResponse::from)
+                .toList());
     }
 
     // GET /auth/admin/ips-bloqueadas — Listado de IPs

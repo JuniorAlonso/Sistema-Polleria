@@ -24,8 +24,17 @@ public class Orden {
     @Column(nullable = false, length = 15)
     private OrdenTipo tipo;
 
+    /**
+     * Canal por el que entró el pedido (S1). Queda nullable a propósito: las filas creadas antes
+     * de esta columna no tienen canal y no se pueden romper; el alta nueva siempre lo resuelve.
+     * Hibernate corre con ddl-auto=update, así que la columna se agrega sola.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(length = 10)
+    private CanalOrigen canalOrigen;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
     @Builder.Default
     private OrdenEstado estado = OrdenEstado.RECIBIDO;
 
@@ -40,6 +49,11 @@ public class Orden {
 
     // ID del repartidor asignado (delivery)
     private Long repartidorId;
+
+    // Marca de «el mozo ya entregó el pedido en mesa». No es un estado nuevo: el cobro
+    // (LISTO → ENTREGADO) sigue siendo el único evento que libera la mesa.
+    private LocalDateTime servidoEn;
+    private Long servidoPor;
 
     // Referencia a la mesa (salón)
     @ManyToOne(fetch = FetchType.LAZY)
@@ -59,12 +73,55 @@ public class Orden {
     @Column(length = 20)
     private String telefonoCliente;
 
+    /**
+     * Celular en forma canónica, derivado de {@code telefonoCliente}. Existe para que el índice
+     * único de numeración compare el mismo cliente aunque el número se haya escrito con
+     * formatos distintos (938924552, +51 938 924 552, (01) 938924552).
+     */
+    @Column(name = "telefono_normalizado", length = 20)
+    private String telefonoNormalizado;
+
     @Column(nullable = false, precision = 10, scale = 2)
     @Builder.Default
     private BigDecimal total = BigDecimal.ZERO;
 
     @Column(length = 500)
     private String observaciones;
+
+    // Timestamps y auditoría operativa (SLA)
+    @Column(name = "en_puerta_at")
+    private LocalDateTime enPuertaAt;
+
+    @Column(name = "listo_at")
+    private LocalDateTime listoAt;
+
+    @Column(name = "intentos_llamada")
+    @Builder.Default
+    private Integer intentosLlamada = 0;
+
+    @Column(name = "llamada_confirmacion_at")
+    private LocalDateTime llamadaConfirmacionAt;
+
+    @Column(name = "monto_paga_con", precision = 10, scale = 2)
+    private BigDecimal montoPagaCon;
+
+    @Column(name = "vuelto_estimado", precision = 10, scale = 2)
+    private BigDecimal vueltoEstimado;
+
+    /**
+     * true cuando el pedido se cobra en efectivo a la entrega (ContraPago). Antes de pasar a
+     * ENTREGADO el cobro debe registrarse en payments-service. DEFAULT false para que
+     * ddl-auto=update pueda agregar la columna NOT NULL sobre filas existentes.
+     */
+    @Column(name = "requiere_cobro_efectivo", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean requiereCobroEfectivo = false;
+
+    @Column(name = "motivo_fantasma", length = 30)
+    private String motivoFantasma;
+
+    @Column(name = "ip_origen", length = 45)
+    private String ipOrigen;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime creadoEn;
@@ -75,19 +132,37 @@ public class Orden {
     @Builder.Default
     private List<OrdenItem> items = new ArrayList<>();
 
+    /**
+     * Bloqueo optimista: dos PATCH /ordenes/{id}/estado simultáneos sobre la misma orden
+     * hacían leer→validar→escribir sin control, permitiendo actualizaciones perdidas y que
+     * dos transiciones mutuamente excluyentes pasaran ambas. Con @Version, la segunda
+     * transacción recibe un conflicto (HTTP 409) en lugar de sobrescribir a la primera.
+     */
+    @Version
+    private Long version;
+
     @PrePersist
     protected void onCreate() {
         creadoEn = LocalDateTime.now();
+        telefonoNormalizado = com.sistema.polleria.orders.util.TelefonoUtil.canonico(telefonoCliente);
     }
 
     @PreUpdate
     protected void onUpdate() {
         actualizadoEn = LocalDateTime.now();
+        telefonoNormalizado = com.sistema.polleria.orders.util.TelefonoUtil.canonico(telefonoCliente);
     }
 
+    public static final BigDecimal COSTO_DELIVERY = new BigDecimal("6.00");
+
     public void recalcularTotal() {
-        this.total = items.stream()
+        BigDecimal subtotal = items.stream()
                 .map(OrdenItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (tipo == OrdenTipo.DELIVERY && subtotal.compareTo(BigDecimal.ZERO) > 0) {
+            this.total = subtotal.add(COSTO_DELIVERY);
+        } else {
+            this.total = subtotal;
+        }
     }
 }

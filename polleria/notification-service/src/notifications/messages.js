@@ -1,6 +1,16 @@
 const config = require('../config');
 
-const ESTADOS_DELIVERY = ['EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO'];
+const ESTADOS_DELIVERY = [
+    'EN_PREPARACION',
+    'PREPARANDO',
+    'LISTO',
+    'LISTO_PARA_ENTREGAR',
+    'EN_CAMINO',
+    'EN_PUERTA',
+    'ENTREGADO',
+    'CANCELADO',
+    'PEDIDO_FANTASMA'
+];
 
 const FIRMA = 'San Pollo de Ica';
 
@@ -56,13 +66,19 @@ function mensajePago({ ordenId, numeroPedido, nombreCliente, montoTotal, tiempoE
 }
 
 // RF31: cambio de estado de delivery
-function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repartidorNombre, repartidorTelefono }) {
+function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repartidorNombre, repartidorTelefono, mensaje }) {
     const numero = numeroVisible({ numeroPedido, ordenId });
     let cuerpo;
 
     switch (estadoNuevo) {
         case 'EN_PREPARACION':
-            cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto.`;
+        case 'PREPARANDO':
+            cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto o esté listo.`;
+            break;
+
+        case 'LISTO':
+        case 'LISTO_PARA_ENTREGAR':
+            cuerpo = `¡Tu pedido N.° ${numero} ya está listo! Si elegiste Recojo en Tienda, ya puedes acercarte a recogerlo a nuestro local. Recuerda que tienes hasta 1 hora para retirarlo.`;
             break;
 
         case 'EN_CAMINO':
@@ -74,16 +90,55 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
             }
             break;
 
+        case 'EN_PUERTA':
+            cuerpo = `¡El repartidor ya está en tu puerta con tu pedido N.° ${numero}! Por favor sal a recibirlo.`;
+            break;
+
         case 'ENTREGADO':
-            cuerpo = `Tu pedido N.° ${numero} fue entregado. Gracias por elegirnos.\n\n` +
+            cuerpo = `Tu pedido N.° ${numero} fue entregado. ¡Muchas gracias por elegir San Pollo!\n\n` +
                 'Si tienes un momento, nos ayudaría mucho conocer tu opinión sobre el pedido.';
+            break;
+
+        case 'CANCELADO':
+            cuerpo = `Tu pedido N.° ${numero} fue cancelado. Si no llegaste a confirmar el pago o la llamada a tiempo, `
+                + 'puedes hacer un nuevo pedido escribiendo *hola* por este chat.';
+            break;
+
+        case 'PEDIDO_FANTASMA':
+            cuerpo = `Tu pedido N.° ${numero} se cerró como no recibido (no se pudo entregar o no se recogió a tiempo), `
+                + 'así que su ticket ya no es válido. Si crees que es un error, comunícate con nosotros al '
+                + `${config.telefonoContacto}. Para un nuevo pedido escribe *hola* por este chat.`;
             break;
 
         default:
             return null;
     }
 
+    // orders-service puede mandar el texto ya redactado (p. ej. recojo listo con plazo y ticket);
+    // si viene, reemplaza el cuerpo genérico del estado.
+    const personalizado = typeof mensaje === 'string' ? mensaje.trim() : '';
+    if (personalizado) {
+        cuerpo = personalizado;
+    }
+
     return [saludo(nombreCliente), '', cuerpo, '', FIRMA].join('\n');
+}
+
+// T6d (S6): aviso al cliente cuando el administrador rechaza el comprobante de Yape. El
+// rechazo deja el pedido impago esperando un comprobante válido, así que el mensaje dice
+// qué pasó, el motivo del admin y cómo completar el pago.
+function mensajeComprobanteRechazado({ ordenId, numeroPedido, nombreCliente, motivo }) {
+    const numero = numeroVisible({ numeroPedido, ordenId });
+    return [
+        saludo(nombreCliente),
+        '',
+        `No pudimos validar el comprobante de Yape de tu pedido N.° ${numero}.`,
+        `Motivo: ${motivo}`,
+        '',
+        'Puedes enviar un comprobante nuevo por este mismo chat para completar el pago.',
+        '',
+        FIRMA
+    ].join('\n');
 }
 
 // Código para ver los pedidos sin iniciar sesión
@@ -99,5 +154,6 @@ module.exports = {
     ESTADOS_DELIVERY,
     mensajePago,
     mensajeEstado,
+    mensajeComprobanteRechazado,
     mensajeCodigo
 };

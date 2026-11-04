@@ -21,6 +21,10 @@ public class OrdenActivaResponse {
     private BigDecimal total;
     private OrdenEstado estadoOrden;
     private Long tiempoEsperaMinutos;
+    /** Momento en que el mozo marcó la comanda como servida; null si aún no se sirvió. */
+    private LocalDateTime servidoEn;
+    /** Momento en que se abrió la comanda (para la línea de tiempo del personal). */
+    private LocalDateTime creadoEn;
 
     public static OrdenActivaResponse from(Orden orden) {
         if (orden == null) return null;
@@ -30,10 +34,12 @@ public class OrdenActivaResponse {
         }
         return OrdenActivaResponse.builder()
                 .ordenId(orden.getId())
-                .mozoId(orden.getClienteId()) // En pedidos de salón, clienteId registra el usuario/mozo que creó la orden
+                .mozoId(orden.getMozoId() != null ? orden.getMozoId() : orden.getClienteId())
                 .total(orden.getTotal())
                 .estadoOrden(orden.getEstado())
                 .tiempoEsperaMinutos(minutos)
+                .servidoEn(orden.getServidoEn())
+                .creadoEn(orden.getCreadoEn())
                 .build();
     }
 }

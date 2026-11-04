@@ -4,8 +4,16 @@ import {
   BackendOrdenResponse,
   BackendOrdenTipo
 } from '../models/api-contracts.model';
-import { CreateOrderRequest, Order, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
+import { CreateOrderRequest, Order, OrderChannel, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
 import { CartItem } from '../models/product.model';
+
+/**
+ * Contrato de T2 (S1): el backend ya expone `canalOrigen` en la respuesta y lo acepta en el alta,
+ * pero `api-contracts.model.ts` todavía no declara el campo (no es parte del alcance de esta
+ * tarea). Se tipa localmente para mapearlo sin inventar el dato ni romper el contrato compartido.
+ */
+type DtoOrdenConCanal = BackendOrdenResponse & { canalOrigen?: string };
+type DtoCrearOrdenConCanal = BackendCrearOrdenRequest & { canalOrigen?: OrderChannel };
 
 export class OrderAdapter {
   /**
@@ -16,18 +24,28 @@ export class OrderAdapter {
     const est = backendEstado.toUpperCase();
 
     switch (est) {
+      case 'PENDIENTE_CONFIRMACION':
+        return 'PENDIENTE_CONFIRMACION';
+      case 'PENDIENTE_PAGO':
+        return 'PENDIENTE_PAGO';
       case 'RECIBIDO':
         return 'PAGADO'; // En frontend 'PAGADO' o 'RECIBIDO' indica que ya está en cola de cocina
       case 'EN_PREPARACION':
+      case 'PREPARANDO':
         return 'EN_PREPARACION';
       case 'LISTO':
+      case 'LISTO_PARA_ENTREGAR':
         return 'LISTO_COCINA';
       case 'EN_CAMINO':
         return 'EN_REPARTO';
+      case 'EN_PUERTA':
+        return 'EN_PUERTA';
       case 'ENTREGADO':
         return 'COMPLETADO';
       case 'CANCELADO':
         return 'CANCELADO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO_FANTASMA';
       default:
         return 'PAGADO';
     }
@@ -41,23 +59,33 @@ export class OrderAdapter {
     const s = status.toUpperCase();
 
     switch (s) {
+      case 'PENDIENTE_CONFIRMACION':
+        return 'PENDIENTE_CONFIRMACION';
       case 'PENDIENTE_PAGO':
+        return 'PENDIENTE_PAGO';
       case 'PAGADO':
       case 'RECIBIDO':
         return 'RECIBIDO';
       case 'EN_PREPARACION':
-        return 'EN_PREPARACION';
+      case 'PREPARANDO':
+        return 'PREPARANDO';
       case 'LISTO_COCINA':
       case 'LISTO':
         return 'LISTO';
+      case 'LISTO_PARA_ENTREGAR':
+        return 'LISTO_PARA_ENTREGAR';
       case 'EN_REPARTO':
       case 'EN_CAMINO':
         return 'EN_CAMINO';
+      case 'EN_PUERTA':
+        return 'EN_PUERTA';
       case 'COMPLETADO':
       case 'ENTREGADO':
         return 'ENTREGADO';
       case 'CANCELADO':
         return 'CANCELADO';
+      case 'PEDIDO_FANTASMA':
+        return 'PEDIDO_FANTASMA';
       default:
         return 'RECIBIDO';
     }
@@ -126,6 +154,10 @@ export class OrderAdapter {
     const subtotal = items.reduce((acc, it) => acc + it.subtotal, 0) || total;
     const costoEnvio = tipo === 'DELIVERY' ? Math.max(0, total - subtotal) : 0;
 
+    // Canal de origen (S1): se propaga tal cual llega del backend. Las órdenes creadas antes de
+    // esta columna no lo traen y quedan sin canal, no con un valor inventado.
+    const canalOrigen = (dto as DtoOrdenConCanal).canalOrigen as OrderChannel | undefined;
+
     return {
       id: String(dto.id),
       codigoSeguimiento: trackingCode,
@@ -140,7 +172,7 @@ export class OrderAdapter {
       items: items,
       tipo: tipo,
       estado: estado,
-      metodoPago: 'TARJETA', // Se complementa si se consulta pago
+      canalOrigen: canalOrigen,
       subtotal: Math.round(subtotal * 100) / 100,
       costoEnvio: Math.round(costoEnvio * 100) / 100,
       descuento: 0,
@@ -148,10 +180,20 @@ export class OrderAdapter {
       notasGenerales: dto.observaciones || undefined,
       createdAt: dto.creadoEn || new Date().toISOString(),
       updatedAt: dto.actualizadoEn || dto.creadoEn || new Date().toISOString(),
-      repartidorAsignado: dto.repartidorId ? {
-        nombre: `Repartidor #${dto.repartidorId}`,
-        celular: '987 112 233'
-      } : undefined
+      // Solo el id: el nombre del motorizado vive en el roster de auth-service (solo ADMIN),
+      // así que aquí no se fabrica un "Repartidor #7".
+      repartidorId: dto.repartidorId,
+      // Marca persistida de "ya se sirvió en mesa"; el estado sigue siendo LISTO hasta el cobro.
+      servidoEn: dto.servidoEn || undefined,
+      servidoPor: dto.servidoPor ?? undefined,
+      enPuertaAt: dto.enPuertaAt || undefined,
+      listoAt: dto.listoAt || undefined,
+      intentosLlamada: dto.intentosLlamada ?? undefined,
+      llamadaConfirmacionAt: dto.llamadaConfirmacionAt || undefined,
+      requiereCobroEfectivo: dto.requiereCobroEfectivo === true,
+      montoPagaCon: dto.montoPagaCon ?? undefined,
+      vueltoEstimado: dto.vueltoEstimado ?? undefined,
+      motivoFantasma: dto.motivoFantasma || undefined
     };
   }
 
@@ -170,15 +212,19 @@ export class OrderAdapter {
    */
   static toBackendCrearRequest(req: CreateOrderRequest): BackendCrearOrdenRequest {
     const tipo = this.toBackendTipo(req.tipo);
-    const mesaId = tipo === 'SALON' ? (req.cliente.mesaNumero || 1) : undefined;
+    // El id de la mesa viaja explícito. Antes se derivaba de `cliente.mesaNumero || 1`, que
+    // confundía número visible con id y mandaba toda comanda sin mesa a la mesa 1. Si falta,
+    // se deja ausente y el backend responde con su validación.
+    const mesaId = tipo === 'SALON' ? req.mesaId : undefined;
 
     const items = (req.items || []).map(it => {
-      // Extraer ID numérico si viene como 'prod-1' o '1'
+      // Extraer ID numérico si viene como 'prod-1' o '1'. Sin fallback: un id inválido no puede
+      // convertirse silenciosamente en el producto 1 (se enviaría el plato equivocado).
       const cleanId = String(it.productoId).replace('prod-', '');
-      const numericId = parseInt(cleanId, 10) || 1;
+      const numericId = Number(cleanId);
 
       return {
-        productoId: numericId,
+        productoId: Number.isFinite(numericId) && numericId > 0 ? numericId : 0,
         cantidad: it.cantidad || 1,
         notas: it.notas || undefined
       };
@@ -186,13 +232,20 @@ export class OrderAdapter {
 
     return {
       tipo: tipo,
+      canalOrigen: req.canalOrigen,
+      estadoInicial: req.estadoInicial ? this.toBackendEstado(req.estadoInicial) : undefined,
+      montoPagaCon: req.montoPagaCon,
+      ipOrigen: req.ipOrigen,
       mesaId: mesaId,
-      direccionEntrega: tipo === 'DELIVERY' ? (req.cliente.direccion || 'Dirección no especificada') : undefined,
-      referencia: tipo === 'DELIVERY' ? req.cliente.referencia : undefined,
-      nombreCliente: req.cliente.nombre || 'Cliente San Pollo',
-      telefonoCliente: req.cliente.celular || '999999999',
+      // Sin datos inventados: un pedido de delivery sin dirección real debe llegar
+      // incompleto para que el backend lo rechace (RF14), y un teléfono falso haría
+      // que las notificaciones de WhatsApp (RF30/RF31) apunten a un número inexistente.
+      direccionEntrega: tipo === 'DELIVERY' ? (req.cliente.direccion || undefined) : undefined,
+      referencia: tipo === 'DELIVERY' ? (req.cliente.referencia || undefined) : undefined,
+      nombreCliente: req.cliente.nombre || undefined,
+      telefonoCliente: req.cliente.celular || undefined,
       observaciones: req.notasGenerales || undefined,
       items: items
-    };
+    } as DtoCrearOrdenConCanal;
   }
 }

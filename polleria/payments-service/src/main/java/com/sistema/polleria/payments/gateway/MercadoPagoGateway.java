@@ -18,13 +18,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Slf4j
@@ -33,21 +30,17 @@ import java.util.Optional;
 public class MercadoPagoGateway implements PaymentGateway {
 
     private final PagoRepository pagoRepository;
-    private final RestClient ordersRestClient;
-
-    @Value("${orders.service.internal-key:}")
-    private String ordersInternalKey;
 
     @Value("${mercadopago.webhook.url:}")
     private String webhookUrl;
 
-    @Value("${mercadopago.back-urls.success:http://localhost:4200/tracking}")
+    @Value("${mercadopago.back-urls.success:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/success}")
     private String successUrl;
 
-    @Value("${mercadopago.back-urls.failure:http://localhost:4200/checkout?status=failure}")
+    @Value("${mercadopago.back-urls.failure:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/failure}")
     private String failureUrl;
 
-    @Value("${mercadopago.back-urls.pending:http://localhost:4200/checkout?status=pending}")
+    @Value("${mercadopago.back-urls.pending:https://airport-arlington-graduation-discussed.trycloudflare.com/checkout/pending}")
     private String pendingUrl;
 
     @Value("${mercadopago.sandbox:true}")
@@ -79,10 +72,7 @@ public class MercadoPagoGateway implements PaymentGateway {
         log.info("Creando preferencia de Mercado Pago para ordenId={}, clienteId={}, monto={}",
                 request.ordenId(), clienteId, request.monto());
 
-        // 1. La preferencia solo se crea para un pedido real ya registrado en orders-service
-        verificarOrdenExiste(request.ordenId());
-
-        // 2. Obtener o registrar la entidad Pago
+        // 1. Obtener o registrar la entidad Pago
         Optional<Pago> pagoExistente = pagoRepository.findByOrdenId(request.ordenId());
         Pago pago;
         if (pagoExistente.isPresent()) {
@@ -103,7 +93,7 @@ public class MercadoPagoGateway implements PaymentGateway {
         }
         pago = pagoRepository.save(pago);
 
-        // 3. Construir el Item del pedido
+        // 2. Construir el Item del pedido
         PreferenceItemRequest itemRequest = PreferenceItemRequest.builder()
                 .id(String.valueOf(request.ordenId()))
                 .title("Pedido #" + request.ordenId() + " - El San Pollo")
@@ -113,10 +103,10 @@ public class MercadoPagoGateway implements PaymentGateway {
                 .unitPrice(request.monto())
                 .build();
 
-        // 4. URLs de retorno para redirección del cliente
-        String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/tracking";
-        String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout?status=failure";
-        String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout?status=pending";
+        // 3. URLs de retorno para redirección del cliente
+        String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/checkout/success";
+        String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout/failure";
+        String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout/pending";
 
         log.debug("Back URLs → success={}, failure={}, pending={}", safeSuccessUrl, safeFailureUrl, safePendingUrl);
 
@@ -126,10 +116,11 @@ public class MercadoPagoGateway implements PaymentGateway {
                 .pending(safePendingUrl)
                 .build();
 
-        // 5. Armar la solicitud de preferencia
+        // 4. Armar la solicitud de preferencia
         PreferenceRequest.PreferenceRequestBuilder preferenceBuilder = PreferenceRequest.builder()
                 .items(List.of(itemRequest))
                 .backUrls(backUrls)
+                .autoReturn("approved")
                 .externalReference(String.valueOf(pago.getId()));
 
         if (webhookUrl != null && !webhookUrl.isBlank()) {
@@ -169,18 +160,6 @@ public class MercadoPagoGateway implements PaymentGateway {
         } catch (MPException mpException) {
             log.error("Error SDK Mercado Pago: {}", mpException.getMessage());
             throw new RuntimeException("Error al conectar con Mercado Pago: " + mpException.getMessage(), mpException);
-        }
-    }
-
-    private void verificarOrdenExiste(Long ordenId) {
-        try {
-            ordersRestClient.get()
-                    .uri("/ordenes/{id}", ordenId)
-                    .header("X-Internal-Key", ordersInternalKey)
-                    .retrieve()
-                    .toBodilessEntity();
-        } catch (HttpClientErrorException.NotFound e) {
-            throw new NoSuchElementException("No existe la orden " + ordenId + " para generar el pago");
         }
     }
 

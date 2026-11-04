@@ -1,10 +1,7 @@
 package com.sistema.polleria.feedback.entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -15,7 +12,8 @@ import java.time.LocalDateTime;
         @Index(name = "idx_reportes_cliente", columnList = "cliente_id"),
         @Index(name = "idx_reportes_estado", columnList = "estado")
 })
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -55,6 +53,9 @@ public class ReporteIncidencia {
 
     @Column(name = "monto_reembolso", precision = 10, scale = 2)
     private BigDecimal montoReembolso;
+
+    @Version
+    private Long version;
 
     @Builder.Default
     @Column(name = "creado_en", nullable = false, updatable = false)

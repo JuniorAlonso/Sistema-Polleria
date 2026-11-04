@@ -1,7 +1,7 @@
 # Guía de Integración Frontend y Especificación de Arquitectura Backend
 **Sistema de Pollería — Fase 1 & Hardening de Seguridad**  
 **Stack Frontend:** Angular 19 (Signals, Standalone Components, Functional Interceptors, RxJS 7.8)  
-**Stack Backend:** Spring Boot 3.4.3 (Java 21), Spring Security 6, Spring Data JPA, PostgreSQL (AWS RDS)
+**Stack Backend:** Spring Boot 3.4.5 (Java 21), Spring Security 6, Spring Data JPA, PostgreSQL (AWS RDS)
 
 ---
 
@@ -323,40 +323,61 @@ function handle401Error(req: HttpRequest<unknown>, next: HttpHandlerFn, authServ
 
 ## 4. Guards de Rutas y RBAC en Angular 19
 
-### Matriz de Roles y Autorizaciones de Vistas
-| Rol | Rutas Autorizadas | Acciones Permitidas |
-| :--- | :--- | :--- |
-| **`CLIENTE`** | `/carta`, `/mis-pedidos`, `/pago/:id`, `/perfil` | Ver carta, pedir, ver historial propio, pagar. |
-| **`MOZO`** | `/salon`, `/mesas`, `/pedidos/activos`, `/cobros` | Asignar mesas, tomar pedidos, marcar órdenes como atendidas. |
-| **`COCINA`** | `/cocina/kds`, `/cocina/ordenes` | Visualizar comandas, cambiar estado a `EN_PREPARACION` y `LISTO`. |
-| **`REPARTIDOR`**| `/delivery/hoja-ruta`, `/delivery/:id` | Ver pedidos en camino, confirmar contraentrega. |
-| **`ADMIN`** | `/*` (Acceso Total a Backoffice y Métricas) | Configurar productos, precios, ver auditorías y reportes. |
+### Matriz de Roles y Rutas Reales (`app.routes.ts`)
 
-### Implementación Functional Guard (`role.guard.ts`)
+El frontend usa **tres guards funcionales** (`frontEnd/src/app/core/guards/`), no un `roleGuard` con lista de roles.
+
+| Ruta | Guard | Quién entra | Redirección del guard |
+| :--- | :--- | :--- | :--- |
+| `/login`, `/registro` | `guestGuard` | Solo sin sesión | Con sesión: `ADMIN`/`MOZO`/`REPARTIDOR` → `/admin`; `CHEF` → `/cocina`; el resto → `/menu` |
+| `/` (home), `/menu`, `/tracking`, `/checkout` | `clientGuard` | Sin sesión o `CLIENTE` | `CHEF` → `/cocina`; `ADMIN`/`MOZO`/`REPARTIDOR` → `/admin` |
+| `/checkout/success`, `/checkout/failure`, `/checkout/pending` | *(sin guard)* | Cualquiera (retornos de Mercado Pago) | — |
+| `/admin` | `staffGuard` | `ADMIN`, `MOZO`, `CHEF`, `REPARTIDOR` | Sin sesión → `/login`; `CLIENTE` → `/menu`; `CHEF` → `/cocina` |
+| `/cocina` | `staffGuard` | `ADMIN` y `CHEF` | Igual que `/admin` |
+| `/mozo` | `staffGuard` | `ADMIN` y `MOZO` | Igual que `/admin` |
+| `/delivery` | `staffGuard` | `ADMIN` y `REPARTIDOR` | Igual que `/admin` |
+| `**` | — | Fallback | Redirige a `/` |
+
+Notas de implementación reales:
+
+- Los tres guards devuelven `true` cuando corren en el servidor (`isPlatformBrowser(PLATFORM_ID) === false`), para no romper el renderizado SSR/prerender: no hay `localStorage` en el servidor.
+- `clientGuard` permite explícitamente a los invitados (sin token) navegar la tienda y el checkout.
+- El rol del backend `COCINA` se normaliza a `CHEF` en el frontend mediante `core/adapters/auth.adapter.ts` (`COCINA`/`CHEF` → `'CHEF'`), y a la inversa al enviar el rol al backend.
+- La autorización fina por rol vive en el **backend** con `@PreAuthorize` por método; los guards del frontend solo ordenan la navegación.
+
+### Implementación de referencia (`staff.guard.ts`)
 ```typescript
-import { inject } from '@angular/core';
-import { CanActivateFn, Router } from '@angular/router';
-import { AuthService } from '../services/auth.service';
-import { Role } from '../models/auth.models';
+export const staffGuard: CanActivateFn = (route, state) => {
+  const platformId = inject(PLATFORM_ID);
+  if (!isPlatformBrowser(platformId)) {
+    return true; // SSR / Prerender: permitir renderizado
+  }
 
-export const roleGuard = (allowedRoles: Role[]): CanActivateFn => {
-  return (route, state) => {
-    const authService = inject(AuthService);
-    const router = inject(Router);
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  const notify = inject(NotificationService);
 
-    const currentUser = authService.currentUser();
-    if (!currentUser) {
-      router.navigate(['/login'], { queryParams: { returnUrl: state.url } });
-      return false;
-    }
+  const user = auth.currentUser();
+  const token = auth.token();
 
-    if (allowedRoles.includes(currentUser.role)) {
-      return true;
-    }
-
-    router.navigate(['/acceso-denegado']);
+  if (!token || !user) {
+    notify.showInfo('Acceso Restringido', 'Debes iniciar sesión con tu cuenta de personal.');
+    router.navigate(['/login']);
     return false;
-  };
+  }
+
+  if (user.rol === 'CLIENTE') {                  // cliente intentando entrar a /admin, /cocina, /mozo o /delivery
+    notify.showError('No tienes permisos de personal para acceder a esta área.');
+    router.navigate(['/menu']);
+    return false;
+  }
+
+  if (user.rol === 'CHEF' && state.url.startsWith('/admin')) {
+    router.navigate(['/cocina']);
+    return false;
+  }
+
+  return true;
 };
 ```
 
@@ -390,6 +411,6 @@ Para auditorías o code reviews del backend, los siguientes invariantes arquitec
 
 - [ ] Configurar interceptor HTTP con patrón de cola/mutex para evitar colisiones de refresh.
 - [ ] Guardar `token` y `refreshToken` en almacenamiento seguro (o memoria reactiva en `AuthService`).
-- [ ] Configurar `roleGuard` en el árbol de rutas de `app.routes.ts`.
+- [ ] Configurar los guards reales (`guestGuard`, `clientGuard`, `staffGuard`) en el árbol de rutas de `app.routes.ts`.
 - [ ] Implementar interceptor de errores globales para capturar errores de validación (`400 Bad Request`) con los mensajes descriptivos del backend.
 - [ ] En pantallas de formulario (ej. Registro), validar localmente la regla de contraseña: mínimo 6 caracteres, alfanumérico (al menos 1 letra y 1 número).

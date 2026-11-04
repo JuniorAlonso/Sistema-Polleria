@@ -21,8 +21,16 @@ import java.util.Set;
 @Service
 public class NotificationService {
 
-    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES =
-            Set.of(OrdenEstado.EN_PREPARACION, OrdenEstado.EN_CAMINO, OrdenEstado.ENTREGADO);
+    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_DELIVERY =
+            Set.of(OrdenEstado.EN_PREPARACION, OrdenEstado.PREPARANDO, OrdenEstado.EN_CAMINO,
+                   OrdenEstado.EN_PUERTA, OrdenEstado.ENTREGADO, OrdenEstado.CANCELADO,
+                   OrdenEstado.PEDIDO_FANTASMA);
+
+    // PEDIDO_FANTASMA closes the order (and voids its ticket): the customer must hear it, and
+    // the WhatsApp bot releases the chat with it.
+    private static final Set<OrdenEstado> ESTADOS_NOTIFICABLES_RECOJO =
+            Set.of(OrdenEstado.PREPARANDO, OrdenEstado.LISTO, OrdenEstado.LISTO_PARA_ENTREGAR,
+                   OrdenEstado.ENTREGADO, OrdenEstado.CANCELADO, OrdenEstado.PEDIDO_FANTASMA);
 
     private final RestClient restClient;
     private final String notificationUrl;
@@ -38,7 +46,10 @@ public class NotificationService {
 
     @Async
     public void notificarCambioEstado(Orden orden, OrdenEstado nuevoEstado) {
-        if (orden.getTipo() != OrdenTipo.DELIVERY || !ESTADOS_NOTIFICABLES.contains(nuevoEstado)) {
+        boolean esDeliveryNotificable = orden.getTipo() == OrdenTipo.DELIVERY && ESTADOS_NOTIFICABLES_DELIVERY.contains(nuevoEstado);
+        boolean esRecojoNotificable = orden.getTipo() == OrdenTipo.RECOJO && ESTADOS_NOTIFICABLES_RECOJO.contains(nuevoEstado);
+
+        if (!esDeliveryNotificable && !esRecojoNotificable) {
             return;
         }
 
@@ -55,6 +66,10 @@ public class NotificationService {
             body.put("telefono", telefono);
             body.put("nombreCliente", orden.getNombreCliente() != null ? orden.getNombreCliente() : "Cliente");
             body.put("estadoNuevo", nuevoEstado.name());
+            if (esRecojoNotificable && nuevoEstado.esListo()) {
+                body.put("mensaje", mensajeRecojoListo(orden));
+                body.put("plazoRecojoMinutos", PLAZO_RECOJO_MINUTOS);
+            }
 
             restClient.post()
                     .uri(notificationUrl + "/api/notificaciones/whatsapp/estado")
@@ -68,6 +83,16 @@ public class NotificationService {
         } catch (Exception e) {
             log.warn("No se pudo encolar WhatsApp para orden #{}: {}", orden.getId(), e.getMessage());
         }
+    }
+
+    static final int PLAZO_RECOJO_MINUTOS = 60;
+
+    /** Texto para el cliente de recojo cuando su pedido queda listo. */
+    static String mensajeRecojoListo(Orden orden) {
+        String numero = orden.getNumeroCliente() != null ? " #" + orden.getNumeroCliente() : "";
+        return "Tu pedido" + numero + " está listo. Debes recogerlo en tienda dentro de 1 hora "
+                + "presentando tu ticket con el código POL-" + orden.getId()
+                + "; pasado ese plazo se declarará pedido fantasma. Escribe *ticket* para verlo de nuevo.";
     }
 
     /** Código de 4 dígitos para ver los pedidos sin iniciar sesión. */

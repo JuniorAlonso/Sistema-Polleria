@@ -1,0 +1,259 @@
+### ===========================================================================
+### REST TESTS: FLUJO COMPLETO DELIVERY Y RECOJO EN TIENDA (POLLERÍA SAN POLLO)
+### Incluye: Yape OTP, ContraPago, Llamadas, En Puerta, Comprobantes, Liquidación y Sanciones
+### ===========================================================================
+
+@authUrl = http://localhost:8081
+@ordersUrl = http://localhost:8082
+@paymentsUrl = http://localhost:8083
+@financeUrl = http://localhost:8086
+@incidentUrl = http://localhost:8087
+@inventoryUrl = http://localhost:8085
+@internalKey = sanpollo-dev-internal-key
+
+### 1. Login de Cajero / Admin para obtener Token
+# @name loginAdmin
+POST {{authUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "admin.polleria@yopmail.com",
+  "password": "Password123!"
+}
+
+### Guardar Token Admin
+@adminToken = {{loginAdmin.response.body.token}}
+
+### 2. Verificar que un cliente limpio NO tiene sanción para ContraPago
+GET {{authUrl}}/auth/sanciones/verificar?telefono=987654321&email=cliente.limpio@test.com&ip=192.168.1.10
+
+### 3. Crear Pedido Delivery ContraPago (Efectivo con vuelto)
+# @name crearPedidoContraPago
+POST {{ordersUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "canalOrigen": "WEB",
+  "estadoInicial": "PENDIENTE_CONFIRMACION",
+  "nombreCliente": "Juan Perez",
+  "telefonoCliente": "987654321",
+  "direccionEntrega": "Av. San Martín 456, Ica",
+  "referencia": "Frente al parque",
+  "montoPagaCon": 100.00,
+  "ipOrigen": "192.168.1.10",
+  "items": [
+    {
+      "productoId": 1,
+      "cantidad": 1,
+      "notas": "Bien dorado"
+    }
+  ]
+}
+
+### Guardar ID de la orden
+@ordenContraPagoId = {{crearPedidoContraPago.response.body.id}}
+
+### 4. Cajero confirma la llamada telefónica del cliente (15 min SLA)
+POST {{ordersUrl}}/ordenes/{{ordenContraPagoId}}/confirmar-llamada
+Authorization: Bearer {{adminToken}}
+
+### 5. Cajero emite Boleta de Venta en Finance-Service (En preparación)
+POST {{financeUrl}}/finanzas/comprobantes
+Content-Type: application/json
+X-Internal-Key: {{internalKey}}
+
+{
+  "ordenId": {{ordenContraPagoId}},
+  "tipo": "BOLETA",
+  "clienteTipoDoc": "DNI",
+  "clienteNumDoc": "45678901",
+  "clienteNombre": "Juan Perez",
+  "clienteDireccion": "Av. San Martín 456, Ica",
+  "total": 30.50,
+  "pagadoDigitalmente": false,
+  "vueltoEstimado": 69.50
+}
+
+### 6. Cocina termina de empacar y marca LISTO_PARA_ENTREGAR
+PATCH {{ordersUrl}}/ordenes/{{ordenContraPagoId}}/estado
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "estado": "LISTO_PARA_ENTREGAR"
+}
+
+### 7. Repartidor toma el pedido para entrega
+POST {{ordersUrl}}/ordenes/{{ordenContraPagoId}}/reclamo
+Authorization: Bearer {{adminToken}}
+
+### 8. Despacho a ruta (EN_CAMINO)
+PATCH {{ordersUrl}}/ordenes/{{ordenContraPagoId}}/estado
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "estado": "EN_CAMINO",
+  "repartidorId": 4
+}
+
+### 9. Repartidor llega al domicilio del cliente (marca EN_PUERTA - timer 30 min)
+POST {{ordersUrl}}/ordenes/{{ordenContraPagoId}}/en-puerta
+Authorization: Bearer {{adminToken}}
+
+### 10. Repartidor cobra en efectivo al cliente (Registro obligatorio en Payments)
+POST {{paymentsUrl}}/pagos/cobro-efectivo
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenContraPagoId}},
+  "monto": 30.50,
+  "montoRecibido": 100.00,
+  "vueltoEntregado": 69.50
+}
+
+### 11. Apertura de Liquidación de Repartidor en Finance-Service
+# @name aperturaLiquidacion
+POST {{financeUrl}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "repartidorId": 4,
+  "repartidorNombre": "Carlos Repartidor",
+  "fondoInicial": 50.00,
+  "observaciones": "Turno Tarde"
+}
+
+@liqId = {{aperturaLiquidacion.response.body.id}}
+
+### 12. Cierre y Rendición de Liquidación de Caja
+POST {{financeUrl}}/finanzas/liquidaciones/{{liqId}}/cierre
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "totalRendido": 80.50,
+  "totalCobradoEfectivo": 30.50,
+  "observaciones": "Cuadre conforme (Fondo 50 + Cobro 30.50 = 80.50)"
+}
+
+### ===========================================================================
+### FLUJO B: COBRO DIRECTO EN CHECKOUT CON YAPE OTP (MERCADO PAGO)
+### ===========================================================================
+
+### 13. Crear Pedido Web para pago Yape
+# @name crearPedidoYape
+POST {{ordersUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "canalOrigen": "WEB",
+  "nombreCliente": "Maria Lopez",
+  "telefonoCliente": "912345678",
+  "direccionEntrega": "Calle Bolivar 789",
+  "items": [
+    {
+      "productoId": 2,
+      "cantidad": 1
+    }
+  ]
+}
+
+@ordenYapeId = {{crearPedidoYape.response.body.id}}
+
+### 14. Pagar directamente con Yape OTP (Pase directo a PREPARANDO en Cocina)
+POST {{paymentsUrl}}/pagos/yape-otp
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenYapeId}},
+  "monto": 42.00,
+  "telefono": "912345678",
+  "otp": "123456",
+  "email": "maria@gmail.com"
+}
+
+### ===========================================================================
+### FLUJO C: PROTOCOLO PEDIDO FANTASMA, SANCIÓN Y CONTROL DE MERMA
+### ===========================================================================
+
+### 15. Crear Pedido que caerá en Pedido Fantasma
+# @name crearPedidoFantasma
+POST {{ordersUrl}}/ordenes
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "canalOrigen": "WEB",
+  "estadoInicial": "PENDIENTE_CONFIRMACION",
+  "nombreCliente": "Cliente Fantasma",
+  "telefonoCliente": "999000111",
+  "direccionEntrega": "Zona Desierta 000",
+  "ipOrigen": "190.234.12.88",
+  "items": [
+    {
+      "productoId": 1,
+      "cantidad": 1
+    }
+  ]
+}
+
+@ordenFantasmaId = {{crearPedidoFantasma.response.body.id}}
+
+### 16. Confirmar llamada y avanzar a ruta
+POST {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/confirmar-llamada
+Authorization: Bearer {{adminToken}}
+
+### 17. Cocina lista
+PATCH {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/estado
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "estado": "LISTO_PARA_ENTREGAR"
+}
+
+### 18. Repartidor toma y sale a ruta
+POST {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/reclamo
+Authorization: Bearer {{adminToken}}
+
+PATCH {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/estado
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "estado": "EN_CAMINO",
+  "repartidorId": 4
+}
+
+### 19. Repartidor llega a la puerta (EN_PUERTA)
+POST {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/en-puerta
+Authorization: Bearer {{adminToken}}
+
+### 20. Pasan 30 minutos sin salir el cliente: Declarar PEDIDO_FANTASMA
+POST {{ordersUrl}}/ordenes/{{ordenFantasmaId}}/pedido-fantasma
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "motivo": "NO_ENTREGADO: Cliente no salió a la puerta tras 30 min"
+}
+
+### 21. Verificar que el Teléfono / IP quedaron SANCIONADOS permanentemente
+GET {{authUrl}}/auth/sanciones/verificar?telefono=999000111&ip=190.234.12.88
+
+### 22. Cajero resuelve el destino del pollo en Almacén (Merma Justificada)
+POST {{inventoryUrl}}/inventario/pedidos-fantasma/resolver
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenFantasmaId}},
+  "ordenTipo": "DELIVERY",
+  "destino": "MERMA_JUSTIFICADA",
+  "observaciones": "Pollo frío devuelto por repartidor tras 35 minutos de espera"
+}

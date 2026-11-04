@@ -9,6 +9,7 @@ import com.sistema.polleria.feedback.entity.ReporteIncidencia;
 import com.sistema.polleria.feedback.repository.ReporteIncidenciaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,9 +26,13 @@ public class ReporteIncidenciaService {
     private final ReporteIncidenciaRepository reporteRepository;
     private final FileStorageService fileStorageService;
     private final PaymentsClient paymentsClient;
+    private final OrdersClient ordersClient;
 
     @Transactional
     public ReporteResponse crear(CrearReporteRequest request, MultipartFile foto, Long clienteId) {
+        // Validar orden contra orders-service
+        ordersClient.obtenerYValidarOrden(request.getOrdenId(), clienteId, false);
+
         String fotoUrl = request.getFotoEvidenciaUrl();
         if (foto != null && !foto.isEmpty()) {
             fotoUrl = fileStorageService.guardarArchivo(foto);
@@ -69,25 +74,55 @@ public class ReporteIncidenciaService {
                 .stream().map(ReporteResponse::from).toList();
     }
 
+    public ReporteResponse obtenerPorIdSeguro(Long id, Long solicitanteId, boolean esAdmin) {
+        ReporteIncidencia reporte = buscarOFallar(id);
+        if (!esAdmin && !reporte.getClienteId().equals(solicitanteId)) {
+            throw new AccessDeniedException("No tiene permisos para acceder a este reporte");
+        }
+        return ReporteResponse.from(reporte);
+    }
+
     public ReporteResponse obtenerPorId(Long id) {
         return ReporteResponse.from(buscarOFallar(id));
+    }
+
+    public java.util.Optional<ReporteResponse> obtenerPorOrden(Long ordenId) {
+        return reporteRepository.findFirstByOrdenIdOrderByCreadoEnDesc(ordenId)
+                .map(ReporteResponse::from);
+    }
+
+    @Transactional
+    public ReporteResponse cambiarEstado(Long id, EstadoReclamo nuevoEstado) {
+        ReporteIncidencia reporte = buscarOFallar(id);
+        reporte.setEstado(nuevoEstado);
+        reporte = reporteRepository.save(reporte);
+        log.info("Reporte #{} movido a estado {}", id, nuevoEstado);
+        return ReporteResponse.from(reporte);
     }
 
     @Transactional
     public ReporteResponse resolver(Long id, ResolverReporteRequest request, String bearerToken) {
         ReporteIncidencia reporte = buscarOFallar(id);
 
+        if (reporte.getEstado() == EstadoReclamo.RESUELTO) {
+            throw new IllegalStateException("El reporte #" + id + " ya fue resuelto con anterioridad");
+        }
+
         reporte.setEstado(request.getEstado());
         reporte.setRespuestaAdmin(request.getRespuestaAdmin());
         reporte.setReembolsoProcedente(Boolean.TRUE.equals(request.getReembolsoProcedente()));
         reporte.setMontoReembolso(request.getMontoReembolso());
-        reporte.setResueltoEn(LocalDateTime.now());
+
+        if (request.getEstado() == EstadoReclamo.RESUELTO || request.getEstado() == EstadoReclamo.RECHAZADO) {
+            reporte.setResueltoEn(LocalDateTime.now());
+        }
 
         if (Boolean.TRUE.equals(request.getReembolsoProcedente())) {
-            log.info("Ejecutando reembolso automático para orden #{}, monto S/ {}",
-                    reporte.getOrdenId(), request.getMontoReembolso());
+            log.info("Ejecutando reembolso automático para orden #{}, reporte #{}, monto S/ {}",
+                    reporte.getOrdenId(), reporte.getId(), request.getMontoReembolso());
             paymentsClient.emitirReembolsoPorOrden(
                     reporte.getOrdenId(),
+                    reporte.getId(),
                     request.getMontoReembolso(),
                     request.getRespuestaAdmin(),
                     bearerToken

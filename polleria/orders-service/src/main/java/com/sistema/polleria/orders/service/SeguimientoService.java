@@ -2,6 +2,7 @@ package com.sistema.polleria.orders.service;
 
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.CodigoSeguimiento;
+import com.sistema.polleria.orders.entity.Orden;
 import com.sistema.polleria.orders.exception.DemasiadasSolicitudesException;
 import com.sistema.polleria.orders.repository.CodigoSeguimientoRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
@@ -21,6 +22,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 /**
  * Seguimiento de pedidos sin iniciar sesión:
@@ -42,15 +44,18 @@ public class SeguimientoService {
     private final CodigoSeguimientoRepository codigoRepository;
     private final OrdenRepository ordenRepository;
     private final NotificationService notificationService;
+    private final OrdenService ordenService;
     private final SecretKey clave;
 
     public SeguimientoService(CodigoSeguimientoRepository codigoRepository,
                               OrdenRepository ordenRepository,
                               NotificationService notificationService,
+                              OrdenService ordenService,
                               @Value("${jwt.secret}") String secreto) {
         this.codigoRepository = codigoRepository;
         this.ordenRepository = ordenRepository;
         this.notificationService = notificationService;
+        this.ordenService = ordenService;
         this.clave = Keys.hmacShaKeyFor(secreto.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -117,19 +122,50 @@ public class SeguimientoService {
 
     /** Pedidos del celular asociado al acceso temporal. */
     public List<OrdenResponse> listarPedidos(String token) {
-        String numero;
+        String numero = telefonoDelToken(token);
+
+        return ordenRepository.findTop20ByTelefonoClienteInOrderByCreadoEnDesc(TelefonoUtil.variantes(numero))
+                .stream().map(OrdenResponse::from).toList();
+    }
+
+    /**
+     * S5: el invitado cancela su propio pedido con el celular verificado por WhatsApp. Es la misma
+     * identidad que usa {@link #listarPedidos}, no una cuenta: por eso sirve cualquier pedido no
+     * terminal escrito con ese celular, aunque se haya hecho sin iniciar sesión.
+     *
+     * La cancelación delega en {@link OrdenService#actualizarEstado} para que el log, la liberación
+     * de mesa y la notificación sean exactamente los mismos que en una cancelación del personal.
+     * Un pedido ajeno o inexistente responde 404 (misma convención anti-enumeración que
+     * {@code GET /ordenes/{id}}). Un pedido ya {@code ENTREGADO} es rechazado por la máquina de
+     * estados (400), no por este método; volver a cancelar uno ya {@code CANCELADO} responde 200 sin
+     * cambios, porque la máquina corta cuando el estado destino es el mismo.
+     */
+    @Transactional
+    public OrdenResponse cancelarPedido(Long id, String token) {
+        String numero = telefonoDelToken(token);
+
+        Orden orden = ordenRepository.findById(id)
+                .filter(o -> numero.equals(TelefonoUtil.canonico(o.getTelefonoCliente())))
+                .orElseThrow(() -> new NoSuchElementException("Orden no encontrada: " + id));
+
+        // Same cancellation policy as the authenticated owner: only before the kitchen starts.
+        return ordenService.cancelarComoCliente(orden.getId(), null);
+    }
+
+    /**
+     * Resuelve el celular del acceso temporal. Lo comparten el listado y la cancelación: un token
+     * ausente, vencido, alterado o que no sea de seguimiento siempre se rechaza igual (400).
+     */
+    private String telefonoDelToken(String token) {
         try {
             Claims claims = Jwts.parser().verifyWith(clave).build().parseSignedClaims(token).getPayload();
             if (!TIPO_TOKEN.equals(claims.get("tipo", String.class))) {
                 throw new IllegalArgumentException();
             }
-            numero = claims.getSubject();
+            return claims.getSubject();
         } catch (Exception e) {
             throw new IllegalArgumentException("Tu acceso venció. Verifica tu celular otra vez.");
         }
-
-        return ordenRepository.findTop20ByTelefonoClienteInOrderByCreadoEnDesc(TelefonoUtil.variantes(numero))
-                .stream().map(OrdenResponse::from).toList();
     }
 
     private String normalizarOFallar(String telefono) {

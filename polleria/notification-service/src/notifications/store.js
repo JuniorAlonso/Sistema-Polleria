@@ -66,7 +66,7 @@ class PostgresStore {
             CREATE TABLE IF NOT EXISTS notification_log (
                 id            TEXT PRIMARY KEY DEFAULT 'notif_' || lpad(nextval('notification_log_seq')::text, 5, '0'),
                 orden_id      BIGINT,
-                destinatario  VARCHAR(20)  NOT NULL,
+                destinatario  VARCHAR(40)  NOT NULL,
                 tipo          VARCHAR(40)  NOT NULL,
                 mensaje       TEXT         NOT NULL,
                 estado        VARCHAR(20)  NOT NULL DEFAULT 'EN_COLA',
@@ -78,6 +78,8 @@ class PostgresStore {
             CREATE INDEX IF NOT EXISTS idx_notification_log_orden ON notification_log (orden_id);
             -- Los códigos de seguimiento no pertenecen a una orden
             ALTER TABLE notification_log ALTER COLUMN orden_id DROP NOT NULL;
+            -- Ensanchar destinatario para soportar JIDs @lid cuando WhatsApp oculta el número
+            ALTER TABLE notification_log ALTER COLUMN destinatario TYPE VARCHAR(40);
         `);
     }
 

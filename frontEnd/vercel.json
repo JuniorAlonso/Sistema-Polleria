@@ -39,6 +39,14 @@
       "destination": "https://orders-service-264198079598.us-central1.run.app/mesas/:path*"
     },
     {
+      "source": "/api/zonas",
+      "destination": "https://orders-service-264198079598.us-central1.run.app/zonas"
+    },
+    {
+      "source": "/api/zonas/:path*",
+      "destination": "https://orders-service-264198079598.us-central1.run.app/zonas/:path*"
+    },
+    {
       "source": "/api/pagos",
       "destination": "https://payments-service-264198079598.us-central1.run.app/pagos"
     },
@@ -77,6 +85,14 @@
     {
       "source": "/mesas/:path*",
       "destination": "https://orders-service-264198079598.us-central1.run.app/mesas/:path*"
+    },
+    {
+      "source": "/zonas",
+      "destination": "https://orders-service-264198079598.us-central1.run.app/zonas"
+    },
+    {
+      "source": "/zonas/:path*",
+      "destination": "https://orders-service-264198079598.us-central1.run.app/zonas/:path*"
     },
     {
       "source": "/pagos",

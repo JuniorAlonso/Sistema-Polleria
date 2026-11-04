@@ -1,211 +1,95 @@
 import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { RouterModule, Router } from '@angular/router';
+import { Router } from '@angular/router';
 import { Subscription, interval } from 'rxjs';
 import { OrdersService } from '../../core/services/orders.service';
 import { PaymentService } from '../../core/services/payment.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
-import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
-import { Order, OrderStatus } from '../../core/models/order.model';
+import { Order } from '../../core/models/order.model';
+import { leerUserIdDelToken } from '../../core/utils/jwt.util';
+import { DeliveryTab, DeliverySubFilter } from './components/delivery.types';
+import { cantidadItems, esContraPago, getCodeNum, mensajeBackend } from './components/delivery.utils';
+import { FinanceService } from '../../core/services/finance.service';
+import { BackendEfectivoPendienteLiquidacion } from '../../core/models/api-contracts.model';
+import { DeliverySidebarComponent } from './components/delivery-sidebar.component';
+import { DeliveryHeaderComponent } from './components/delivery-header.component';
+import { AvailableOrdersListComponent } from './components/available-orders-list.component';
+import { DeliveryFiltersComponent } from './components/delivery-filters.component';
+import { DeliveryOrderCardComponent } from './components/delivery-order-card.component';
+import { RouteMapComponent } from './components/route-map.component';
+import { CashSettlementComponent } from './components/cash-settlement.component';
+import { DeliveryHistoryComponent } from './components/delivery-history.component';
+import { DeliveryConfirmModalComponent } from './components/delivery-confirm-modal.component';
 
-export type DeliveryTab = 'ENTREGAS_ACTIVAS' | 'MAPA_RUTA' | 'COBROS_RENDICION' | 'HISTORIAL';
-export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
+export type { DeliveryTab, DeliverySubFilter };
 
+/**
+ * Contenedor (smart) del módulo repartidor: orquesta estado y servicios;
+ * la presentación vive en `./components` (componentes tontos con input()/output()).
+ */
 @Component({
   selector: 'app-repartidor-delivery',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, CurrencyPENPipe],
+  imports: [
+    CommonModule,
+    DeliverySidebarComponent,
+    DeliveryHeaderComponent,
+    AvailableOrdersListComponent,
+    DeliveryFiltersComponent,
+    DeliveryOrderCardComponent,
+    RouteMapComponent,
+    CashSettlementComponent,
+    DeliveryHistoryComponent,
+    DeliveryConfirmModalComponent
+  ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
-      
-      <!-- ================= SIDEBAR LATERAL REPARTIDOR ================= -->
-      <aside class="w-full md:w-64 bg-[#14161a] border-r border-white/10 flex flex-col shrink-0 md:sticky md:top-0 md:h-screen z-40">
-        
-        <!-- Sidebar Header -->
-        <div class="h-16 px-5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
-          <a routerLink="/" class="flex items-center gap-1.5 leading-none">
-            <span class="font-display text-2xl font-black text-polleria-crimson tracking-wider">
-              SAN POLLO
-            </span>
-            <span class="font-display text-2xl font-black text-sky-400 tracking-wider">
-              REPARTO
-            </span>
-          </a>
-        </div>
 
-        <!-- Sidebar Navigation Menu -->
-        <nav class="flex-1 p-3.5 space-y-1 overflow-y-auto no-scrollbar">
-          <div class="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3 py-1.5">
-            Flota & Delivery
-          </div>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('ENTREGAS_ACTIVAS')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'ENTREGAS_ACTIVAS' ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h2m-6 0a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
-              </svg>
-              <span>Mis Entregas Activas</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-full bg-sky-500 text-slate-950 font-black text-xs">
-              {{ activeDeliveryOrders().length }}
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('MAPA_RUTA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'MAPA_RUTA' ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-              </svg>
-              <span>Ruta & GPS Ica</span>
-            </div>
-          </button>
-
-          <div class="pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-widest text-slate-500 px-3">
-            Liquidación & Caja
-          </div>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('COBROS_RENDICION')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'COBROS_RENDICION' ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-polleria-gold shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span>Arqueo de Efectivo</span>
-            </div>
-          </button>
-
-          <button 
-            type="button"
-            (click)="activeTab.set('HISTORIAL')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'HISTORIAL' ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span>Historial del Día</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-md bg-black/40 text-[11px] font-bold text-slate-300">
-              {{ completedDeliveryOrders().length }}
-            </span>
-          </button>
-        </nav>
-
-        <!-- Sidebar User Footer -->
-        <div class="p-3 border-t border-white/10 bg-[#101215] shrink-0">
-          <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-white/5">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <div class="w-8 h-8 rounded-full ring-2 ring-sky-400 overflow-hidden bg-slate-800 flex items-center justify-center text-xs font-black text-sky-400 shrink-0 shadow">
-                <span>{{ (auth.currentUser()?.nombre?.substring(0, 2) || 'RP') | uppercase }}</span>
-              </div>
-              <div class="flex flex-col text-left leading-tight min-w-0">
-                <span class="text-xs font-bold text-white truncate">
-                  {{ auth.currentUser()?.nombre || 'Mitrufely Repartidor' }}
-                </span>
-                <span class="text-[10px] font-mono text-sky-400 font-bold">
-                  MOTORIZADO #04
-                </span>
-              </div>
-            </div>
-            <button 
-              type="button"
-              (click)="cerrarSesion()"
-              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/20 transition cursor-pointer shrink-0"
-              title="Cerrar Sesión"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-      </aside>
+      <app-delivery-sidebar
+        [activeTab]="activeTab()"
+        [entregasActivasCount]="misEntregasActivas().length"
+        [completadasCount]="completedDeliveryOrders().length"
+        [userName]="auth.currentUser()?.nombre"
+        (onTabChange)="cambiarTab($event)"
+        (onLogout)="cerrarSesion()"
+      />
 
       <!-- ================= MAIN CONTENT WRAPPER ================= -->
       <div class="flex-1 flex flex-col min-w-0 min-h-screen bg-[#0d0e11] overflow-y-auto">
-        
-        <!-- Top Bar -->
-        <header class="h-16 bg-[#14161a]/90 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
-          
-          <div class="flex items-center gap-2.5">
-            <h1 class="text-base sm:text-lg font-extrabold text-white tracking-wide uppercase">
-              {{ getActiveTabLabel() }}
-            </h1>
-          </div>
 
-          <!-- Quick Stats Top -->
-          <div class="flex items-center gap-3">
-            <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs">
-              <span class="text-slate-400">Total Efectivo a Rendir:</span>
-              <span class="font-display font-bold text-polleria-gold">{{ totalEfectivoARendir() | currencyPEN }}</span>
-            </div>
-
-            <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 font-bold">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span>GPS Activo (Ica)</span>
-            </div>
-          </div>
-
-        </header>
+        <app-delivery-header
+          [title]="getActiveTabLabel()"
+          [totalEfectivo]="totalEfectivoARendir()"
+        />
 
         <!-- ================= TAB 1: ENTREGAS ACTIVAS ================= -->
         @if (activeTab() === 'ENTREGAS_ACTIVAS') {
           <main class="flex-1 p-4 sm:p-6 max-w-6xl mx-auto w-full space-y-4">
-            
-            <!-- Filters Toolbar -->
-            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#14161a] p-3.5 rounded-2xl border border-white/10 shadow">
-              <div class="flex items-center gap-1.5 text-xs bg-black/40 p-1 rounded-xl border border-white/5">
-                <button 
-                  type="button"
-                  (click)="subFilter.set('TODAS')"
-                  class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5"
-                  [ngClass]="subFilter() === 'TODAS' ? 'bg-sky-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                >
-                  <span>Todas Activas</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="subFilter() === 'TODAS' ? 'bg-black/20 text-slate-950' : 'bg-white/10 text-slate-300'">{{ activeDeliveryOrders().length }}</span>
-                </button>
 
-                <button 
-                  type="button"
-                  (click)="subFilter.set('POR_RECOGER')"
-                  class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5"
-                  [ngClass]="subFilter() === 'POR_RECOGER' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-white'"
-                >
-                  <span>Por Recoger en Cocina</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="subFilter() === 'POR_RECOGER' ? 'bg-black/30 text-white' : 'bg-white/10 text-slate-300'">{{ readyForPickupOrders().length }}</span>
-                </button>
-
-                <button 
-                  type="button"
-                  (click)="subFilter.set('EN_RUTA')"
-                  class="px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5"
-                  [ngClass]="subFilter() === 'EN_RUTA' ? 'bg-sky-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'"
-                >
-                  <span>En Ruta</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" [ngClass]="subFilter() === 'EN_RUTA' ? 'bg-black/30 text-slate-950' : 'bg-white/10 text-slate-300'">{{ inRouteOrders().length }}</span>
-                </button>
+            @if (miIdMotorizado() === null) {
+              <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-start gap-2.5">
+                <svg class="w-4 h-4 shrink-0 mt-0.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                <span>No se pudo identificar tu usuario en la sesión. Vuelve a iniciar sesión para poder tomar pedidos.</span>
               </div>
+            }
 
-              <span class="text-xs text-slate-400">Actualización en vivo cada 2.5s</span>
-            </div>
+            <!-- S10 — Pedidos disponibles para entregar (solo REPARTIDOR) -->
+            @if (auth.isRepartidor()) {
+              <app-available-orders-list
+                [orders]="pedidosDisponibles()"
+                [canClaim]="!!miIdMotorizado()"
+                (onClaimOrder)="tomarPedido($event)"
+              />
+            }
+
+            <app-delivery-filters
+              [subFilter]="subFilter()"
+              [activasCount]="activeDeliveryOrders().length"
+              [porRecogerCount]="readyForPickupOrders().length"
+              [misEntregasCount]="misEntregasActivas().length"
+              (onFilterChange)="subFilter.set($event)"
+            />
 
             <!-- Entregas Cards -->
             <div class="space-y-4 pt-1">
@@ -224,112 +108,16 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
               }
 
               @for (order of filteredActiveDeliveryOrders(); track order.id) {
-                <div class="p-5 rounded-2xl bg-[#14161a] border border-white/10 shadow-xl space-y-4 hover:border-sky-500/40 transition">
-                  
-                  <!-- Header Card -->
-                  <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-3 border-b border-white/10">
-                    <div class="flex items-center gap-3">
-                      <span class="font-mono text-xl font-black text-white">
-                        #{{ getCodeNum(order.codigoSeguimiento) }}
-                      </span>
-                      <span class="px-2.5 py-0.5 rounded-full text-xs font-bold" [ngClass]="{
-                        'bg-rose-500/20 text-rose-300': order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO',
-                        'bg-amber-500/20 text-amber-300': order.estado === 'EN_PREPARACION',
-                        'bg-purple-500/20 text-purple-300': order.estado === 'LISTO_COCINA',
-                        'bg-sky-500/20 text-sky-300': order.estado === 'EN_REPARTO'
-                      }">
-                        {{ order.estado === 'LISTO_COCINA' ? 'LISTO PARA RECOGER' : order.estado }}
-                      </span>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                      <span class="font-display text-xl font-bold text-polleria-gold">
-                        {{ order.total | currencyPEN }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <!-- Client & Address Info -->
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                    <div class="space-y-1">
-                      <span class="text-slate-400 font-bold">Cliente:</span>
-                      <p class="text-sm font-bold text-white">{{ order.cliente.nombre || 'Cliente San Pollo' }}</p>
-                      <div class="flex items-center gap-2 pt-1">
-                        @if (order.cliente.celular) {
-                          <a 
-                            [href]="'tel:' + order.cliente.celular"
-                            class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 flex items-center gap-1 transition font-mono font-bold"
-                          >
-                            <svg class="w-3.5 h-3.5 inline mr-1 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>{{ order.cliente.celular }}
-                          </a>
-                          <button 
-                            (click)="enviarWhatsAppCliente(order)"
-                            class="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white flex items-center gap-1 transition cursor-pointer font-bold"
-                            title="Enviar WhatsApp directo al cliente"
-                          >
-                            <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>WhatsApp
-                          </button>
-                        }
-                      </div>
-                    </div>
-
-                    <div class="space-y-1">
-                      <span class="text-slate-400 font-bold">Dirección de Entrega:</span>
-                      <p class="text-slate-200 font-medium">{{ order.cliente.direccion || 'Ica, Perú' }}</p>
-                      @if (order.cliente.referencia || order.notasGenerales) {
-                        <p class="text-[11px] text-slate-400 italic">Ref: {{ order.cliente.referencia || order.notasGenerales }}</p>
-                      }
-                      @if (order.cliente.direccion) {
-                        <a 
-                          [href]="'https://www.google.com/maps/search/?api=1&query=' + encodeUri(order.cliente.direccion + ', Ica, Peru')"
-                          target="_blank"
-                          class="inline-flex items-center gap-1 text-sky-400 hover:underline pt-1 font-bold"
-                        >
-                          <svg class="w-3.5 h-3.5 inline mr-1 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Ver en Google Maps / Waze
-                        </a>
-                      }
-                    </div>
-                  </div>
-
-                  <!-- Products Summary -->
-                  <div class="p-3 rounded-xl bg-black/40 border border-white/5 text-xs space-y-1">
-                    <span class="text-slate-400 font-bold block">Contenido del Pedido:</span>
-                    @for (item of order.items; track item.product.id) {
-                      <p class="text-slate-300"><strong class="text-white">{{ item.cantidad }}x</strong> {{ item.product.nombre }}</p>
-                    }
-                  </div>
-
-                  <!-- Action Buttons Steps -->
-                  <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
-                    <div class="text-xs text-slate-400">
-                      <span>Método de pago: </span>
-                      <span class="font-bold text-white font-mono">{{ order.metodoPago || 'CONTRAENTREGA' }}</span>
-                    </div>
-
-                    <div class="flex items-center gap-2">
-                      @if (order.estado === 'LISTO_COCINA') {
-                        <button 
-                          (click)="avanzarAReparto(order)"
-                          class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
-                        >
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Tomar y Empezar Reparto</span>
-                        </button>
-                      } @else if (order.estado === 'EN_PREPARACION' || order.estado === 'PAGADO' || order.estado === 'PENDIENTE_PAGO') {
-                        <span class="text-xs text-amber-400/90 font-medium px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>En cocina / horno — Aún no listo</span>
-                        </span>
-                      } @else if (order.estado === 'EN_REPARTO') {
-                        <button 
-                          (click)="abrirModalCobroEntrega(order)"
-                          class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider transition cursor-pointer shadow-lg animate-pulse flex items-center gap-1.5"
-                        >
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregar y Cobrar Pedido</span>
-                        </button>
-                      }
-                    </div>
-                  </div>
-
-                </div>
+                <app-delivery-order-card
+                  [order]="order"
+                  [canClaim]="!!miIdMotorizado()"
+                  [minutosEnPuerta]="calcularMinutosEnPuerta(order)"
+                  (onClaimOrder)="tomarPedido($event)"
+                  (onArrivedAtDoor)="marcarLlegadaEnPuerta($event)"
+                  (onMarkDelivered)="abrirModalCobroEntrega($event)"
+                  (onDeclareGhost)="declararFantasma($event)"
+                  (onSendWhatsApp)="enviarWhatsAppCliente($event)"
+                />
               }
             </div>
 
@@ -338,208 +126,36 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
 
         <!-- ================= TAB 2: MAPA DE RUTA ================= -->
         @if (activeTab() === 'MAPA_RUTA') {
-          <main class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-            
-            <div class="bg-[#14161a] p-4 rounded-2xl border border-white/10 shadow flex justify-between items-center">
-              <div>
-                <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                  <span>Ruta Satelital y Cobertura de Reparto en Ica</span>
-                </h2>
-                <p class="text-xs text-slate-400">Visualización de ruta optimizada desde el local (Av. San Martín) hacia las direcciones de entrega.</p>
-              </div>
-            </div>
-
-            <!-- Simulated Interactive Map Card -->
-            <div class="bg-[#14161a] rounded-2xl border border-white/10 p-6 shadow-xl relative overflow-hidden h-[420px] flex flex-col justify-between">
-              
-              <div class="absolute inset-0 opacity-20 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px]"></div>
-
-              <div class="relative z-10 flex items-center justify-between">
-                <div class="p-3 rounded-xl bg-polleria-crimson text-white font-bold text-xs flex items-center gap-2 shadow-lg">
-                  <span class="flex items-center gap-1.5"><svg class="w-4 h-4 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>Local San Pollo (Av. San Martín 450, Ica)</span>
-                </div>
-                <div class="text-xs font-mono text-sky-400 bg-black/60 px-3 py-1.5 rounded-xl border border-white/10">
-                  En ruta: {{ inRouteOrders().length }} pedidos
-                </div>
-              </div>
-
-              <!-- Markers List on Map -->
-              <div class="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                @for (order of inRouteOrders(); track order.id) {
-                  <div class="p-3 rounded-xl bg-black/70 border border-sky-500/30 text-xs space-y-1 shadow">
-                    <div class="flex justify-between items-center">
-                      <span class="font-bold text-white">Destino: #{{ getCodeNum(order.codigoSeguimiento) }}</span>
-                      <span class="text-sky-400 font-mono">{{ order.total | currencyPEN }}</span>
-                    </div>
-                    <p class="text-slate-300 truncate">{{ order.cliente.direccion || 'Ica' }}</p>
-                    <span class="text-[10px] text-amber-400 font-bold">{{ order.cliente.nombre }}</span>
-                  </div>
-                }
-              </div>
-
-              <!-- Map Footer -->
-              <div class="relative z-10 flex justify-between items-center text-xs text-slate-400 pt-3 border-t border-white/10">
-                <span>Zona de cobertura: Cercado Ica, San Joaquín, La Tinguiña, Parcona.</span>
-                <span class="text-emerald-400 font-bold">Base de despacho: San Martín</span>
-              </div>
-
-            </div>
-
-          </main>
+          <app-route-map [orders]="misEntregasActivas()" />
         }
 
         <!-- ================= TAB 3: COBROS & ARQUEO DE EFECTIVO ================= -->
         @if (activeTab() === 'COBROS_RENDICION') {
-          <main class="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full space-y-6">
-            
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Efectivo Cobrado Hoy</span>
-                <p class="font-display text-3xl font-black text-polleria-gold mt-1">{{ totalEfectivoARendir() | currencyPEN }}</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Digital (Tarjeta / Yape)</span>
-                <p class="font-display text-3xl font-black text-purple-400 mt-1">{{ totalDigitalCobrado() | currencyPEN }}</p>
-              </div>
-              <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 shadow">
-                <span class="text-xs text-slate-400 font-medium">Entregas Validadas</span>
-                <p class="font-display text-3xl font-black text-emerald-400 mt-1">{{ completedDeliveryOrders().length }}</p>
-              </div>
-            </div>
-
-            <!-- Rendición Form Card -->
-            <div class="bg-[#14161a] p-6 rounded-2xl border border-white/10 shadow-xl space-y-4">
-              <div class="pb-3 border-b border-white/10">
-                <h3 class="text-base font-bold text-white">Hoja de Liquidación de Caja al Administrador</h3>
-                <p class="text-xs text-slate-400">Rinde los cobros en efectivo acumulados durante el turno para liberar tu cuenta.</p>
-              </div>
-
-              <div class="space-y-3 text-xs">
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Total en Efectivo por Entregar en Caja:</span>
-                  <span class="font-display text-xl font-bold text-polleria-gold">{{ totalEfectivoARendir() | currencyPEN }}</span>
-                </div>
-
-                <div class="flex justify-between items-center p-3 rounded-xl bg-white/5">
-                  <span class="text-slate-300">Base / Fondo de Vueltos Inicial:</span>
-                  <span class="font-mono text-white font-bold">S/. 100.00</span>
-                </div>
-              </div>
-
-              <button 
-                (click)="rendirCajaModal()"
-                class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-              >
-                <svg class="w-4 h-4 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Rendir Efectivo y Cerrar Liquidación
-              </button>
-            </div>
-
-          </main>
+          <app-cash-settlement
+            [totalEfectivo]="totalEfectivoARendir()"
+            [totalDigital]="totalDigitalCobrado()"
+            [completadasCount]="completedDeliveryOrders().length"
+            [pendiente]="efectivoPendiente()"
+            [errorPendiente]="errorEfectivoPendiente()"
+            (refrescar)="cargarEfectivoPendiente()"
+          />
         }
 
         <!-- ================= TAB 4: HISTORIAL DE ENTREGAS DEL DÍA ================= -->
         @if (activeTab() === 'HISTORIAL') {
-          <main class="flex-1 p-4 sm:p-6 max-w-6xl mx-auto w-full space-y-6">
-            
-            <div class="bg-[#14161a] rounded-2xl border border-white/10 overflow-hidden shadow">
-              <div class="p-4 border-b border-white/10 flex justify-between items-center">
-                <h3 class="text-sm font-bold text-white">Historial de Repartos Completados</h3>
-                <span class="text-xs text-slate-400">Total: {{ completedDeliveryOrders().length }} pedidos</span>
-              </div>
-
-              <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs text-slate-300">
-                  <thead class="bg-black/40 text-[11px] uppercase tracking-wider text-slate-400 border-b border-white/10">
-                    <tr>
-                      <th class="p-3">Pedido</th>
-                      <th class="p-3">Cliente</th>
-                      <th class="p-3">Dirección</th>
-                      <th class="p-3">Método Pago</th>
-                      <th class="p-3">Monto</th>
-                      <th class="p-3">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-white/5">
-                    @for (order of completedDeliveryOrders(); track order.id) {
-                      <tr class="hover:bg-white/5">
-                        <td class="p-3 font-mono font-bold text-white">#{{ getCodeNum(order.codigoSeguimiento) }}</td>
-                        <td class="p-3 font-bold">{{ order.cliente.nombre }}</td>
-                        <td class="p-3 text-slate-400">{{ order.cliente.direccion }}</td>
-                        <td class="p-3 font-mono text-sky-400">{{ order.metodoPago || 'CONTRAENTREGA' }}</td>
-                        <td class="p-3 font-display font-bold text-polleria-gold">{{ order.total | currencyPEN }}</td>
-                        <td class="p-3">
-                          <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                            <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Entregado
-                          </span>
-                        </td>
-                      </tr>
-                    } @empty {
-                      <tr>
-                        <td colspan="6" class="p-8 text-center text-slate-500">
-                          Aún no se han completado entregas en este turno.
-                        </td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-          </main>
+          <app-delivery-history [orders]="completedDeliveryOrders()" />
         }
 
         <!-- ================= MODAL COBRO CONTRAENTREGA ================= -->
-        @if (selectedOrderModal()) {
-          <div class="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <div class="bg-[#14161a] w-full max-w-lg rounded-3xl border border-white/15 p-6 space-y-4 shadow-2xl">
-              
-              <div class="flex justify-between items-start pb-3 border-b border-white/10">
-                <div>
-                  <h3 class="font-display text-2xl font-bold text-white">Confirmar Entrega y Cobro</h3>
-                  <span class="text-xs text-slate-400">Orden #{{ getCodeNum(selectedOrderModal()?.codigoSeguimiento || '') }} • {{ selectedOrderModal()?.cliente?.nombre }}</span>
-                </div>
-                <button (click)="selectedOrderModal.set(null)" class="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer" aria-label="Cerrar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-              </div>
-
-              <!-- Detalle de Cobro -->
-              <div class="space-y-3 text-xs">
-                <div class="p-4 rounded-xl bg-white/5 flex justify-between items-center">
-                  <span class="text-slate-300 font-bold">Total a Cobrar:</span>
-                  <span class="font-display text-2xl font-black text-polleria-gold">
-                    {{ selectedOrderModal()?.total | currencyPEN }}
-                  </span>
-                </div>
-
-                @if (selectedOrderModal()?.metodoPago === 'EFECTIVO_CONTRAENTREGA' || !selectedOrderModal()?.metodoPago) {
-                  <div class="p-4 rounded-xl bg-black/40 border border-white/10 space-y-3">
-                    <label class="font-bold text-slate-300 block">Calculadora de Vuelto:</label>
-                    <div class="flex items-center gap-2">
-                      <span class="text-slate-400">Cliente paga con S/.:</span>
-                      <input 
-                        type="number" 
-                        [(ngModel)]="montoPagaCliente"
-                        class="w-28 px-3 py-1.5 rounded-xl bg-black border border-white/20 text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-polleria-gold"
-                      />
-                    </div>
-                    <div class="pt-2 border-t border-white/10 flex justify-between items-center text-sm font-bold">
-                      <span class="text-slate-400">Vuelto a entregar:</span>
-                      <span class="font-mono text-emerald-400">
-                        {{ calcularVuelto() | currencyPEN }}
-                      </span>
-                    </div>
-                  </div>
-                }
-
-                <button 
-                  (click)="confirmarCobroYEntrega()"
-                  class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-                >
-                  <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Confirmar Cobrado y Entregado
-                </button>
-              </div>
-
-            </div>
-          </div>
+        @if (selectedOrderModal(); as modalOrder) {
+          <app-delivery-confirm-modal
+            [order]="modalOrder"
+            [montoPagaCliente]="montoPagaCliente"
+            [vuelto]="calcularVuelto()"
+            (onClose)="selectedOrderModal.set(null)"
+            (onMontoChange)="montoPagaCliente = $event"
+            (onConfirm)="confirmarCobroYEntrega()"
+          />
         }
 
       </div>
@@ -549,6 +165,9 @@ export type DeliverySubFilter = 'TODAS' | 'POR_RECOGER' | 'EN_RUTA';
 export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly paymentService = inject(PaymentService);
+  private readonly financeService = inject(FinanceService);
+  readonly efectivoPendiente = signal<BackendEfectivoPendienteLiquidacion | null>(null);
+  readonly errorEfectivoPendiente = signal<string | null>(null);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -562,24 +181,47 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   montoPagaCliente = 100;
 
   readonly deliveryOrders = computed(() =>
-    this.ordersService.orders().filter(o => (o.tipo || 'DELIVERY').toUpperCase() === 'DELIVERY')
+    this.ordersService.orders().filter(o => o.tipo === 'DELIVERY')
   );
 
-  readonly activeDeliveryOrders = computed(() =>
-    this.deliveryOrders().filter(o => !['COMPLETADO', 'CANCELADO'].includes(o.estado))
-  );
+  /** Identidad real del motorizado autenticado (claim `userId` del JWT). */
+  readonly miIdMotorizado = computed(() => leerUserIdDelToken(this.auth.getAccessToken()));
 
+  /** S10 — pedidos que el backend ofrece al repartidor (delivery LISTO sin repartidor). */
+  readonly pedidosDisponibles = computed(() => this.ordersService.pedidosDisponibles());
+
+  /**
+   * S6.6 — Cola compartida: pedidos DELIVERY listos en cocina que todavía no tienen motorizado.
+   * Un pedido ya asignado (a mí o a otro) no es un pedido disponible.
+   */
   readonly readyForPickupOrders = computed(() =>
-    this.activeDeliveryOrders().filter(o => o.estado === 'LISTO_COCINA')
+    this.deliveryOrders().filter(o => o.estado === 'LISTO_COCINA' && o.repartidorId == null)
   );
 
-  readonly inRouteOrders = computed(() =>
-    this.activeDeliveryOrders().filter(o => o.estado === 'EN_REPARTO')
-  );
+  /**
+   * S6.6 — Mis entregas activas: lo que ya es mío, en ruta o asignado y todavía listo.
+   * Si el admin me lo asignó antes de despachar, tiene que verlo aquí aunque siga LISTO.
+   */
+  readonly misEntregasActivas = computed(() => {
+    const miId = this.miIdMotorizado();
+    if (!miId) return [];
+    return this.deliveryOrders().filter(
+      o => o.repartidorId === miId && (o.estado === 'EN_REPARTO' || o.estado === 'EN_PUERTA' || o.estado === 'LISTO_COCINA')
+    );
+  });
 
-  readonly completedDeliveryOrders = computed(() =>
-    this.deliveryOrders().filter(o => o.estado === 'COMPLETADO')
-  );
+  /** S6.6 — Historial del día: entregas completadas por mí. */
+  readonly completedDeliveryOrders = computed(() => {
+    const miId = this.miIdMotorizado();
+    if (!miId) return [];
+    return this.deliveryOrders().filter(o => o.estado === 'COMPLETADO' && o.repartidorId === miId);
+  });
+
+  /** `TODAS` = disponibles + mis entregas activas. */
+  readonly activeDeliveryOrders = computed(() => [
+    ...this.readyForPickupOrders(),
+    ...this.misEntregasActivas()
+  ]);
 
   readonly filteredActiveDeliveryOrders = computed(() => {
     const filter = this.subFilter();
@@ -587,7 +229,7 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
       return this.readyForPickupOrders();
     }
     if (filter === 'EN_RUTA') {
-      return this.inRouteOrders();
+      return this.misEntregasActivas();
     }
     return this.activeDeliveryOrders();
   });
@@ -595,10 +237,20 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     if (isPlatformBrowser(this.platformId)) {
       this.ordersService.loadActiveOrders();
+      this.cargarDisponibles();
       this.pollingSub = interval(2500).subscribe(() => {
         this.ordersService.loadActiveOrders();
+        this.cargarDisponibles();
       });
     }
+  }
+
+  /** S10 — recarga la lista de disponibles con el mismo sondeo de la pantalla (sin tiempo real nuevo). */
+  private cargarDisponibles(): void {
+    this.ordersService.listarDisponiblesParaEntrega().subscribe({
+      next: () => undefined,
+      error: () => undefined
+    });
   }
 
   ngOnDestroy(): void {
@@ -608,7 +260,12 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
   }
 
   getCodeNum(code: string): string {
-    return code ? code.replace('POL-', '') : '1001';
+    return getCodeNum(code);
+  }
+
+  /** Cantidad total de unidades del pedido (suma de cantidades, no líneas del carrito). */
+  cantidadItems(order: Order): number {
+    return cantidadItems(order);
   }
 
   getActiveTabLabel(): string {
@@ -623,13 +280,13 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
 
   totalEfectivoARendir(): number {
     return this.completedDeliveryOrders()
-      .filter(o => o.metodoPago === 'EFECTIVO_CONTRAENTREGA' || !o.metodoPago)
+      .filter(o => esContraPago(o))
       .reduce((acc, o) => acc + o.total, 0);
   }
 
   totalDigitalCobrado(): number {
     return this.completedDeliveryOrders()
-      .filter(o => o.metodoPago && o.metodoPago !== 'EFECTIVO_CONTRAENTREGA')
+      .filter(o => !esContraPago(o))
       .reduce((acc, o) => acc + o.total, 0);
   }
 
@@ -637,17 +294,82 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     return encodeURIComponent(str);
   }
 
-  avanzarAReparto(order: Order): void {
+  /**
+   * S10 — el motorizado toma un pedido listo de la cola compartida.
+   *
+   * Un pedido **sin dueño** se reclama con `POST /ordenes/{id}/reclamo`: el backend asigna el
+   * repartidor del token de forma atómica (el segundo intento recibe 409) y **no cambia el estado**.
+   * Un pedido **ya asignado a mí** inicia la ruta (LISTO → EN_REPARTO), que es el paso explícito
+   * del repartidor con el pedido ya en mano.
+   *
+   * Si no hay identidad no se envía nada: un `repartidorId` nulo dejaría el pedido sin dueño.
+   */
+  tomarPedido(order: Order): void {
+    const miId = this.miIdMotorizado();
+    if (!miId) {
+      this.notify.showError('No se pudo identificar tu usuario. Vuelve a iniciar sesión para tomar pedidos.');
+      return;
+    }
+    if (order.tipo !== 'DELIVERY') {
+      this.notify.showError('Esta orden pertenece a salón o recojo y no puede ser tomada para delivery.');
+      return;
+    }
     if (order.estado !== 'LISTO_COCINA') {
       this.notify.showError('El pedido aún está en preparación en cocina. Espera que esté listo.');
       return;
     }
-    this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO').subscribe({
+    if (order.repartidorId != null && order.repartidorId !== miId) {
+      this.ordersService.loadActiveOrders();
+      this.cargarDisponibles();
+      this.notify.showError(`La orden #${this.getCodeNum(order.codigoSeguimiento)} ya fue tomada por otro motorizado.`);
+      return;
+    }
+
+    if (order.repartidorId === miId) {
+      // Ya es mío: corresponde iniciar la ruta. Comportamiento previo de este botón.
+      this.ordersService.updateOrderStatus(order.id, 'EN_REPARTO', miId).subscribe({
+        next: () => {
+          this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)} e iniciaste el reparto`);
+        },
+        error: () => {
+          this.notify.showError(`Error al tomar la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+        }
+      });
+      return;
+    }
+
+    // Sin dueño: reclamo atómico. La pantalla se refresca con lo que responde el backend.
+    this.ordersService.reclamarPedido(order.id).subscribe({
       next: () => {
-        this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} en ruta de entrega`);
+        this.cargarDisponibles();
+        this.ordersService.loadActiveOrders();
+        this.notify.showSuccess(`Tomaste la orden #${this.getCodeNum(order.codigoSeguimiento)}`);
       },
-      error: () => {
-        this.notify.showError(`Error al iniciar reparto de orden #${this.getCodeNum(order.codigoSeguimiento)}`);
+      error: (err: Error) => {
+        // El 409 puede ser que otro llegó primero, que el pedido dejó de estar LISTO, o un
+        // reintento del mismo repartidor. Se consulta la verdad y se refresca; si el pedido
+        // quedó asignado a él, se muestra como suyo en vez de como un error.
+        this.ordersService.obtenerOrden(order.id).subscribe({
+          next: actual => {
+            const esMio = actual.repartidorId != null && actual.repartidorId === miId;
+            if (esMio) {
+              this.ordersService.orders.update(prev =>
+                prev.some(o => o.id === actual.id)
+                  ? prev.map(o => o.id === actual.id ? actual : o)
+                  : [actual, ...prev]);
+              this.notify.showSuccess(`La orden #${this.getCodeNum(order.codigoSeguimiento)} ya está asignada a ti`);
+            } else {
+              this.notify.showError(err.message);
+            }
+            this.cargarDisponibles();
+            this.ordersService.loadActiveOrders();
+          },
+          error: () => {
+            this.notify.showError(err.message);
+            this.cargarDisponibles();
+            this.ordersService.loadActiveOrders();
+          }
+        });
       }
     });
   }
@@ -665,19 +387,70 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
 
   abrirModalCobroEntrega(order: Order): void {
     this.selectedOrderModal.set(order);
-    this.montoPagaCliente = order.total <= 50 ? 50 : 100;
+    this.montoPagaCliente = order.montoPagaCon ? Number(order.montoPagaCon) : (order.total <= 50 ? 50 : 100);
+  }
+
+  marcarLlegadaEnPuerta(order: Order): void {
+    this.ordersService.marcarEnPuerta(order.id).subscribe({
+      next: () => {
+        this.notify.showSuccess('¡Estás en la puerta!', 'Inició el cronómetro de 30 min y se avisó al cliente por WhatsApp.');
+        this.ordersService.loadActiveOrders();
+      },
+      error: (err) => {
+        this.notify.showError('Error al marcar en puerta', err?.message);
+      }
+    });
+  }
+
+  calcularMinutosEnPuerta(order: Order): number {
+    if (!order.enPuertaAt) return 0;
+    const inicio = new Date(order.enPuertaAt).getTime();
+    const ahora = Date.now();
+    const difMin = Math.floor((ahora - inicio) / 60000);
+    return difMin > 0 ? difMin : 0;
+  }
+
+  declararFantasma(order: Order): void {
+    const confirmar = confirm(`¿Declarar el Pedido #${this.getCodeNum(order.codigoSeguimiento)} como Pedido Fantasma?\nEsto bloqueará al cliente y devolverás el producto al local.`);
+    if (!confirmar) return;
+
+    this.ordersService.declararPedidoFantasma(order.id, 'NO_ENTREGADO: Cliente no salió a la puerta tras 30 min').subscribe({
+      next: () => {
+        this.notify.showInfo('Pedido Fantasma declarado', 'Devuelve el producto a caja para registro de merma.');
+        this.ordersService.loadActiveOrders();
+      },
+      error: (err) => {
+        this.notify.showError('Error al declarar pedido fantasma', err?.message);
+      }
+    });
   }
 
   calcularVuelto(): number {
     const o = this.selectedOrderModal();
     if (!o) return 0;
     const vuelto = this.montoPagaCliente - o.total;
-    return vuelto > 0 ? vuelto : 0;
+    return vuelto > 0 ? Math.round(vuelto * 100) / 100 : 0;
   }
 
   confirmarCobroYEntrega(): void {
     const order = this.selectedOrderModal();
-    if (order) {
+    if (!order) return;
+
+    if (esContraPago(order)) {
+      // Registro obligatorio de cobro en efectivo en payments-service
+      const vuelto = this.calcularVuelto();
+      this.paymentService.registrarCobroEfectivo(order.id, order.total, this.montoPagaCliente, vuelto).subscribe({
+        next: () => {
+          this.selectedOrderModal.set(null);
+          this.notify.showSuccess(`¡Cobro de S/ ${order.total.toFixed(2)} registrado y pedido ENTREGADO!`);
+          this.ordersService.loadActiveOrders();
+        },
+        error: (err) => {
+          this.notify.showError('Error al registrar cobro en efectivo', err?.message);
+        }
+      });
+    } else {
+      // Pedido ya pagado digitalmente
       this.ordersService.updateOrderStatus(order.id, 'COMPLETADO').subscribe({
         next: () => {
           this.selectedOrderModal.set(null);
@@ -690,8 +463,25 @@ export class RepartidorDeliveryComponent implements OnInit, OnDestroy {
     }
   }
 
-  rendirCajaModal(): void {
-    this.notify.showSuccess('Arqueo de Efectivo Enviado', 'Se ha notificado al Administrador el cierre de caja.');
+  cambiarTab(tab: DeliveryTab): void {
+    this.activeTab.set(tab);
+    if (tab === 'COBROS_RENDICION') this.cargarEfectivoPendiente();
+  }
+
+  /** Cash still to hand in, computed by finance-service from the registered cash payments (S6). */
+  cargarEfectivoPendiente(): void {
+    const miId = this.miIdMotorizado();
+    if (!miId) return;
+    this.errorEfectivoPendiente.set(null);
+    this.financeService.obtenerEfectivoPendienteLiquidacion(miId).subscribe({
+      next: (pendiente) => this.efectivoPendiente.set(pendiente),
+      error: (err) => {
+        this.efectivoPendiente.set(null);
+        this.errorEfectivoPendiente.set(err?.status === 404
+          ? 'No tienes una liquidación abierta. Pide al Cajero que la abra antes de salir a repartir.'
+          : mensajeBackend(err, 'No se pudo obtener el efectivo pendiente de liquidar'));
+      }
+    });
   }
 
   cerrarSesion(): void {

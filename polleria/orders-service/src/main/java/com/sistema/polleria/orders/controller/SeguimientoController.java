@@ -42,4 +42,13 @@ public class SeguimientoController {
     public ResponseEntity<List<OrdenResponse>> pedidos(@RequestHeader("X-Seguimiento-Token") String token) {
         return ResponseEntity.ok(seguimientoService.listarPedidos(token));
     }
+
+    // POST /ordenes/seguimiento/{id}/cancelar   Header: X-Seguimiento-Token
+    // El invitado cancela su propio pedido con el celular ya verificado. Ruta solo de cancelación:
+    // no acepta estados arbitrarios, así que no reemplaza el flujo operativo de cocina y reparto.
+    @PostMapping("/{id}/cancelar")
+    public ResponseEntity<OrdenResponse> cancelar(@PathVariable Long id,
+                                                  @RequestHeader("X-Seguimiento-Token") String token) {
+        return ResponseEntity.ok(seguimientoService.cancelarPedido(id, token));
+    }
 }

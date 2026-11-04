@@ -87,3 +87,14 @@ npm run build
 - **Amber Gold:** `#f59e0b` (Dorado al horno)
 - **Dark Charcoal:** `#0c0d0e` / `#141618` (Carbón & Elegancia)
 - **Background:** `#f8fafc` (Slate limpio con tarjetas glassmorphism)
+
+---
+
+## Proxy de desarrollo (`proxy.conf.json`)
+
+`ng serve` carga `proxy.conf.json`, que redirige rutas relativas a los microservicios locales
+(`/auth` 8081; `/ordenes`, `/productos`, `/mesas`, `/zonas`, `/ws-polleria` 8082; `/pagos` 8083;
+`/feedback` 8085; `/inventario` 8086; `/finanzas` 8087; `/incidentes` 8088; `/api/notificaciones` 3001).
+Hoy `environment.development.ts` sigue usando URLs absolutas (`http://localhost:80xx`), por lo que el proxy
+solo se activa al apuntar esas URLs a rutas relativas (por ejemplo `''`). No se cambio para no alterar el comportamiento.
+Las llamadas HTTP de ordenes, pagos, finanzas e incidentes viven en `src/app/core/api/*`.

@@ -24,6 +24,9 @@ class ReseniaServiceTest {
     @Mock
     private ReseniaRepository reseniaRepository;
 
+    @Mock
+    private OrdersClient ordersClient;
+
     @InjectMocks
     private ReseniaService reseniaService;
 
@@ -33,6 +36,7 @@ class ReseniaServiceTest {
     void setUp() {
         request = CrearReseniaRequest.builder()
                 .ordenId(10L)
+                .productoId(3L)
                 .calificacion(5)
                 .comentario("Excelente sabor y rapidez")
                 .build();
@@ -53,6 +57,7 @@ class ReseniaServiceTest {
         assertEquals(10L, response.getOrdenId());
         assertEquals(5, response.getCalificacion());
         assertEquals("Excelente sabor y rapidez", response.getComentario());
+        verify(ordersClient).obtenerYValidarOrden(10L, 1L, false);
         verify(reseniaRepository).save(any(Resenia.class));
     }
 
@@ -69,9 +74,9 @@ class ReseniaServiceTest {
 
     @Test
     void testObtenerResumenProductoCalculaPromedio() {
-        Resenia r1 = Resenia.builder().id(1L).calificacion(5).build();
-        Resenia r2 = Resenia.builder().id(2L).calificacion(4).build();
-        when(reseniaRepository.findAllByOrderByCreadoEnDesc()).thenReturn(List.of(r1, r2));
+        Resenia r1 = Resenia.builder().id(1L).productoId(3L).calificacion(5).visible(true).build();
+        Resenia r2 = Resenia.builder().id(2L).productoId(3L).calificacion(4).visible(true).build();
+        when(reseniaRepository.findByProductoIdAndVisibleTrueOrderByCreadoEnDesc(3L)).thenReturn(List.of(r1, r2));
 
         ProductoReseniasResponse response = reseniaService.obtenerResumenProducto(3L);
 

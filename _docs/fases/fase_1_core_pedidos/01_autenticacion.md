@@ -280,7 +280,7 @@ GET /auth/validate
 - **Refresh Token Rotation (RTR):** En cada petición a `/auth/refresh`, el token actual se invalida y se genera uno nuevo.
 - **Detección Automática de Reuso:** Si un atacante intenta utilizar un refresh token revocado, el sistema detecta la anomalía e invalida automáticamente **todas** las sesiones activas del usuario afectado.
 - Claims: `sub` (email), `role`, `userId`
-- El mismo `JWT_SECRET` se comparte entre los 3 microservicios
+- El mismo `JWT_SECRET` se comparte entre **los 7 servicios Spring Boot** (y el `notification-service` de Node valida el mismo token para `GET /historial` y `GET /qr`). Está declarado como `jwt.secret=${JWT_SECRET}` **sin valor por defecto**: si la variable falta en el despliegue, el servicio no arranca.
 
 ### Bloqueo por IP (RF05)
 - Tras **5 intentos fallidos** consecutivos desde la misma IP → bloqueo por **15 minutos**

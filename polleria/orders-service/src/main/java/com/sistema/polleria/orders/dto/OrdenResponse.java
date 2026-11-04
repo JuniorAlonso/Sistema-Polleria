@@ -14,6 +14,7 @@ public class OrdenResponse {
     private Long id;
     private Integer numeroCliente;
     private OrdenTipo tipo;
+    private CanalOrigen canalOrigen;
     private OrdenEstado estado;
     private Long clienteId;
     private Long mozoId;
@@ -27,6 +28,15 @@ public class OrdenResponse {
     private String observaciones;
     private LocalDateTime creadoEn;
     private LocalDateTime actualizadoEn;
+    private LocalDateTime servidoEn;
+    private Long servidoPor;
+    private LocalDateTime enPuertaAt;
+    private LocalDateTime listoAt;
+    private Integer intentosLlamada;
+    private BigDecimal montoPagaCon;
+    private BigDecimal vueltoEstimado;
+    private String motivoFantasma;
+    private Boolean requiereCobroEfectivo;
     private List<ItemResponse> items;
 
     @Data
@@ -56,6 +66,7 @@ public class OrdenResponse {
                 .id(o.getId())
                 .numeroCliente(o.getNumeroCliente())
                 .tipo(o.getTipo())
+                .canalOrigen(o.getCanalOrigen())
                 .estado(o.getEstado())
                 .clienteId(o.getClienteId())
                 .mozoId(o.getMozoId())
@@ -69,6 +80,15 @@ public class OrdenResponse {
                 .observaciones(o.getObservaciones())
                 .creadoEn(o.getCreadoEn())
                 .actualizadoEn(o.getActualizadoEn())
+                .servidoEn(o.getServidoEn())
+                .servidoPor(o.getServidoPor())
+                .enPuertaAt(o.getEnPuertaAt())
+                .listoAt(o.getListoAt())
+                .intentosLlamada(o.getIntentosLlamada())
+                .montoPagaCon(o.getMontoPagaCon())
+                .vueltoEstimado(o.getVueltoEstimado())
+                .motivoFantasma(o.getMotivoFantasma())
+                .requiereCobroEfectivo(Boolean.TRUE.equals(o.getRequiereCobroEfectivo()))
                 .items(items)
                 .build();
     }

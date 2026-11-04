@@ -7,6 +7,7 @@ import com.sistema.polleria.orders.entity.Mesa;
 import com.sistema.polleria.orders.entity.MesaEstado;
 import com.sistema.polleria.orders.entity.Orden;
 import com.sistema.polleria.orders.entity.OrdenEstado;
+import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.MesaRepository;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -28,20 +32,39 @@ public class MesaService {
 
     private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
             OrdenEstado.ENTREGADO,
-            OrdenEstado.CANCELADO
+            OrdenEstado.CANCELADO,
+            OrdenEstado.PEDIDO_FANTASMA
     );
 
     public List<MesaResponse> listarTodas() {
         return listarTodas(false);
     }
 
+    @Transactional(readOnly = true)
     public List<MesaResponse> listarTodas(boolean incluirInactivas) {
         List<Mesa> mesas = incluirInactivas
                 ? mesaRepository.findAll()
                 : mesaRepository.findByActivoTrueOrderByNumeroAsc();
 
+        if (mesas.isEmpty()) {
+            return List.of();
+        }
+
+        // Una sola consulta para todas las comandas activas del salón. Antes se hacía una
+        // consulta por mesa (N+1) y cada cliente que hace polling multiplicaba la carga.
+        List<Long> mesaIds = mesas.stream().map(Mesa::getId).toList();
+        Map<Long, Orden> activasPorMesa = ordenRepository
+                .findByMesaIdInAndEstadoNotIn(mesaIds, ESTADOS_TERMINALES)
+                .stream()
+                .collect(Collectors.toMap(o -> o.getMesa().getId(), Function.identity(), (a, b) -> a));
+
         return mesas.stream()
-                .map(this::mapearMesaConOrdenActiva)
+                .map(mesa -> {
+                    Orden activa = mesa.getEstado() != MesaEstado.LIBRE
+                            ? activasPorMesa.get(mesa.getId())
+                            : null;
+                    return MesaResponse.from(mesa, activa != null ? OrdenActivaResponse.from(activa) : null);
+                })
                 .toList();
     }
 
@@ -152,7 +175,24 @@ public class MesaService {
                     actual, nuevoEstado, actual, transicionesPermitidas(actual)
             );
             log.warn(errorMsg);
-            throw new IllegalStateException(errorMsg);
+            throw new ConflictoDeEstadoException(errorMsg);
+        }
+
+        // Liberar o pasar a limpieza una mesa con comanda activa dejaba la comanda huérfana:
+        // la mesa quedaba LIBRE, mapearMesaConOrdenActiva ocultaba la comanda y no había forma
+        // de cobrarla. Primero se cobra o se cancela; forzar=true sigue siendo el override.
+        if (!esForzado && (nuevoEstado == MesaEstado.LIBRE || nuevoEstado == MesaEstado.EN_LIMPIEZA)) {
+            List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
+            if (!comandasActivas.isEmpty()) {
+                Orden comanda = comandasActivas.get(0);
+                String errorMsg = String.format(
+                        "No se puede pasar la mesa #%d a %s porque tiene la comanda #%d en estado %s. "
+                        + "Cóbrala o cancélala antes de liberar la mesa.",
+                        mesa.getNumero(), nuevoEstado, comanda.getId(), comanda.getEstado()
+                );
+                log.warn(errorMsg);
+                throw new ConflictoDeEstadoException(errorMsg);
+            }
         }
 
         mesa.setEstado(nuevoEstado);
@@ -203,7 +243,7 @@ public class MesaService {
 
         List<Orden> ordenesActivas = ordenRepository.findByMesaIdAndEstadoNotIn(id, ESTADOS_TERMINALES);
         if (!ordenesActivas.isEmpty()) {
-            throw new IllegalStateException("No se puede dar de baja la mesa #" + mesa.getNumero() + " porque tiene una comanda activa en curso");
+            throw new ConflictoDeEstadoException("No se puede dar de baja la mesa #" + mesa.getNumero() + " porque tiene una comanda activa en curso");
         }
 
         // Soft delete para garantizar integridad con el histórico de órdenes y reportes
@@ -217,6 +257,18 @@ public class MesaService {
 
     public Mesa buscarOFallar(Long id) {
         return mesaRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Mesa no encontrada: " + id));
+    }
+
+    /**
+     * Igual que {@link #buscarOFallar(Long)} pero tomando un bloqueo pesimista sobre la fila
+     * de la mesa. Debe invocarse dentro de una transacción; el bloqueo se libera al confirmar.
+     * Se usa al abrir una comanda de salón para que la verificación de comanda activa y la
+     * creación de la orden sean una única operación atómica.
+     */
+    @Transactional
+    public Mesa buscarOFallarConBloqueo(Long id) {
+        return mesaRepository.buscarConBloqueo(id)
                 .orElseThrow(() -> new NoSuchElementException("Mesa no encontrada: " + id));
     }
 

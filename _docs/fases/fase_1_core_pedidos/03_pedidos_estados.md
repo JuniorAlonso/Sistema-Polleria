@@ -14,6 +14,7 @@
 | `id` | `Long` | PK, auto-increment |
 | `tipo` | `OrdenTipo` (enum) | Not null |
 | `estado` | `OrdenEstado` (enum) | Not null, default `RECIBIDO` |
+| `canalOrigen` | `CanalOrigen` (enum) | Nullable, max 10. Canal por el que entró el pedido (S1) |
 | `clienteId` | `Long` | ID del usuario (del JWT) |
 | `mozoId` | `Long` | ID del mozo que tomó el pedido |
 | `repartidorId` | `Long` | ID del repartidor asignado |
@@ -48,6 +49,25 @@ SALON, DELIVERY, RECOJO
 ```java
 RECIBIDO, EN_PREPARACION, LISTO, EN_CAMINO, ENTREGADO, CANCELADO
 ```
+
+### CanalOrigen (Enum)
+```java
+WEB, WHATSAPP, SALON
+```
+
+Registra **por qué canal entró** el pedido (S1), para medir y auditar los pedidos de WhatsApp. La
+columna es **nullable** a propósito: las filas creadas antes de esta columna no tienen canal y no
+se rompen (`ddl-auto=update` agrega la columna solo). El alta nueva siempre lo resuelve:
+
+| Caso | Canal resultante |
+| :--- | :--- |
+| El request manda `canalOrigen` | El que mandó (debe ser `WEB`, `WHATSAPP` o `SALON`) |
+| Sin `canalOrigen` y `tipo = SALON` | `SALON` |
+| Sin `canalOrigen` y cualquier otro tipo | `WEB` |
+
+Ese default (decisión de L5) es lo que mantiene compatible al checkout web actual, que no manda el
+campo; el bot de WhatsApp manda `WHATSAPP` explícito. Un canal desconocido (p. ej. `TELEGRAM`)
+responde `400` por deserialización y **no** crea pedido.
 
 ---
 
@@ -89,12 +109,47 @@ RECIBIDO, EN_PREPARACION, LISTO, EN_CAMINO, ENTREGADO, CANCELADO
 | `RECIBIDO` | `EN_PREPARACION`, `CANCELADO` |
 | `EN_PREPARACION` | `LISTO`, `CANCELADO` |
 | `LISTO` (SALON/RECOJO) | `ENTREGADO` |
-| `LISTO` (DELIVERY) | `EN_CAMINO` |
+| `LISTO` (DELIVERY) | `EN_CAMINO`, `ENTREGADO` |
 | `EN_CAMINO` | `ENTREGADO`, `CANCELADO` |
 | `ENTREGADO` | _(estado final)_ |
 | `CANCELADO` | _(estado final)_ |
 
 Cualquier transición inválida retorna `400: "Transición de estado inválida: X → Y"`.
+
+**Quién puede mover el pedido (flujo obligatorio):**
+
+| Quién | Alcance |
+| :--- | :--- |
+| `ADMIN`, `MOZO`, `COCINA`, `REPARTIDOR` | Cualquier pedido, cualquier transición válida |
+| Microservicio con `X-Internal-Key` (`payments-service`) | Cualquier pedido (así propaga el resultado del pago) |
+| `CLIENTE` | **Solo su propio pedido, y solo a `CANCELADO`** |
+
+El cliente no puede enviar `EN_PREPARACION`, `LISTO` ni `ENTREGADO`: el avance por cocina y
+reparto lo gestiona la pollería. Un intento de avanzar su propio pedido responde `403` con el
+cuerpo genérico del manejador de acceso denegado
+(`{"error":"No tienes permisos para esta acción","status":403}` — el mismo que cualquier otro
+rechazo de rol, para no revelar la regla interna); un intento sobre el pedido de otro responde
+`404` (misma convención que `GET /ordenes/{id}`, para no revelar qué pedidos existen).
+
+Comprobado en vivo contra el stack levantado, con un token `CLIENTE` del dueño del pedido:
+`GET /ordenes/{id}` → `200` y `PATCH` a `EN_PREPARACION`, `LISTO` y `ENTREGADO` → `403`, con el
+estado del pedido intacto tras los tres intentos.
+
+**Cancelación del invitado (S5):** un pedido anónimo (`clienteId = 0`) no tiene dueño autenticado,
+así que `PATCH /ordenes/{id}/estado` le respondía `404` y el cliente que pidió sin cuenta no podía
+cancelar. El invitado que ya verificó su celular con el código de WhatsApp cancela por una ruta
+solo de cancelación, con la misma identidad temporal que usa el seguimiento:
+
+| Quién | Alcance |
+| :--- | :--- |
+| Invitado con `X-Seguimiento-Token` | `POST /ordenes/seguimiento/{id}/cancelar`: cancela **su propio** pedido (el `telefonoCliente` canónico coincide con el celular del token) mientras no esté en estado terminal |
+
+Un pedido ajeno o inexistente responde `404` (misma convención anti-enumeración que
+`GET /ordenes/{id}`); un token ausente, inválido o vencido responde `400`; un pedido ya `ENTREGADO` responde `400`
+por la máquina de estados; y volver a cancelar uno ya `CANCELADO` responde `200` sin cambios, porque la
+máquina corta cuando el estado destino es el mismo (idempotente). La cancelación se delega en
+`OrdenService.actualizarEstado(...)`, de modo que el log, la liberación de mesa y la notificación
+son exactamente los mismos que en una cancelación hecha por el personal.
 
 ---
 
@@ -151,6 +206,7 @@ POST /ordenes
 | Campo | Tipo | Obligatorio | Validación |
 | :--- | :--- | :---: | :--- |
 | `tipo` | `string` | ✅ | Enum: `SALON`, `DELIVERY`, `RECOJO` |
+| `canalOrigen` | `string` | ❌ | Enum: `WEB`, `WHATSAPP`, `SALON`. Sin él se deriva `SALON` para salón y `WEB` para el resto |
 | `mesaId` | `number` | Solo SALON | Obligatorio si `tipo = SALON` |
 | `direccionEntrega` | `string` | Solo DELIVERY | Obligatorio si `tipo = DELIVERY` |
 | `referencia` | `string` | ❌ | — |
@@ -167,6 +223,7 @@ POST /ordenes
 {
   "id": 42,
   "tipo": "DELIVERY",
+  "canalOrigen": "WEB",
   "estado": "RECIBIDO",
   "clienteId": 7,
   "mozoId": null,
@@ -322,6 +379,53 @@ PATCH /ordenes/{id}/estado
 
 **Comportamiento adicional:**
 - Cuando una orden `SALON` pasa a `ENTREGADO` o `CANCELADO`, la mesa asociada se libera automáticamente (estado → `LIBRE`).
+
+---
+
+### 8. Listar Pedidos Disponibles para Entrega (RF18)
+
+```
+GET /ordenes/disponibles
+```
+
+**Acceso:** 🔒 Solo `ADMIN`, `REPARTIDOR`
+
+Retorna los pedidos que el repartidor puede tomar: de tipo `DELIVERY`, en estado `LISTO` y sin
+`repartidorId`. Ordenados del más viejo al más nuevo. No aparecen los pedidos de salón, ni los de
+recojo, ni los delivery que la cocina todavía no terminó, ni los que ya tomó otro repartidor.
+
+**Response `200 OK`:** `OrdenResponse[]`
+
+---
+
+### 9. Tomar un Pedido para Entrega — Reclamo Atómico (RF18)
+
+```
+POST /ordenes/{id}/reclamo
+```
+
+**Acceso:** 🔒 Solo `ADMIN`, `REPARTIDOR`
+
+Asigna el pedido al repartidor autenticado (`repartidorId` = `userId` del JWT). No recibe cuerpo.
+
+**Response `200 OK`:** `OrdenResponse` con `repartidorId` asignado y **el estado sin cambios**
+(sigue en `LISTO`). Pasar a `EN_CAMINO` sigue siendo un `PATCH /ordenes/{id}/estado` aparte, que
+ya exige tener repartidor asignado.
+
+**Errores:**
+| Código | Cuándo |
+| :--- | :--- |
+| `404` | El pedido no existe |
+| `409` | El pedido ya fue tomado por un repartidor (`"El pedido #N ya fue tomado por un repartidor."`) |
+| `409` | No es `DELIVERY` (`"Solo los pedidos de delivery se pueden tomar para entrega…"`) |
+| `409` | Es `DELIVERY` pero no está `LISTO` (`"El pedido #N todavía no está listo para entregar…"`) |
+| `403` | Un rol que no reparte (`CLIENTE`, `MOZO`, `COCINA`, `CAJERO`) intenta tomarlo |
+
+**Reclamo atómico (S10):** el reparto de un pedido no puede duplicarse. El servicio toma la fila
+con bloqueo pesimista (`buscarConBloqueo`) más el `@Version` de la entidad, así que si dos
+repartidores reclaman a la vez uno recibe `200` y el otro `409`; en la base queda un único
+`repartidorId`. Lo prueba `ReclamoPedidoConcurrenteTest` (seis reclamos simultáneos, exactamente
+un ganador).
 
 ---
 

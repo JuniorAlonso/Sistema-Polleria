@@ -1,9 +1,13 @@
-export type MotivoMerma = 
-  | 'VENCIMIENTO' 
-  | 'MAL_ESTADO' 
-  | 'ERROR_COCINA' 
-  | 'CAIDA' 
-  | 'COCCION_EXCESIVA' 
+/**
+ * Debe coincidir 1:1 con MotivoMerma del inventory-service
+ * (polleria/inventory-service/.../entity/MotivoMerma.java). El backend rechaza
+ * con 400 cualquier valor que no pertenezca a su enum.
+ */
+export type MotivoMerma =
+  | 'VENCIMIENTO'
+  | 'MAL_ESTADO'
+  | 'ERROR_COCINA'
+  | 'CAIDA'
   | 'OTRO';
 
 export type InsumoCategoria = 'CARNES' | 'VERDURAS' | 'ABARROTES' | 'BEBIDAS' | 'CONDIMENTOS' | 'DESCARTABLES' | 'OTRO';
@@ -58,14 +62,15 @@ export interface CrearDespachoRequest {
   }[];
 }
 
+/**
+ * Refleja MermaResponse del inventory-service. El backend no envía unidad de
+ * medida, costo de pérdida ni responsable: para la unidad se cruza el insumo.
+ */
 export interface Merma {
   id: number;
   insumoId: number;
   insumoNombre: string;
   cantidad: number;
-  unidad?: string;
-  costoPerdida?: number;
-  responsable?: string;
   motivo: MotivoMerma;
   justificacion?: string;
   registradoPor?: number;
@@ -74,14 +79,20 @@ export interface Merma {
 
 export type RegistroMerma = Merma;
 
+/** Refleja RegistrarMermaRequest del inventory-service. */
 export interface RegistrarMermaRequest {
   insumoId: number;
   cantidad: number;
   motivo: MotivoMerma;
   justificacion?: string;
-  responsable?: string;
 }
 
+/**
+ * Refleja AlertaStockResponse del inventory-service: es una alerta por umbral
+ * (stockActual <= stockMinimoAlerta), no una predicción. El backend no envía
+ * consumo diario, días restantes ni sugerencia, así que el frontend no los
+ * inventa.
+ */
 export interface AlertaStock {
   insumoId: number;
   insumoNombre: string;
@@ -89,11 +100,7 @@ export interface AlertaStock {
   stockMinimoAlerta: number;
   unidadMedida: string;
   nivelCriticidad?: 'ALTO' | 'CRITICO';
-  nivelSeveridad?: 'ALTA' | 'CRITICA' | 'CRITICO' | 'ALTO';
   mensaje: string;
-  consumoDiarioEstimado?: number;
-  diasRestantesEstimados?: number;
-  sugerencia?: string;
 }
 
 export interface RentabilidadInventario {
