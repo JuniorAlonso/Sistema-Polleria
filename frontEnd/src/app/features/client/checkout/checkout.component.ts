@@ -11,6 +11,21 @@ import { NotificationService } from '../../../core/services/notification.service
 import { Order, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { environment } from '../../../../environments/environment';
+
+import { PLATFORM_ID } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+
+declare const MercadoPago: any;
+
+const PEDIDO_PENDIENTE_MP_KEY = 'sanpollo.mpPedidoPendiente';
+
+/** Pedido ya registrado que espera el pago en Mercado Pago (para reintentos y la página de retorno). */
+interface PedidoPendienteMp {
+  id: string;
+  codigo: string;
+  firma: string;
+}
 
 @Component({
   selector: 'app-checkout',
@@ -516,6 +531,9 @@ export class CheckoutComponent implements OnInit {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
   }
 
+  payWithMercadoPago(): void {
+    const celularLimpio = this.validarDatosPedido();
+    if (!celularLimpio) return;
   /**
    * Backend message first (`error.error` / `error.message`, then the Spring ProblemDetail `detail`);
    * never the generic HttpErrorResponse text.
@@ -658,56 +676,33 @@ export class CheckoutComponent implements OnInit {
 
   private procesarMercadoPagoTarjeta(celularCliente: string): void {
     this.isProcessing.set(true);
-    const currentUser = this.auth.currentUser();
+    const totalAPagar = this.cart.total();
+    const firma = this.firmaCarrito();
 
-    const orderData: Order = {
-      id: '0',
-      codigoSeguimiento: '',
-      cliente: {
-        nombre: currentUser?.nombre || 'Cliente San Pollo',
-        celular: celularCliente,
-        correo: currentUser?.correo,
-        direccion: this.tipoPedido() === 'DELIVERY' ? this.direccion : 'Recojo en Tienda San Pollo Principal',
-        referencia: this.instrucciones
-      },
-      items: [...this.cart.items()],
-      tipo: this.tipoPedido(),
-      // Opens waiting for payment; the backend expires it after 15 min if never paid.
-      estado: 'PENDIENTE_PAGO',
-      metodoPago: 'TARJETA',
-      subtotal: this.cart.subtotal(),
-      costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
-      descuento: 0,
-      total: this.totalPagar(),
-      notasGenerales: this.instrucciones,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    // Retry after a preference failure: ask for the SAME order, never create a second one.
-    if (this.ordenTarjetaPendiente) {
-      this.pagarConTarjeta(this.ordenTarjetaPendiente);
+    // Si el cliente vuelve de Mercado Pago sin pagar y reintenta con el mismo carrito,
+    // se reutiliza el pedido ya creado en vez de registrar uno nuevo.
+    const pendiente = this.leerPedidoPendienteMp();
+    if (pendiente && pendiente.firma === firma) {
+      this.redirigirAMercadoPago(pendiente.id, totalAPagar);
       return;
     }
 
-    this.ordersService.createOrder(orderData).subscribe({
+    // El pedido real se registra primero; la preferencia de Mercado Pago apunta a su ID
+    // para que el webhook pueda aprobar el pago y avanzar ese pedido (RF21).
+    this.ordersService.createOrder(this.construirOrden(celularLimpio, 'TARJETA')).subscribe({
       next: (createdOrder) => {
-        this.ordenTarjetaPendiente = createdOrder;
-        this.pagarConTarjeta(createdOrder);
+        this.guardarPedidoPendienteMp({ id: createdOrder.id, codigo: createdOrder.codigoSeguimiento, firma });
+        this.redirigirAMercadoPago(createdOrder.id, totalAPagar);
       },
       error: (err) => {
         this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.notify.showError('No se pudo registrar tu pedido', err?.message || 'Intenta nuevamente.');
       }
     });
   }
 
-  private pagarConTarjeta(createdOrder: Order): void {
-    const realOrderId = typeof createdOrder.id === 'number'
-      ? createdOrder.id
-      : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
-
-    this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
+  private redirigirAMercadoPago(ordenId: string, totalAPagar: number): void {
+    this.paymentService.crearPreferenciaMercadoPago(ordenId, totalAPagar).subscribe({
       next: (pref) => {
         this.isProcessing.set(false);
         const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
@@ -776,6 +771,14 @@ export class CheckoutComponent implements OnInit {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+  }
+
+  confirmOrder(): void {
+    const celularLimpio = this.validarDatosPedido();
+    if (!celularLimpio) return;
+
+    this.isProcessing.set(true);
+    const orderData = this.construirOrden(celularLimpio, this.metodoPago());
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
