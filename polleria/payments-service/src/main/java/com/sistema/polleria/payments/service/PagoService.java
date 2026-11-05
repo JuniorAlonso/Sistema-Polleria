@@ -85,7 +85,7 @@ public class PagoService {
         com.sistema.polleria.payments.gateway.PaymentGateway gateway = paymentGatewayService.seleccionar(request.metodoPago());
         GatewayResult result = gateway.procesar(request, clienteId);
 
-        Pago pago = new Pago();
+        Pago pago = pagoRepository.findByOrdenId(request.ordenId()).orElseGet(Pago::new);
         pago.setOrdenId(request.ordenId());
         pago.setClienteId(clienteId);
         pago.setMonto(request.monto());

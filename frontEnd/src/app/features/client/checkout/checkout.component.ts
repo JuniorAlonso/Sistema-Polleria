@@ -713,6 +713,20 @@ export class CheckoutComponent implements OnInit {
         const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
         if (redirectUrl) {
           this.ordenTarjetaPendiente = null;
+          try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+              localStorage.setItem('sanpollo_last_order', JSON.stringify({
+                id: createdOrder.id,
+                code: createdOrder.codigoSeguimiento,
+                codigo: createdOrder.codigoSeguimiento,
+                total: createdOrder.total,
+                estado: createdOrder.estado
+              }));
+              localStorage.setItem('sanpollo_current_order', JSON.stringify(createdOrder));
+            }
+          } catch (e) {
+            console.warn('No se pudo guardar la orden en localStorage', e);
+          }
           this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
           setTimeout(() => {
             window.location.href = redirectUrl;
