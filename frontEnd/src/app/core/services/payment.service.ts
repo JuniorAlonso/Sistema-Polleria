@@ -191,59 +191,41 @@ export class PaymentService {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const montoFinal = Math.round(monto * 100) / 100;
 
-    return this.http.post<{
-      preferenceId: string;
-      initPoint: string;
-      sandboxInitPoint: string;
-      pagoId: number;
-      ordenId: number;
-    }>(`${this.API_URL}/pagos/mercadopago/preferencia`, {
+    return this.api.crearPreferenciaMercadoPago({
       ordenId: cleanOrderId,
       monto: montoFinal,
       metodoPago: 'TARJETA'
-    }).pipe(
-      catchError(() => {
-        // === INTENTO 2 (fallback): llamar a MP vía proxy de Angular (/mp-api) ===
-        // El proxy redirige /mp-api → https://api.mercadopago.com  (sin CORS)
-        const mpToken = 'APP_USR-2733300582350003-082916-7d60b458fb460f2ef2eb803852c0935e-3645988283';
-        const body = {
-          items: [
-            {
-              id: String(cleanOrderId),
-              title: `Pedido #${cleanOrderId} - El San Pollo`,
-              description: 'Consumo pollería / delivery',
-              quantity: 1,
-              currency_id: 'PEN',
-              unit_price: montoFinal
-            }
-          ],
-          back_urls: {
-            success: 'http://localhost:4200/tracking',
-            failure: 'http://localhost:4200/checkout?status=failure',
-            pending: 'http://localhost:4200/checkout?status=pending'
-          },
-          external_reference: String(cleanOrderId)
-        };
+    });
+  }
 
-        // Usa /mp-api/checkout/preferences (proxy evita CORS en navegador)
-        return this.http.post<any>('/mp-api/checkout/preferences', body, {
-          headers: {
-            Authorization: `Bearer ${mpToken}`,
-            'Content-Type': 'application/json'
-          }
-        }).pipe(
-          map(mpRes => ({
-            preferenceId: mpRes.id,
-            initPoint: mpRes.init_point,
-            sandboxInitPoint: mpRes.sandbox_init_point || mpRes.init_point,
-            pagoId: Date.now(),
-            ordenId: cleanOrderId
-          }))
-        );
-      })
+  /**
+   * Cobro directo con Yape integrado en Mercado Pago (OTP 6 dígitos).
+   */
+  pagarConYapeOtp(
+    ordenId: number | string,
+    monto: number,
+    telefono: string,
+    otp: string,
+    email?: string
+  ): Observable<PaymentTransaction> {
+    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const body = {
+      ordenId: cleanId,
+      monto: Math.round(monto * 100) / 100,
+      telefono: telefono.replace(/\D/g, ''),
+      otp: otp.trim(),
+      email: email?.trim()
+    };
+
+    return this.api.pagarConYapeOtp(body).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
+      tap(tx => this.lastTransaction.set(tx))
     );
   }
 
+  /**
+   * Registro obligatorio de cobro en efectivo antes de completar la entrega (ContraPago).
+   */
   registrarCobroEfectivo(
     ordenId: number | string,
     monto: number,

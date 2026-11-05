@@ -32,7 +32,6 @@ import java.util.Set;
 public class OrdenController {
 
     private static final Set<String> ROLES_PERSONAL = Set.of("ADMIN", "MOZO", "COCINA", "REPARTIDOR", "CAJERO");
-    private static final Set<String> ROLES_CAMBIO_ESTADO = Set.of("ADMIN", "MOZO", "COCINA", "REPARTIDOR", "CLIENTE");
 
     private final OrdenService ordenService;
 
@@ -224,10 +223,6 @@ public class OrdenController {
         return ResponseEntity.ok(ordenService.listarActivosYCompletadosHoy());
     }
 
-    /**
-     * Cambio de estado por el personal/cliente (JWT) o por payments-service con la clave interna
-     * (p. ej. el webhook de Mercado Pago, que no trae JWT de usuario).
-     */
     @PatchMapping("/{id}/estado")
     @PreAuthorize("hasAnyAuthority('ADMIN','MOZO','COCINA','REPARTIDOR','CLIENTE','CAJERO')")
     public ResponseEntity<OrdenResponse> actualizarEstado(
@@ -272,12 +267,8 @@ public class OrdenController {
     }
 
     private boolean esPersonal(Authentication authentication) {
-        return tieneAlgunRol(authentication, ROLES_PERSONAL);
-    }
-
-    private boolean tieneAlgunRol(Authentication authentication, Set<String> roles) {
         return authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(a -> roles.contains(a.getAuthority()));
+                .anyMatch(a -> ROLES_PERSONAL.contains(a.getAuthority()));
     }
 
     private boolean esDueno(Authentication authentication, OrdenResponse orden) {

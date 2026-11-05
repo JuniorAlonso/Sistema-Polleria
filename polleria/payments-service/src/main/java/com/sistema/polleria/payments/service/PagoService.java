@@ -18,7 +18,7 @@ import com.sistema.polleria.payments.gateway.PaymentGatewayService;
 import com.sistema.polleria.payments.repository.PagoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -45,9 +45,10 @@ public class PagoService {
     private final OrdenesClient ordenesClient;
     private final AlmacenComprobantes almacenComprobantes;
 
-    @Value("${orders.service.internal-key:}")
-    private String ordersInternalKey;
-
+    /**
+     * Minutes, counted from the order creation, during which a Yape/Plin capture can still be
+     * approved. Matches the 15-minute PENDIENTE_PAGO timeout of orders-service.
+     */
     @Value("${pagos.comprobante.ventana-minutos:15}")
     private long ventanaMinutos = 15;
 
@@ -535,27 +536,16 @@ public class PagoService {
      * automáticamente el estado del pedido a EN_PREPARACION (RF21).
      * Se delega a {@link NotificadorOrden} para que @Async realmente se aplique.
      */
-    @Async
     private void notificarOrdenAsync(Long ordenId, String bearerToken) {
-        log.info("Pago aprobado para orden {} — notificando a orders-service", ordenId);
-        if (ordersRestClient != null) {
-            try {
-                var spec = ordersRestClient.patch()
-                        .uri("/ordenes/{id}/estado", ordenId)
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .body(java.util.Map.of("estado", "EN_PREPARACION"));
-                if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
-                    spec.header("X-Internal-Key", ordersInternalKey);
-                }
-                if (bearerToken != null && !bearerToken.isBlank()) {
-                    spec.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
-                }
-                spec.retrieve().toBodilessEntity();
-                log.info("Orden {} actualizada automáticamente a EN_PREPARACION en orders-service", ordenId);
-            } catch (Exception e) {
-                log.warn("No se pudo notificar automáticamente a orders-service para orden {}: {}", ordenId, e.getMessage());
-            }
-        }
+        notificadorOrden.notificarPagoAprobado(ordenId, bearerToken);
+    }
+
+    /**
+     * Notifica cualquier cambio de estado a orders-service autenticándose con
+     * la clave interna X-Internal-Key (o Bearer token si está disponible).
+     */
+    public void notificarOrdenEstadoAsync(Long ordenId, String nuevoEstado, String bearerToken) {
+        notificadorOrden.notificarEstado(ordenId, nuevoEstado, bearerToken);
     }
 
     /**
