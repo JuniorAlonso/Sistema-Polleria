@@ -333,7 +333,7 @@ try {
     Write-Host "OK - Liquidacion cerrada! Estado: $($liqCierreResp.estado) - Diferencia: S/ $($liqCierreResp.diferencia)" -ForegroundColor Green
 
     # -------------------------------------------------------------------------
-    Write-Step "15. Protocolo de Pedido Fantasma, Sancion y Control de Merma"
+    Write-Step "15. Protocolo de Pedido Fantasma y Sancion"
     # -------------------------------------------------------------------------
     $fantasmaPayload = @{
         tipo             = "DELIVERY"
@@ -371,17 +371,6 @@ try {
     Write-Host "   Sancionado: $($sancionCheck.sancionado)"
     Write-Host "   Bloqueado Efectivo: $($sancionCheck.bloqueadoEfectivo)"
     Write-Host "   Motivo: $($sancionCheck.motivo)"
-
-    # Resolver producto devuelto en Inventario como Merma Justificada
-    $mermaPayload = @{
-        ordenId       = $fantasmaId
-        ordenTipo     = "DELIVERY"
-        destino       = "MERMA_JUSTIFICADA"
-        observaciones = "Pollo frio devuelto tras espera en puerta"
-    } | ConvertTo-Json
-
-    $mermaResp = Invoke-RestMethod -Uri "http://localhost:8085/inventario/pedidos-fantasma/resolver" -Method Post -Headers $authAdminHeaders -Body $mermaPayload -ContentType "application/json"
-    Write-Host "OK - Resolucion en Almacen completada: Destino: $($mermaResp.destino) - Merma ID: $($mermaResp.mermaId)" -ForegroundColor Green
 
     Write-Host "`nTODAS LAS PRUEBAS COMPLETADAS EXITOSAMENTE SIN NINGUN ERROR!" -ForegroundColor Green
 } catch {

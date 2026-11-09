@@ -32,7 +32,6 @@
         <module>orders-service</module>
         <module>payments-service</module>
         <module>feedback-service</module>
-        <module>inventory-service</module>
         <module>finance-service</module>
         <module>incident-service</module>
     </modules>

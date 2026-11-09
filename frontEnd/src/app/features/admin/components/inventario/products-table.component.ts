@@ -104,7 +104,9 @@ export class ProductsTableComponent {
 
   emitirStock(id: Product['id'], valor: string): void {
     const limpio = valor.trim();
-    const stock = limpio === '' ? null : Math.max(0, Math.floor(Number(limpio)));
+    // A negative value is sent as is so the backend rejects it with its message, instead of being
+    // silently turned into 0 (which would mark the dish as sold out).
+    const stock = limpio === '' ? null : Math.floor(Number(limpio));
     if (stock !== null && Number.isNaN(stock)) return;
     this.stockChanged.emit({ id, stock });
   }

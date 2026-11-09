@@ -2,9 +2,7 @@
 -- SCRIPT DE SEMILLAS PARA DESARROLLO LOCAL (POLLERÍA SAN POLLO)
 -- Añade:
 -- 1. Carta completa de Productos con imágenes locales de /assets/images/
--- 2. Insumos del Almacén Central de Inventario
--- 3. Despachos y Lotes de Insumos hacia Cocina (RF23)
--- 4. Registro de Mermas por vencimiento de lote (RF24)
+--    (el inventario es el stock de cada plato: productos.stock, NULL = sin control)
 -- ============================================================
 
 BEGIN;
@@ -40,130 +38,11 @@ DELETE FROM productos WHERE id IN (11, 12);
 SELECT setval(pg_get_serial_sequence('productos', 'id'), COALESCE(MAX(id), 1)) FROM productos;
 
 -- ------------------------------------------------------------
--- 2. INSUMOS DE ALMACÉN CENTRAL (INVENTORY-SERVICE)
+-- 2. EXTENSIÓN DE ESQUEMA OPERATIVO: DELIVERY, RECOJO, COMPROBANTES Y SANCIONES
 -- ------------------------------------------------------------
-INSERT INTO insumos (nombre, unidad_medida, stock_actual, stock_minimo_alerta, costo_unitario)
-VALUES 
-    ('Pollo Entero Fresco Eviscerado (Calibre 2.2kg)', 'UNIDAD', 120.00, 25.00, 18.50),
-    ('Papa Amarilla Seleccionada para Fritura', 'KG', 250.00, 50.00, 3.80),
-    ('Carbón Vegetal de Algarrobo', 'KG', 300.00, 60.00, 3.20),
-    ('Aceite Vegetal para Fritura Profunda', 'LITRO', 80.00, 20.00, 7.50),
-    ('Corazón de Res Marinado para Anticuchos', 'KG', 35.00, 10.00, 22.00),
-    ('Maíz Morado Culli Seleccionado', 'KG', 50.00, 12.00, 5.50),
-    ('Masa Wantán y Queso Andino (Tequeños)', 'UNIDAD', 180.00, 40.00, 0.80),
-    ('Salchicha Frankfurter Ahumada', 'KG', 30.00, 8.00, 16.00),
-    ('Ají Amarillo y Rocoto (Base Cremas)', 'KG', 40.00, 10.00, 4.50),
-    ('Verduras Frescas para Ensalada (Lechuga/Tomate)', 'KG', 55.00, 15.00, 3.00)
-ON CONFLICT (nombre) DO UPDATE 
-SET stock_actual = EXCLUDED.stock_actual,
-    stock_minimo_alerta = EXCLUDED.stock_minimo_alerta,
-    costo_unitario = EXCLUDED.costo_unitario;
 
--- Ajustar la secuencia de insumos
-SELECT setval(pg_get_serial_sequence('insumos', 'id'), COALESCE(MAX(id), 1)) FROM insumos;
-
--- ------------------------------------------------------------
--- 3. DESPACHOS Y LOTES DE INSUMOS HACIA COCINA (RF23)
--- ------------------------------------------------------------
-DELETE FROM despacho_items WHERE observaciones LIKE 'Lote LOT-%';
-DELETE FROM despachos_cocina WHERE solicitante_nombre LIKE 'Chef Mario%';
-
--- Despacho 1: Horno de Brasa
-INSERT INTO despachos_cocina (solicitante_id, solicitante_nombre, fecha_despacho)
-VALUES (4, 'Chef Mario - Horno de Brasa', NOW() - INTERVAL '3 hours');
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    30.00,
-    'Lote LOT-POL-2408 (30 aves calibre 2.2kg) - Estación Horno Principal'
-FROM insumos WHERE nombre = 'Pollo Entero Fresco Eviscerado (Calibre 2.2kg)';
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    75.00,
-    'Lote LOT-CAR-0044 (3 sacos x 25kg) - Carga Horno de Brasa'
-FROM insumos WHERE nombre = 'Carbón Vegetal de Algarrobo';
-
--- Despacho 2: Cocina Caliente & Fritura
-INSERT INTO despachos_cocina (solicitante_id, solicitante_nombre, fecha_despacho)
-VALUES (4, 'Chef Mario - Cocina Caliente', NOW() - INTERVAL '2 hours');
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    50.00,
-    'Lote LOT-PAP-1102 (50 kg seleccionada) - Pelado y corte para fritura'
-FROM insumos WHERE nombre = 'Papa Amarilla Seleccionada para Fritura';
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    15.00,
-    'Lote LOT-ACE-3021 (Bidón 15L) - Recambio freidoras automáticas'
-FROM insumos WHERE nombre = 'Aceite Vegetal para Fritura Profunda';
-
--- Despacho 3: Parrilla y Bar
-INSERT INTO despachos_cocina (solicitante_id, solicitante_nombre, fecha_despacho)
-VALUES (4, 'Chef Mario - Parrilla y Bar', NOW() - INTERVAL '45 minutes');
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    12.00,
-    'Lote LOT-ANT-0815 (12 kg en brochetas) - Estación Parrilla'
-FROM insumos WHERE nombre = 'Corazón de Res Marinado para Anticuchos';
-
-INSERT INTO despacho_items (despacho_id, insumo_id, insumo_nombre, cantidad, observaciones)
-SELECT 
-    currval(pg_get_serial_sequence('despachos_cocina', 'id')),
-    id,
-    nombre,
-    10.00,
-    'Lote LOT-CHI-1204 (10 kg maíz culli) - Preparación Chicha Morada 50L'
-FROM insumos WHERE nombre = 'Maíz Morado Culli Seleccionado';
-
--- ------------------------------------------------------------
--- 4. MERMAS DE INSUMOS POR CONTROL DE CALIDAD Y VENCIMIENTO (RF24)
--- ------------------------------------------------------------
-DELETE FROM mermas WHERE justificacion LIKE '%Lote LOT-%';
-
-INSERT INTO mermas (insumo_id, insumo_nombre, cantidad, motivo, justificacion, registrado_por, fecha)
-SELECT 
-    id,
-    nombre,
-    2.50,
-    'VENCIMIENTO',
-    'Vencimiento de Lote LOT-PAP-1090 por exceso de humedad en almacén',
-    4,
-    NOW() - INTERVAL '1 day'
-FROM insumos WHERE nombre = 'Papa Amarilla Seleccionada para Fritura';
-
-INSERT INTO mermas (insumo_id, insumo_nombre, cantidad, motivo, justificacion, registrado_por, fecha)
-SELECT 
-    id,
-    nombre,
-    1.00,
-    'ERROR_COCINA',
-    'Sobre-cocción de 1 pollo en horno de Lote LOT-POL-2408',
-    4,
-    NOW() - INTERVAL '5 hours'
-FROM insumos WHERE nombre = 'Pollo Entero Fresco Eviscerado (Calibre 2.2kg)';
-
--- ------------------------------------------------------------
--- 5. EXTENSIÓN DE ESQUEMA OPERATIVO: DELIVERY, RECOJO, COMPROBANTES Y SANCIONES
--- ------------------------------------------------------------
+-- Stock por plato (orders-service lo descuenta al pedir). NULL = el plato no lleva control de stock.
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS stock INT;
 
 -- Columnas operativas en ordenes para SLAs, motorizado en puerta y contrapago
 ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS en_puerta_at TIMESTAMP;
@@ -253,6 +132,21 @@ ALTER TABLE liquidaciones_repartidores ADD COLUMN IF NOT EXISTS diferencia_efect
 ALTER TABLE pagos ADD COLUMN IF NOT EXISTS repartidor_id BIGINT;
 ALTER TABLE pagos ADD COLUMN IF NOT EXISTS liquidacion_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_pagos_repartidor_id ON pagos (repartidor_id);
+
+-- Cobros / rendición de efectivo a repartidores por entrega ContraPago (finance-service)
+CREATE TABLE IF NOT EXISTS cobros_repartidores (
+    id                  BIGSERIAL PRIMARY KEY,
+    repartidor_id       BIGINT NOT NULL,
+    monto               NUMERIC(10, 2) NOT NULL CHECK (monto > 0),
+    arqueo_caja_id      BIGINT,
+    cobrado_por         BIGINT NOT NULL,
+    fecha               TIMESTAMP NOT NULL DEFAULT NOW(),
+    observaciones       VARCHAR(255),
+    liquidacion_id      BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_cobros_repartidores_repartidor ON cobros_repartidores(repartidor_id);
+CREATE INDEX IF NOT EXISTS idx_cobros_repartidores_fecha ON cobros_repartidores(fecha);
+CREATE INDEX IF NOT EXISTS idx_cobros_repartidores_liquidacion ON cobros_repartidores(liquidacion_id);
 
 -- Sanciones y bloqueos permanentes de cliente (auth-service / incident-service)
 CREATE TABLE IF NOT EXISTS sanciones_cliente (
