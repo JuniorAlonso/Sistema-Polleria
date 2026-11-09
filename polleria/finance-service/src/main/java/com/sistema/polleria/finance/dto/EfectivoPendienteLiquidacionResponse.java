@@ -13,6 +13,18 @@ public record EfectivoPendienteLiquidacionResponse(
         LocalDateTime desde,
         BigDecimal total,
         int cantidad,
-        List<PagosClient.EfectivoPendiente.Item> pagos
+        List<PagosClient.EfectivoPendiente.Item> pagos,
+        BigDecimal totalCobrado,
+        BigDecimal totalRendido
 ) {
+    public EfectivoPendienteLiquidacionResponse(
+            Long repartidorId,
+            Long liquidacionId,
+            LocalDateTime desde,
+            BigDecimal total,
+            int cantidad,
+            List<PagosClient.EfectivoPendiente.Item> pagos
+    ) {
+        this(repartidorId, liquidacionId, desde, total, cantidad, pagos, total, BigDecimal.ZERO);
+    }
 }

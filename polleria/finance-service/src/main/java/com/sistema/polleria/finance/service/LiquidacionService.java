@@ -1,11 +1,9 @@
 package com.sistema.polleria.finance.service;
 
-import com.sistema.polleria.finance.dto.AperturaLiquidacionRequest;
-import com.sistema.polleria.finance.dto.CierreLiquidacionRequest;
-import com.sistema.polleria.finance.dto.EfectivoPendienteLiquidacionResponse;
-import com.sistema.polleria.finance.dto.LiquidacionResponse;
+import com.sistema.polleria.finance.dto.*;
 import com.sistema.polleria.finance.entity.*;
 import com.sistema.polleria.finance.repository.ArqueoCajaRepository;
+import com.sistema.polleria.finance.repository.CobroRepartidorRepository;
 import com.sistema.polleria.finance.repository.LiquidacionRepartidorRepository;
 import com.sistema.polleria.finance.repository.MovimientoCajaRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +22,7 @@ import java.util.NoSuchElementException;
 public class LiquidacionService {
 
     private final LiquidacionRepartidorRepository liquidacionRepository;
+    private final CobroRepartidorRepository cobroRepartidorRepository;
     private final ArqueoCajaRepository arqueoRepository;
     private final MovimientoCajaRepository movimientoRepository;
     private final PagosClient pagosClient;
@@ -69,6 +68,53 @@ public class LiquidacionService {
 
         log.info("Liquidación abierta #{} para repartidor {} con fondo de S/ {}",
                 liq.getId(), req.repartidorNombre(), req.fondoInicial());
+
+        return LiquidacionResponse.from(liq);
+    }
+
+    @Transactional
+    public LiquidacionResponse recargarFondo(Long id, RecargaFondoRequest req, Long cajeroId) {
+        LiquidacionRepartidor liq = liquidacionRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Liquidación no encontrada: " + id));
+
+        if (liq.getEstado() != EstadoLiquidacion.ABIERTA) {
+            throw new IllegalStateException("Solo se puede recargar fondo a una liquidación ABIERTA (estado actual: " + liq.getEstado() + ")");
+        }
+
+        if (req.monto() == null || req.monto().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("El monto a recargar debe ser mayor a 0");
+        }
+
+        var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
+        if (arqueoOpt.isEmpty()) {
+            throw new IllegalStateException("No hay caja abierta para registrar el egreso de efectivo");
+        }
+
+        BigDecimal fondoPrevio = liq.getFondoInicial() != null ? liq.getFondoInicial() : BigDecimal.ZERO;
+        BigDecimal nuevoFondo = fondoPrevio.add(req.monto());
+        liq.setFondoInicial(nuevoFondo);
+        if (req.motivo() != null && !req.motivo().isBlank()) {
+            String obs = liq.getObservaciones() != null ? liq.getObservaciones() + " | " : "";
+            liq.setObservaciones(obs + "Recarga fondo S/ " + req.monto() + ": " + req.motivo());
+        }
+        liq = liquidacionRepository.save(liq);
+
+        String motivoEgreso = "Recarga de fondo de vueltos a repartidor " + liq.getRepartidorNombre()
+                + " (Liq #" + liq.getId() + ")"
+                + (req.motivo() != null && !req.motivo().isBlank() ? ": " + req.motivo() : "");
+
+        MovimientoCaja egreso = MovimientoCaja.builder()
+                .arqueoId(arqueoOpt.get().getId())
+                .tipo(TipoMovimiento.EGRESO)
+                .monto(req.monto())
+                .motivo(motivoEgreso)
+                .registradoPor(cajeroId)
+                .fecha(LocalDateTime.now())
+                .build();
+        movimientoRepository.save(egreso);
+
+        log.info("Recarga de fondo S/ {} aplicada a liquidación #{} del repartidor {}. Fondo acumulado: S/ {}",
+                req.monto(), liq.getId(), liq.getRepartidorNombre(), nuevoFondo);
 
         return LiquidacionResponse.from(liq);
     }
@@ -121,6 +167,11 @@ public class LiquidacionService {
         BigDecimal esperado = liq.getFondoInicial().add(totalEsperadoEfectivo);
         BigDecimal diferencia = req.totalRendido().subtract(esperado);
 
+        // Prevenir duplicación en caja: descontar cobros parciales que ya ingresaron a caja chica
+        BigDecimal totalRendidoPrevio = cobroRepartidorRepository.sumMontoByLiquidacionId(liq.getId());
+        if (totalRendidoPrevio == null) totalRendidoPrevio = BigDecimal.ZERO;
+        BigDecimal incrementalCierre = req.totalRendido().subtract(totalRendidoPrevio);
+
         liq.setTotalCobradoEfectivo(totalCobrado);
         liq.setTotalEsperadoEfectivo(totalEsperadoEfectivo);
         liq.setDiferenciaEfectivo(totalCobrado.subtract(totalEsperadoEfectivo));
@@ -140,18 +191,30 @@ public class LiquidacionService {
                     liq.getId(), bearer);
         }
 
-        // Registrar ingreso del efectivo total rendido en la caja activa del cajero
+        // Registrar ingreso del remanente efectivo en la caja activa del cajero (solo el incremental para no duplicar)
         var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
-        if (arqueoOpt.isPresent() && req.totalRendido().compareTo(BigDecimal.ZERO) > 0) {
+        if (arqueoOpt.isPresent() && incrementalCierre.compareTo(BigDecimal.ZERO) > 0) {
             MovimientoCaja ingreso = MovimientoCaja.builder()
                     .arqueoId(arqueoOpt.get().getId())
                     .tipo(TipoMovimiento.INGRESO)
-                    .monto(req.totalRendido())
+                    .monto(incrementalCierre)
                     .motivo("Rendición y liquidación de repartidor " + liq.getRepartidorNombre() + " (Liq #" + liq.getId() + ")")
                     .registradoPor(cajeroId)
                     .fecha(LocalDateTime.now())
                     .build();
             movimientoRepository.save(ingreso);
+
+            // Registrar también en el libro mayor de cobros a repartidores
+            CobroRepartidor cobroCierre = CobroRepartidor.builder()
+                    .repartidorId(liq.getRepartidorId())
+                    .monto(incrementalCierre)
+                    .arqueoCajaId(arqueoOpt.get().getId())
+                    .cobradoPor(cajeroId)
+                    .fecha(LocalDateTime.now())
+                    .observaciones("Cierre y liquidación final (Liq #" + liq.getId() + ")")
+                    .liquidacionId(liq.getId())
+                    .build();
+            cobroRepartidorRepository.save(cobroCierre);
         }
 
         log.info("Liquidación #{} cerrada: Rendido S/ {}, Esperado S/ {}, Diferencia S/ {} (Estado: {})",
@@ -160,17 +223,172 @@ public class LiquidacionService {
         return LiquidacionResponse.from(liq);
     }
 
-    /** Cash the courier must hand in: every cash payment not yet linked to a settlement (S6, S8). */
+    /**
+     * Cash a courier must hand in: expected cash (orders + float) minus any cash already collected
+     * by cashier/admin via partial/total collections (S6, S8).
+     */
     @Transactional(readOnly = true)
     public EfectivoPendienteLiquidacionResponse efectivoPendiente(Long repartidorId, String bearer) {
-        LiquidacionRepartidor liq = liquidacionRepository
-                .findFirstByRepartidorIdAndEstado(repartidorId, EstadoLiquidacion.ABIERTA)
-                .orElseThrow(() -> new NoSuchElementException(
-                        "El repartidor " + repartidorId + " no tiene una liquidación abierta"));
+        var liqOpt = liquidacionRepository
+                .findFirstByRepartidorIdAndEstado(repartidorId, EstadoLiquidacion.ABIERTA);
+
         PagosClient.EfectivoPendiente p = pagosClient.obtenerPendiente(repartidorId, null, bearer);
-        return new EfectivoPendienteLiquidacionResponse(repartidorId, liq.getId(), liq.getCreadoEn(),
-                p.total() != null ? p.total() : BigDecimal.ZERO, p.cantidad(),
-                p.pagos() != null ? p.pagos() : List.of());
+        BigDecimal totalCobrado = p.total() != null ? p.total() : BigDecimal.ZERO;
+
+        BigDecimal totalRendido = liqOpt
+                .map(l -> cobroRepartidorRepository.sumMontoByLiquidacionId(l.getId()))
+                .orElse(BigDecimal.ZERO);
+        if (totalRendido == null) totalRendido = BigDecimal.ZERO;
+
+        BigDecimal fondo = liqOpt
+                .map(l -> l.getFondoInicial() != null ? l.getFondoInicial() : BigDecimal.ZERO)
+                .orElse(BigDecimal.ZERO);
+        BigDecimal saldoPendiente = fondo.add(totalCobrado).subtract(totalRendido);
+        if (saldoPendiente.compareTo(BigDecimal.ZERO) < 0) {
+            saldoPendiente = BigDecimal.ZERO;
+        }
+
+        Long liqId = liqOpt.map(LiquidacionRepartidor::getId).orElse(null);
+        LocalDateTime creadoEn = liqOpt.map(LiquidacionRepartidor::getCreadoEn).orElse(null);
+
+        return new EfectivoPendienteLiquidacionResponse(
+                repartidorId, liqId, creadoEn,
+                saldoPendiente, p.cantidad(),
+                p.pagos() != null ? p.pagos() : List.of(),
+                totalCobrado, totalRendido);
+    }
+
+    /**
+     * Cobro de efectivo (parcial monto X o total) a un repartidor por parte de ADMIN o CAJERO.
+     * Solo a través de este método el efectivo a rendir disminuye.
+     */
+    @Transactional
+    public CobroRepartidorResponse registrarCobro(RegistrarCobroRepartidorRequest req, Long operadorId, String bearer) {
+        // 1. Obtener o crear la liquidación abierta para este repartidor
+        LiquidacionRepartidor liq = liquidacionRepository
+                .findFirstByRepartidorIdAndEstado(req.repartidorId(), EstadoLiquidacion.ABIERTA)
+                .orElseGet(() -> {
+                    String nombre = req.repartidorNombre() != null && !req.repartidorNombre().isBlank()
+                            ? req.repartidorNombre()
+                            : "Repartidor #" + req.repartidorId();
+                    var arqueoActivo = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
+                    LiquidacionRepartidor nueva = LiquidacionRepartidor.builder()
+                            .repartidorId(req.repartidorId())
+                            .repartidorNombre(nombre)
+                            .arqueoCajaId(arqueoActivo.map(ArqueoCaja::getId).orElse(null))
+                            .fondoInicial(BigDecimal.ZERO)
+                            .totalCobradoEfectivo(BigDecimal.ZERO)
+                            .totalRendido(BigDecimal.ZERO)
+                            .diferencia(BigDecimal.ZERO)
+                            .estado(EstadoLiquidacion.ABIERTA)
+                            .observaciones("Liquidación abierta automáticamente por cobro de efectivo")
+                            .creadoEn(LocalDateTime.now())
+                            .build();
+                    return liquidacionRepository.save(nueva);
+                });
+
+        // 2. Consultar pagos pendientes en payments-service
+        PagosClient.EfectivoPendiente pendiente = pagosClient.obtenerPendiente(req.repartidorId(), null, bearer);
+        BigDecimal totalCobrado = pendiente.total() != null ? pendiente.total() : BigDecimal.ZERO;
+        liq.setTotalCobradoEfectivo(totalCobrado);
+
+        // 3. Consultar cuánto ya ha rendido en cobros previos de esta liquidación
+        BigDecimal totalRendidoPrevio = cobroRepartidorRepository.sumMontoByLiquidacionId(liq.getId());
+        if (totalRendidoPrevio == null) totalRendidoPrevio = BigDecimal.ZERO;
+
+        BigDecimal totalEsperado = liq.getFondoInicial().add(totalCobrado);
+        BigDecimal saldoPendiente = totalEsperado.subtract(totalRendidoPrevio);
+        if (saldoPendiente.compareTo(BigDecimal.ZERO) < 0) saldoPendiente = BigDecimal.ZERO;
+
+        if (req.monto().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("El monto a cobrar debe ser mayor a 0");
+        }
+        if (req.monto().compareTo(saldoPendiente) > 0) {
+            throw new IllegalArgumentException("El monto a cobrar (S/ " + req.monto()
+                    + ") supera el saldo pendiente (S/ " + saldoPendiente + ")");
+        }
+
+        // 4. Buscar arqueo activo para registrar el ingreso a caja física
+        var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
+        Long arqueoId = arqueoOpt.map(ArqueoCaja::getId).orElse(null);
+
+        // 5. Guardar el cobro
+        CobroRepartidor cobro = CobroRepartidor.builder()
+                .repartidorId(req.repartidorId())
+                .monto(req.monto())
+                .arqueoCajaId(arqueoId)
+                .cobradoPor(operadorId)
+                .fecha(LocalDateTime.now())
+                .observaciones(req.observaciones())
+                .liquidacionId(liq.getId())
+                .build();
+        cobro = cobroRepartidorRepository.save(cobro);
+
+        // 6. Si hay caja abierta, registrar movimiento de INGRESO
+        if (arqueoOpt.isPresent()) {
+            MovimientoCaja ingreso = MovimientoCaja.builder()
+                    .arqueoId(arqueoOpt.get().getId())
+                    .tipo(TipoMovimiento.INGRESO)
+                    .monto(req.monto())
+                    .motivo("Cobro de efectivo a repartidor " + liq.getRepartidorNombre() + " (Cobro #" + cobro.getId() + ")")
+                    .registradoPor(operadorId)
+                    .fecha(LocalDateTime.now())
+                    .build();
+            movimientoRepository.save(ingreso);
+        }
+
+        // 7. Actualizar la liquidación
+        BigDecimal nuevoTotalRendido = totalRendidoPrevio.add(req.monto());
+        liq.setTotalRendido(nuevoTotalRendido);
+        BigDecimal saldoRestante = saldoPendiente.subtract(req.monto());
+
+        // Si el saldo llega a 0, liquidamos los pagos pendientes en payments-service y cerramos
+        if (saldoRestante.compareTo(BigDecimal.ZERO) == 0) {
+            if (pendiente.pagos() != null && !pendiente.pagos().isEmpty()) {
+                pagosClient.liquidar(
+                        pendiente.pagos().stream().map(PagosClient.EfectivoPendiente.Item::pagoId).toList(),
+                        liq.getId(),
+                        bearer
+                );
+            }
+            liq.setTotalEsperadoEfectivo(totalCobrado);
+            liq.setDiferenciaEfectivo(BigDecimal.ZERO);
+            liq.setDiferencia(BigDecimal.ZERO);
+            liq.setEstado(EstadoLiquidacion.CERRADA);
+            liq.setCerradoEn(LocalDateTime.now());
+            liq.setCerradoPor(operadorId);
+        }
+        liquidacionRepository.save(liq);
+
+        log.info("Cobro #{} registrado: S/ {} al repartidor {} (Saldo restante: S/ {})",
+                cobro.getId(), req.monto(), liq.getRepartidorNombre(), saldoRestante);
+
+        return CobroRepartidorResponse.from(cobro, saldoRestante);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CobroRepartidorResponse> listarCobrosPorRepartidor(Long repartidorId) {
+        return cobroRepartidorRepository.findByRepartidorIdOrderByFechaDesc(repartidorId)
+                .stream()
+                .map(c -> CobroRepartidorResponse.from(c, BigDecimal.ZERO))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<RepartidorPendienteCobroResponse> listarRepartidoresConPendiente(String bearer) {
+        List<LiquidacionRepartidor> abiertas = liquidacionRepository.findByEstadoOrderByCreadoEnDesc(EstadoLiquidacion.ABIERTA);
+        return abiertas.stream().map(l -> {
+            EfectivoPendienteLiquidacionResponse pend = efectivoPendiente(l.getRepartidorId(), bearer);
+            return new RepartidorPendienteCobroResponse(
+                    l.getRepartidorId(),
+                    l.getRepartidorNombre(),
+                    pend.totalCobrado(),
+                    pend.totalRendido(),
+                    pend.total(),
+                    pend.cantidad(),
+                    l.getId()
+            );
+        }).toList();
     }
 
     @Transactional(readOnly = true)
