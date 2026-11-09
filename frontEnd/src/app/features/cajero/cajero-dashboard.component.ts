@@ -9,7 +9,6 @@ import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { TipoMovimiento } from '../../core/models/finance.model';
-import { InventoryService } from '../../core/services/inventory.service';
 import { RepartidoresService } from '../../core/services/repartidores.service';
 import { BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 import { CajeroTab, CapturaPendiente, EntregaRecojoEvent, MetodoCobro, RechazarCapturaEvent } from './models/cajero.models';
@@ -24,13 +23,14 @@ import { CajeroArqueoTabComponent } from './components/cajero-arqueo-tab.compone
 import { CajeroHistorialTabComponent } from './components/cajero-historial-tab.component';
 import { CajeroLlamadasTabComponent } from './components/cajero-llamadas-tab.component';
 import { CajeroLiquidacionesTabComponent } from './components/cajero-liquidaciones-tab.component';
-import { CajeroMermasTabComponent } from './components/cajero-mermas-tab.component';
 import { CajeroCobroModalComponent } from './components/cajero-cobro-modal.component';
 import { CajeroTicketModalComponent } from './components/cajero-ticket-modal.component';
 import { CajeroMovimientoModalComponent } from './components/cajero-movimiento-modal.component';
 import { CajeroCierreModalComponent } from './components/cajero-cierre-modal.component';
 import { CajeroNuevaLiquidacionModalComponent } from './components/cajero-nueva-liquidacion-modal.component';
+import { CajeroRecargaFondoModalComponent } from './components/cajero-recarga-fondo-modal.component';
 import { CajeroCierreLiquidacionModalComponent } from './components/cajero-cierre-liquidacion-modal.component';
+import { CajeroCobroRepartidorModalComponent } from './components/cajero-cobro-repartidor-modal.component';
 
 export type { CajeroTab, MetodoCobro };
 
@@ -47,13 +47,14 @@ export type { CajeroTab, MetodoCobro };
     CajeroCapturasTabComponent,
     CajeroRecojoTabComponent,
     CajeroLiquidacionesTabComponent,
-    CajeroMermasTabComponent,
     CajeroCobroModalComponent,
     CajeroTicketModalComponent,
     CajeroMovimientoModalComponent,
     CajeroCierreModalComponent,
     CajeroNuevaLiquidacionModalComponent,
-    CajeroCierreLiquidacionModalComponent
+    CajeroRecargaFondoModalComponent,
+    CajeroCierreLiquidacionModalComponent,
+    CajeroCobroRepartidorModalComponent
   ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
@@ -69,7 +70,6 @@ export type { CajeroTab, MetodoCobro };
         [totalCapturas]="capturasPendientes().length"
         [totalRecojo]="ordenesRecojo().length"
         [totalLiquidaciones]="liquidacionesAbiertas().length"
-        [totalFantasma]="ordenesFantasma().length"
         [totalCobros]="cobrosDelDia().length"
         [usuarioNombre]="auth.currentUser()?.nombre"
         (logout)="cerrarSesion()"
@@ -91,8 +91,6 @@ export type { CajeroTab, MetodoCobro };
           @if (activeTab() === 'POS') {
             <app-cajero-pos-tab
               [cajaAbierta]="cajaAbierta()"
-              [filtroTipo]="filtroTipo()"
-              (filtroTipoChange)="filtroTipo.set($event)"
               [totalPorCobrar]="comandasPorCobrar().length"
               [comandas]="comandasFiltradas()"
               [(busquedaTexto)]="busquedaTexto"
@@ -131,6 +129,7 @@ export type { CajeroTab, MetodoCobro };
             <app-cajero-llamadas-tab
               [ordenes]="ordenesPendientesLlamada()"
               [now]="now()"
+              [procesando]="procesandoAccion()"
               (confirmar)="confirmarLlamadaPedido($event)"
               (noContesta)="intentoLlamadaPedido($event)"
               (cancelar)="cancelarPedidoContraPago($event)"
@@ -162,14 +161,9 @@ export type { CajeroTab, MetodoCobro };
             <app-cajero-liquidaciones-tab
               [liquidaciones]="liquidacionesAbiertas()"
               (nuevaLiquidacion)="abrirModalNuevaLiquidacion()"
+              (cobrarEfectivo)="abrirModalCobroRepartidor()"
+              (recargarFondo)="abrirModalRecargaFondo($event)"
               (rendir)="abrirModalCierreLiquidacion($event)"
-            />
-          }
-
-          @if (activeTab() === 'MERMAS_FANTASMA') {
-            <app-cajero-mermas-tab
-              [ordenes]="ordenesFantasma()"
-              (resolver)="resolverProductoFantasma($event.orden, $event.destino)"
             />
           }
 
@@ -234,10 +228,23 @@ export type { CajeroTab, MetodoCobro };
         <app-cajero-nueva-liquidacion-modal
           [repartidores]="repartidoresService.repartidores()"
           [(repartidorId)]="repartidorIdLiqInput"
+          [fondoSugerido]="fondoSugeridoNuevoRepartidor()"
           [(fondoInicial)]="fondoInicialLiqInput"
           [(observaciones)]="observacionesLiqInput"
+          (onRepartidorChange)="onRepartidorLiqChange($event)"
           (cancelar)="mostrarModalNuevaLiquidacion.set(false)"
           (aperturar)="ejecutarAperturaLiquidacion()"
+        />
+      }
+
+      <!-- MODAL RECARGA DE FONDO A MOTORIZADO -->
+      @if (mostrarModalRecargaFondo()) {
+        <app-cajero-recarga-fondo-modal
+          [liquidacion]="liquidacionRecargaSeleccionada()"
+          [(monto)]="montoRecargaInput"
+          [(motivo)]="motivoRecargaInput"
+          (cancelar)="mostrarModalRecargaFondo.set(false)"
+          (confirmar)="ejecutarRecargaFondo()"
         />
       }
 
@@ -251,6 +258,16 @@ export type { CajeroTab, MetodoCobro };
         />
       }
 
+      <!-- MODAL COBRO DE EFECTIVO A MOTORIZADO -->
+      @if (mostrarModalCobroRepartidor()) {
+        <app-cajero-cobro-repartidor-modal
+          [repartidores]="repartidoresService.repartidores()"
+          [(repartidorId)]="repartidorIdCobroInput"
+          (cancelar)="mostrarModalCobroRepartidor.set(false)"
+          (cobroExitoso)="mostrarModalCobroRepartidor.set(false); refrescarTodo()"
+        />
+      }
+
     </div>
   `
 })
@@ -258,7 +275,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
-  readonly inventoryService = inject(InventoryService);
   readonly repartidoresService = inject(RepartidoresService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
@@ -267,7 +283,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   // Estados reactivos
   readonly activeTab = signal<CajeroTab>('POS');
-  readonly filtroTipo = signal<string>('TODAS');
   busquedaTexto = '';
   readonly cargando = signal<boolean>(false);
   readonly procesandoAccion = signal<boolean>(false);
@@ -300,7 +315,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   digitalesCierreInput = 0;
   observacionesCierreInput = '';
 
-  // --- Módulos Operativos Nuevos: Llamadas, Liquidaciones y Mermas ---
+  // --- Módulos Operativos Nuevos: Llamadas y Liquidaciones ---
   readonly ordenesPendientesLlamada = computed(() =>
     this.ordersService.orders().filter(o => o.estado === 'PENDIENTE_CONFIRMACION')
   );
@@ -330,19 +345,29 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.ordersService.orders().filter(o => o.tipo === 'RECOJO_EN_TIENDA' && o.estado === 'LISTO_COCINA')
   );
 
-  readonly ordenesFantasma = computed(() =>
-    this.ordersService.orders().filter(o => o.estado === 'PEDIDO_FANTASMA')
-  );
-
   readonly liquidacionesAbiertas = signal<BackendLiquidacionResponse[]>([]);
   readonly mostrarModalNuevaLiquidacion = signal<boolean>(false);
+  readonly mostrarModalRecargaFondo = signal<boolean>(false);
   readonly mostrarModalCierreLiquidacion = signal<boolean>(false);
+  readonly mostrarModalCobroRepartidor = signal<boolean>(false);
   readonly liquidacionSeleccionada = signal<BackendLiquidacionResponse | null>(null);
+  readonly liquidacionRecargaSeleccionada = signal<BackendLiquidacionResponse | null>(null);
 
   repartidorIdLiqInput: number | null = null;
+  repartidorIdCobroInput: number | null = null;
   fondoInicialLiqInput = 50.0;
+  montoRecargaInput = 20;
+  motivoRecargaInput = '';
   totalRendidoLiqInput = 0;
   observacionesLiqInput = '';
+
+  readonly fondoSugeridoNuevoRepartidor = computed(() => {
+    const repId = this.repartidorIdLiqInput;
+    if (!repId) return 0;
+    return this.ordersService.orders()
+      .filter(o => o.tipo === 'DELIVERY' && o.repartidorId === repId && o.requiereCobroEfectivo && !['COMPLETADO', 'CANCELADO', 'PEDIDO_FANTASMA'].includes(o.estado))
+      .reduce((acc, o) => acc + (o.vueltoEstimado || 0), 0);
+  });
 
   // Registro combinado de cobros aprobados desde el microservicio de pagos
   readonly cobrosDelDia = computed(() => {
@@ -374,10 +399,17 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   // Computed: Comandas que esperan cobro
   // Se excluyen pedidos cancelados, completados O que ya tengan su pago APROBADO en el backend
+  /**
+   * What the cashier collects at the POS: dine-in (SALON) orders. Delivery is paid online or
+   * collected by the courier, pickup is collected at «Recojo en tienda» against its ticket, and an
+   * order still waiting for its payment or phone call is not payable yet. Offering them here gave a
+   * second collection path without ticket or courier.
+   */
   readonly comandasPorCobrar = computed(() => {
     const pagosMap = this.paymentService.pagosPorOrdenMap();
     return this.ordersService.orders().filter(o => {
-      if (['CANCELADO', 'COMPLETADO'].includes(o.estado) || o.estado === 'PAGADO') return false;
+      if (o.tipo !== 'SALON') return false;
+      if (['CANCELADO', 'COMPLETADO', 'PEDIDO_FANTASMA'].includes(o.estado)) return false;
       const pago = pagosMap.get(String(o.id));
       return !pago || pago.estado !== 'APROBADO';
     });
@@ -385,10 +417,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   readonly comandasFiltradas = computed(() => {
     let list = this.comandasPorCobrar();
-
-    if (this.filtroTipo() !== 'TODAS') {
-      list = list.filter(o => o.tipo === this.filtroTipo());
-    }
 
     const q = this.busquedaTexto.trim().toLowerCase();
     if (q) {
@@ -554,8 +582,22 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
                 tipo: 'INGRESO',
                 monto: orden.total,
                 motivo: `Cobro Comanda #${orden.codigoSeguimiento || orden.id} (${orden.cliente.nombre})`
-              }).subscribe();
+              }).subscribe({
+                // The payment is already confirmed: the cashier must record the income by hand.
+                error: (err) => this.notify.showError(
+                  'No se registró el ingreso en caja',
+                  `El cobro de la comanda #${orden.codigoSeguimiento || orden.id} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${this.mensajeError(err, '')}`.trim()
+                )
+              });
             }
+
+            // 4. Cerrar la comanda en salón y liberar la mesa en orders-service
+            this.ordersService.completarOrdenSalon(orden.id, orden.estado).subscribe({
+              error: (err) => this.notify.showError(
+                'No se pudo cerrar la comanda',
+                `El cobro de la comanda #${orden.codigoSeguimiento || orden.id} se registró, pero no se pudo completar la orden. ${this.mensajeError(err, '')}`.trim()
+              )
+            });
 
             // Registrar en historial local
             const cobroReg = {
@@ -563,9 +605,12 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
               fechaHora: new Date().toISOString(),
               ordenId: orden.id,
               codigoOrden: orden.codigoSeguimiento || orden.id,
+              cliente: orden.cliente.nombre || 'Cliente General',
               clienteNombre: orden.cliente.nombre || 'Cliente General',
+              tipo: orden.tipo,
               tipoOrden: orden.tipo,
               metodo: metodo,
+              total: orden.total,
               monto: orden.total,
               referencia: referencia,
               items: orden.items,
@@ -685,13 +730,16 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     });
   }
 
-  // --- Métodos de Gestión Operativa: Llamadas, Liquidaciones y Mermas ---
+  // --- Métodos de Gestión Operativa: Llamadas y Liquidaciones ---
 
   confirmarLlamadaPedido(o: Order): void {
+    const codigo = o.codigoSeguimiento || o.id;
+    this.procesandoAccion.set(true);
     this.ordersService.confirmarLlamada(o.id).subscribe({
       next: () => {
-        this.notify.showSuccess(`Pedido #${o.codigoSeguimiento || o.id} confirmado`, 'Pasa directo a preparación en cocina.');
-        // Emisión automática de comprobante Boleta en finance-service
+        this.procesandoAccion.set(false);
+        this.notify.showSuccess(`Pedido #${codigo} confirmado`, 'Pasa a la cola de cocina: cocina lo inicia.');
+        // The cash receipt (boleta) is issued in finance-service; if it fails the cashier must know.
         this.financeService.emitirComprobante({
           ordenId: Number(o.id),
           tipo: 'BOLETA',
@@ -700,18 +748,25 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
           total: o.total,
           pagadoDigitalmente: false,
           vueltoEstimado: o.vueltoEstimado
-        }).subscribe();
+        }).subscribe({
+          error: (err) => this.notify.showError('No se emitió la boleta',
+            `El pedido #${codigo} sí quedó confirmado. ${this.mensajeError(err, 'Emítela desde Arqueo.')}`.trim())
+        });
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al confirmar llamada', err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo confirmar la llamada', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.refrescarTodo();
       }
     });
   }
 
   intentoLlamadaPedido(o: Order): void {
+    this.procesandoAccion.set(true);
     this.ordersService.registrarIntentoLlamada(o.id, 'Cliente no contesta llamada').subscribe({
       next: (actualizada) => {
+        this.procesandoAccion.set(false);
         if (actualizada.estado === 'CANCELADO') {
           this.notify.showError(`Pedido #${o.codigoSeguimiento || o.id} cancelado`, 'Alcanzó el máximo de 2 intentos fallidos.');
         } else {
@@ -720,7 +775,9 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al registrar intento', err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo registrar el intento', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.refrescarTodo();
       }
     });
   }
@@ -729,13 +786,17 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     const confirmar = confirm(`¿Cancelar el pedido #${o.codigoSeguimiento || o.id} por inasistencia del cliente?`);
     if (!confirmar) return;
 
+    this.procesandoAccion.set(true);
     this.ordersService.updateOrderStatus(o.id, 'CANCELADO').subscribe({
       next: () => {
-        this.notify.showInfo('Pedido cancelado', 'La comanda fue cancelada.');
+        this.procesandoAccion.set(false);
+        this.notify.showInfo('Pedido cancelado', `El pedido #${o.codigoSeguimiento || o.id} fue cancelado.`);
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al cancelar pedido', err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo cancelar el pedido', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.refrescarTodo();
       }
     });
   }
@@ -750,13 +811,13 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** Approves the capture in payments-service; the order moves to PREPARANDO only on the backend answer. */
+  /** Approves the capture in payments-service; the order enters the kitchen queue only on the backend answer. */
   aprobarCaptura(pago: PagoOrdenAdmin): void {
     this.procesandoAccion.set(true);
     this.paymentService.verificarComprobante(pago.id, true).subscribe({
       next: () => {
         this.procesandoAccion.set(false);
-        this.notify.showSuccess(`Pago de la orden #${pago.ordenId} confirmado`, 'El pedido pasa a preparación en cocina.');
+        this.notify.showSuccess(`Pago de la orden #${pago.ordenId} confirmado`, 'El pedido pasa a la cola de cocina.');
         this.refrescarTodo();
       },
       error: (err: Error) => {
@@ -850,7 +911,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.ordersService.declararPedidoFantasma(orden.id, 'NO_RECOGIDO: Cliente no recogió en 1 hora').subscribe({
       next: () => {
         this.procesandoAccion.set(false);
-        this.notify.showInfo('Pedido fantasma registrado', 'Clasifica el producto en la bandeja de Mermas / Fantasma.');
+        this.notify.showInfo('Pedido fantasma registrado', 'El cliente queda bloqueado para pago contra entrega.');
         this.refrescarTodo();
       },
       error: (err) => {
@@ -870,6 +931,48 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.repartidorIdLiqInput = null;
     this.repartidoresService.cargar();
     this.mostrarModalNuevaLiquidacion.set(true);
+  }
+
+  onRepartidorLiqChange(repId: number | null): void {
+    this.repartidorIdLiqInput = repId;
+    const sugerido = this.fondoSugeridoNuevoRepartidor();
+    if (sugerido > 0) {
+      this.fondoInicialLiqInput = sugerido;
+    }
+  }
+
+  abrirModalRecargaFondo(liq: BackendLiquidacionResponse): void {
+    this.liquidacionRecargaSeleccionada.set(liq);
+    this.montoRecargaInput = 20;
+    this.motivoRecargaInput = '';
+    this.mostrarModalRecargaFondo.set(true);
+  }
+
+  ejecutarRecargaFondo(): void {
+    const liq = this.liquidacionRecargaSeleccionada();
+    if (!liq) return;
+    if (!this.montoRecargaInput || this.montoRecargaInput <= 0) {
+      this.notify.showError('El monto a recargar debe ser mayor a 0');
+      return;
+    }
+
+    this.financeService.recargarFondoLiquidacion(liq.id, this.montoRecargaInput, this.motivoRecargaInput).subscribe({
+      next: (actualizada) => {
+        this.mostrarModalRecargaFondo.set(false);
+        this.liquidacionRecargaSeleccionada.set(null);
+        this.notify.showSuccess(`Fondo recargado a S/ ${actualizada.fondoInicial.toFixed(2)} para ${actualizada.repartidorNombre}`);
+        this.refrescarTodo();
+      },
+      error: (err) => {
+        this.notify.showError('Error al recargar fondo', err?.error?.message || err?.message);
+      }
+    });
+  }
+
+  abrirModalCobroRepartidor(repartidorId?: number): void {
+    this.repartidorIdCobroInput = repartidorId ?? null;
+    this.repartidoresService.cargar();
+    this.mostrarModalCobroRepartidor.set(true);
   }
 
   ejecutarAperturaLiquidacion(): void {
@@ -923,24 +1026,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.notify.showError('Error al cerrar liquidación', err?.error?.message || err?.message);
-      }
-    });
-  }
-
-  resolverProductoFantasma(o: Order, destino: 'VENTA_RAPIDA_SALON' | 'MERMA_JUSTIFICADA'): void {
-    const tipo = o.tipo === 'RECOJO_EN_TIENDA' ? 'RECOJO' : 'DELIVERY';
-    this.inventoryService.resolverProductoFantasma({
-      ordenId: Number(o.id),
-      ordenTipo: tipo,
-      destino: destino,
-      observaciones: `Resuelto por cajero: ${destino}`
-    }).subscribe({
-      next: () => {
-        this.notify.showSuccess(`Destino registrado: ${destino === 'VENTA_RAPIDA_SALON' ? 'Reasignado a mostrador' : 'Merma Justificada'}`);
-        this.refrescarTodo();
-      },
-      error: (err) => {
-        this.notify.showError('Error al resolver producto', err?.message);
       }
     });
   }

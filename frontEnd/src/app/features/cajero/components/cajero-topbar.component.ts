@@ -24,8 +24,6 @@ import { CajeroTab } from '../models/cajero.models';
                 <span>ENTREGA DE RECOJO EN TIENDA</span>
               } @else if (activeTab() === 'LIQUIDACIONES') {
                 <span>LIQUIDACIÓN DE REPARTIDORES</span>
-              } @else if (activeTab() === 'MERMAS_FANTASMA') {
-                <span>PEDIDOS FANTASMA Y MERMAS</span>
               } @else {
                 <span>HISTORIAL DE COBROS REALIZADOS</span>
               }

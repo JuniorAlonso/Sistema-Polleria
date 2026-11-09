@@ -73,14 +73,18 @@ import { MINUTOS_ESPERA_RECOJO, minutosRestantes } from '../models/cajero-plazos
               }
             </div>
 
+            @let bloqueo = motivoBloqueo(o);
+            @if (bloqueo && !procesando()) {
+              <p data-testid="recojo-bloqueo" class="text-[11px] font-bold text-amber-300">{{ bloqueo }}</p>
+            }
             <div class="flex items-center gap-2 pt-2 border-t border-white/10">
               <button
                 type="button"
                 (click)="entregar.emit({ orden: o, codigoTicket: codigos[o.id] || '', efectivoRecibido: efectivo[o.id] || 0 })"
-                [disabled]="procesando() || !(codigos[o.id] || '').trim() || (o.requiereCobroEfectivo && (efectivo[o.id] || 0) < o.total)"
+                [disabled]="procesando() || !!bloqueo"
                 class="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
               >
-                {{ o.requiereCobroEfectivo ? '✓ Cobrar y Entregar' : '✓ Entregar' }}
+                {{ procesando() ? 'Procesando…' : (o.requiereCobroEfectivo ? '✓ Cobrar y Entregar' : '✓ Entregar') }}
               </button>
               @if (vencido) {
                 <button
@@ -115,6 +119,21 @@ export class CajeroRecojoTabComponent {
   protected readonly minutosRestantes = minutosRestantes;
   protected codigos: Record<string, string> = {};
   protected efectivo: Record<string, number> = {};
+
+  /**
+   * Why the hand-over button is still disabled, shown under it. A disabled button with no reason
+   * looked like a button that does nothing.
+   */
+  protected motivoBloqueo(o: Order): string | null {
+    if (!(this.codigos[o.id] || '').trim()) {
+      return 'Escribe el código del ticket del cliente para entregar.';
+    }
+    const recibido = Number(this.efectivo[o.id]) || 0;
+    if (o.requiereCobroEfectivo && recibido < o.total) {
+      return `El efectivo recibido (S/ ${recibido.toFixed(2)}) no cubre el total (S/ ${o.total.toFixed(2)}).`;
+    }
+    return null;
+  }
 
   protected vuelto(o: Order): string {
     return Math.max(0, (Number(this.efectivo[o.id]) || 0) - o.total).toFixed(2);

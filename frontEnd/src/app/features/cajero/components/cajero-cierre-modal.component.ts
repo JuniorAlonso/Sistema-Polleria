@@ -104,11 +104,17 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
               </div>
             </div>
 
+            @if (!procesando() && efectivo() < 0) {
+              <p data-testid="cierre-bloqueo" class="text-[11px] font-bold text-amber-300">
+                El efectivo contado no puede ser negativo.
+              </p>
+            }
+
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
               <button
                 type="button"
                 (click)="cancelar.emit()"
-                class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold uppercase"
+                class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold uppercase transition cursor-pointer"
               >
                 Cancelar
               </button>
@@ -116,9 +122,9 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
                 type="button"
                 (click)="confirmar.emit()"
                 [disabled]="efectivo() < 0 || procesando()"
-                class="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white text-xs font-bold uppercase disabled:opacity-50"
+                class="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white text-xs font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
               >
-                Confirmar Cierre de Turno
+                {{ procesando() ? 'Cerrando caja…' : 'Confirmar Cierre de Turno' }}
               </button>
             </div>
           </div>

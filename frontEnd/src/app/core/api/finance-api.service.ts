@@ -5,7 +5,14 @@ import {
   ArqueoCaja, AperturaCajaRequest, MovimientoCaja, CierreCajaRequest, BalanceDiario,
   EmitirComprobanteRequest, AbrirLiquidacionRequest, CerrarLiquidacionRequest
 } from '../models/finance.model';
-import { BackendComprobanteResponse, BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from '../models/api-contracts.model';
+import {
+  BackendComprobanteResponse,
+  BackendEfectivoPendienteLiquidacion,
+  BackendLiquidacionResponse,
+  RegistrarCobroRepartidorRequest,
+  BackendCobroRepartidorResponse,
+  RepartidorPendienteCobro
+} from '../models/api-contracts.model';
 import { environment } from '../../../environments/environment';
 
 /** Capa HTTP pura de finance-service (:8087). Sin estado, sin notificaciones. */
@@ -58,6 +65,10 @@ export class FinanceApiService {
     return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/apertura`, req);
   }
 
+  recargarFondoLiquidacion(id: number | string, req: { monto: number; motivo?: string }): Observable<BackendLiquidacionResponse> {
+    return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/${id}/recargar-fondo`, req);
+  }
+
   cerrarLiquidacion(id: number | string, req: CerrarLiquidacionRequest): Observable<BackendLiquidacionResponse> {
     return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/${id}/cierre`, req);
   }
@@ -73,5 +84,17 @@ export class FinanceApiService {
 
   listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {
     return this.http.get<BackendLiquidacionResponse[]>(`${this.API_URL}/finanzas/liquidaciones/abiertas`);
+  }
+
+  registrarCobroRepartidor(req: RegistrarCobroRepartidorRequest): Observable<BackendCobroRepartidorResponse> {
+    return this.http.post<BackendCobroRepartidorResponse>(`${this.API_URL}/finanzas/liquidaciones/cobro-efectivo`, req);
+  }
+
+  listarCobrosRepartidor(repartidorId: number | string): Observable<BackendCobroRepartidorResponse[]> {
+    return this.http.get<BackendCobroRepartidorResponse[]>(`${this.API_URL}/finanzas/liquidaciones/repartidor/${repartidorId}/cobros`);
+  }
+
+  listarRepartidoresConPendiente(): Observable<RepartidorPendienteCobro[]> {
+    return this.http.get<RepartidorPendienteCobro[]>(`${this.API_URL}/finanzas/liquidaciones/repartidores/pendientes`);
   }
 }

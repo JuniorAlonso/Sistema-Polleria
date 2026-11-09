@@ -165,18 +165,19 @@ import { MetodoCobro } from '../models/cajero.models';
                   </div>
 
                   <!-- Indicador de Vuelto en Vivo -->
+                  @let falta = faltaEfectivo;
                   <div class="p-3.5 rounded-xl flex items-center justify-between border"
-                    [ngClass]="vuelto() >= 0 ? 'bg-emerald-950/30 border-emerald-500/40' : 'bg-rose-950/30 border-rose-500/40'"
+                    [ngClass]="falta === 0 ? 'bg-emerald-950/30 border-emerald-500/40' : 'bg-rose-950/30 border-rose-500/40'"
                   >
                     <span class="text-xs font-bold uppercase tracking-wider"
-                      [ngClass]="vuelto() >= 0 ? 'text-emerald-300' : 'text-rose-300'"
+                      [ngClass]="falta === 0 ? 'text-emerald-300' : 'text-rose-300'"
                     >
-                      {{ vuelto() >= 0 ? 'Vuelto a Entregar:' : 'Monto insuficiente:' }}
+                      {{ falta === 0 ? 'Vuelto a Entregar:' : 'Monto insuficiente:' }}
                     </span>
                     <span class="font-display text-2xl font-bold"
-                      [ngClass]="vuelto() >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+                      [ngClass]="falta === 0 ? 'text-emerald-400' : 'text-rose-400'"
                     >
-                      {{ (vuelto() >= 0 ? vuelto() : -vuelto()) | currencyPEN }}
+                      {{ (falta === 0 ? vuelto() : falta) | currencyPEN }}
                     </span>
                   </div>
                 </div>
@@ -215,27 +216,37 @@ import { MetodoCobro } from '../models/cajero.models';
             </div>
 
             <!-- Modal Footer con Acción -->
-            <div class="p-5 border-t border-white/10 bg-black/30 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                (click)="cerrar.emit()"
-                class="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
-              >
-                Cancelar
-              </button>
+            <div class="p-5 border-t border-white/10 bg-black/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+              @if (!procesando() && motivoBloqueo) {
+                <p data-testid="cobro-bloqueo" class="text-[11px] font-bold text-amber-300">
+                  {{ motivoBloqueo }}
+                </p>
+              } @else {
+                <div></div>
+              }
 
-              <button
-                type="button"
-                (click)="confirmar.emit()"
-                [disabled]="!cobroValido() || procesando()"
-                class="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-display text-lg font-black uppercase tracking-wider transition duration-150 shadow-lg shadow-emerald-500/20 disabled:opacity-50 cursor-pointer flex items-center gap-2"
-              >
-                @if (procesando()) {
-                  <span>PROCESANDO COBRO...</span>
-                } @else {
-                  <span>CONFIRMAR COBRO & EMITIR TICKET</span>
-                }
-              </button>
+              <div class="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  (click)="cerrar.emit()"
+                  class="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  (click)="confirmar.emit()"
+                  [disabled]="!cobroValido() || procesando()"
+                  class="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-display text-lg font-black uppercase tracking-wider transition duration-150 shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+                >
+                  @if (procesando()) {
+                    <span>PROCESANDO COBRO…</span>
+                  } @else {
+                    <span>CONFIRMAR COBRO & EMITIR TICKET</span>
+                  }
+                </button>
+              </div>
             </div>
 
           </div>
@@ -256,4 +267,28 @@ export class CajeroCobroModalComponent {
   readonly confirmar = output<void>();
   readonly exacto = output<void>();
   readonly sumar = output<number>();
+
+  protected get faltaEfectivo(): number {
+    const total = this.orden()?.total || 0;
+    const recibido = Number(this.efectivoRecibido()) || 0;
+    return Math.max(0, Math.round((total - recibido) * 100) / 100);
+  }
+
+  protected get motivoBloqueo(): string | null {
+    if (this.metodo() === 'EFECTIVO') {
+      const falta = this.faltaEfectivo;
+      if (falta > 0) {
+        const recibido = Number(this.efectivoRecibido()) || 0;
+        return `El efectivo recibido (S/ ${recibido.toFixed(2)}) no cubre el total (S/ ${(this.orden()?.total || 0).toFixed(2)}). Falta S/ ${falta.toFixed(2)}.`;
+      }
+      return null;
+    }
+    if (this.metodo() === 'TARJETA' && !this.referencia().trim()) {
+      return 'Ingresa el Nº de operación o voucher POS para confirmar el cobro.';
+    }
+    if (this.metodo() === 'YAPE_PLIN' && !this.referencia().trim()) {
+      return 'Ingresa el código de aprobación o celular de Yape / Plin.';
+    }
+    return null;
+  }
 }

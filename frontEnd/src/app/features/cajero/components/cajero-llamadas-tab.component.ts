@@ -75,13 +75,14 @@ import { MINUTOS_VALIDACION_PAGO, minutosRestantes } from '../models/cajero-plaz
                     <div class="flex items-center gap-2 pt-2 border-t border-white/10">
                       <button 
                         (click)="confirmar.emit(o)"
-                        [disabled]="vencido"
+                        [disabled]="vencido || procesando()"
                         class="flex-1 disabled:opacity-40 disabled:cursor-not-allowed py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
                       >
-                        ✓ Confirmar y Cocinar
+                        {{ procesando() ? 'Procesando…' : '✓ Confirmar y Cocinar' }}
                       </button>
                       <button 
                         (click)="noContesta.emit(o)"
+                        [disabled]="procesando()"
                         class="py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold text-xs transition cursor-pointer"
                         title="Registrar intento fallido de llamada"
                       >
@@ -89,6 +90,7 @@ import { MINUTOS_VALIDACION_PAGO, minutosRestantes } from '../models/cajero-plaz
                       </button>
                       <button 
                         (click)="cancelar.emit(o)"
+                        [disabled]="procesando()"
                         class="py-2 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition cursor-pointer"
                         title="Cancelar pedido por no atender"
                       >
@@ -108,6 +110,8 @@ import { MINUTOS_VALIDACION_PAGO, minutosRestantes } from '../models/cajero-plaz
 export class CajeroLlamadasTabComponent {
   readonly ordenes = input.required<Order[]>();
   readonly now = input.required<number>();
+  /** A call action is in flight: the buttons are disabled so it is not sent twice. */
+  readonly procesando = input<boolean>(false);
 
   protected readonly plazo = MINUTOS_VALIDACION_PAGO;
   protected readonly minutosRestantes = minutosRestantes;

@@ -46,11 +46,11 @@ import { TicketVista } from '../models/cajero.models';
               </div>
               <div class="flex justify-between">
                 <span>Cliente:</span>
-                <span class="font-bold truncate max-w-[160px]">{{ ticket().cliente }}</span>
+                <span class="font-bold truncate max-w-[160px]">{{ clienteNombre }}</span>
               </div>
               <div class="flex justify-between">
                 <span>Tipo:</span>
-                <span class="font-bold">{{ ticket().tipo }}</span>
+                <span class="font-bold">{{ tipoOrden }}</span>
               </div>
             </div>
 
@@ -76,15 +76,15 @@ import { TicketVista } from '../models/cajero.models';
             <div class="space-y-1 text-xs font-mono border-b border-dashed border-slate-300 pb-3">
               <div class="flex justify-between text-slate-600">
                 <span>OP. GRAVADA:</span>
-                <span>{{ ((ticket().total || 0) / 1.18) | currencyPEN }}</span>
+                <span>{{ (totalMonto / 1.18) | currencyPEN }}</span>
               </div>
               <div class="flex justify-between text-slate-600">
                 <span>I.G.V. (18%):</span>
-                <span>{{ ((ticket().total || 0) - ((ticket().total || 0) / 1.18)) | currencyPEN }}</span>
+                <span>{{ (totalMonto - (totalMonto / 1.18)) | currencyPEN }}</span>
               </div>
               <div class="flex justify-between font-bold text-base text-slate-900 pt-1">
                 <span>TOTAL:</span>
-                <span>{{ ticket().total | currencyPEN }}</span>
+                <span>{{ totalMonto | currencyPEN }}</span>
               </div>
               <div class="flex justify-between text-slate-700 pt-2 border-t border-slate-200">
                 <span>MÉTODO:</span>
@@ -144,4 +144,19 @@ export class CajeroTicketModalComponent {
 
   readonly imprimir = output<void>();
   readonly cerrar = output<void>();
+
+  protected get clienteNombre(): string {
+    const t = this.ticket() as any;
+    return t?.cliente || t?.clienteNombre || 'Cliente General';
+  }
+
+  protected get tipoOrden(): string {
+    const t = this.ticket() as any;
+    return t?.tipo || t?.tipoOrden || 'SALON';
+  }
+
+  protected get totalMonto(): number {
+    const t = this.ticket() as any;
+    return Number(t?.total ?? t?.monto ?? 0);
+  }
 }

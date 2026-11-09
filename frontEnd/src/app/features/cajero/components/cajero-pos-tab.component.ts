@@ -38,41 +38,11 @@ import { Order } from '../../../core/models/order.model';
 
             <!-- Filtros & Buscador -->
             <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <!-- Filtro de tipo -->
-              <div class="flex items-center gap-1.5 p-1 bg-[#14161a] border border-white/10 rounded-xl">
-                <button
-                  type="button"
-                  (click)="filtroTipoChange.emit('TODAS')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
-                  [ngClass]="filtroTipo() === 'TODAS' ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:text-white'"
-                >
-                  Todas ({{ totalPorCobrar() }})
-                </button>
-                <button
-                  type="button"
-                  (click)="filtroTipoChange.emit('SALON')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
-                  [ngClass]="filtroTipo() === 'SALON' ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:text-white'"
-                >
-                  Salón / Mesas
-                </button>
-                <button
-                  type="button"
-                  (click)="filtroTipoChange.emit('DELIVERY')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
-                  [ngClass]="filtroTipo() === 'DELIVERY' ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:text-white'"
-                >
-                  Delivery
-                </button>
-                <button
-                  type="button"
-                  (click)="filtroTipoChange.emit('RECOJO_EN_TIENDA')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
-                  [ngClass]="filtroTipo() === 'RECOJO_EN_TIENDA' ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:text-white'"
-                >
-                  Para Llevar
-                </button>
-              </div>
+              <!-- The POS only collects dine-in orders: no type filter. -->
+              <p class="text-xs text-slate-400">
+                Comandas de salón por cobrar: <strong class="text-white">{{ totalPorCobrar() }}</strong>.
+                Delivery y recojo se cobran en sus propias pestañas.
+              </p>
 
               <!-- Input de Búsqueda -->
               <div class="relative w-full sm:w-72">
@@ -181,13 +151,11 @@ import { Order } from '../../../core/models/order.model';
 })
 export class CajeroPosTabComponent {
   readonly cajaAbierta = input.required<boolean>();
-  readonly filtroTipo = input<string>('TODAS');
   readonly totalPorCobrar = input<number>(0);
   readonly comandas = input.required<Order[]>();
   /** Texto de busqueda (two-way): el contenedor mantiene el valor. */
   readonly busquedaTexto = model<string>('');
 
-  readonly filtroTipoChange = output<string>();
   readonly abrirCaja = output<void>();
   readonly cobrar = output<Order>();
 }

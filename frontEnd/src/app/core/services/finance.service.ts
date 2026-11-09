@@ -9,7 +9,10 @@ import {
 import { 
   BackendComprobanteResponse, 
   BackendEfectivoPendienteLiquidacion,
-  BackendLiquidacionResponse
+  BackendLiquidacionResponse,
+  RegistrarCobroRepartidorRequest,
+  BackendCobroRepartidorResponse,
+  RepartidorPendienteCobro
 } from '../models/api-contracts.model';
 import { NotificationService } from './notification.service';
 
@@ -172,6 +175,10 @@ export class FinanceService {
     return this.api.abrirLiquidacion(req);
   }
 
+  recargarFondoLiquidacion(id: number | string, monto: number, motivo?: string): Observable<BackendLiquidacionResponse> {
+    return this.api.recargarFondoLiquidacion(id, { monto, motivo });
+  }
+
   cerrarLiquidacion(id: number | string, req: CerrarLiquidacionRequest): Observable<BackendLiquidacionResponse> {
     return this.api.cerrarLiquidacion(id, req);
   }
@@ -189,6 +196,28 @@ export class FinanceService {
 
   listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {
     return this.api.listarLiquidacionesAbiertas().pipe(
+      catchError(() => of([]))
+    );
+  }
+
+  registrarCobroRepartidor(req: RegistrarCobroRepartidorRequest): Observable<BackendCobroRepartidorResponse> {
+    return this.api.registrarCobroRepartidor(req).pipe(
+      tap(res => {
+        this.notify.showSuccess(`Cobro de S/ ${res.monto.toFixed(2)} registrado al repartidor. Saldo restante: S/ ${res.saldoRestante.toFixed(2)}`);
+        this.obtenerCajaActual();
+        this.cargarMovimientos();
+      })
+    );
+  }
+
+  listarCobrosRepartidor(repartidorId: number | string): Observable<BackendCobroRepartidorResponse[]> {
+    return this.api.listarCobrosRepartidor(repartidorId).pipe(
+      catchError(() => of([]))
+    );
+  }
+
+  listarRepartidoresConPendiente(): Observable<RepartidorPendienteCobro[]> {
+    return this.api.listarRepartidoresConPendiente().pipe(
       catchError(() => of([]))
     );
   }

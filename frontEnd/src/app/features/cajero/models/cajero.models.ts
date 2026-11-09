@@ -1,9 +1,8 @@
 import { Order } from '../../../core/models/order.model';
 import { PagoOrdenAdmin } from '../../../core/models/payment.model';
 
-export type CajeroTab = 'POS' | 'CAPTURAS_PAGO' | 'LLAMADAS_CONTRAPAGO' | 'RECOJO_TIENDA' | 'LIQUIDACIONES' | 'MERMAS_FANTASMA' | 'ARQUEO' | 'HISTORIAL';
+export type CajeroTab = 'POS' | 'CAPTURAS_PAGO' | 'LLAMADAS_CONTRAPAGO' | 'RECOJO_TIENDA' | 'LIQUIDACIONES' | 'ARQUEO' | 'HISTORIAL';
 export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
-export type DestinoFantasma = 'VENTA_RAPIDA_SALON' | 'MERMA_JUSTIFICADA';
 
 /** Fila del historial de cobros aprobados (vista "Cobros del Día"). */
 export interface CobroDelDia {
@@ -33,11 +32,6 @@ export interface TicketVista {
   efectivoRecibido?: number;
   vuelto?: number;
   referencia?: string;
-}
-
-export interface ResolverFantasmaEvent {
-  orden: Order;
-  destino: DestinoFantasma;
 }
 
 /** PENDIENTE_PAGO order with its payment (null while the customer has not uploaded the capture). */

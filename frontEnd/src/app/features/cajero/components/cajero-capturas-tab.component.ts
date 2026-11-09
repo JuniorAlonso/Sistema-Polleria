@@ -38,7 +38,9 @@ import { PagoOrdenAdmin } from '../../../core/models/payment.model';
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         @for (c of capturas(); track c.orden.id) {
-          @let restantes = minutosRestantes(c.orden.createdAt, plazo, now());
+          <!-- A capture uploaded in time stops the order's expiry (backend S6): no countdown then. -->
+          @let conCaptura = !!c.pago?.comprobanteUrl;
+          @let restantes = conCaptura ? null : minutosRestantes(c.orden.createdAt, plazo, now());
           @let vencido = restantes !== null && restantes <= 0;
           <div class="p-5 rounded-2xl bg-[#14161a] border shadow-xl space-y-3"
                [ngClass]="vencido ? 'border-rose-500/40' : 'border-sky-500/30'">
@@ -51,9 +53,11 @@ import { PagoOrdenAdmin } from '../../../core/models/payment.model';
               <div class="text-right">
                 <span class="text-xs text-slate-400 block font-mono">Monto:</span>
                 <span class="font-mono text-lg font-black text-polleria-gold">{{ c.orden.total | currencyPEN }}</span>
-                @if (restantes !== null) {
+                @if (conCaptura) {
+                  <span class="block text-[11px] font-bold text-emerald-300">Captura recibida · no vence mientras la revisas</span>
+                } @else if (restantes !== null) {
                   <span class="block text-[11px] font-mono font-bold" [ngClass]="vencido ? 'text-rose-400' : 'text-amber-300'">
-                    {{ vencido ? 'Plazo vencido' : '⏱ ' + restantes + ' min restantes' }}
+                    {{ vencido ? 'Plazo vencido' : '⏱ ' + restantes + ' min para enviar la captura' }}
                   </span>
                 }
               </div>
@@ -70,14 +74,18 @@ import { PagoOrdenAdmin } from '../../../core/models/payment.model';
               </div>
             }
 
+            @let bloqueo = motivoBloqueo(c);
+            @if (bloqueo && !procesando()) {
+              <p data-testid="captura-bloqueo" class="text-[11px] font-bold text-amber-300">{{ bloqueo }}</p>
+            }
             <div class="flex items-center gap-2 pt-2 border-t border-white/10">
               <button
                 type="button"
                 (click)="aprobar.emit(c.pago!)"
-                [disabled]="procesando() || vencido || !c.pago?.comprobanteUrl"
+                [disabled]="procesando() || !!bloqueo"
                 class="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
               >
-                ✓ Confirmar Pago
+                {{ procesando() ? 'Procesando…' : '✓ Confirmar Pago' }}
               </button>
               <button
                 type="button"
@@ -109,6 +117,17 @@ export class CajeroCapturasTabComponent {
 
   protected readonly plazo = MINUTOS_VALIDACION_PAGO;
   protected readonly minutosRestantes = minutosRestantes;
+
+  protected motivoBloqueo(c: CapturaPendiente): string | null {
+    if (!c.pago?.comprobanteUrl) {
+      const restantes = this.minutosRestantes(c.orden.createdAt, this.plazo, this.now());
+      if (restantes !== null && restantes <= 0) {
+        return 'El plazo de 15 minutos venció sin captura.';
+      }
+      return 'Esperando que el cliente suba la captura de pago.';
+    }
+    return null;
+  }
 
   protected pedirMotivoYRechazar(pago: PagoOrdenAdmin): void {
     const motivo = (prompt('Motivo del rechazo (se enviará al cliente):') ?? '').trim();

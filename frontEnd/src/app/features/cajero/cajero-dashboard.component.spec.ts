@@ -193,5 +193,164 @@ describe('CajeroDashboardComponent', () => {
         'No se registró el ingreso en caja',
         jasmine.stringMatching(/manualmente/));
     });
+
+    it('el botón de entregar dice por qué está bloqueado en vez de no hacer nada', () => {
+      ordersService.orders.set([recojo({ requiereCobroEfectivo: true })]);
+      component.activeTab.set('RECOJO_TIENDA');
+      fixture.detectChanges();
+
+      const motivo = () => (fixture.nativeElement.querySelector('[data-testid="recojo-bloqueo"]') as HTMLElement | null);
+      expect(motivo()?.textContent).toContain('Escribe el código del ticket');
+
+      const ticket = fixture.nativeElement.querySelector('input[type="text"]') as HTMLInputElement;
+      ticket.value = 'POL-12';
+      ticket.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(motivo()?.textContent).toContain('no cubre el total');
+
+      const efectivo = fixture.nativeElement.querySelector('input[type="number"]') as HTMLInputElement;
+      efectivo.value = '30';
+      efectivo.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(motivo()).withContext('todo listo: no queda motivo de bloqueo').toBeNull();
+    });
+  });
+
+  describe('retroalimentación y alineación del cajero', () => {
+    let notify: NotificationService;
+    let paymentService: PaymentService;
+    const hace = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+    const orden = (extra: Partial<Order>): Order => ({ ...mockOrder, ...extra });
+
+    beforeEach(() => {
+      notify = TestBed.inject(NotificationService);
+      spyOn(notify, 'showError');
+      spyOn(notify, 'showSuccess');
+      spyOn(notify, 'showInfo');
+      paymentService = TestBed.inject(PaymentService);
+    });
+
+    it('capturas: una captura ya subida no vence y se puede confirmar aunque pasaron 15 minutos', () => {
+      ordersService.orders.set([orden({ id: '31', codigoSeguimiento: 'POL-31', tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', canalOrigen: 'WHATSAPP', createdAt: hace(30) })]);
+      component.pagosPorVerificar.set([{ id: 5, ordenId: 31, monto: 45, estado: 'PENDIENTE_VERIFICACION', comprobanteUrl: 'https://img/31.jpg' }]);
+      component.activeTab.set('CAPTURAS_PAGO');
+      fixture.detectChanges();
+
+      const texto = fixture.nativeElement.textContent as string;
+      expect(texto).not.toContain('Plazo vencido');
+      expect(texto).toContain('no vence');
+      const confirmar = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
+        .find(b => (b.textContent || '').includes('Confirmar Pago'))!;
+      expect(confirmar.disabled).toBeFalse();
+    });
+
+    it('capturas: sin captura el plazo de 15 minutos sigue corriendo', () => {
+      ordersService.orders.set([orden({ id: '32', codigoSeguimiento: 'POL-32', tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', canalOrigen: 'WHATSAPP', createdAt: hace(30) })]);
+      component.activeTab.set('CAPTURAS_PAGO');
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).toContain('Plazo vencido');
+    });
+
+    it('confirmar pago avisa que el pedido pasa a la cola de cocina', () => {
+      spyOn(paymentService, 'verificarComprobante').and.returnValue(of({ id: 5, ordenId: 31, monto: 45, estado: 'APROBADO' }));
+
+      component.aprobarCaptura({ id: 5, ordenId: 31, monto: 45, estado: 'PENDIENTE_VERIFICACION' });
+
+      expect(notify.showSuccess).toHaveBeenCalledWith(jasmine.any(String), jasmine.stringMatching(/cola de cocina/));
+    });
+
+    it('llamadas: un rechazo del backend muestra SU motivo y libera los botones', () => {
+      const pendiente = orden({ id: '41', codigoSeguimiento: 'POL-41', tipo: 'DELIVERY', estado: 'PENDIENTE_CONFIRMACION' });
+      spyOn(ordersService, 'confirmarLlamada').and.callFake(() => {
+        expect(component.procesandoAccion()).withContext('bloqueado mientras responde').toBeTrue();
+        return throwError(() => ({ status: 409, error: { error: 'El plazo de 15 minutos para confirmar la llamada venció' }, message: 'Http failure response' }));
+      });
+
+      component.confirmarLlamadaPedido(pendiente);
+
+      expect(notify.showError).toHaveBeenCalledWith('No se pudo confirmar la llamada', 'El plazo de 15 minutos para confirmar la llamada venció');
+      expect(component.procesandoAccion()).toBeFalse();
+    });
+
+    it('llamadas: si la boleta no se emite, el cajero se entera', () => {
+      const pendiente = orden({ id: '42', codigoSeguimiento: 'POL-42', tipo: 'DELIVERY', estado: 'PENDIENTE_CONFIRMACION' });
+      spyOn(ordersService, 'confirmarLlamada').and.returnValue(of({ ...pendiente, estado: 'PAGADO' }));
+      spyOn(financeService, 'emitirComprobante').and.returnValue(throwError(() => ({ status: 503, error: { error: 'finance caído' } })));
+
+      component.confirmarLlamadaPedido(pendiente);
+
+      expect(notify.showSuccess).toHaveBeenCalled();
+      expect(notify.showError).toHaveBeenCalledWith('No se emitió la boleta', jasmine.stringMatching(/finance caído/));
+    });
+
+    it('llamadas: registrar "no contesta" y cancelar muestran el motivo del backend', () => {
+      const pendiente = orden({ id: '43', codigoSeguimiento: 'POL-43', tipo: 'DELIVERY', estado: 'PENDIENTE_CONFIRMACION' });
+      spyOn(ordersService, 'registrarIntentoLlamada').and.returnValue(throwError(() => ({ status: 409, error: { error: 'motivo intento' } })));
+      spyOn(ordersService, 'updateOrderStatus').and.returnValue(throwError(() => ({ status: 409, error: { error: 'motivo cancelar' } })));
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      component.intentoLlamadaPedido(pendiente);
+      component.cancelarPedidoContraPago(pendiente);
+
+      expect(notify.showError).toHaveBeenCalledWith('No se pudo registrar el intento', 'motivo intento');
+      expect(notify.showError).toHaveBeenCalledWith('No se pudo cancelar el pedido', 'motivo cancelar');
+      expect(component.procesandoAccion()).toBeFalse();
+    });
+
+    it('POS: solo lista lo que se cobra en caja (salón); delivery, recojo y pedidos sin pagar o sin confirmar van por su propio flujo', () => {
+      ordersService.orders.set([
+        orden({ id: '51', tipo: 'SALON', estado: 'LISTO' as never }),
+        orden({ id: '52', tipo: 'DELIVERY', estado: 'EN_REPARTO' }),
+        orden({ id: '53', tipo: 'RECOJO_EN_TIENDA', estado: 'LISTO_COCINA' }),
+        orden({ id: '54', tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO' }),
+        orden({ id: '55', tipo: 'RECOJO_EN_TIENDA', estado: 'PENDIENTE_CONFIRMACION' }),
+        orden({ id: '56', tipo: 'DELIVERY', estado: 'PEDIDO_FANTASMA' })
+      ]);
+
+      expect(component.comandasPorCobrar().map(o => o.id)).toEqual(['51']);
+    });
+
+    it('POS: si el ingreso en caja falla después de cobrar, el cajero se entera', () => {
+      financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
+      spyOn(paymentService, 'obtenerPorOrden').and.returnValue(of({ id: '9', estado: 'PENDIENTE' } as PaymentTransaction));
+      spyOn(paymentService, 'confirmarPago').and.returnValue(of({ id: '9', estado: 'APROBADO' } as PaymentTransaction));
+      spyOn(financeService, 'registrarMovimiento').and.returnValue(throwError(() => ({ status: 503, error: { error: 'caja caída' } })));
+      spyOn(ordersService, 'completarOrdenSalon').and.returnValue(of(mockOrder));
+      component.seleccionarOrdenParaCobro(mockOrder);
+      component.efectivoRecibidoInput = 50;
+
+      component.confirmarCobroComanda();
+
+      expect(notify.showError).toHaveBeenCalledWith('No se registró el ingreso en caja', jasmine.stringMatching(/manualmente/));
+    });
+
+    it('POS: al cobrar una comanda de salón, completa la orden para cerrar la mesa en el backend', () => {
+      spyOn(paymentService, 'obtenerPorOrden').and.returnValue(of({ id: '9', estado: 'PENDIENTE' } as PaymentTransaction));
+      spyOn(paymentService, 'confirmarPago').and.returnValue(of({ id: '9', estado: 'APROBADO' } as PaymentTransaction));
+      const completarSpy = spyOn(ordersService, 'completarOrdenSalon').and.returnValue(of(mockOrder));
+      component.seleccionarOrdenParaCobro(mockOrder);
+      component.efectivoRecibidoInput = 50;
+
+      component.confirmarCobroComanda();
+
+      expect(completarSpy).toHaveBeenCalledWith('101', 'LISTO');
+      expect(component.ticketEmitido()).toBeTruthy();
+      expect(component.ticketEmitido().clienteNombre).toBe('Juan Perez');
+      expect(component.ticketEmitido().total).toBe(45);
+    });
+
+    it('capturas: muestra motivo de bloqueo si falta la captura de pago', () => {
+      ordersService.orders.set([orden({ id: '35', codigoSeguimiento: 'POL-35', tipo: 'DELIVERY', estado: 'PENDIENTE_PAGO', canalOrigen: 'WHATSAPP' })]);
+      component.pagosPorVerificar.set([]);
+      component.activeTab.set('CAPTURAS_PAGO');
+      fixture.detectChanges();
+
+      const bloqueo = fixture.nativeElement.querySelector('[data-testid="captura-bloqueo"]') as HTMLElement;
+      expect(bloqueo?.textContent).toContain('Esperando que el cliente suba la captura');
+      const botonAprobar = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
+        .find(b => (b.textContent || '').includes('Confirmar Pago'))!;
+      expect(botonAprobar.disabled).toBeTrue();
+    });
   });
 });

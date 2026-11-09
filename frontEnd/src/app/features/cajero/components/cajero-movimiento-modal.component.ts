@@ -68,6 +68,13 @@ import { TipoMovimiento } from '../../../core/models/finance.model';
               </div>
             </div>
 
+            <!-- Why «Guardar» is still disabled: a disabled button with no reason looks broken. -->
+            @if (!procesando() && (monto() <= 0 || !motivo())) {
+              <p data-testid="movimiento-bloqueo" class="text-[11px] font-bold text-amber-300">
+                {{ monto() <= 0 ? 'Ingresa un monto mayor a S/ 0.00.' : 'Escribe el motivo del movimiento.' }}
+              </p>
+            }
+
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
               <button
                 type="button"
@@ -80,9 +87,9 @@ import { TipoMovimiento } from '../../../core/models/finance.model';
                 type="button"
                 (click)="guardar.emit()"
                 [disabled]="monto() <= 0 || !motivo() || procesando()"
-                class="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold uppercase disabled:opacity-50"
+                class="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                Guardar Movimiento
+                {{ procesando() ? 'Guardando…' : 'Guardar Movimiento' }}
               </button>
             </div>
           </div>

@@ -81,7 +81,7 @@ import { CajeroTab } from '../models/cajero.models';
           >
             <div class="flex items-center gap-3">
               <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
               </svg>
               <span>Capturas Yape / Plin</span>
             </div>
@@ -115,7 +115,7 @@ import { CajeroTab } from '../models/cajero.models';
           >
             <div class="flex items-center gap-3">
               <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
               </svg>
               <span>Recojo en Tienda</span>
             </div>
@@ -138,23 +138,6 @@ import { CajeroTab } from '../models/cajero.models';
             </div>
             <span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold text-xs">
               {{ totalLiquidaciones() }}
-            </span>
-          </button>
-
-          <button 
-            type="button"
-            (click)="tabChange.emit('MERMAS_FANTASMA')"
-            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
-            [ngClass]="activeTab() === 'MERMAS_FANTASMA' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
-          >
-            <div class="flex items-center gap-3">
-              <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-              </svg>
-              <span>Mermas / Pedidos Fantasma</span>
-            </div>
-            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="totalFantasma() > 0 ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-400'">
-              {{ totalFantasma() }}
             </span>
           </button>
 
@@ -228,7 +211,6 @@ export class CajeroSidebarComponent {
   readonly totalCapturas = input<number>(0);
   readonly totalRecojo = input<number>(0);
   readonly totalLiquidaciones = input<number>(0);
-  readonly totalFantasma = input<number>(0);
   readonly totalCobros = input<number>(0);
   readonly usuarioNombre = input<string | undefined>(undefined);
 
