@@ -94,8 +94,11 @@ test('"ticket" lo reenvía con el estado actual que devuelve orders-service', as
     assert.match(ticket, /N\.° \*?4/);
     assert.match(ticket, /listo para recoger/i, 'usa el estado real del pedido');
     assert.match(ticket, /presenta este c[oó]digo/i);
-    assert.strictEqual(cliente.consultas.length, 1);
-    assert.match(cliente.consultas[0], /\/ordenes\/95$/);
+    // The phone lookup of active orders (S4) is a separate request; this double does not answer it
+    // with a list, so the bot falls back to the order the chat remembers, read by its id.
+    const porId = cliente.consultas.filter(u => !u.includes('/ordenes/activas-por-telefono'));
+    assert.strictEqual(porId.length, 1);
+    assert.match(porId[0], /\/ordenes\/95$/);
 });
 
 test('tras liberar la conversación (pago aprobado) el ticket sigue disponible con la opción 5 del menú', async () => {

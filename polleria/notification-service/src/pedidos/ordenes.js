@@ -78,6 +78,36 @@ class ClienteOrdenes {
     }
 
     /**
+     * Active orders of the chat's phone (X-Internal-Key), newest first. Lets a customer who lost
+     * or deleted the ticket message get it back, and lets the bot recognise an order that was
+     * created even though the create call timed out. Throws on any failure.
+     */
+    async listarActivosPorTelefono(telefono) {
+        const controlador = new AbortController();
+        const temporizador = setTimeout(() => controlador.abort(), this.timeoutMs);
+        try {
+            const headers = {};
+            if (this.internalKey) {
+                headers['X-Internal-Key'] = this.internalKey;
+            }
+            const res = await this.fetchImpl(
+                `${this.baseUrl}/ordenes/activas-por-telefono?telefono=${encodeURIComponent(String(telefono || ''))}`,
+                { method: 'GET', headers, signal: controlador.signal }
+            );
+            if (!res || res.ok === false) {
+                throw await errorDeRespuesta('orders-service', res);
+            }
+            const lista = await res.json();
+            if (!Array.isArray(lista)) {
+                throw new Error('orders-service devolvió una lista de pedidos inválida');
+            }
+            return lista;
+        } finally {
+            clearTimeout(temporizador);
+        }
+    }
+
+    /**
      * Cancels the order on behalf of the customer chatting with the bot (X-Internal-Key).
      * orders-service validates the transition; a refusal (e.g. 409, kitchen already started)
      * is thrown with its status and message so the bot never claims a cancellation.

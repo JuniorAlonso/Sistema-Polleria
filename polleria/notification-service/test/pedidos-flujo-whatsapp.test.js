@@ -149,7 +149,7 @@ test('consulta: el pedido de otro celular no se muestra', async () => {
 // ─── 2. "cancelar" with a created order ─────────────────────────────────────────
 
 test('cancelar con un pedido PENDIENTE_PAGO lo cancela en orders-service y libera el chat conservando el ticket', async () => {
-    for (const estado of ['PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION', 'RECIBIDO']) {
+    for (const estado of ['PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION']) {
         const { bot, conversacion, cancelaciones } = montar({ orden: ordenDe({ estado }) });
         await conversacion.set(CELULAR, { estado: 'PEDIDO_CONFIRMADO', pedido: PEDIDO, ultimoPedido: PEDIDO });
         const r = await bot.procesar(texto('cancelar'));
@@ -159,6 +159,14 @@ test('cancelar con un pedido PENDIENTE_PAGO lo cancela en orders-service y liber
         assert.strictEqual(guardado.estado, 'MENU');
         assert.strictEqual(guardado.ultimoPedido.id, 101);
     }
+});
+
+test('cancelar un pedido ya pagado o confirmado por llamada (en cola de cocina) no lo cancela', async () => {
+    const { bot, conversacion, cancelaciones } = montar({ orden: ordenDe({ estado: 'RECIBIDO' }) });
+    await conversacion.set(CELULAR, { estado: 'PEDIDO_CONFIRMADO', pedido: PEDIDO, ultimoPedido: PEDIDO });
+    const r = await bot.procesar(texto('cancelar'));
+    assert.deepStrictEqual(cancelaciones, []);
+    assert.match(r, /no se puede cancelar/i);
 });
 
 test('cancelar con comprobante recibido también cancela si la orden sigue esperando el pago', async () => {
@@ -316,6 +324,17 @@ test('PRESERVE: /whatsapp/estado de la orden del chat la libera conservando el t
 test('/whatsapp/estado PREPARANDO de la orden del chat libera la conversación (ContraPago confirmado por llamada)', async () => {
     await conversacionHttp.set(CELULAR, { estado: 'PEDIDO_CONFIRMADO', pedido: { ...PEDIDO_CHAT, metodoPago: 'EFECTIVO' } });
     const res = await post('/whatsapp/estado', { ordenId: 300, numeroPedido: 4, telefono: '999888777', estadoNuevo: 'PREPARANDO' });
+    assert.strictEqual(res.status, 202);
+    assert.strictEqual((await conversacionHttp.get(CELULAR)).estado, 'MENU');
+});
+
+test('/whatsapp/estado RECIBIDO (llamada confirmada o pago aprobado) avisa que entró a cocina y libera el chat', async () => {
+    assert.ok(ESTADOS_DELIVERY.includes('RECIBIDO'));
+    const texto = mensajeEstado({ ordenId: 300, numeroPedido: 4, estadoNuevo: 'RECIBIDO' });
+    assert.match(texto, /pedido N\.° 4/);
+    assert.match(texto, /cocina/i);
+    await conversacionHttp.set(CELULAR, { estado: 'PEDIDO_CONFIRMADO', pedido: { ...PEDIDO_CHAT, metodoPago: 'EFECTIVO' } });
+    const res = await post('/whatsapp/estado', { ordenId: 300, numeroPedido: 4, telefono: '999888777', estadoNuevo: 'RECIBIDO' });
     assert.strictEqual(res.status, 202);
     assert.strictEqual((await conversacionHttp.get(CELULAR)).estado, 'MENU');
 });

@@ -224,7 +224,7 @@ function codigoTicket(pedido) {
 }
 
 const ESTADOS_TICKET = {
-    RECIBIDO: 'Recibido',
+    RECIBIDO: 'Confirmado, en cola de cocina',
     PENDIENTE_PAGO: 'Esperando la captura de tu Yape',
     PENDIENTE_CONFIRMACION: 'Esperando nuestra llamada de confirmación',
     EN_PREPARACION: 'En preparación',
@@ -296,7 +296,9 @@ function mensajePedidoCreado(pedido, ajustes) {
 function mensajePedidoYaConfirmado(pedido, ajustes) {
     return (
         `Tu pedido N.° *${numeroDePedido(pedido)}* ya está registrado.\n\n` +
-        lineaSiguientePaso(pedido, ajustes)
+        lineaSiguientePaso(pedido, ajustes) + '\n\n' +
+        // A customer who only wanted the menu must know how to get out of the open order.
+        '_Escribe *ticket* para ver tu código, *cancelar* para anular el pedido o *salir* para volver al menú._'
     );
 }
 

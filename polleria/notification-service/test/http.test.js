@@ -62,7 +62,8 @@ test('POST /whatsapp/pago sin clave interna responde 401', async () => {
 });
 
 test('POST /whatsapp/estado valida el estado', async () => {
-    const malo = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'RECIBIDO' });
+    // RECIBIDO is valid now (the order entered the kitchen queue); an unknown state is not.
+    const malo = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'INVENTADO' });
     assert.strictEqual(malo.status, 400);
 
     const bueno = await post('/whatsapp/estado', { ordenId: 52, telefono: '999888777', estadoNuevo: 'EN_CAMINO' });

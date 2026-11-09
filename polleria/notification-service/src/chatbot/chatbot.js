@@ -88,6 +88,34 @@ const RESPUESTAS_EFECTIVO = ['2', 'efectivo', 'contrapago', 'contra pago', 'cont
 const PALABRAS_TICKET = ['ticket', 'mi ticket', 'ver ticket', 'ver mi ticket', 'reenviar ticket',
     'enviame mi ticket', 'envia mi ticket', 'mandame mi ticket', 'codigo de ticket', 'mi codigo de ticket'];
 
+// "Where is my order / I lost my ticket" in the customer's own words (accents already removed).
+// They are checked before "start an order", so "mi pedido" looks the order up instead of opening a
+// new one; "quiero hacer mi pedido" still starts one because it asks to make an order.
+const CONSULTAS_DE_TICKET_EXACTAS = ['mi pedido', 'mis pedidos', 'mi orden', 'mi codigo', 'codigo', 'mi numero de pedido',
+    'estado', 'estado de mi pedido', 'mi ticket de pedido'];
+const PATRONES_CONSULTA_DE_TICKET = [
+    /\bticket\b/,
+    /\b(perdi|borre|borro|olvide|elimine|no encuentro|no tengo|ya no tengo|no me llego)\b.*\b(ticket|codigo|mensaje|pedido|numero)\b/,
+    /\b(donde esta|como va|que paso con|estado de)\b.*\b(pedido|orden)\b/
+];
+
+function esConsultaDeTicket(texto) {
+    const limpio = String(texto || '').replace(/[¡!¿?.,;:~*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!limpio) return false;
+    if (/\b(hacer|quiero|pedir|ordenar|nuevo)\b/.test(limpio) && !/\b(ticket|codigo|perdi|borre|borro|olvide)\b/.test(limpio)) {
+        return false;
+    }
+    return CONSULTAS_DE_TICKET_EXACTAS.includes(limpio) || PATRONES_CONSULTA_DE_TICKET.some(p => p.test(limpio));
+}
+
+/** Text worth an answer: an emoji-only or blank message (a reaction, a sticker caption) is not. */
+function tieneTextoUtil(texto) {
+    return /[a-z0-9]/i.test(String(texto || ''));
+}
+
+/** Minutes within which an order found after a timed-out create is taken as that same order. */
+const MINUTOS_RECUPERAR_PEDIDO = 3;
+
 /** Final states whose ticket can no longer be used at the counter. */
 const ESTADOS_TICKET_NO_VALIDO = ['CANCELADO', 'PEDIDO_FANTASMA'];
 
@@ -125,7 +153,9 @@ function esCancelacion(texto) {
 const CANCELACIONES_DE_PEDIDO = ['cancelar', 'cancela', 'cancelar pedido', 'cancelar mi pedido', 'cancela mi pedido', 'anular', 'anular pedido', 'anular mi pedido'];
 
 /** Order states the customer can still cancel from the chat (before the kitchen starts). */
-const ESTADOS_CANCELABLES_DESDE_CHAT = ['PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION', 'RECIBIDO'];
+// Not RECIBIDO: there the order is already paid or confirmed by phone and waits in the kitchen
+// queue, so cancelling it goes through the restaurant (orders-service refuses it too).
+const ESTADOS_CANCELABLES_DESDE_CHAT = ['PENDIENTE_PAGO', 'PENDIENTE_CONFIRMACION'];
 
 function esCancelacionDePedido(texto) {
     if (!texto) return false;
@@ -287,7 +317,7 @@ class BotPedidos {
             return this._resolverComprobante(msg, clave, guardado);
         }
 
-        if (PALABRAS_TICKET.includes(texto) || (texto === '5' && estado === ESTADO_MENU)) {
+        if (PALABRAS_TICKET.includes(texto) || esConsultaDeTicket(texto) || (texto === '5' && estado === ESTADO_MENU)) {
             return this._enviarTicket(clave, guardado);
         }
 
@@ -380,6 +410,18 @@ class BotPedidos {
         // Estado MENU
         if (esSaludo(texto)) return getMainMenu();
 
+        // "cancelar" after leaving the order with "salir": the order is still alive, so it is
+        // cancelled (or the customer is told why not) instead of answering nothing.
+        if (esCancelacionDePedido(texto)) {
+            const ultimo = guardado.ultimoPedido;
+            if (ultimo && ultimo.id !== undefined && ultimo.id !== null) {
+                return this._cancelarPedido(clave, { ...guardado, pedido: ultimo });
+            }
+            return 'No tienes un pedido en curso para cancelar. Escribe *1* para hacer un pedido o *hola* para ver el menú. 🍗';
+        }
+        // "salir", "volver", "reiniciar" while already in the menu: just show it again.
+        if (esCancelacion(texto)) return getMainMenu();
+
         if (esMensajeAgradecimiento(texto)) {
             return '¡A ti! Que disfrutes tu pedido. Si necesitas algo más o deseas hacer un nuevo pedido, escribe *hola* para ver el menú. 🍗';
         }
@@ -410,6 +452,11 @@ class BotPedidos {
             return respuestaAsesor(this.ajustes);
         }
 
+        // Anything else with letters or digits (a typo like "ola", a "9", free text) gets the
+        // options again instead of silence; a blank or emoji-only message is still ignored.
+        if (tieneTextoUtil(texto)) {
+            return `🤔 No entendí tu mensaje.\n\n${getMainMenu()}`;
+        }
         return null;
     }
 
@@ -650,7 +697,7 @@ class BotPedidos {
             }
 
             const estadosMap = {
-                RECIBIDO: '📥 Recibido',
+                RECIBIDO: '📥 Confirmado, en cola de cocina',
                 PENDIENTE_PAGO: '⏳ Esperando la captura de tu Yape',
                 PENDIENTE_CONFIRMACION: '📞 Esperando nuestra llamada de confirmación',
                 EN_PREPARACION: '🍳 En preparación en cocina',
@@ -693,7 +740,7 @@ class BotPedidos {
 
     /**
      * "cancelar" with an order already created: the current state is read from orders-service.
-     * Before the kitchen starts (PENDIENTE_PAGO, PENDIENTE_CONFIRMACION, RECIBIDO) the order is
+     * While it waits for the payment or the call (PENDIENTE_PAGO, PENDIENTE_CONFIRMACION) the order is
      * cancelled there and only then the chat is released; otherwise, or if the service refuses
      * or does not answer, the customer is told and the conversation stays as it was.
      */
@@ -755,6 +802,17 @@ class BotPedidos {
      * presented as valid, and if the service is down the saved ticket goes out without a state.
      */
     async _enviarTicket(clave, guardado) {
+        // S4: the active orders of this WhatsApp number come from orders-service, so the ticket
+        // survives a deleted message, a lost conversation or an order older than the last one.
+        const activos = await this._pedidosActivos(clave);
+        if (activos && activos.length === 1) {
+            const pedido = pedidoDesdeOrden(activos[0]);
+            await this.conversacion.set(clave, { ...guardado, ultimoPedido: pedido });
+            return mensajeTicket(pedido, activos[0].estado);
+        }
+        if (activos && activos.length > 1) {
+            return mensajeVariosTickets(activos);
+        }
         const pedido = guardado.pedido || guardado.ultimoPedido;
         if (!pedido || pedido.id === undefined || pedido.id === null) {
             return MENSAJE_SIN_TICKET;
@@ -784,6 +842,22 @@ class BotPedidos {
         } catch (error) {
             logger.warn(`No se pudo consultar la orden #${pedido.id} para el ticket: ${error.message || error}`);
             return mensajeTicket(pedido);
+        }
+    }
+
+    /**
+     * Active orders of the chat's phone, or null when they cannot be looked up (no client, the
+     * chat key is not a phone, orders-service down): callers then fall back to what the chat
+     * remembers.
+     */
+    async _pedidosActivos(clave) {
+        if (!this.ordenes || typeof this.ordenes.listarActivosPorTelefono !== 'function') return null;
+        if (!normalizarTelefono(clave)) return null;
+        try {
+            return await this.ordenes.listarActivosPorTelefono(clave);
+        } catch (error) {
+            logger.warn(`No se pudieron buscar los pedidos activos de ${clave}: ${error.message || error}`);
+            return null;
         }
     }
 
@@ -857,18 +931,7 @@ class BotPedidos {
         try {
             logger.info(`Creando pedido ${tipo} (${datos.estadoInicial}) en orders-service para ${clave}...`);
             const orden = await this.ordenes.crear(datos);
-            const pedido = {
-                id: orden.id,
-                numeroCliente: orden.numeroCliente,
-                total: orden.total,
-                tipo,
-                metodoPago: efectivo ? 'EFECTIVO' : 'YAPE',
-                montoPagaCon: orden.montoPagaCon,
-                vueltoEstimado: orden.vueltoEstimado
-            };
-            await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido, ultimoPedido: pedido });
-            logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
-            return mensajePedidoCreado(pedido, this.ajustes);
+            return this._registrarPedidoCreado(clave, orden, tipo, efectivo);
         } catch (error) {
             const status = error && error.status;
             const detalle = (error && error.detalle) || '';
@@ -896,6 +959,15 @@ class BotPedidos {
                 return `${detalle}\n\n${PREGUNTA_MONTO_EFECTIVO}`;
             }
             logger.error(`Fallo al crear orden para ${clave} en orders-service: ${error.message || error}`);
+            // No HTTP status = timeout or network cut: orders-service may have created the order
+            // anyway. If it did, take that order instead of letting "confirmar" create a duplicate.
+            if (!status) {
+                const recuperado = await this._recuperarPedidoCreado(clave, guardado, tipo);
+                if (recuperado) {
+                    logger.warn(`Alta cortada para ${clave}, pero la orden #${recuperado.id} sí se creó: se usa esa`);
+                    return this._registrarPedidoCreado(clave, recuperado, tipo, efectivo);
+                }
+            }
             // Fallo explícito: no se inventa número de pedido y el carrito no se pierde.
             if ((status === 400 || status === 409) && detalle) {
                 await this.conversacion.set(clave, { ...guardado, estado: ESTADO_CATALOGO });
@@ -903,6 +975,39 @@ class BotPedidos {
             }
             return this._falloPedido(clave, guardado);
         }
+    }
+
+    async _registrarPedidoCreado(clave, orden, tipo, efectivo) {
+        const pedido = {
+            id: orden.id,
+            numeroCliente: orden.numeroCliente,
+            total: orden.total,
+            tipo,
+            metodoPago: efectivo ? 'EFECTIVO' : 'YAPE',
+            montoPagaCon: orden.montoPagaCon,
+            vueltoEstimado: orden.vueltoEstimado
+        };
+        await this.conversacion.set(clave, { estado: ESTADO_PEDIDO_CONFIRMADO, pedido, ultimoPedido: pedido });
+        logger.success(`Pedido creado con éxito: orden #${orden.id} (número cliente #${orden.numeroCliente}, total: S/ ${orden.total}). Estado de ${clave} actualizado a ${ESTADO_PEDIDO_CONFIRMADO}`);
+        return mensajePedidoCreado(pedido, this.ajustes);
+    }
+
+    /**
+     * After a create call that timed out: an active order of this phone, of the same type and
+     * with exactly the cart's items, created in the last few minutes and not the chat's previous
+     * order, is the one that call created.
+     */
+    async _recuperarPedidoCreado(clave, guardado, tipo) {
+        const activos = await this._pedidosActivos(clave);
+        if (!activos) return null;
+        const anterior = guardado.ultimoPedido && guardado.ultimoPedido.id;
+        const limite = Date.now() - MINUTOS_RECUPERAR_PEDIDO * 60 * 1000;
+        return activos.find(o =>
+            o.tipo === tipo &&
+            o.id !== anterior &&
+            Date.parse(o.creadoEn) >= limite &&
+            mismosItems(o, guardado.carrito)
+        ) || null;
     }
 
     async _falloPedido(clave, guardado) {
@@ -1246,6 +1351,47 @@ class BotPedidos {
             return { ok: false, productos: [], texto: mensajeSinServicio(this.ajustes) };
         }
     }
+}
+
+/** The chat's view of an order returned by orders-service. */
+function pedidoDesdeOrden(orden) {
+    return {
+        id: orden.id,
+        numeroCliente: orden.numeroCliente,
+        total: orden.total,
+        tipo: orden.tipo === 'RECOJO' ? 'RECOJO' : 'DELIVERY'
+    };
+}
+
+const ESTADOS_LEGIBLES = {
+    RECIBIDO: 'Confirmado, en cola de cocina',
+    PENDIENTE_PAGO: 'Esperando tu pago',
+    PENDIENTE_CONFIRMACION: 'Esperando nuestra llamada',
+    EN_PREPARACION: 'En preparación',
+    PREPARANDO: 'En preparación',
+    LISTO: 'Listo',
+    LISTO_PARA_ENTREGAR: 'Listo',
+    EN_CAMINO: 'En camino',
+    EN_PUERTA: 'En tu puerta'
+};
+
+function mensajeVariosTickets(ordenes) {
+    const lineas = ordenes.map(o => {
+        const p = pedidoDesdeOrden(o);
+        const entrega = p.tipo === 'RECOJO' ? 'Recojo en tienda' : 'Delivery';
+        return `• *POL-${p.id}* — Pedido N.° ${numeroDePedido(p)} — ${entrega} — ${ESTADOS_LEGIBLES[o.estado] || o.estado}`;
+    });
+    return (
+        '🎫 *TUS PEDIDOS ACTIVOS*\n\n' +
+        lineas.join('\n') +
+        '\n\nPresenta el código *POL-…* de tu pedido en caja si es de recojo en tienda.'
+    );
+}
+
+/** Same products and quantities as the cart (any order). */
+function mismosItems(orden, carrito) {
+    const clave = items => items.map(i => `${Number(i.productoId)}x${Number(i.cantidad)}`).sort().join(',');
+    return Array.isArray(orden.items) && clave(orden.items) === clave(carrito || []);
 }
 
 function crearBot(opciones) {

@@ -1,6 +1,7 @@
 const config = require('../config');
 
 const ESTADOS_DELIVERY = [
+    'RECIBIDO',
     'EN_PREPARACION',
     'PREPARANDO',
     'LISTO',
@@ -71,6 +72,11 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
     let cuerpo;
 
     switch (estadoNuevo) {
+        case 'RECIBIDO':
+            // A confirmed ContraPago call or an approved payment: the order waits in the kitchen queue.
+            cuerpo = `Tu pedido N.° ${numero} fue confirmado y ya está en la cola de cocina. Te avisaremos cuando empiecen a prepararlo.`;
+            break;
+
         case 'EN_PREPARACION':
         case 'PREPARANDO':
             cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto o esté listo.`;

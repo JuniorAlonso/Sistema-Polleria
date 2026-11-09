@@ -151,8 +151,9 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
             }
 
             // CANCELADO and PEDIDO_FANTASMA also free the chat (keeping the ticket) so "hola"
-            // starts a new order; PREPARANDO is the cashier's call confirmation of a cash order.
-            const liberaConversacion = ['EN_PREPARACION', 'PREPARANDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
+            // starts a new order; RECIBIDO is a confirmed cash call or an approved payment (the
+            // order entered the kitchen queue).
+            const liberaConversacion = ['RECIBIDO', 'EN_PREPARACION', 'PREPARANDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'];
             if (conversacion && telefono && liberaConversacion.includes(estadoNuevo)) {
                 const clave = claveDeUsuario(telefono);
                 try {
