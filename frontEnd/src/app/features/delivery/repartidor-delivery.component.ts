@@ -19,6 +19,7 @@ import { RouteMapComponent } from './components/route-map.component';
 import { CashSettlementComponent } from './components/cash-settlement.component';
 import { DeliveryHistoryComponent } from './components/delivery-history.component';
 import { DeliveryConfirmModalComponent } from './components/delivery-confirm-modal.component';
+import { CurrencyPENPipe } from '../../shared/pipes/currency-pen.pipe';
 
 export type { DeliveryTab };
 
@@ -31,6 +32,7 @@ export type { DeliveryTab };
   standalone: true,
   imports: [
     CommonModule,
+    CurrencyPENPipe,
     DeliverySidebarComponent,
     DeliveryHeaderComponent,
     DeliveryOrderCardComponent,
