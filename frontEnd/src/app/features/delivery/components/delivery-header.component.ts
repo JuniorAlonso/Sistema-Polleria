@@ -18,6 +18,13 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 
           <!-- Quick Stats Top -->
           <div class="flex items-center gap-3">
+            @if (sencilloRequerido() > 0) {
+              <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-300 font-bold">
+                <span class="text-slate-400">Vuelto a Llevar:</span>
+                <span class="font-display font-bold text-amber-400">{{ sencilloRequerido() | currencyPEN }}</span>
+              </div>
+            }
+
             <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs">
               <span class="text-slate-400">Total Efectivo a Rendir:</span>
               <span class="font-display font-bold text-polleria-gold">{{ totalEfectivo() | currencyPEN }}</span>
@@ -35,4 +42,5 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 export class DeliveryHeaderComponent {
   readonly title = input.required<string>();
   readonly totalEfectivo = input.required<number>();
+  readonly sencilloRequerido = input<number>(0);
 }

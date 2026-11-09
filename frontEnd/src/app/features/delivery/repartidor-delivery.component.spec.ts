@@ -41,15 +41,13 @@ function orden(over: Partial<Order> & { id: string }): Order {
   } as Order;
 }
 
-function botonTomarPedido(fixture: ComponentFixture<RepartidorDeliveryComponent>): HTMLButtonElement | null {
+function boton(fixture: ComponentFixture<RepartidorDeliveryComponent>, texto: string): HTMLButtonElement | null {
   const botones = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
-  return botones.find(b => (b.textContent || '').includes('Tomar Pedido')) ?? null;
+  return botones.find(b => (b.textContent || '').includes(texto)) ?? null;
 }
 
-/** Botón de la sección nueva «Pedidos disponibles para entregar» (minúscula, distinto del de las cards). */
-function botonTomarDisponible(fixture: ComponentFixture<RepartidorDeliveryComponent>): HTMLButtonElement | null {
-  const botones = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
-  return botones.find(b => (b.textContent || '').includes('Tomar pedido')) ?? null;
+function seccion(fixture: ComponentFixture<RepartidorDeliveryComponent>, id: string): HTMLElement | null {
+  return fixture.nativeElement.querySelector(`[data-testid="${id}"]`);
 }
 
 /**
@@ -57,7 +55,7 @@ function botonTomarDisponible(fixture: ComponentFixture<RepartidorDeliveryCompon
  * disponibles sin asignar, mis entregas activas e historial propio, todo filtrado por el
  * `userId` del JWT.
  */
-describe('RepartidorDeliveryComponent — cola compartida del motorizado', () => {
+describe('RepartidorDeliveryComponent — bandeja del motorizado', () => {
   const MI_ID = 7;
 
   let fixture: ComponentFixture<RepartidorDeliveryComponent>;
@@ -93,201 +91,162 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     http.verify();
   });
 
-  it('construye las tres listas desde el userId del token', () => {
+  it('arma mis entregas e historial desde el userId del token, y los disponibles desde el backend', () => {
     ordersService.orders.set([
-      orden({ id: '1', estado: 'LISTO_COCINA' }),
       orden({ id: '2', estado: 'EN_REPARTO', repartidorId: MI_ID }),
       orden({ id: '4', estado: 'COMPLETADO', repartidorId: MI_ID })
     ]);
+    ordersService.pedidosDisponibles.set([orden({ id: '1', estado: 'LISTO_COCINA' })]);
     fixture.detectChanges();
 
     expect(component.miIdMotorizado()).toBe(MI_ID);
-    expect(component.readyForPickupOrders().map(o => o.id))
-      .withContext('disponibles: LISTO sin repartidor')
-      .toEqual(['1']);
-    expect(component.misEntregasActivas().map(o => o.id))
-      .withContext('mis entregas: EN_REPARTO con mi id')
-      .toEqual(['2']);
-    expect(component.completedDeliveryOrders().map(o => o.id))
-      .withContext('historial: COMPLETADO con mi id')
-      .toEqual(['4']);
-    expect(component.activeDeliveryOrders().map(o => o.id))
-      .withContext('TODAS = disponibles + mis entregas')
-      .toEqual(['1', '2']);
+    expect(component.misEntregasActivas().map(o => o.id)).toEqual(['2']);
+    expect(component.completedDeliveryOrders().map(o => o.id)).toEqual(['4']);
+    expect(component.porTomar().map(o => o.id)).toEqual(['1']);
   });
 
-  it('reescribe los subfiltros sobre las listas de la cola compartida', () => {
-    ordersService.orders.set([
-      orden({ id: '1', estado: 'LISTO_COCINA' }),
-      orden({ id: '2', estado: 'EN_REPARTO', repartidorId: MI_ID })
-    ]);
+  it('un pedido disponible aparece UNA sola vez en la pantalla (sin secciones redundantes)', () => {
+    auth.currentUser.set(usuarioRepartidor(MI_ID));
+    const disponible = orden({ id: '11', estado: 'LISTO_COCINA' });
+    ordersService.orders.set([disponible]);
+    ordersService.pedidosDisponibles.set([disponible]);
     fixture.detectChanges();
 
-    component.subFilter.set('POR_RECOGER');
-    expect(component.filteredActiveDeliveryOrders().map(o => o.id)).toEqual(['1']);
-
-    component.subFilter.set('EN_RUTA');
-    expect(component.filteredActiveDeliveryOrders().map(o => o.id)).toEqual(['2']);
-
-    component.subFilter.set('TODAS');
-    expect(component.filteredActiveDeliveryOrders().map(o => o.id)).toEqual(['1', '2']);
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto.split('#11').length - 1).withContext('el pedido no se repite en dos listas').toBe(1);
+    expect(seccion(fixture, 'seccion-por-tomar')!.textContent).toContain('#11');
+    expect(seccion(fixture, 'seccion-mis-entregas')!.textContent).not.toContain('#11');
   });
 
-  it('un pedido LISTO asignado a otro motorizado no aparece en ninguna lista (S6.7)', () => {
+  it('un pedido de otro motorizado no aparece en ninguna lista (S6.7)', () => {
     ordersService.orders.set([
-      orden({ id: '1', estado: 'LISTO_COCINA' }),
       orden({ id: '2', estado: 'EN_REPARTO', repartidorId: MI_ID }),
       orden({ id: '3', estado: 'LISTO_COCINA', repartidorId: 9 }),
-      orden({ id: '4', estado: 'COMPLETADO', repartidorId: MI_ID }),
       orden({ id: '5', estado: 'COMPLETADO', repartidorId: 9 }),
       orden({ id: '6', estado: 'EN_REPARTO', repartidorId: 9 })
     ]);
+    ordersService.pedidosDisponibles.set([orden({ id: '3', estado: 'LISTO_COCINA', repartidorId: 9 })]);
     fixture.detectChanges();
 
-    const visibles = [
-      ...component.readyForPickupOrders(),
-      ...component.misEntregasActivas(),
-      ...component.completedDeliveryOrders()
-    ].map(o => o.id);
-
+    const visibles = [...component.porTomar(), ...component.misEntregasActivas(), ...component.completedDeliveryOrders()]
+      .map(o => o.id);
     expect(visibles).not.toContain('3');
     expect(visibles).not.toContain('5');
     expect(visibles).not.toContain('6');
   });
 
-  it('incluye en mis entregas un pedido LISTO ya asignado a mí y permite tomarlo', () => {
+  it('antes de tomarlo la tarjeta dice DISPONIBLE y no muestra el celular del cliente', () => {
+    auth.currentUser.set(usuarioRepartidor(MI_ID));
+    ordersService.pedidosDisponibles.set([orden({ id: '11', estado: 'LISTO_COCINA' })]);
+    fixture.detectChanges();
+
+    const tarjeta = seccion(fixture, 'seccion-por-tomar')!;
+    expect(tarjeta.textContent).toContain('Disponible');
+    expect(tarjeta.textContent).not.toContain('999999999');
+    expect(boton(fixture, 'Tomar pedido')).not.toBeNull();
+    expect(boton(fixture, 'Salir a repartir')).toBeNull();
+  });
+
+  it('después de tomarlo la tarjeta es MÍA: dice recogerlo en el local, muestra el contacto y ofrece salir a repartir', () => {
     ordersService.orders.set([orden({ id: '7', estado: 'LISTO_COCINA', repartidorId: MI_ID })]);
     fixture.detectChanges();
 
-    expect(component.misEntregasActivas().map(o => o.id))
-      .withContext('el admin ya me lo asignó: debe verse aunque siga LISTO')
-      .toEqual(['7']);
-    expect(component.readyForPickupOrders().map(o => o.id))
-      .withContext('un pedido ya asignado a mí no es un disponible de la cola')
-      .toEqual([]);
+    const mias = seccion(fixture, 'seccion-mis-entregas')!;
+    expect(mias.textContent).toContain('#7');
+    expect(mias.textContent).toContain('Recógelo en el local');
+    expect(mias.textContent).toContain('999999999');
+    expect(boton(fixture, 'Tomar pedido')).withContext('un pedido mío no se vuelve a tomar').toBeNull();
 
-    const boton = botonTomarPedido(fixture);
-    expect(boton).withContext('debe poder tomarse con el mismo botón').not.toBeNull();
-    expect(boton!.disabled).toBeFalse();
-
-    boton!.click();
+    boton(fixture, 'Salir a repartir')!.click();
     fixture.detectChanges();
 
     const req = http.expectOne(r => r.method === 'PATCH' && r.url.includes('/ordenes/7/estado'));
-    expect(req.request.body)
-      .withContext('un pedido asignado a mí se envía con mi repartidorId')
-      .toEqual({ estado: 'EN_CAMINO', repartidorId: MI_ID });
-
-    req.flush({
-      id: 7,
-      tipo: 'DELIVERY',
-      estado: 'EN_CAMINO',
-      repartidorId: MI_ID,
-      total: 50,
-      nombreCliente: 'Cliente',
-      telefonoCliente: '999999999',
-      items: [],
-      creadoEn: '2026-01-01T00:00:00Z'
-    });
+    expect(req.request.body).toEqual({ estado: 'EN_CAMINO', repartidorId: MI_ID });
+    req.flush({ id: 7, tipo: 'DELIVERY', estado: 'EN_CAMINO', repartidorId: MI_ID, total: 50,
+      nombreCliente: 'Cliente', telefonoCliente: '999999999', items: [], creadoEn: '2026-01-01T00:00:00Z' });
   });
 
-  it('al tomar un pedido sin dueño usa el reclamo atómico (POST /reclamo)', () => {
-    ordersService.orders.set([orden({ id: '1', estado: 'LISTO_COCINA' })]);
+  it('mis entregas muestran en qué paso va el pedido', () => {
+    ordersService.orders.set([orden({ id: '8', estado: 'EN_REPARTO', repartidorId: MI_ID })]);
     fixture.detectChanges();
 
-    const boton = botonTomarPedido(fixture);
-    expect(boton).withContext('debe existir el botón «Tomar Pedido»').not.toBeNull();
-    expect(boton!.disabled).toBeFalse();
+    const paso = seccion(fixture, 'seccion-mis-entregas')!.querySelector('[data-testid="paso-actual"]');
+    expect(paso).not.toBeNull();
+    expect(paso!.textContent).toContain('En camino');
+  });
 
-    boton!.click();
+  it('al tomar: el botón queda «Tomando…» mientras responde, luego avisa el siguiente paso y marca el pedido como recién tomado', () => {
+    const exito = spyOn(notify, 'showSuccess');
+    auth.currentUser.set(usuarioRepartidor(MI_ID));
+    ordersService.pedidosDisponibles.set([orden({ id: '11', estado: 'LISTO_COCINA' })]);
     fixture.detectChanges();
 
-    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/1/reclamo'));
-    expect(req.request.body)
-      .withContext('el repartidor lo asigna el backend con el token, no el cuerpo')
-      .toEqual({});
+    boton(fixture, 'Tomar pedido')!.click();
+    fixture.detectChanges();
 
-    req.flush({
-      id: 1,
-      tipo: 'DELIVERY',
-      estado: 'LISTO',
-      repartidorId: MI_ID,
-      total: 50,
-      nombreCliente: 'Cliente',
-      telefonoCliente: '999999999',
-      items: [],
-      creadoEn: '2026-01-01T00:00:00Z'
-    });
+    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'));
+    expect(req.request.body).withContext('el repartidor lo asigna el backend con el token').toEqual({});
+    const enCurso = boton(fixture, 'Tomando');
+    expect(enCurso).withContext('feedback mientras el backend responde').not.toBeNull();
+    expect(enCurso!.disabled).toBeTrue();
+    expect(ordersService.pedidosDisponibles().map(o => o.id))
+      .withContext('sin confirmar del backend sigue disponible').toContain('11');
 
-    // El pedido reclamado se refresca con el sondeo de la pantalla, sin optimismo local.
+    req.flush(dtoDisponible(11, { repartidorId: MI_ID }));
     http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/disponibles')).flush([]);
-    http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes')).forEach(r => r.flush([]));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes'))
+      .forEach(r => r.flush([dtoDisponible(11, { repartidorId: MI_ID })]));
+    fixture.detectChanges();
+
+    expect(exito.calls.mostRecent().args[1]).toContain('Salir a repartir');
+    const mias = seccion(fixture, 'seccion-mis-entregas')!;
+    expect(mias.textContent).toContain('#11');
+    expect(mias.textContent).toContain('Recién tomado');
+    expect(seccion(fixture, 'seccion-por-tomar')!.textContent).not.toContain('#11');
   });
 
   it('sin identidad en el token avisa en pantalla y no envía repartidorId nulo', () => {
     auth.token.set(null);
-    ordersService.orders.set([orden({ id: '1', estado: 'LISTO_COCINA' })]);
+    auth.currentUser.set(usuarioRepartidor(MI_ID));
+    ordersService.pedidosDisponibles.set([orden({ id: '1', estado: 'LISTO_COCINA' })]);
     fixture.detectChanges();
 
     expect(component.miIdMotorizado()).toBeNull();
-    expect(fixture.nativeElement.textContent)
-      .withContext('debe mostrarse un aviso claro de identidad faltante')
-      .toContain('No se pudo identificar');
+    expect(fixture.nativeElement.textContent).toContain('No se pudo identificar');
+    expect(boton(fixture, 'Tomar pedido')!.disabled).toBeTrue();
 
-    const boton = botonTomarPedido(fixture);
-    expect(boton).withContext('el botón debe seguir visible pero deshabilitado').not.toBeNull();
-    expect(boton!.disabled).withContext('«Tomar Pedido» deshabilitado sin identidad').toBeTrue();
-
-    component.tomarPedido(ordersService.orders()[0]);
+    component.tomarPedido(ordersService.pedidosDisponibles()[0]);
     fixture.detectChanges();
 
     http.expectNone(r => r.method === 'PATCH');
     http.expectNone(r => r.method === 'POST' && r.url.includes('/reclamo'));
   });
 
-  it('mantiene «Cobrar y Entregar» para mis entregas activas (comportamiento previo)', () => {
+  it('mantiene «Cobrar y Entregar» para mis entregas en la puerta', () => {
     ordersService.orders.set([orden({ id: '2', estado: 'EN_PUERTA', repartidorId: MI_ID })]);
     fixture.detectChanges();
 
-    const boton = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
-      .find(b => (b.textContent || '').includes('Cobrar y Entregar'));
-    expect(boton).withContext('el botón de cobro debe seguir disponible en mis entregas').not.toBeUndefined();
-
-    boton!.click();
+    boton(fixture, 'Cobrar y Entregar')!.click();
     fixture.detectChanges();
 
     expect(component.selectedOrderModal()?.id).toBe('2');
   });
 
-  it('comandas de SALON nunca aparecen en las bandejas del repartidor aunque estén en LISTO_COCINA', () => {
-    ordersService.orders.set([
-      orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA' }),
+  it('comandas de SALON nunca aparecen en la bandeja ni se pueden tomar', () => {
+    ordersService.orders.set([orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA', repartidorId: MI_ID })]);
+    ordersService.pedidosDisponibles.set([
+      orden({ id: '12', tipo: 'SALON', estado: 'LISTO_COCINA' }),
       orden({ id: '11', tipo: 'DELIVERY', estado: 'LISTO_COCINA' })
     ]);
     fixture.detectChanges();
 
-    const disponibles = component.readyForPickupOrders().map(o => o.id);
-    expect(disponibles).not.toContain('10');
-    expect(disponibles).toContain('11');
+    expect(component.porTomar().map(o => o.id)).toEqual(['11']);
+    expect(component.misEntregasActivas().map(o => o.id)).not.toContain('10');
 
-    const activas = component.filteredActiveDeliveryOrders().map(o => o.id);
-    expect(activas).not.toContain('10');
-    expect(activas).toContain('11');
+    component.tomarPedido(orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA' }));
+    expect(http.match(r => r.method === 'PATCH').length).toBe(0);
+    expect(http.match(r => r.method === 'POST' && r.url.includes('/reclamo')).length).toBe(0);
   });
-
-  it('si se intenta tomar un pedido de SALON, es rechazado y no dispara PATCH', () => {
-    const ordenSalon = orden({ id: '10', tipo: 'SALON', estado: 'LISTO_COCINA' });
-    component.tomarPedido(ordenSalon);
-    fixture.detectChanges();
-
-    const patchRequests = http.match(r => r.method === 'PATCH');
-    expect(patchRequests.length).withContext('no debe dispararse ninguna llamada PATCH').toBe(0);
-    expect(http.match(r => r.method === 'POST' && r.url.includes('/reclamo')).length)
-      .withContext('un pedido de salón no se reclama')
-      .toBe(0);
-  });
-
-  // ---- S10: sección de pedidos disponibles y reclamo atómico ----
 
   const dtoDisponible = (
     id: number,
@@ -308,21 +267,15 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     creadoEn: '2026-01-01T00:00:00Z'
   });
 
-  it('solo el rol REPARTIDOR ve la sección «Pedidos disponibles para entregar»', () => {
+  it('solo el rol REPARTIDOR ve la sección de pedidos por tomar', () => {
     ordersService.pedidosDisponibles.set([orden({ id: '11', estado: 'LISTO_COCINA' })]);
     auth.currentUser.set(usuarioRepartidor(MI_ID));
     fixture.detectChanges();
-
-    expect(fixture.nativeElement.textContent)
-      .withContext('el repartidor sí ve la sección')
-      .toContain('Pedidos disponibles para entregar');
+    expect(seccion(fixture, 'seccion-por-tomar')).withContext('el repartidor sí la ve').not.toBeNull();
 
     auth.currentUser.set({ ...usuarioRepartidor(1), rol: 'ADMIN' });
     fixture.detectChanges();
-
-    expect(fixture.nativeElement.textContent)
-      .withContext('el ADMIN no ve la sección del repartidor')
-      .not.toContain('Pedidos disponibles para entregar');
+    expect(seccion(fixture, 'seccion-por-tomar')).withContext('el ADMIN no').toBeNull();
   });
 
   it('la lista muestra número, dirección, referencia, total y cantidad de ítems', () => {
@@ -344,42 +297,12 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     auth.currentUser.set(usuarioRepartidor(MI_ID));
     fixture.detectChanges();
 
-    const seccion = (fixture.nativeElement.querySelector('section') as HTMLElement).textContent || '';
-    expect(seccion).toContain('#11');
-    expect(seccion).toContain('Calle Las Begonias 123');
-    expect(seccion).toContain('Frente al parque');
-    expect(seccion).toContain('S/ 68.50');
-    expect(seccion).toContain('2 ítems');
-  });
-
-  it('al tomar un disponible reclama y refresca con la verdad del backend (sin optimismo local)', () => {
-    ordersService.pedidosDisponibles.set([orden({ id: '11', estado: 'LISTO_COCINA' })]);
-    auth.currentUser.set(usuarioRepartidor(MI_ID));
-    fixture.detectChanges();
-
-    const boton = botonTomarDisponible(fixture);
-    expect(boton).withContext('debe existir el botón «Tomar pedido» de la sección').not.toBeNull();
-
-    boton!.click();
-    fixture.detectChanges();
-
-    const req = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'));
-    expect(ordersService.pedidosDisponibles().map(o => o.id))
-      .withContext('sin confirmar del backend el pedido sigue en la lista')
-      .toContain('11');
-
-    req.flush(dtoDisponible(11, { repartidorId: MI_ID }));
-
-    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/disponibles')).flush([]);
-    http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes'))
-      .forEach(r => r.flush([dtoDisponible(11, { repartidorId: MI_ID })]));
-
-    expect(ordersService.pedidosDisponibles().map(o => o.id))
-      .withContext('deja de estar disponible')
-      .not.toContain('11');
-    expect(component.misEntregasActivas().map(o => o.id))
-      .withContext('aparece entre los del repartidor')
-      .toContain('11');
+    const texto = seccion(fixture, 'seccion-por-tomar')!.textContent || '';
+    expect(texto).toContain('#11');
+    expect(texto).toContain('Calle Las Begonias 123');
+    expect(texto).toContain('Frente al parque');
+    expect(texto).toContain('S/ 68.50');
+    expect(texto).toContain('2 ítems');
   });
 
   it('un 409 muestra el mensaje del backend y refresca la lista', () => {
@@ -388,7 +311,7 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     auth.currentUser.set(usuarioRepartidor(MI_ID));
     fixture.detectChanges();
 
-    botonTomarDisponible(fixture)!.click();
+    boton(fixture, 'Tomar pedido')!.click();
     fixture.detectChanges();
 
     http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'))
@@ -414,7 +337,7 @@ describe('RepartidorDeliveryComponent — cola compartida del motorizado', () =>
     auth.currentUser.set(usuarioRepartidor(MI_ID));
     fixture.detectChanges();
 
-    botonTomarDisponible(fixture)!.click();
+    boton(fixture, 'Tomar pedido')!.click();
     fixture.detectChanges();
 
     http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/11/reclamo'))
