@@ -2,21 +2,15 @@ import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } f
 import { isPlatformBrowser } from '@angular/common';
 import { Router } from '@angular/router';
 import { Subscription, interval } from 'rxjs';
-import { InventoryService } from '../../core/services/inventory.service';
 import { OrdersService } from '../../core/services/orders.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order, OrderStatus } from '../../core/models/order.model';
 import { KitchenTab, KdsFilter, codigoNumerico } from './kitchen.types';
-import { RegistrarMermaRequest } from '../../core/models/inventory.model';
-import { KitchenDespachoModalComponent, DespachoFormValue } from './components/kitchen-despacho-modal.component';
-import { KitchenMermaModalComponent } from './components/kitchen-merma-modal.component';
 import { KitchenSidebarComponent } from './components/kitchen-sidebar.component';
 import { KitchenHeaderComponent } from './components/kitchen-header.component';
 import { KitchenFilterBarComponent } from './components/kitchen-filter-bar.component';
 import { KitchenOrderCardComponent } from './components/kitchen-order-card.component';
-import { KitchenSupplyPanelComponent } from './components/kitchen-supply-panel.component';
-import { KitchenMermaPanelComponent } from './components/kitchen-merma-panel.component';
 
 export type { KitchenTab, KdsFilter } from './kitchen.types';
 
@@ -27,11 +21,7 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
     KitchenSidebarComponent,
     KitchenHeaderComponent,
     KitchenFilterBarComponent,
-    KitchenOrderCardComponent,
-    KitchenSupplyPanelComponent,
-    KitchenMermaPanelComponent,
-    KitchenDespachoModalComponent,
-    KitchenMermaModalComponent
+    KitchenOrderCardComponent
   ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
@@ -51,8 +41,6 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
           [activeTab]="activeTab()"
           [preparingCount]="preparingCount()"
           [readyCount]="readyCount()"
-          (solicitarLote)="solicitarDespachoModal()"
-          (registrarMerma)="registrarMermaModal()"
         />
 
         @if (activeTab() === 'KDS') {
@@ -103,48 +91,13 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
           </main>
         }
 
-        @if (activeTab() === 'DESPACHO_INSUMOS') {
-          <app-kitchen-supply-panel
-            [despachos]="inventory.despachos()"
-            (solicitarLote)="solicitarDespachoModal()"
-          />
-        }
-
-        @if (activeTab() === 'MERMAS') {
-          <app-kitchen-merma-panel
-            [mermas]="inventory.mermas()"
-            (registrarMerma)="registrarMermaModal()"
-          />
-        }
-
       </div>
     </div>
-
-    @if (mostrarDespachoModal()) {
-      <app-kitchen-despacho-modal
-        [insumos]="inventory.insumos()"
-        [enviando]="enviandoInventario()"
-        [error]="errorInventario()"
-        (closed)="mostrarDespachoModal.set(false)"
-        (confirmed)="registrarDespacho($event)"
-      />
-    }
-
-    @if (mostrarMermaModal()) {
-      <app-kitchen-merma-modal
-        [insumos]="inventory.insumos()"
-        [enviando]="enviandoInventario()"
-        [error]="errorInventario()"
-        (closed)="mostrarMermaModal.set(false)"
-        (confirmed)="registrarMerma($event)"
-      />
-    }
   `
 })
 export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly authService = inject(AuthService);
-  readonly inventory = inject(InventoryService);
   private notify = inject(NotificationService);
   private router = inject(Router);
   private platformId = inject(PLATFORM_ID);
@@ -152,11 +105,6 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
 
   readonly activeTab = signal<KitchenTab>('KDS');
   readonly kdsFilter = signal<KdsFilter>('TODAS');
-
-  readonly mostrarDespachoModal = signal(false);
-  readonly mostrarMermaModal = signal(false);
-  readonly enviandoInventario = signal(false);
-  readonly errorInventario = signal<string | null>(null);
 
   readonly rawKitchenOrders = computed(() =>
     this.ordersService.orders()
@@ -237,8 +185,6 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   getActiveTabLabel(): string {
     switch (this.activeTab()) {
       case 'KDS': return 'Comandas de Cocina & Horno en Vivo';
-      case 'DESPACHO_INSUMOS': return 'Despacho de Lotes de Insumos';
-      case 'MERMAS': return 'Registro de Mermas de Cierre';
       default: return 'Panel Cocina';
     }
   }
@@ -262,55 +208,6 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
         );
       }
     });
-  }
-
-  solicitarDespachoModal(): void {
-    this.errorInventario.set(null);
-    this.mostrarDespachoModal.set(true);
-  }
-
-  registrarMermaModal(): void {
-    this.errorInventario.set(null);
-    this.mostrarMermaModal.set(true);
-  }
-
-  /** POST /inventario/despachos: la lista y el stock solo cambian con la respuesta del backend. */
-  registrarDespacho(form: DespachoFormValue): void {
-    this.enviandoInventario.set(true);
-    this.errorInventario.set(null);
-    this.inventory.registrarDespacho({
-      solicitanteNombre: this.authService.currentUser()?.nombre,
-      items: [{ insumoId: form.insumoId, cantidad: form.cantidad, observaciones: form.observaciones }]
-    }).subscribe({
-      next: () => {
-        this.enviandoInventario.set(false);
-        this.mostrarDespachoModal.set(false);
-      },
-      error: err => {
-        this.enviandoInventario.set(false);
-        this.errorInventario.set(this.mensajeInventario(err, 'No se pudo registrar el despacho'));
-      }
-    });
-  }
-
-  /** POST /inventario/mermas: la lista solo cambia con la respuesta del backend. */
-  registrarMerma(req: RegistrarMermaRequest): void {
-    this.enviandoInventario.set(true);
-    this.errorInventario.set(null);
-    this.inventory.registrarMerma(req).subscribe({
-      next: () => {
-        this.enviandoInventario.set(false);
-        this.mostrarMermaModal.set(false);
-      },
-      error: err => {
-        this.enviandoInventario.set(false);
-        this.errorInventario.set(this.mensajeInventario(err, 'No se pudo registrar la merma'));
-      }
-    });
-  }
-
-  private mensajeInventario(err: { error?: { error?: string; message?: string }; message?: string } | null, fallback: string): string {
-    return err?.error?.error || err?.error?.message || err?.message || fallback;
   }
 
   cerrarSesion(): void {

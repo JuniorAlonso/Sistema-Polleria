@@ -230,14 +230,28 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                     <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
                   }
 
-                  <!-- Cobro Inmediato -->
-                  <div class="pt-2 border-t border-white/10">
-                    <button 
-                      (click)="cobrar.emit()"
-                      class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
-                    >
-                      <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Cobrar Cuenta & Cerrar Comanda</span>
-                    </button>
+                  <!-- Cobro / Cuenta: SOLO EL CAJERO COBRA -->
+                  <div class="pt-2 border-t border-white/10 space-y-2">
+                    @if (mesa().estado === 'POR_COBRAR') {
+                      <div class="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs text-center font-bold">
+                        💳 Cuenta enviada a Caja · Cobro en POS
+                        <p class="text-[11px] font-normal text-amber-300/80 mt-0.5">El cobro formal y cierre de comanda se realiza exclusivamente en Caja.</p>
+                      </div>
+                    } @else if (comandaMesa()) {
+                      <button 
+                        (click)="cobrar.emit()"
+                        class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
+                      >
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Solicitar Cobro en Caja (POS)</span>
+                      </button>
+                    } @else {
+                      <button 
+                        (click)="cobrar.emit()"
+                        class="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        Liberar Mesa Vacía
+                      </button>
+                    }
                   </div>
                 </div>
               }

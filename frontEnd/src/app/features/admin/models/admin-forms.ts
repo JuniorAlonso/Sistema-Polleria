@@ -1,13 +1,11 @@
 import { Order, OrderStatus, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { MesaSalon, SalonZona } from '../../../core/models/table.model';
-import { MotivoMerma } from '../../../core/models/inventory.model';
 import { TipoMovimiento } from '../../../core/models/finance.model';
 import { EstadoReclamo } from '../../../core/models/feedback.model';
 import { EstadoNotificacion } from '../../../core/models/notification-log.model';
 
 /** Contratos de UI compartidos entre los contenedores (smart) y los componentes presentacionales del panel admin. */
 
-export type InventarioSubTab = 'CARTA' | 'INSUMOS' | 'MERMAS' | 'PREDICCION';
 export type OrderStateFilter =
   | 'TODAS' | 'ATENCION' | 'NUEVAS' | 'PREPARANDOSE' | 'EN_CAMINO' | 'COMPLETADO' | 'INCIDENCIAS';
 
@@ -32,19 +30,6 @@ export interface ManualOrderForm {
   selectedProductId: string;
   cantidad: number;
   notas: string;
-}
-
-export interface DespachoForm {
-  insumoId: number;
-  cantidad: number;
-  estacion: string;
-}
-
-export interface MermaForm {
-  insumoId: number;
-  cantidad: number;
-  motivo: MotivoMerma;
-  justificacion: string;
 }
 
 export interface MovimientoForm {

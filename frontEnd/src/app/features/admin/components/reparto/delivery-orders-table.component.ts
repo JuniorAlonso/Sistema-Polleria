@@ -17,10 +17,16 @@ import { getCodeNum, puedeDespachar } from '../../shared/admin-format.util';
               </h2>
               <p class="text-xs text-slate-400">Pedidos DELIVERY en curso, tomados de orders-service (:8082).</p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <span class="px-3 py-1.5 rounded-xl bg-[#1c1f24] border border-white/10 text-xs font-mono">
                 Delivery en curso: <strong class="text-polleria-gold">{{ pedidos().length }}</strong>
               </span>
+              <button
+                (click)="cobroRequested.emit()"
+                class="px-3 py-1.5 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow"
+              >
+                $ Cobrar a Motorizado
+              </button>
               <button
                 (click)="refreshRequested.emit()"
                 class="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition cursor-pointer"
@@ -99,6 +105,7 @@ export class DeliveryOrdersTableComponent {
   readonly motorizadoNames = input.required<Record<number, string>>();
 
   readonly refreshRequested = output<void>();
+  readonly cobroRequested = output<void>();
   readonly assignRequested = output<Order>();
 
   protected readonly getCodeNum = getCodeNum;

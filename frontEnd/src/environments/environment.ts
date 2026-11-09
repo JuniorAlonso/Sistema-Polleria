@@ -4,7 +4,6 @@ export const environment = {
   ordersApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
   paymentsApiUrl: 'https://technology-pts-road-referred.trycloudflare.com',
   feedbackApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
-  inventoryApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
   financeApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
   incidentApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com',
   notificationApiUrl: 'https://gsm-asking-graphs-bobby.trycloudflare.com/notificaciones',
@@ -16,7 +15,6 @@ export const environment = {
     orders: 'https://gsm-asking-graphs-bobby.trycloudflare.com/ordenes',
     payments: 'https://technology-pts-road-referred.trycloudflare.com/pagos',
     feedback: 'https://gsm-asking-graphs-bobby.trycloudflare.com/feedback',
-    inventory: 'https://gsm-asking-graphs-bobby.trycloudflare.com/inventario',
     finance: 'https://gsm-asking-graphs-bobby.trycloudflare.com/finanzas',
     incidents: 'https://gsm-asking-graphs-bobby.trycloudflare.com/incidentes'
   },

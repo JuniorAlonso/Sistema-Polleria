@@ -245,6 +245,7 @@ export class OrderAdapter {
       nombreCliente: req.cliente.nombre || undefined,
       telefonoCliente: req.cliente.celular || undefined,
       observaciones: req.notasGenerales || undefined,
+      requiereCobroEfectivo: req.requiereCobroEfectivo,
       items: items
     } as DtoCrearOrdenConCanal;
   }

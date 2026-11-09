@@ -106,6 +106,41 @@ describe('ProductsService — sin carta simulada', () => {
       .toBeFalse();
   });
 
+  it('avisa el rechazo del backend al activar un plato sin stock', () => {
+    http.expectOne(esGet).flush([{
+      id: 9, nombre: 'Chicha Morada 1L', descripcion: '', precio: 14,
+      categoria: 'BEBIDAS', imagenUrl: '', disponible: false, stock: 0
+    }]);
+
+    let resultado: string | null | undefined;
+    service.toggleAgotado(service.products()[0].id, error => resultado = error);
+    http.expectOne(req => req.method === 'PATCH').flush(
+      { error: "'Chicha Morada 1L' no tiene stock: repón unidades antes de activarlo.", status: 400 },
+      { status: 400, statusText: 'Bad Request' });
+
+    expect(resultado).toBe("'Chicha Morada 1L' no tiene stock: repón unidades antes de activarlo.");
+    expect(service.products()[0].agotado).toBeTrue();
+  });
+
+  it('confirma el cambio de disponibilidad recién cuando el backend responde', () => {
+    http.expectOne(esGet).flush([{
+      id: 9, nombre: 'Chicha Morada 1L', descripcion: '', precio: 14,
+      categoria: 'BEBIDAS', imagenUrl: '', disponible: true
+    }]);
+
+    let resultado: string | null | undefined;
+    service.toggleAgotado(service.products()[0].id, error => resultado = error);
+    expect(resultado).withContext('sin respuesta todavía no hay confirmación').toBeUndefined();
+
+    http.expectOne(req => req.method === 'PATCH').flush({
+      id: 9, nombre: 'Chicha Morada 1L', descripcion: '', precio: 14,
+      categoria: 'BEBIDAS', imagenUrl: '', disponible: false
+    });
+
+    expect(resultado).toBeNull();
+    expect(service.products()[0].agotado).toBeTrue();
+  });
+
   it('restaura el producto eliminado de forma optimista si el backend falla', () => {
     http.expectOne(esGet).flush([{
       id: 9,

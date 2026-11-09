@@ -191,7 +191,8 @@ export class OrdersService {
           // ContraPago / capture orders must open waiting for the cashier; dropping the state
           // created them as RECIBIDO (straight to the kitchen) and skipped the sanction check.
           estadoInicial: ESTADOS_INICIALES_CHECKOUT.includes(orderRequest.estado) ? orderRequest.estado : undefined,
-          montoPagaCon: orderRequest.montoPagaCon
+          montoPagaCon: orderRequest.montoPagaCon,
+          requiereCobroEfectivo: orderRequest.requiereCobroEfectivo
         };
       } else {
         createReq = orderRequest as CreateOrderRequest;
@@ -355,7 +356,7 @@ export class OrdersService {
         const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
         const current = this.orders();
         const changed = current.length !== sorted.length ||
-          sorted.some((o, i) => !current[i] || current[i].id !== o.id || current[i].estado !== o.estado || current[i].updatedAt !== o.updatedAt);
+          sorted.some((o, i) => !current[i] || current[i].id !== o.id || current[i].estado !== o.estado || current[i].repartidorId !== o.repartidorId || current[i].updatedAt !== o.updatedAt);
         if (changed) {
           this.orders.set(sorted);
         }
@@ -480,6 +481,12 @@ export class OrdersService {
    * con la máquina de estados del backend.
    */
   dispatchDeliveryOrder(order: Order, repartidorId: number): Observable<Order> {
+    if (order.estado === 'PAGADO' || order.estado === 'RECIBIDO') {
+      return this.updateOrderStatus(order.id, 'EN_PREPARACION').pipe(
+        switchMap(() => this.updateOrderStatus(order.id, 'LISTO_COCINA')),
+        switchMap(() => this.updateOrderStatus(order.id, 'EN_REPARTO', repartidorId))
+      );
+    }
     if (order.estado === 'EN_PREPARACION') {
       return this.updateOrderStatus(order.id, 'LISTO_COCINA').pipe(
         switchMap(() => this.updateOrderStatus(order.id, 'EN_REPARTO', repartidorId))

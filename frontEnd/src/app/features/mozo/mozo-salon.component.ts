@@ -782,27 +782,26 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * S6.4: si la mesa tiene comanda activa, el cobro cierra la orden (ENTREGADO en el backend,
-   * que además libera la mesa). Sin comanda activa se conserva la liberación directa de la mesa.
-   * Un rechazo del backend se muestra tal cual y nunca anuncia un éxito inexistente.
+   * S6.4: SOLO EL CAJERO COBRA.
+   * Si la mesa tiene comanda activa, el mozo solicita el cobro pasando la mesa a POR_COBRAR.
+   * El cobro formal, emisión de boleta y cierre de comanda se realiza exclusivamente en la ventana de Caja (POS).
+   * Sin comanda activa se conserva la liberación directa de la mesa vacía.
    */
   cobrarMesaModal(): void {
     const m = this.selectedMesaModal();
     if (!m) return;
 
     if (m.ordenId) {
-      const estadoActual = this.comandaMesa()?.estado;
-      this.ordersService.completarOrdenSalon(m.ordenId, estadoActual).subscribe({
+      this.salonService.actualizarEstado(m.id, 'POR_COBRAR').subscribe({
         next: () => {
           this.salonService.cargarMesas();
-          this.ordersService.loadActiveOrders();
-          this.cerrarModalMesa();
-          this.notify.showSuccess(`Cuenta cobrada para ${m.nombre}. La comanda quedó cerrada.`);
+          this.cargarComandaMesa(m.ordenId!);
+          this.notify.showSuccess(`Mesa ${m.nombre}: cuenta enviada a Caja para cobro.`);
         },
         error: (err) => {
           const motivo = err?.error?.error || err?.error?.mensaje || err?.error?.message
-            || err?.message || 'El backend rechazó el cierre de la comanda';
-          this.notify.showError('No se pudo cobrar la cuenta', motivo);
+            || err?.message || 'El backend rechazó el cambio de estado de la mesa';
+          this.notify.showError('No se pudo enviar la cuenta a caja', motivo);
         }
       });
       return;

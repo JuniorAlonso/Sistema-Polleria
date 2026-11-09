@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ProductsService } from '../../../../core/services/products.service';
@@ -44,13 +44,19 @@ import { ProductCreateModalComponent } from '../../components/inventario/product
     }
   `
 })
-export class AdminInventarioPage {
+export class AdminInventarioPage implements OnInit {
   readonly productsService = inject(ProductsService);
   readonly notify = inject(NotificationService);
 
+  ngOnInit(): void {
+    // Each order takes units out of the stock: reload so the admin never edits a stale count.
+    this.productsService.loadProducts();
+  }
+
   alternarDisponibilidad(productId: Product['id']): void {
-    this.productsService.toggleAgotado(productId);
-    this.notify.showSuccess('Disponibilidad actualizada');
+    this.productsService.toggleAgotado(productId, error => error === null
+      ? this.notify.showSuccess('Disponibilidad actualizada')
+      : this.notify.showError('No se pudo cambiar la disponibilidad', error));
   }
 
   eliminarProducto(productId: Product['id']): void {
@@ -63,8 +69,12 @@ export class AdminInventarioPage {
       next: p => this.notify.showSuccess(
         stock === null ? `"${p.nombre}" ya no lleva control de stock` : `Stock de "${p.nombre}": ${stock}`
       ),
-      error: (err: HttpErrorResponse) =>
-        this.notify.showError('No se pudo actualizar el stock', err.error?.error || 'Intenta nuevamente.')
+      error: (err: HttpErrorResponse) => {
+        // Bean validation answers { errors: { stock: '...' } }; business rules answer { error: '...' }.
+        const validacion = err.error?.errors ? Object.values(err.error.errors).join('. ') : null;
+        this.notify.showError('No se pudo actualizar el stock',
+          validacion || err.error?.error || 'Intenta nuevamente.');
+      }
     });
   }
 

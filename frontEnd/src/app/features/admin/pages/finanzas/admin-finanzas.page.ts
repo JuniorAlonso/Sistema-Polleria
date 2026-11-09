@@ -10,6 +10,8 @@ import { CashMovementsTableComponent } from '../../components/finanzas/cash-move
 import { CashOpenModalComponent } from '../../components/finanzas/cash-open-modal.component';
 import { CashCloseModalComponent } from '../../components/finanzas/cash-close-modal.component';
 import { CashMovementModalComponent } from '../../components/finanzas/cash-movement-modal.component';
+import { CajeroCobroRepartidorModalComponent } from '../../../cajero/components/cajero-cobro-repartidor-modal.component';
+import { RepartidoresService } from '../../../../core/services/repartidores.service';
 
 /** Contenedor (smart) de la pestaña FINANZAS & CAJA: turno, arqueo y caja menor. */
 @Component({
@@ -22,13 +24,15 @@ import { CashMovementModalComponent } from '../../components/finanzas/cash-movem
     CashMovementsTableComponent,
     CashOpenModalComponent,
     CashCloseModalComponent,
-    CashMovementModalComponent
+    CashMovementModalComponent,
+    CajeroCobroRepartidorModalComponent
   ],
   host: { class: 'contents' },
   template: `
     <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
       <app-cash-header
         [cajaActual]="financeService.cajaActual()"
+        (cobroRepartidorRequested)="abrirCobroRepartidor()"
         (movementRequested)="showMovimientoCajaModal = true"
         (closeRequested)="abrirModalCierreCaja()"
         (openRequested)="showAbrirCajaModal = true"
@@ -42,6 +46,16 @@ import { CashMovementModalComponent } from '../../components/finanzas/cash-movem
 
       <app-cash-movements-table [movimientos]="financeService.movimientos()" />
     </main>
+
+    <!-- Modal: cobrar efectivo a motorizado -->
+    @if (showCobroRepartidorModal) {
+      <app-cajero-cobro-repartidor-modal
+        [repartidores]="repartidoresService.repartidores()"
+        [(repartidorId)]="repartidorIdSeleccionado"
+        (cancelar)="showCobroRepartidorModal = false"
+        (cobroExitoso)="showCobroRepartidorModal = false; financeService.cargarCajaActual(); financeService.cargarMovimientos()"
+      />
+    }
 
     <!-- Modal: abrir caja -->
     @if (showAbrirCajaModal) {
@@ -75,12 +89,22 @@ import { CashMovementModalComponent } from '../../components/finanzas/cash-movem
 export class AdminFinanzasPage implements OnInit {
   readonly authService = inject(AuthService);
   readonly financeService = inject(FinanceService);
+  readonly repartidoresService = inject(RepartidoresService);
   readonly notify = inject(NotificationService);
 
   ngOnInit(): void {
     this.financeService.cargarCajaActual();
     this.financeService.cargarBalanceDiario();
     this.financeService.cargarMovimientos();
+  }
+
+  showCobroRepartidorModal = false;
+  repartidorIdSeleccionado: number | null = null;
+
+  abrirCobroRepartidor(repartidorId?: number): void {
+    this.repartidorIdSeleccionado = repartidorId ?? null;
+    this.repartidoresService.cargar();
+    this.showCobroRepartidorModal = true;
   }
 
   // Modal de Apertura de Caja (Fase 6)

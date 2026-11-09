@@ -94,7 +94,7 @@ npm run build
 
 `ng serve` carga `proxy.conf.json`, que redirige rutas relativas a los microservicios locales
 (`/auth` 8081; `/ordenes`, `/productos`, `/mesas`, `/zonas`, `/ws-polleria` 8082; `/pagos` 8083;
-`/feedback` 8085; `/inventario` 8086; `/finanzas` 8087; `/incidentes` 8088; `/api/notificaciones` 3001).
+`/feedback` 8085; `/finanzas` 8087; `/incidentes` 8088; `/api/notificaciones` 3001).
 Hoy `environment.development.ts` sigue usando URLs absolutas (`http://localhost:80xx`), por lo que el proxy
 solo se activa al apuntar esas URLs a rutas relativas (por ejemplo `''`). No se cambio para no alterar el comportamiento.
 Las llamadas HTTP de ordenes, pagos, finanzas e incidentes viven en `src/app/core/api/*`.

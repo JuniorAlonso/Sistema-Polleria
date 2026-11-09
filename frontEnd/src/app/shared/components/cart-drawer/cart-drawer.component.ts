@@ -142,11 +142,11 @@ import { NotificationService } from '../../../core/services/notification.service
                 <span class="font-medium text-slate-800">{{ cart.subtotal() | currencyPEN }}</span>
               </div>
               <div class="flex justify-between text-slate-500">
-                <span>Delivery</span>
+                <span>Delivery <span class="text-[11px]">(gratis si recoges en tienda)</span></span>
                 <span class="font-medium text-slate-800">{{ cart.costoEnvio() | currencyPEN }}</span>
               </div>
               <div class="pt-2 border-t border-slate-200 flex justify-between items-baseline">
-                <span class="font-bold text-slate-900">Total a Pagar</span>
+                <span class="font-bold text-slate-900">Total con delivery</span>
                 <span class="text-xl font-extrabold text-brand-600">{{ cart.total() | currencyPEN }}</span>
               </div>
             </div>

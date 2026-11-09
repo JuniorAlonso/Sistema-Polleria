@@ -95,7 +95,7 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
     http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
   }
 
-  it('cobrar una mesa con comanda activa cierra la orden (S6.4)', () => {
+  it('SOLO EL CAJERO COBRA: solicitar cobro en mesa con comanda activa envía la cuenta a caja pasando la mesa a POR_COBRAR', () => {
     component.seleccionarMesa(mesa());
 
     // S6.5: al abrir el modal se lee la comanda real del backend.
@@ -103,51 +103,35 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
 
     component.cobrarMesaModal();
 
-    const patch = http.expectOne(r => r.method === 'PATCH' && r.url.endsWith('/ordenes/7/estado'));
-    expect(patch.request.body.estado)
-      .withContext('COMPLETADO del frontend se traduce al ENTREGADO del backend')
-      .toBe('ENTREGADO');
+    const put = http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(put.request.body.estado).toBe('POR_COBRAR');
+    put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
 
-    // El cobro no debe liberar la mesa por separado: lo hace el backend al entregar la orden.
-    http.expectNone(r => r.method === 'PUT' && r.url.includes('/mesas/3/estado'));
-
-    patch.flush({
-      id: 7,
-      tipo: 'SALON',
-      estado: 'ENTREGADO',
-      total: 45.5,
-      mesaNumero: 3,
-      nombreCliente: 'Mesa 03',
-      telefonoCliente: '',
-      items: [],
-      creadoEn: '2026-01-01T00:00:00Z'
-    });
+    // Recarga comanda de la mesa y lista de mesas
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
     flushMesasReload();
-    // El cobro también refresca el historial del turno desde /ordenes.
-    http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes')).forEach(r => r.flush([]));
 
-    expect(component.selectedMesaModal()).toBeNull();
     const exito = notify.showSuccess as jasmine.Spy;
     expect(exito).toHaveBeenCalled();
     expect(exito.calls.mostRecent().args.join(' '))
-      .withContext('el éxito no puede prometer una Pre-Cuenta que el sistema no emite')
-      .not.toContain('Pre-Cuenta');
+      .toContain('cuenta enviada a Caja');
   });
 
-  it('un rechazo del backend no anuncia éxito y muestra el motivo real (S6.4)', () => {
+  it('un rechazo del backend al enviar la cuenta no anuncia éxito y muestra el motivo real', () => {
     component.seleccionarMesa(mesa());
     http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
 
     component.cobrarMesaModal();
 
-    http.expectOne(r => r.method === 'PATCH' && r.url.endsWith('/ordenes/7/estado'))
-      .flush({ error: 'Solo se puede entregar una orden en estado LISTO' }, { status: 409, statusText: 'Conflict' });
+    http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'))
+      .flush({ error: 'La mesa no está operativa' }, { status: 409, statusText: 'Conflict' });
+    flushMesasReload();
 
     expect(notify.showSuccess).not.toHaveBeenCalled();
     const error = notify.showError as jasmine.Spy;
     expect(error).toHaveBeenCalled();
     expect(error.calls.mostRecent().args.join(' '))
-      .toContain('Solo se puede entregar una orden en estado LISTO');
+      .toContain('La mesa no está operativa');
   });
 
   it('cobrar una mesa sin comanda activa mantiene la liberación directa de la mesa (comportamiento previo)', () => {
@@ -476,11 +460,15 @@ describe('MozoSalonComponent — servido persistido', () => {
 
     const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
     post.flush(dtoOrden({ estado: 'LISTO' }));
+
+    const put = http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(put.request.body.estado).toBe('POR_COBRAR');
+    put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
     flushMesasReload();
 
     const exito = notify.showSuccess as jasmine.Spy;
     expect(exito).toHaveBeenCalled();
-    expect(exito.calls.mostRecent().args.join(' ')).toContain('comanda servida');
+    expect(exito.calls.allArgs().flat().join(' ')).toContain('comanda servida');
     expect((notify.showError as jasmine.Spy)).not.toHaveBeenCalled();
   });
 
@@ -535,6 +523,10 @@ describe('MozoSalonComponent — servido persistido', () => {
 
     const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
     post.flush(dtoOrden({ estado: 'LISTO' }));
+
+    const put = http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(put.request.body.estado).toBe('POR_COBRAR');
+    put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
 
     http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
     flushMesasReload();

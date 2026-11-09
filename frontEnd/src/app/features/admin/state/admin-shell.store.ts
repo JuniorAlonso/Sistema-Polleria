@@ -7,7 +7,7 @@ import { PaymentService } from '../../../core/services/payment.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { MesaSalon } from '../../../core/models/table.model';
-import { InventarioSubTab, ManualOrderForm } from '../models/admin-forms';
+import { ManualOrderForm } from '../models/admin-forms';
 import { getCodeNum } from '../shared/admin-format.util';
 
 /**
@@ -27,9 +27,6 @@ export class AdminShellStore {
   private readonly notify = inject(NotificationService);
 
   readonly getCodeNum = getCodeNum;
-
-  /** Sub-pestaña de Inventario (el botón "Ver Carta" del header la fija antes de navegar). */
-  readonly inventarioSubTab = signal<InventarioSubTab>('CARTA');
 
   // ── Pagos ───────────────────────────────────────────────────────────────────────────
   estaOrdenPagada(order: Order): boolean {
@@ -300,6 +297,7 @@ export class AdminShellStore {
     this.ordersService.createOrder({
       tipo,
       metodoPago: this.manualOrder.metodoPago,
+      requiereCobroEfectivo: this.manualOrder.metodoPago === 'EFECTIVO_CONTRAENTREGA',
       cliente: {
         nombre: this.manualOrder.clienteNombre,
         celular: this.manualOrder.clienteCelular,

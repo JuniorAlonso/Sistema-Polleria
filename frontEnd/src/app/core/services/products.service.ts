@@ -84,9 +84,11 @@ export class ProductsService {
   }
 
   /**
-   * RF10: Toggle Disponibilidad / Agotado conectando a PATCH /productos/{id}/disponibilidad
+   * RF10: Toggle Disponibilidad / Agotado conectando a PATCH /productos/{id}/disponibilidad.
+   * `alTerminar` recibe null si el backend confirmó, o su mensaje si lo rechazó (p. ej. un plato
+   * sin stock no se puede activar); en ese caso la carta vuelve al estado real.
    */
-  toggleAgotado(productId: string): void {
+  toggleAgotado(productId: string, alTerminar?: (error: string | null) => void): void {
     const cleanId = this.extractNumericId(productId);
     const cartaAnterior = this._products();
 
@@ -104,10 +106,13 @@ export class ProductsService {
               products.map(p => p.id === productId || p.id === String(res.id) ? updated : p)
             );
           }
+          alTerminar?.(null);
         }),
-        catchError(() => {
+        catchError(err => {
           // El backend no confirmó el cambio: la carta vuelve al estado real.
           this._products.set(cartaAnterior);
+          const mensaje = err?.error?.error || err?.error?.message;
+          alTerminar?.(typeof mensaje === 'string' ? mensaje : 'No se pudo actualizar la disponibilidad.');
           return of(null);
         })
       ).subscribe();

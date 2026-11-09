@@ -8,7 +8,6 @@
 @paymentsUrl = http://localhost:8083
 @financeUrl = http://localhost:8086
 @incidentUrl = http://localhost:8087
-@inventoryUrl = http://localhost:8085
 @internalKey = sanpollo-dev-internal-key
 
 ### 1. Login de Cajero / Admin para obtener Token
@@ -178,7 +177,7 @@ Content-Type: application/json
 }
 
 ### ===========================================================================
-### FLUJO C: PROTOCOLO PEDIDO FANTASMA, SANCIÓN Y CONTROL DE MERMA
+### FLUJO C: PROTOCOLO PEDIDO FANTASMA Y SANCIÓN
 ### ===========================================================================
 
 ### 15. Crear Pedido que caerá en Pedido Fantasma
@@ -246,14 +245,3 @@ Content-Type: application/json
 ### 21. Verificar que el Teléfono / IP quedaron SANCIONADOS permanentemente
 GET {{authUrl}}/auth/sanciones/verificar?telefono=999000111&ip=190.234.12.88
 
-### 22. Cajero resuelve el destino del pollo en Almacén (Merma Justificada)
-POST {{inventoryUrl}}/inventario/pedidos-fantasma/resolver
-Authorization: Bearer {{adminToken}}
-Content-Type: application/json
-
-{
-  "ordenId": {{ordenFantasmaId}},
-  "ordenTipo": "DELIVERY",
-  "destino": "MERMA_JUSTIFICADA",
-  "observaciones": "Pollo frío devuelto por repartidor tras 35 minutos de espera"
-}

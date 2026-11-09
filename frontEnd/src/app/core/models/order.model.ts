@@ -93,4 +93,5 @@ export interface CreateOrderRequest {
   /** Canal de origen (S1). El checkout web no lo manda y el backend deriva WEB o SALON. */
   canalOrigen?: OrderChannel;
   notasGenerales?: string;
+  requiereCobroEfectivo?: boolean;
 }

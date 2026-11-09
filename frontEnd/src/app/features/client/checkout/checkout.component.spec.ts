@@ -65,6 +65,77 @@ describe('CheckoutComponent', () => {
     fixture.detectChanges();
   });
 
+  describe('S1: guest at payment', () => {
+    beforeEach(() => {
+      auth.currentUser = () => null;
+      sessionStorage.removeItem('polleria_checkout_borrador');
+    });
+    afterEach(() => sessionStorage.removeItem('polleria_checkout_borrador'));
+
+    for (const metodo of ['TARJETA', 'YAPE_OTP', 'EFECTIVO_CONTRAENTREGA'] as const) {
+      it(`asks a guest to log in instead of creating the order (${metodo})`, () => {
+        component.metodoPago.set(metodo);
+        component.otpYape = '123456';
+
+        component.confirmOrder();
+        fixture.detectChanges();
+
+        expect(component.mostrarModalLogin()).toBeTrue();
+        const modal = fixture.nativeElement.querySelector('[data-testid="checkout-login-modal"]');
+        expect(modal).withContext('the login invitation must be on screen').not.toBeNull();
+        expect(modal.textContent).toContain('Inicia sesión');
+        expect(orders.createOrder).not.toHaveBeenCalled();
+        expect(payments.crearPreferenciaMercadoPago).not.toHaveBeenCalled();
+        expect(cart.isEmpty()).withContext('the cart is not lost').toBeFalse();
+        expect(navigate).not.toHaveBeenCalled();
+      });
+    }
+
+    it('keeps what the guest typed so it is back after logging in', () => {
+      component.tipoPedido.set('DELIVERY');
+      component.direccion = 'Av. Lima 123';
+      component.celular = '987654321';
+      component.instrucciones = 'Tocar el timbre';
+      component.metodoPago.set('EFECTIVO_CONTRAENTREGA');
+      component.montoPagaCon = 50;
+      component.confirmOrder();
+
+      auth.currentUser = () => ({ nombre: 'Ana', celular: '912345678', correo: 'a@b.com' });
+      const vuelta = TestBed.createComponent(CheckoutComponent);
+      vuelta.detectChanges();
+      const restaurado = vuelta.componentInstance;
+
+      expect(restaurado.tipoPedido()).toBe('DELIVERY');
+      expect(restaurado.direccion).toBe('Av. Lima 123');
+      expect(restaurado.celular).toBe('987654321');
+      expect(restaurado.instrucciones).toBe('Tocar el timbre');
+      expect(restaurado.metodoPago()).toBe('EFECTIVO_CONTRAENTREGA');
+      expect(restaurado.montoPagaCon).toBe(50);
+      expect(sessionStorage.getItem('polleria_checkout_borrador'))
+        .withContext('the draft is used once').toBeNull();
+    });
+
+    it('sends the guest to log in or register and back to the checkout', () => {
+      component.confirmOrder();
+
+      component.irALogin();
+      expect(navigate).toHaveBeenCalledWith(['/login'], { queryParams: { returnUrl: '/checkout' } });
+
+      component.irARegistro();
+      expect(navigate).toHaveBeenCalledWith(['/registro'], { queryParams: { returnUrl: '/checkout' } });
+    });
+
+    it('"seguir revisando" closes the invitation without losing anything', () => {
+      component.confirmOrder();
+
+      component.mostrarModalLogin.set(false);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('[data-testid="checkout-login-modal"]')).toBeNull();
+      expect(cart.isEmpty()).toBeFalse();
+    });
+  });
+
   describe('Yape OTP', () => {
     beforeEach(() => {
       component.metodoPago.set('YAPE_OTP');
@@ -118,10 +189,11 @@ describe('CheckoutComponent', () => {
       expect(notify.showError).toHaveBeenCalledWith('Pago Yape rechazado', 'La orden ya no espera pago');
     });
 
-    it('marks the locally registered order as in preparation once Yape approves, before navigating', () => {
+    it('marks the locally registered order as paid (kitchen queue) once Yape approves, before navigating', () => {
       payments.pagarConYapeOtp.and.returnValue(of(tx('APROBADO')));
       navigate.and.callFake(() => {
-        expect(orders.registerClientOrder).toHaveBeenCalledWith(jasmine.objectContaining({ id: '55', estado: 'EN_PREPARACION' }));
+        // The backend puts a paid order in the kitchen queue (RECIBIDO = PAGADO): the kitchen starts it.
+        expect(orders.registerClientOrder).toHaveBeenCalledWith(jasmine.objectContaining({ id: '55', estado: 'PAGADO' }));
         return Promise.resolve(true);
       });
 
@@ -152,18 +224,6 @@ describe('CheckoutComponent', () => {
       expect(component.isProcessing()).toBeFalse();
     });
 
-    it('a guest never calls iniciarPago (POST /pagos requires a session) and still gets the tracking page', () => {
-      auth.currentUser = () => null;
-
-      component.confirmOrder();
-
-      expect(orders.createOrder).toHaveBeenCalledTimes(1);
-      expect(payments.iniciarPago).not.toHaveBeenCalled();
-      expect(notify.showError).not.toHaveBeenCalled();
-      expect(cart.isEmpty()).toBeTrue();
-      expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
-    });
-
     it('clears the cart and navigates after iniciarPago succeeds', () => {
       payments.iniciarPago.and.returnValue(of(tx('PENDIENTE')));
 
@@ -174,13 +234,13 @@ describe('CheckoutComponent', () => {
     });
 
     it('a pickup order tells the customer the ticket POL-<id> in the success toast', () => {
-      auth.currentUser = () => null;
+      payments.iniciarPago.and.returnValue(of(tx('PENDIENTE')));
       component.confirmOrder();
       expect(notify.showSuccess.calls.mostRecent().args[1]).toContain('POL-55');
     });
 
     it('a delivery order does not mention a pickup ticket', () => {
-      auth.currentUser = () => null;
+      payments.iniciarPago.and.returnValue(of(tx('PENDIENTE')));
       component.tipoPedido.set('DELIVERY');
       component.direccion = 'Av. Lima 1';
       component.confirmOrder();

@@ -4,7 +4,6 @@ export const environment = {
   ordersApiUrl: 'http://localhost:8082',
   paymentsApiUrl: 'http://localhost:8083',
   feedbackApiUrl: 'http://localhost:8085',
-  inventoryApiUrl: 'http://localhost:8086',
   financeApiUrl: 'http://localhost:8087',
   incidentApiUrl: 'http://localhost:8088',
   notificationApiUrl: 'http://localhost:3001/api/notificaciones',
@@ -16,7 +15,6 @@ export const environment = {
     orders: 'http://localhost:8082/ordenes',
     payments: 'http://localhost:8083/pagos',
     feedback: 'http://localhost:8085',
-    inventory: 'http://localhost:8086',
     finance: 'http://localhost:8087',
     incidents: 'http://localhost:8088'
   },

@@ -17,8 +17,14 @@ import { ArqueoCaja } from '../../../../core/models/finance.model';
               <p class="text-xs text-slate-400">Arqueo con discrepancia, flujo de caja menor y conciliación diaria (finance-service :8087).</p>
             </div>
 
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               @if (cajaActual()?.estado === 'ABIERTA') {
+                <button 
+                  (click)="cobroRepartidorRequested.emit()"
+                  class="px-4 py-2 bg-polleria-gold hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition cursor-pointer shadow"
+                >
+                  $ Cobrar a Motorizado
+                </button>
                 <button 
                   (click)="movementRequested.emit()"
                   class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition cursor-pointer"
@@ -46,6 +52,7 @@ import { ArqueoCaja } from '../../../../core/models/finance.model';
 export class CashHeaderComponent {
   readonly cajaActual = input.required<ArqueoCaja | null>();
 
+  readonly cobroRepartidorRequested = output<void>();
   readonly movementRequested = output<void>();
   readonly closeRequested = output<void>();
   readonly openRequested = output<void>();

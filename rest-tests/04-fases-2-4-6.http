@@ -8,7 +8,6 @@
 @ORDERS_URL = http://localhost:8082
 @PAYMENTS_URL = http://localhost:8083
 @FEEDBACK_URL = http://localhost:8085
-@INVENTORY_URL = http://localhost:8086
 @FINANCE_URL = http://localhost:8087
 @INCIDENT_URL = http://localhost:8088
 
@@ -127,54 +126,14 @@ Authorization: {{TOKEN}}
 DELETE {{AUTH_URL}}/auth/admin/ips-bloqueadas/190.232.10.15
 Authorization: {{TOKEN}}
 
-### 6.3 INVENTARIO - Registrar nuevo insumo
-POST {{INVENTORY_URL}}/insumos
+### 6.3 INVENTARIO - Fijar el stock de un plato (null = sin control de stock)
+PATCH {{ORDERS_URL}}/productos/1/stock
 Content-Type: application/json
 Authorization: {{TOKEN}}
 
 {
-  "nombre": "Pollo Entero Fresco",
-  "unidadMedida": "UND",
-  "stockActual": 60.00,
-  "stockMinimoAlerta": 15.00,
-  "costoUnitario": 18.50
+  "stock": 40
 }
-
-### 6.4 INVENTARIO - Despacho de insumos hacia cocina
-POST {{INVENTORY_URL}}/despachos
-Content-Type: application/json
-Authorization: {{TOKEN}}
-
-{
-  "solicitanteNombre": "Chef Mario - Maestro Hornero",
-  "items": [
-    {
-      "insumoId": 1,
-      "cantidad": 12.00,
-      "observaciones": "Horneado turno tarde"
-    }
-  ]
-}
-
-### 6.5 INVENTARIO - Registro de merma justificada
-POST {{INVENTORY_URL}}/mermas
-Content-Type: application/json
-Authorization: {{TOKEN}}
-
-{
-  "insumoId": 1,
-  "cantidad": 1.00,
-  "motivo": "ERROR_COCINA",
-  "justificacion": "Pollo sobrecocido por exceso de brasas"
-}
-
-### 6.6 INVENTARIO - Consultar alertas predictivas de quiebre de stock
-GET {{INVENTORY_URL}}/inventario/analisis/alertas
-Authorization: {{TOKEN}}
-
-### 6.7 INVENTARIO - Balance de rentabilidad y valorización de insumos
-GET {{INVENTORY_URL}}/inventario/analisis/rentabilidad
-Authorization: {{TOKEN}}
 
 ### 6.8 FINANZAS - Apertura de caja con fondo inicial
 POST {{FINANCE_URL}}/caja/apertura

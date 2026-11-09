@@ -12,6 +12,18 @@ import { Order, OrderType, PaymentMethod } from '../../../core/models/order.mode
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
 
+/** sessionStorage key of the checkout form a guest leaves to log in (S1). */
+const CLAVE_BORRADOR = 'polleria_checkout_borrador';
+
+interface BorradorCheckout {
+  tipoPedido: OrderType;
+  metodoPago: PaymentMethod;
+  direccion: string;
+  celular: string;
+  instrucciones: string;
+  montoPagaCon: number | null;
+}
+
 @Component({
   selector: 'app-checkout',
   standalone: true,
@@ -396,6 +408,39 @@ import { AuthService } from '../../../core/services/auth.service';
       </div>
 
     </div>
+
+    <!-- S1: a guest is invited to log in before paying; the cart and the form are kept -->
+    @if (mostrarModalLogin()) {
+      <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+           role="dialog" aria-modal="true" aria-labelledby="checkout-login-titulo"
+           data-testid="checkout-login-modal">
+        <div class="w-full max-w-md rounded-2xl bg-[#14161a] border border-polleria-gold/40 p-6 space-y-4 text-center shadow-2xl">
+          <h2 id="checkout-login-titulo" class="font-display text-2xl tracking-wide text-polleria-gold uppercase">
+            Inicia sesión para pagar
+          </h2>
+          <p class="text-sm text-slate-300">
+            Con tu cuenta puedes pagar, subir tu comprobante y seguir tu pedido en vivo sin perderlo.
+          </p>
+          <p class="text-xs text-slate-400">
+            Tu carrito y los datos que ya llenaste te esperan aquí cuando vuelvas.
+          </p>
+          <div class="flex flex-col gap-2 pt-2">
+            <button type="button" (click)="irALogin()"
+              class="w-full py-3 rounded-full bg-[#f59e0b] hover:bg-[#fbbf24] text-slate-950 font-black uppercase tracking-wider cursor-pointer">
+              Iniciar sesión
+            </button>
+            <button type="button" (click)="irARegistro()"
+              class="w-full py-3 rounded-full border-2 border-polleria-gold text-polleria-gold hover:bg-polleria-gold/10 font-bold uppercase tracking-wider cursor-pointer">
+              Crear cuenta
+            </button>
+            <button type="button" (click)="mostrarModalLogin.set(false)"
+              class="w-full py-2 text-xs text-slate-400 hover:text-white cursor-pointer">
+              Seguir revisando mi pedido
+            </button>
+          </div>
+        </div>
+      </div>
+    }
   `
 })
 export class CheckoutComponent implements OnInit {
@@ -413,6 +458,8 @@ export class CheckoutComponent implements OnInit {
   readonly sancionActiva = signal<boolean>(false);
   /** True when the sanction lookup failed: the customer is neither cleared nor blocked here. */
   readonly sancionNoVerificada = signal<boolean>(false);
+  /** S1: a guest pressed pay; they are invited to log in or sign up instead of losing the order. */
+  readonly mostrarModalLogin = signal<boolean>(false);
   /** Order already created for a Yape OTP attempt, kept so a retry pays the SAME order. */
   private ordenYapePendiente: Order | null = null;
   /** Order already created for a card attempt, kept so a retry asks Mercado Pago for the SAME order. */
@@ -438,6 +485,7 @@ export class CheckoutComponent implements OnInit {
     const user = this.auth.currentUser();
     this.celular = user?.celular || '';
     this.celularYape = this.celular;
+    this.restaurarBorrador();
 
     if (this.celular) {
       this.verificarSancionCliente(this.celular);
@@ -516,6 +564,55 @@ export class CheckoutComponent implements OnInit {
     return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
   }
 
+  irALogin(): void {
+    this.guardarBorrador();
+    this.router.navigate(['/login'], { queryParams: { returnUrl: '/checkout' } });
+  }
+
+  irARegistro(): void {
+    this.guardarBorrador();
+    this.router.navigate(['/registro'], { queryParams: { returnUrl: '/checkout' } });
+  }
+
+  /** What the guest typed in the checkout, kept for the round trip to the login page (same tab). */
+  private guardarBorrador(): void {
+    const borrador: BorradorCheckout = {
+      tipoPedido: this.tipoPedido(),
+      metodoPago: this.metodoPago(),
+      direccion: this.direccion,
+      celular: this.celular,
+      instrucciones: this.instrucciones,
+      montoPagaCon: this.montoPagaCon
+    };
+    try {
+      sessionStorage.setItem(CLAVE_BORRADOR, JSON.stringify(borrador));
+    } catch {
+      // Storage blocked (private mode): the cart is still in localStorage, only the form is lost.
+    }
+  }
+
+  /** Puts the guest's form back after login and forgets it, so it is used only once. */
+  private restaurarBorrador(): void {
+    let borrador: Partial<BorradorCheckout> | null = null;
+    try {
+      const guardado = sessionStorage.getItem(CLAVE_BORRADOR);
+      sessionStorage.removeItem(CLAVE_BORRADOR);
+      borrador = guardado ? JSON.parse(guardado) : null;
+    } catch {
+      borrador = null;
+    }
+    if (!borrador) return;
+    if (borrador.tipoPedido) this.tipoPedido.set(borrador.tipoPedido);
+    if (borrador.metodoPago) this.metodoPago.set(borrador.metodoPago);
+    if (borrador.direccion) this.direccion = borrador.direccion;
+    if (borrador.celular) {
+      this.celular = borrador.celular;
+      this.celularYape = borrador.celular;
+    }
+    if (borrador.instrucciones) this.instrucciones = borrador.instrucciones;
+    if (borrador.montoPagaCon != null) this.montoPagaCon = borrador.montoPagaCon;
+  }
+
   /**
    * Backend message first (`error.error` / `error.message`, then the Spring ProblemDetail `detail`);
    * never the generic HttpErrorResponse text.
@@ -537,6 +634,14 @@ export class CheckoutComponent implements OnInit {
   }
 
   confirmOrder(): void {
+    // S1: a guest cannot pay (no upload of the Yape capture, no tracking of the order): invite them
+    // to log in first. Nothing is created, the cart stays and the form comes back after login.
+    if (!this.auth.currentUser()) {
+      this.guardarBorrador();
+      this.mostrarModalLogin.set(true);
+      return;
+    }
+
     if (this.tipoPedido() === 'DELIVERY' && !this.direccion.trim()) {
       this.notify.showError('Ingresa la dirección de entrega');
       return;
@@ -639,8 +744,9 @@ export class CheckoutComponent implements OnInit {
           this.cart.clearCart();
           // A guest cannot read GET /ordenes/{id}: tracking falls back to this local copy, which
           // must not keep saying the payment is pending.
-          this.ordersService.registerClientOrder({ ...createdOrder, estado: 'EN_PREPARACION', updatedAt: new Date().toISOString() });
-          this.notify.showSuccess('¡Pago Yape aprobado!', this.conTicket(createdOrder, 'Tu pedido ingresó directo a preparación en cocina.'));
+          // A paid order enters the kitchen queue (backend RECIBIDO = PAGADO); the kitchen starts it.
+          this.ordersService.registerClientOrder({ ...createdOrder, estado: 'PAGADO', updatedAt: new Date().toISOString() });
+          this.notify.showSuccess('¡Pago Yape aprobado!', this.conTicket(createdOrder, 'Tu pedido ya está en la cola de cocina.'));
           this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
         } else {
           // Not approved: keep the cart and the created order so the OTP can be retried.
@@ -795,7 +901,7 @@ export class CheckoutComponent implements OnInit {
       next: (createdOrder) => {
         // The order is already registered at this point: the customer must always land on
         // its tracking page. The PENDIENTE payment is optional (the cash collection creates it
-        // when missing), and POST /pagos requires a session, so guests skip it.
+        // when missing). Only logged-in customers get here (S1).
         const finalizar = () => {
           this.cart.clearCart();
           this.isProcessing.set(false);
@@ -805,10 +911,6 @@ export class CheckoutComponent implements OnInit {
           );
           this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
         };
-        if (!currentUser) {
-          finalizar();
-          return;
-        }
         this.paymentService.iniciarPago(createdOrder.id, createdOrder.total, 'EFECTIVO_CONTRAENTREGA', celularCliente).subscribe({
           next: finalizar,
           error: (err) => {

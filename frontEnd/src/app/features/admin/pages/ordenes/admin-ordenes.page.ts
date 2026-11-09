@@ -369,7 +369,7 @@ export class AdminOrdenesPage implements OnInit {
   confirmarLlamada(order: Order): void {
     const code = this.getCodeNum(order.codigoSeguimiento);
     this.ordersService.confirmarLlamada(order.id).subscribe({
-      next: () => this.notify.showSuccess(`Llamada confirmada: la orden #${code} pasó a cocina`),
+      next: () => this.notify.showSuccess(`Llamada confirmada: la orden #${code} pasó a la cola de cocina`),
       error: err => this.notify.showError(this.mensajeError(err, `No se pudo confirmar la llamada de la orden #${code}`))
     });
   }

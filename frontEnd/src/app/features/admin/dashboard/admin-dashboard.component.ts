@@ -10,7 +10,6 @@ import { SalonService } from '../../../core/services/salon.service';
 import { PaymentService } from '../../../core/services/payment.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { MesaSalon } from '../../../core/models/table.model';
-import { Insumo } from '../../../core/models/inventory.model';
 import { AdminShellStore } from '../state/admin-shell.store';
 import { AdminOrderModalsComponent } from '../pages/shared/admin-order-modals.component';
 
@@ -25,7 +24,6 @@ export type DashboardTab =
   | 'SOPORTE';
 
 export type TableSalon = MesaSalon;
-export type InsumoAlmacen = Insumo;
 
 /** Segmento de ruta (`/admin/<segmento>`) de cada pestaña. */
 const TAB_BY_SEGMENT: Record<string, DashboardTab> = {
@@ -245,7 +243,7 @@ const TAB_BY_SEGMENT: Record<string, DashboardTab> = {
           <div class="flex items-center gap-3">
             <button 
               type="button"
-              routerLink="inventario" (click)="store.inventarioSubTab.set('CARTA')"
+              routerLink="inventario"
               class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-300 hover:text-white border border-white/10 transition cursor-pointer"
             >
               <svg class="w-3.5 h-3.5 text-polleria-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">

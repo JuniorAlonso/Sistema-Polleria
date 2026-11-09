@@ -114,6 +114,7 @@ export interface BackendCrearOrdenRequest {
   montoPagaCon?: number;
   ipOrigen?: string;
   observaciones?: string;
+  requiereCobroEfectivo?: boolean;
   items: BackendOrdenItemRequest[];
 }
 
@@ -244,22 +245,37 @@ export interface BackendEfectivoPendienteLiquidacion {
   total: number;
   cantidad: number;
   pagos: { pagoId: number; ordenId: number; monto: number; verificadoEn: string }[];
+  totalCobrado?: number;
+  totalRendido?: number;
 }
 
-// --- 1.7 Mermas & Productos Fantasma (:8085) ---
-export interface BackendResolucionProductoFantasmaRequest {
-  ordenId: number;
-  ordenTipo: 'DELIVERY' | 'RECOJO';
-  destino: 'VENTA_RAPIDA_SALON' | 'MERMA_JUSTIFICADA';
+export interface RegistrarCobroRepartidorRequest {
+  repartidorId: number;
+  repartidorNombre?: string;
+  monto: number;
   observaciones?: string;
 }
 
-export interface BackendResolucionProductoFantasmaResponse {
-  ordenId: number;
-  destino: 'VENTA_RAPIDA_SALON' | 'MERMA_JUSTIFICADA';
-  resultado: string;
-  mermaId?: number;
+export interface BackendCobroRepartidorResponse {
+  id: number;
+  repartidorId: number;
+  monto: number;
+  arqueoCajaId: number | null;
+  cobradoPor: number;
   fecha: string;
+  observaciones?: string;
+  liquidacionId: number | null;
+  saldoRestante: number;
+}
+
+export interface RepartidorPendienteCobro {
+  repartidorId: number;
+  repartidorNombre: string;
+  totalCobrado: number;
+  totalRendido: number;
+  saldoPendiente: number;
+  cantidadOrdenes: number;
+  liquidacionId: number | null;
 }
 
 export interface BackendIniciarPagoRequest {
