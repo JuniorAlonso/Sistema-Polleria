@@ -1,9 +1,10 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterModule } from '@angular/router';
+import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
+import { rutaDeRetornoSegura } from '../../../core/utils/return-url';
 import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-hero.component';
 
 @Component({
@@ -193,6 +194,7 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
             <!-- Botón Secundario Dorado: Enlace a Login -->
             <a 
               routerLink="/login"
+              queryParamsHandling="preserve"
               class="w-full py-4 bg-transparent border-2 border-polleria-gold hover:bg-polleria-gold/10 active:scale-[0.99] text-polleria-gold font-display text-xl tracking-wider uppercase transition duration-200 block text-center cursor-pointer rounded-xs"
             >
               YA TENGO CUENTA
@@ -209,7 +211,11 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
 export class RegisterComponent {
   readonly auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
+
+  /** Where the new customer goes back after signing up (e.g. the checkout that asked them to). */
+  readonly returnUrl = rutaDeRetornoSegura(this.route.snapshot.queryParamMap.get('returnUrl'));
 
   nombre = '';
   celular = '';
@@ -247,7 +253,11 @@ export class RegisterComponent {
     }).subscribe({
       next: () => {
         this.notify.showSuccess(`¡Bienvenido/a, ${this.nombre}!`, 'Tu cuenta ha sido creada exitosamente.');
-        this.router.navigate(['/menu']);
+        if (this.returnUrl) {
+          this.router.navigateByUrl(this.returnUrl);
+        } else {
+          this.router.navigate(['/menu']);
+        }
       },
       error: (err) => {
         this.notify.showError(err.message || 'Error al crear la cuenta');

@@ -1,9 +1,10 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterModule } from '@angular/router';
+import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
+import { rutaDeRetornoSegura } from '../../../core/utils/return-url';
 import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-hero.component';
 import { TwoFactorModalComponent } from '../../../shared/components/two-factor-modal/two-factor-modal.component';
 
@@ -123,6 +124,7 @@ import { TwoFactorModalComponent } from '../../../shared/components/two-factor-m
             <!-- Botón Secundario Dorado: Enlace a Registro -->
             <a 
               routerLink="/registro"
+              queryParamsHandling="preserve"
               class="w-full py-4 bg-transparent border-2 border-polleria-gold hover:bg-polleria-gold/10 active:scale-[0.99] text-polleria-gold font-display text-xl tracking-wider uppercase transition duration-200 block text-center cursor-pointer rounded-xs"
             >
               CREAR CUENTA NUEVA
@@ -148,7 +150,11 @@ import { TwoFactorModalComponent } from '../../../shared/components/two-factor-m
 export class LoginComponent {
   readonly auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
+
+  /** Where a customer goes back after logging in (e.g. the checkout that asked them to). */
+  readonly returnUrl = rutaDeRetornoSegura(this.route.snapshot.queryParamMap.get('returnUrl'));
 
   correo = '';
   password = '';
@@ -196,6 +202,9 @@ export class LoginComponent {
       this.router.navigate(['/delivery']);
     } else if (rol === 'CAJERO') {
       this.router.navigate(['/cajero']);
+    } else if (this.returnUrl) {
+      // A customer sent here from the checkout goes back to it; the cart was kept.
+      this.router.navigateByUrl(this.returnUrl);
     } else {
       this.router.navigate(['/menu']);
     }
