@@ -92,4 +92,55 @@ class MercadoPagoWebhookControllerTest {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
+
+    @Test
+    @DisplayName("S7: una tarjeta rechazada no cancela el pedido: el cliente puede reintentar")
+    void pagoRechazadoNoCancelaLaOrden() {
+        Pago pago = pagoMercadoPago();
+
+        controller.aplicarEstadoDePasarela(pago, "rejected", "555", "cc_rejected_insufficient_amount", "visa");
+
+        verify(pagoService).actualizarEstadoDesdePasarela(eq(70L), eq(EstadoPago.RECHAZADO), anyString());
+        verify(pagoService, never()).notificarOrdenEstadoAsync(anyLong(), eq("CANCELADO"), anyString());
+    }
+
+    @Test
+    @DisplayName("S7: un intento cancelado en Mercado Pago tampoco cancela el pedido")
+    void pagoCanceladoEnLaPasarelaNoCancelaLaOrden() {
+        Pago pago = pagoMercadoPago();
+
+        controller.aplicarEstadoDePasarela(pago, "cancelled", "555", "expired", "visa");
+
+        verify(pagoService).actualizarEstadoDesdePasarela(eq(70L), eq(EstadoPago.CANCELADO), anyString());
+        verify(pagoService, never()).notificarOrdenEstadoAsync(anyLong(), eq("CANCELADO"), anyString());
+    }
+
+    @Test
+    @DisplayName("Preserva: un reembolso sí cancela el pedido")
+    void reembolsoCancelaLaOrden() {
+        Pago pago = pagoMercadoPago();
+
+        controller.aplicarEstadoDePasarela(pago, "refunded", "555", "refunded", "visa");
+
+        verify(pagoService).notificarOrdenEstadoAsync(900L, "CANCELADO", "");
+    }
+
+    @Test
+    @DisplayName("Preserva: un pago aprobado se confirma")
+    void pagoAprobadoSeConfirma() {
+        Pago pago = pagoMercadoPago();
+
+        controller.aplicarEstadoDePasarela(pago, "approved", "555", "accredited", "visa");
+
+        verify(pagoService).confirmar(eq(70L), any(), eq(""));
+    }
+
+    private Pago pagoMercadoPago() {
+        Pago pago = new Pago();
+        pago.setId(70L);
+        pago.setOrdenId(900L);
+        pago.setMetodoPago(MetodoPago.TARJETA);
+        pago.setEstado(EstadoPago.PENDIENTE);
+        return pago;
+    }
 }

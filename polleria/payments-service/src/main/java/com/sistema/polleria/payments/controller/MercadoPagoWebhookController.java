@@ -67,47 +67,8 @@ public class MercadoPagoWebhookController {
                     if (optPago.isPresent()) {
                         Pago pago = optPago.get();
                         String status = payment.getStatus() != null ? payment.getStatus().toLowerCase() : "";
-
-                        switch (status) {
-                            case "approved" -> {
-                                if (pago.getEstado() != EstadoPago.APROBADO) {
-                                    ConfirmarPagoRequest req = new ConfirmarPagoRequest(
-                                            "MP-" + paymentId,
-                                            "Pago aprobado por Mercado Pago (Medio: " + payment.getPaymentMethodId() + ")"
-                                    );
-                                    pagoService.confirmar(pagoId, req, "");
-                                    log.info("Pago ID={} confirmado con éxito vía Webhook de Mercado Pago", pagoId);
-                                } else {
-                                    log.info("El pago ID={} ya se encontraba aprobado previamente", pagoId);
-                                }
-                            }
-                            case "rejected" -> {
-                                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO,
-                                        "Pago rechazado por Mercado Pago: " + payment.getStatusDetail());
-                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
-                                log.warn("Pago ID={} marcado como RECHAZADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
-                            }
-                            case "cancelled" -> {
-                                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.CANCELADO,
-                                        "Pago cancelado por Mercado Pago");
-                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
-                                log.warn("Pago ID={} marcado como CANCELADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
-                            }
-                            case "refunded" -> {
-                                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.REEMBOLSADO,
-                                        "Pago reembolsado por Mercado Pago");
-                                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
-                                log.info("Pago ID={} marcado como REEMBOLSADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
-                            }
-                            case "in_process", "pending" -> {
-                                // Si el pago ya estaba APROBADO, actualizarEstadoDesdePasarela lo ignora:
-                                // un webhook 'in_process' tardío no debe degradarlo a PENDIENTE.
-                                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.PENDIENTE,
-                                        "Pago en proceso en Mercado Pago (" + payment.getStatusDetail() + ")");
-                                log.info("Pago ID={} en estado PENDIENTE en Mercado Pago", pagoId);
-                            }
-                            default -> log.info("Estado de pago no mapeado: {}", status);
-                        }
+                        aplicarEstadoDePasarela(pago, status, paymentId, payment.getStatusDetail(),
+                                payment.getPaymentMethodId());
                     } else {
                         log.warn("No se encontró entidad Pago con ID={}", pagoId);
                     }
@@ -121,6 +82,56 @@ public class MercadoPagoWebhookController {
 
         // Responder siempre 200 OK a Mercado Pago para confirmar recepción
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Applies a Mercado Pago payment status to our pago. A rejected or cancelled attempt does NOT
+     * cancel the order (S7): the customer may retry with another card until the payment window
+     * ends, and the expiry scheduler cancels it if they never pay. Only a refund closes the order.
+     */
+    void aplicarEstadoDePasarela(Pago pago, String status, String paymentId, String statusDetail,
+                                 String paymentMethodId) {
+        Long pagoId = pago.getId();
+        switch (status) {
+            case "approved" -> {
+                if (pago.getEstado() != EstadoPago.APROBADO) {
+                    ConfirmarPagoRequest req = new ConfirmarPagoRequest(
+                            "MP-" + paymentId,
+                            "Pago aprobado por Mercado Pago (Medio: " + paymentMethodId + ")"
+                    );
+                    pagoService.confirmar(pagoId, req, "");
+                    log.info("Pago ID={} confirmado con éxito vía Webhook de Mercado Pago", pagoId);
+                } else {
+                    log.info("El pago ID={} ya se encontraba aprobado previamente", pagoId);
+                }
+            }
+            case "rejected" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO,
+                        "Pago rechazado por Mercado Pago: " + statusDetail);
+                log.warn("Pago ID={} rechazado por Mercado Pago; la orden {} sigue esperando el pago",
+                        pagoId, pago.getOrdenId());
+            }
+            case "cancelled" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.CANCELADO,
+                        "Pago cancelado por Mercado Pago");
+                log.warn("Pago ID={} cancelado en Mercado Pago; la orden {} sigue esperando el pago",
+                        pagoId, pago.getOrdenId());
+            }
+            case "refunded" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.REEMBOLSADO,
+                        "Pago reembolsado por Mercado Pago");
+                pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+                log.info("Pago ID={} marcado como REEMBOLSADO por Mercado Pago y orden {} notificada", pagoId, pago.getOrdenId());
+            }
+            case "in_process", "pending" -> {
+                // Si el pago ya estaba APROBADO, actualizarEstadoDesdePasarela lo ignora:
+                // un webhook 'in_process' tardío no debe degradarlo a PENDIENTE.
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.PENDIENTE,
+                        "Pago en proceso en Mercado Pago (" + statusDetail + ")");
+                log.info("Pago ID={} en estado PENDIENTE en Mercado Pago", pagoId);
+            }
+            default -> log.info("Estado de pago no mapeado: {}", status);
+        }
     }
 
     private String resolvePaymentId(String type, String topic, String paramId, String dataId, Map<String, Object> body) {

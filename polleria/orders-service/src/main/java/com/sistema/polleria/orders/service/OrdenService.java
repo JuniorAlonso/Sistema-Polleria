@@ -84,7 +84,8 @@ public class OrdenService {
                 .observaciones(request.getObservaciones())
                 .montoPagaCon(request.getMontoPagaCon())
                 .ipOrigen(request.getIpOrigen())
-                .requiereCobroEfectivo(request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION)
+                .requiereCobroEfectivo(Boolean.TRUE.equals(request.getRequiereCobroEfectivo())
+                        || request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION)
                 .build();
 
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() != null) {
@@ -112,7 +113,8 @@ public class OrdenService {
             mesa.setEstado(MesaEstado.OCUPADA);
         }
 
-        // Construir items
+        // Construir items (bloqueando los platos en orden de id para no provocar deadlocks)
+        bloquearProductos(request.getItems().stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> items = request.getItems().stream()
                 .map(itemReq -> construirItem(orden, itemReq))
                 .toList();
@@ -164,6 +166,7 @@ public class OrdenService {
                     + " y no admite productos nuevos.");
         }
 
+        bloquearProductos(itemsReq.stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> nuevos = itemsReq.stream()
                 .map(itemReq -> construirItem(orden, itemReq))
                 .toList();
@@ -254,15 +257,33 @@ public class OrdenService {
         }
     }
 
-    /** Un pedido cancelado antes de que cocina lo empiece devuelve sus unidades al stock. */
+    /**
+     * Un pedido cancelado antes de que cocina lo empiece devuelve sus unidades al stock. Solo
+     * reactiva el plato que se había agotado por stock: uno que el admin desactivó a mano sigue
+     * desactivado.
+     */
     private void devolverStock(Orden orden) {
+        bloquearProductos(orden.getItems().stream().map(i -> i.getProducto().getId()).toList());
         for (OrdenItem item : orden.getItems()) {
             Producto producto = productoService.buscarConBloqueo(item.getProducto().getId());
-            if (producto.getStock() != null) {
-                producto.setStock(producto.getStock() + item.getCantidad());
-                producto.setDisponible(true);
+            Integer stock = producto.getStock();
+            if (stock != null) {
+                producto.setStock(stock + item.getCantidad());
+                if (stock == 0) {
+                    producto.setDisponible(true);
+                }
             }
         }
+    }
+
+    /**
+     * Toma el bloqueo de cada plato en orden ascendente de id antes de tocar su stock. Sin esto,
+     * dos pedidos con los mismos platos en distinto orden ([A, B] y [B, A]) pueden bloquearse
+     * mutuamente y Postgres aborta uno de ellos (deadlock).
+     */
+    private void bloquearProductos(List<Long> productoIds) {
+        productoIds.stream().filter(java.util.Objects::nonNull).distinct().sorted()
+                .forEach(productoService::buscarConBloqueo);
     }
 
     // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre. Fuera de una
@@ -368,7 +389,7 @@ public class OrdenService {
         }
 
         boolean devolverStock = request.getEstado() == OrdenEstado.CANCELADO
-                && ESTADOS_CANCELABLES_POR_CLIENTE.contains(orden.getEstado());
+                && ESTADOS_SIN_COCINAR.contains(orden.getEstado());
         orden.setEstado(request.getEstado());
         if (devolverStock) {
             devolverStock(orden);
@@ -398,9 +419,58 @@ public class OrdenService {
         return OrdenResponse.from(orden);
     }
 
-    /** States from which the customer (guest or owner) may still cancel: nothing was cooked yet. */
-    private static final List<OrdenEstado> ESTADOS_CANCELABLES_POR_CLIENTE = List.of(
+    /**
+     * Active (non-terminal) orders of a phone, newest first, whatever format it was stored in. The
+     * WhatsApp bot uses it so a customer who lost the ticket message can get it back.
+     */
+    @Transactional(readOnly = true)
+    public List<OrdenResponse> listarActivosPorTelefono(String telefono) {
+        List<String> variantes = com.sistema.polleria.orders.util.TelefonoUtil.variantes(telefono);
+        if (variantes.isEmpty()) {
+            throw new IllegalArgumentException("El celular no es válido: debe ser un celular peruano de 9 dígitos.");
+        }
+        return ordenRepository.findTop20ByTelefonoClienteInOrderByCreadoEnDesc(variantes).stream()
+                .filter(o -> !ESTADOS_TERMINALES.contains(o.getEstado()))
+                .map(OrdenResponse::from)
+                .toList();
+    }
+
+    /** Minutes the customer gets to resend a capture after the cashier rejects one. */
+    static final long MINUTOS_REENVIO_COMPROBANTE = 15;
+
+    /**
+     * payments-service reports the Yape/Plin capture of an unpaid order. {@code recibido=true}
+     * stops the expiry clock while the cashier reviews it; {@code false} (rejected) restarts it with
+     * a fresh window to resend. An order that is no longer PENDIENTE_PAGO is left untouched.
+     */
+    @Transactional
+    public void registrarEstadoComprobante(Long id, boolean recibido) {
+        Orden orden = buscarOFallarConBloqueo(id);
+        if (orden.getEstado() != OrdenEstado.PENDIENTE_PAGO) {
+            log.info("Captura de la orden #{} ignorada: estado {}", id, orden.getEstado());
+            return;
+        }
+        orden.setComprobantePendiente(recibido);
+        if (!recibido) {
+            orden.setPlazoPagoHasta(LocalDateTime.now().plusMinutes(MINUTOS_REENVIO_COMPROBANTE));
+        }
+        ordenRepository.save(orden);
+        log.info("Orden #{}: captura {}", id, recibido ? "en revisión" : "rechazada, nuevo plazo " + orden.getPlazoPagoHasta());
+    }
+
+    /** States where nothing was cooked yet: cancelling returns the units to stock. */
+    private static final List<OrdenEstado> ESTADOS_SIN_COCINAR = List.of(
             OrdenEstado.RECIBIDO,
+            OrdenEstado.PENDIENTE_PAGO,
+            OrdenEstado.PENDIENTE_CONFIRMACION
+    );
+
+    /**
+     * States from which the customer (guest or owner) may still cancel on their own. Not RECIBIDO:
+     * there the order is already paid or confirmed by phone and waits in the kitchen queue, so a
+     * cancellation goes through the restaurant.
+     */
+    private static final List<OrdenEstado> ESTADOS_CANCELABLES_POR_CLIENTE = List.of(
             OrdenEstado.PENDIENTE_PAGO,
             OrdenEstado.PENDIENTE_CONFIRMACION
     );
@@ -556,8 +626,10 @@ public class OrdenService {
             throw new ConflictoDeEstadoException("El plazo de 15 minutos para confirmar la llamada venció");
         }
         orden.setLlamadaConfirmacionAt(LocalDateTime.now());
+        // The confirmed order enters the kitchen queue (RECIBIDO, "por preparar"): the kitchen
+        // starts it. Jumping to PREPARANDO left the cook with only a "Listo" button.
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
-        req.setEstado(OrdenEstado.PREPARANDO);
+        req.setEstado(OrdenEstado.RECIBIDO);
         return actualizarEstado(id, req, cajeroId);
     }
 
@@ -614,7 +686,8 @@ public class OrdenService {
     }
 
     /**
-     * Declara un pedido como fantasma y dispara el protocolo de sanción y merma.
+     * Declara un pedido como fantasma y dispara el protocolo de sanción. Las unidades del
+     * pedido no vuelven al stock: la comida ya salió de cocina.
      */
     @Transactional
     public OrdenResponse declararPedidoFantasma(Long id, String motivo, Long usuarioId) {
@@ -655,7 +728,8 @@ public class OrdenService {
                     "El pedido fantasma se declara con POST /ordenes/" + orden.getId()
                     + "/pedido-fantasma, no cambiando el estado.");
         }
-        if (nuevo.esPreparacion()) {
+        // Entering the kitchen queue (RECIBIDO) or preparation from an unpaid / unconfirmed order.
+        if (nuevo.esPreparacion() || nuevo == OrdenEstado.RECIBIDO) {
             if (actual == OrdenEstado.PENDIENTE_PAGO) {
                 throw new ConflictoDeEstadoException(
                         "El pedido #" + orden.getId() + " espera pago: el pago debe verificarse "
@@ -748,8 +822,8 @@ public class OrdenService {
 
         boolean valido = switch (actual) {
             case RECIBIDO -> nuevo.esPreparacion() || nuevo == OrdenEstado.PENDIENTE_CONFIRMACION || nuevo == OrdenEstado.PENDIENTE_PAGO;
-            case PENDIENTE_CONFIRMACION -> nuevo.esPreparacion();
-            case PENDIENTE_PAGO -> nuevo.esPreparacion();
+            // A confirmed call or an approved payment enters the kitchen queue (RECIBIDO).
+            case PENDIENTE_CONFIRMACION, PENDIENTE_PAGO -> nuevo == OrdenEstado.RECIBIDO || nuevo.esPreparacion();
             case EN_PREPARACION, PREPARANDO -> nuevo.esListo();
             case LISTO, LISTO_PARA_ENTREGAR -> (tipo == OrdenTipo.DELIVERY)
                     ? (nuevo == OrdenEstado.EN_CAMINO || nuevo == OrdenEstado.ENTREGADO)

@@ -377,27 +377,48 @@ class VerificarComprobanteYapeTest {
     }
 
     @Test
-    @DisplayName("S3: aprobar pasados los 15 minutos de la orden responde 400; rechazar sigue permitido")
-    void aprobarFueraDeVentanaResponde400PeroRechazarSiPermite() throws Exception {
+    @DisplayName("S6: una captura subida a tiempo se puede aprobar aunque el cajero la revise pasados los 15 minutos")
+    void aprobarPasados15MinutosConElPedidoAunImpagoSiSePermite() throws Exception {
         long ordenId = 978112L;
         long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978112/tarde.jpg");
+        // The capture stopped the expiry clock in orders-service: the order is still PENDIENTE_PAGO.
         org.mockito.Mockito.when(ordenesClient.obtener(ordenId)).thenReturn(new OrdenesClient.OrdenInfo(
                 ordenId, "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"), 944L,
                 java.time.LocalDateTime.now().minusMinutes(16)));
-        String tokenCajero = token(OTRO_ID, "CAJERO", "cajero@prueba.local");
 
-        ResponseEntity<String> aprobar = verificar(pagoId, "{\"aprobado\": true}", tokenCajero);
+        ResponseEntity<String> aprobar = verificar(pagoId, "{\"aprobado\": true}",
+                token(OTRO_ID, "CAJERO", "cajero@prueba.local"));
 
-        assertThat(aprobar.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(aprobar.getBody()).contains("15 minutos");
-        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado())
-                .isEqualTo(EstadoPago.PENDIENTE_VERIFICACION);
-        verify(notificadorOrden, never()).notificarPagoAprobado(anyLong(), anyString());
+        assertThat(aprobar.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado()).isEqualTo(EstadoPago.APROBADO);
+    }
+
+    @Test
+    @DisplayName("S6: subir la captura detiene el reloj del pedido y rechazarla le da un plazo nuevo")
+    void laCapturaSeInformaAOrdersAlSubirlaYAlRechazarla() throws Exception {
+        long ordenId = 978113L;
+        long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978113/captura.jpg");
+
+        verify(ordenesClient).marcarComprobante(ordenId, true);
 
         ResponseEntity<String> rechazar = verificar(
-                pagoId, "{\"aprobado\": false, \"motivoRechazo\": \"Captura ilegible\"}", tokenCajero);
+                pagoId, "{\"aprobado\": false, \"motivoRechazo\": \"Captura ilegible\"}",
+                token(OTRO_ID, "CAJERO", "cajero@prueba.local"));
         assertThat(rechazar.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(pagoRepository.findById(pagoId).orElseThrow().getEstado()).isEqualTo(EstadoPago.RECHAZADO);
+        verify(ordenesClient).marcarComprobante(ordenId, false);
+    }
+
+    @Test
+    @DisplayName("S6: si orders-service no confirma la captura, no se guarda y el cliente debe reenviarla")
+    void sinConfirmacionDeOrdersLaCapturaNoSeGuarda() throws Exception {
+        long ordenId = 978114L;
+        org.mockito.Mockito.doThrow(new OrdenesClient.OrdenNoDisponibleException("orders caído", null))
+                .when(ordenesClient).marcarComprobante(ordenId, true);
+
+        ResponseEntity<String> respuesta = registrarComprobanteRespuesta(ordenId, "comprobantes/yape/978114/x.jpg");
+
+        assertThat(respuesta.getStatusCode().is2xxSuccessful()).isFalse();
+        assertThat(pagoRepository.findByOrdenId(ordenId)).isEmpty();
     }
 
     // ─── util ───────────────────────────────────────────────────────

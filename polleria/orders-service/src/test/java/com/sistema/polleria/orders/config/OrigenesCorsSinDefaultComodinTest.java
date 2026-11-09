@@ -32,7 +32,7 @@ class OrigenesCorsSinDefaultComodinTest {
 
     private static final List<String> SERVICIOS = List.of(
             "auth-service", "orders-service", "payments-service", "feedback-service",
-            "inventory-service", "finance-service", "incident-service");
+            "finance-service", "incident-service");
 
     /** Declaración correcta, sin nada después de los dos puntos. */
     private static final String DECLARACION_EXACTA = "@Value(\"${cors.allowed-origins}\")";

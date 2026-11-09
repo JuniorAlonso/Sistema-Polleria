@@ -44,6 +44,29 @@ public class OrdenesClient {
     }
 
     /**
+     * Tells orders-service that the Yape/Plin capture of an order arrived ({@code recibido=true}:
+     * the unpaid order stops expiring while the cashier reviews it) or was rejected ({@code false}:
+     * the customer gets a fresh window to resend it). Fails closed with
+     * {@link OrdenNoDisponibleException}: a capture orders-service does not know about could let a
+     * paid order expire.
+     */
+    public void marcarComprobante(Long ordenId, boolean recibido) {
+        try {
+            var spec = ordersRestClient.patch().uri("/ordenes/{id}/comprobante-pago", ordenId)
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(java.util.Map.of("recibido", recibido));
+            if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
+                spec.header("X-Internal-Key", ordersInternalKey);
+            }
+            spec.retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            log.warn("No se pudo informar la captura de la orden {} a orders-service: {}", ordenId, e.getMessage());
+            throw new OrdenNoDisponibleException(
+                    "No se pudo registrar la captura del pedido " + ordenId + " en este momento. Intenta nuevamente.", e);
+        }
+    }
+
+    /**
      * Fetches the order. 404 becomes {@link NoSuchElementException}; any other failure becomes
      * {@link OrdenNoDisponibleException} so callers can fail closed.
      */

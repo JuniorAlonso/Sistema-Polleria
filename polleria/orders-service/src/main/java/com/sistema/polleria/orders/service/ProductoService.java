@@ -64,7 +64,8 @@ public class ProductoService {
         producto.setPrecio(request.getPrecio());
         producto.setCategoria(request.getCategoria());
         producto.setImagenUrl(request.getImagenUrl());
-        producto.setDisponible(request.isDisponible());
+        // Sin unidades el plato no puede mostrarse disponible: todo pedido sería rechazado.
+        producto.setDisponible(request.isDisponible() && !sinStock(producto));
         productoRepository.save(producto);
         log.info("Producto actualizado: {}", id);
         return ProductoResponse.from(producto);
@@ -73,6 +74,10 @@ public class ProductoService {
     @Transactional
     public ProductoResponse toggleDisponibilidad(Long id) {
         Producto producto = buscarOFallar(id);
+        if (!producto.isDisponible() && sinStock(producto)) {
+            throw new IllegalArgumentException(
+                    "'" + producto.getNombre() + "' no tiene stock: repón unidades antes de activarlo.");
+        }
         producto.setDisponible(!producto.isDisponible());
         productoRepository.save(producto);
         log.info("Producto {} marcado como {}", id, producto.isDisponible() ? "disponible" : "agotado");
@@ -100,6 +105,11 @@ public class ProductoService {
         buscarOFallar(id);
         productoRepository.deleteById(id);
         log.info("Producto eliminado: {}", id);
+    }
+
+    /** Con control de stock y sin unidades. {@code null} = sin control, nunca se queda sin stock. */
+    private static boolean sinStock(Producto producto) {
+        return producto.getStock() != null && producto.getStock() == 0;
     }
 
     public Producto buscarConBloqueo(Long id) {

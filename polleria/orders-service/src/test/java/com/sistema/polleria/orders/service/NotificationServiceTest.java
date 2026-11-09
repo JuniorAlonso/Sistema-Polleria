@@ -67,6 +67,25 @@ class NotificationServiceTest {
     }
 
     @Test
+    void unRecojoPagadoConYapeOMercadoPagoSeAvisaAlEntrarACocina() {
+        // An approved capture moves the order to EN_PREPARACION (only cash orders pass PREPARANDO).
+        service.notificarCambioEstado(orden(OrdenTipo.RECOJO), OrdenEstado.EN_PREPARACION);
+
+        assertEquals(1, cuerpos.size());
+        assertTrue(cuerpos.get(0).contains("\"estadoNuevo\":\"EN_PREPARACION\""), cuerpos.get(0));
+    }
+
+    @Test
+    void entrarALaColaDeCocinaSeAvisaEnDeliveryYRecojo() {
+        // RECIBIDO is where a confirmed ContraPago call or an approved payment lands now.
+        service.notificarCambioEstado(orden(OrdenTipo.DELIVERY), OrdenEstado.RECIBIDO);
+        service.notificarCambioEstado(orden(OrdenTipo.RECOJO), OrdenEstado.RECIBIDO);
+
+        assertEquals(2, cuerpos.size());
+        assertTrue(cuerpos.get(0).contains("\"estadoNuevo\":\"RECIBIDO\""), cuerpos.get(0));
+    }
+
+    @Test
     void preservaQueUnEstadoNoNotificableNoSeEnvia() {
         service.notificarCambioEstado(orden(OrdenTipo.DELIVERY), OrdenEstado.LISTO);
         service.notificarCambioEstado(orden(OrdenTipo.RECOJO), OrdenEstado.EN_CAMINO);

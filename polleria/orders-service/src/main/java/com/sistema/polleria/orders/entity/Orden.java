@@ -120,6 +120,21 @@ public class Orden {
     @Column(name = "motivo_fantasma", length = 30)
     private String motivoFantasma;
 
+    /**
+     * true while a Yape/Plin capture waits for the cashier: the unpaid order must not expire under
+     * a customer who already paid. DEFAULT false so ddl-auto=update can add it over existing rows.
+     */
+    @Column(name = "comprobante_pendiente", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean comprobantePendiente = false;
+
+    /**
+     * Payment deadline after a rejected capture (the customer gets a fresh window to resend it).
+     * null = the usual 15 minutes counted from {@code creadoEn}.
+     */
+    @Column(name = "plazo_pago_hasta")
+    private LocalDateTime plazoPagoHasta;
+
     @Column(name = "ip_origen", length = 45)
     private String ipOrigen;
 

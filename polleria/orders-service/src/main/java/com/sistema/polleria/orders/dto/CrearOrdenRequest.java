@@ -37,6 +37,7 @@ public class CrearOrdenRequest {
     private OrdenEstado estadoInicial;
     private java.math.BigDecimal montoPagaCon;
     private String ipOrigen;
+    private Boolean requiereCobroEfectivo;
 
     @NotEmpty(message = "La orden debe tener al menos un producto")
     @Valid

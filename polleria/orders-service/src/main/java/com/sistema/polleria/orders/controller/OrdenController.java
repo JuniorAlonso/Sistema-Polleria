@@ -192,6 +192,42 @@ public class OrdenController {
                 ordenService.declararPedidoFantasma(id, motivo, extraerUserId(authentication)));
     }
 
+    /**
+     * Interno (bot de WhatsApp): pedidos activos de un celular, para que quien perdió o borró el
+     * mensaje con su ticket lo recupere. Sin la clave interna responde 403: expondría pedidos ajenos.
+     */
+    @GetMapping("/activas-por-telefono")
+    public ResponseEntity<List<OrdenResponse>> listarActivosPorTelefono(
+            @RequestParam String telefono,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
+    ) {
+        if (!esLlamadaInterna(claveInterna)) {
+            throw new AccessDeniedException("Solo el bot de WhatsApp puede buscar pedidos por celular.");
+        }
+        return ResponseEntity.ok(ordenService.listarActivosPorTelefono(telefono));
+    }
+
+    /**
+     * Interno (payments-service): una captura de Yape/Plin llegó ({@code recibido=true}) o el cajero
+     * la rechazó ({@code false}). Mientras está en revisión el pedido impago no expira.
+     */
+    @PatchMapping("/{id}/comprobante-pago")
+    public ResponseEntity<Void> registrarEstadoComprobante(
+            @PathVariable Long id,
+            @RequestBody Map<String, Boolean> body,
+            @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
+    ) {
+        if (!esLlamadaInterna(claveInterna)) {
+            throw new AccessDeniedException("Solo payments-service puede informar la captura de un pago.");
+        }
+        Boolean recibido = body != null ? body.get("recibido") : null;
+        if (recibido == null) {
+            throw new IllegalArgumentException("Falta el campo 'recibido'.");
+        }
+        ordenService.registrarEstadoComprobante(id, recibido);
+        return ResponseEntity.ok().build();
+    }
+
     @GetMapping("/activos")
     @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
     public ResponseEntity<List<OrdenResponse>> listarActivos() {

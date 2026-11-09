@@ -49,8 +49,8 @@ public class OrdenExpiracionScheduler {
             }
         }
 
-        // 2. SLA 15 min: WhatsApp Yape/Plin pendiente de captura
-        List<Orden> expiradosPago = ordenRepository.findExpiradosPago(limite15m);
+        // 2. SLA 15 min: Yape/Plin sin captura (una captura en revisión detiene el reloj)
+        List<Orden> expiradosPago = ordenRepository.findExpiradosPago(limite15m, ahora);
         for (Orden o : expiradosPago) {
             try {
                 log.warn("Expirando orden #{} por superar 15 min en PENDIENTE_PAGO", o.getId());

@@ -153,9 +153,10 @@ class OrdenFlujoBordesTest {
     }
 
     @Test
-    void elClienteCancelaDesdeRecibidoYPendientes() {
-        for (OrdenEstado estado : List.of(OrdenEstado.RECIBIDO, OrdenEstado.PENDIENTE_PAGO,
-                OrdenEstado.PENDIENTE_CONFIRMACION)) {
+    void elClienteCancelaMientrasEsperaPagoOLlamada() {
+        // Not RECIBIDO: there the order is already paid or confirmed and waits in the kitchen
+        // queue (covered by OrdenColaCocinaTest).
+        for (OrdenEstado estado : List.of(OrdenEstado.PENDIENTE_PAGO, OrdenEstado.PENDIENTE_CONFIRMACION)) {
             Orden o = orden(OrdenTipo.DELIVERY, estado);
             cargar(o);
 
@@ -196,14 +197,14 @@ class OrdenFlujoBordesTest {
     }
 
     @Test
-    void confirmarLaLlamadaDentroDelPlazoPasaAPreparando() {
+    void confirmarLaLlamadaDentroDelPlazoPasaALaColaDeCocina() {
         Orden o = orden(OrdenTipo.DELIVERY, OrdenEstado.PENDIENTE_CONFIRMACION);
         o.setCreadoEn(LocalDateTime.now().minusMinutes(14));
         cargar(o);
 
         ordenService.confirmarLlamada(1L, 3L);
 
-        assertEquals(OrdenEstado.PREPARANDO, o.getEstado());
+        assertEquals(OrdenEstado.RECIBIDO, o.getEstado());
     }
 
     // ---------------------------------------------------------------- S6 cash amount

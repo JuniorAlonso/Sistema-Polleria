@@ -34,7 +34,7 @@ class SecretoJwtSinValorPorDefectoTest {
 
     private static final List<String> SERVICIOS = List.of(
             "auth-service", "orders-service", "payments-service", "feedback-service",
-            "inventory-service", "finance-service", "incident-service");
+            "finance-service", "incident-service");
 
     private static final Pattern DECLARACION = Pattern.compile("^jwt\\.secret=(.*)$", Pattern.MULTILINE);
 

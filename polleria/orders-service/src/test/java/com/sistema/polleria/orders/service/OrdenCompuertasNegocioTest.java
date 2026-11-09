@@ -108,7 +108,8 @@ class OrdenCompuertasNegocioTest {
 
         ordenService.confirmarLlamada(1L, 3L);
 
-        assertEquals(OrdenEstado.PREPARANDO, o.getEstado());
+        // The confirmed order waits in the kitchen queue; the kitchen starts it.
+        assertEquals(OrdenEstado.RECIBIDO, o.getEstado());
         assertNotNull(o.getLlamadaConfirmacionAt());
     }
 
@@ -272,6 +273,18 @@ class OrdenCompuertasNegocioTest {
 
         assertFalse(guardada.getValue().getRequiereCobroEfectivo());
         assertFalse(resp.getRequiereCobroEfectivo());
+    }
+
+    @Test
+    void crearConRequiereCobroEfectivoExplicitoLoConserva() {
+        CrearOrdenRequest r = crearRequest(null);
+        r.setRequiereCobroEfectivo(true);
+        ArgumentCaptor<Orden> guardada = guardar();
+
+        OrdenResponse resp = ordenService.crear(r, 5L);
+
+        assertTrue(guardada.getValue().getRequiereCobroEfectivo());
+        assertTrue(resp.getRequiereCobroEfectivo());
     }
 
     // estadoInicial: POST /ordenes is public, so it can only open an order in a state that still

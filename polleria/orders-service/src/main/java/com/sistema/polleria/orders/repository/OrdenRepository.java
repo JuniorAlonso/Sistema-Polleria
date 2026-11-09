@@ -59,7 +59,7 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
      */
     @EntityGraph(attributePaths = {"items", "items.producto"})
     @Query("SELECT o FROM Orden o WHERE o.tipo = 'DELIVERY' AND o.estado IN ('LISTO', 'LISTO_PARA_ENTREGAR') " +
-           "AND (o.repartidorId IS NULL OR o.repartidorId = 0) ORDER BY o.creadoEn ASC")
+           "AND (o.repartidorId IS NULL OR o.repartidorId <= 0) ORDER BY o.creadoEn ASC")
     List<Orden> findDisponiblesParaEntrega();
 
     List<Orden> findByRepartidorIdAndEstado(Long repartidorId, OrdenEstado estado);
@@ -103,8 +103,15 @@ public interface OrdenRepository extends JpaRepository<Orden, Long> {
     @Query("SELECT o FROM Orden o WHERE o.estado = 'PENDIENTE_CONFIRMACION' AND o.creadoEn <= :limite")
     List<Orden> findExpiradosConfirmacion(@Param("limite") java.time.LocalDateTime limite);
 
-    @Query("SELECT o FROM Orden o WHERE o.estado = 'PENDIENTE_PAGO' AND o.creadoEn <= :limite")
-    List<Orden> findExpiradosPago(@Param("limite") java.time.LocalDateTime limite);
+    /**
+     * Unpaid orders past their payment window. An order whose capture is under review never expires
+     * here; after a rejection the window is {@code plazoPagoHasta} instead of {@code creadoEn + 15'}.
+     */
+    @Query("SELECT o FROM Orden o WHERE o.estado = 'PENDIENTE_PAGO'"
+            + " AND (o.comprobantePendiente IS NULL OR o.comprobantePendiente = false)"
+            + " AND ((o.plazoPagoHasta IS NULL AND o.creadoEn <= :limite) OR o.plazoPagoHasta <= :ahora)")
+    List<Orden> findExpiradosPago(@Param("limite") java.time.LocalDateTime limite,
+                                  @Param("ahora") java.time.LocalDateTime ahora);
 
     @Query("SELECT o FROM Orden o WHERE o.estado = 'EN_PUERTA' AND o.enPuertaAt <= :limite")
     List<Orden> findExpiradosEnPuerta(@Param("limite") java.time.LocalDateTime limite);

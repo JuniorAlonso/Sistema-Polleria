@@ -110,6 +110,53 @@ class OrdenStockTest {
         assertEquals(25, pollo.getStock());
     }
 
+    @Test
+    void cancelarNoReactivaUnPlatoQueElAdminDesactivoAMano() {
+        pollo.setStock(25);
+        pollo.setDisponible(false);
+        Orden orden = ordenConPollo(OrdenEstado.RECIBIDO, 15);
+        when(ordenRepository.findById(1L)).thenReturn(Optional.of(orden));
+
+        ordenService.actualizarEstado(1L, cancelar(), 0L);
+
+        assertEquals(40, pollo.getStock());
+        assertFalse(pollo.isDisponible());
+    }
+
+    @Test
+    void cancelarReactivaElPlatoQueSeHabiaAgotadoPorStock() {
+        pollo.setStock(0);
+        pollo.setDisponible(false);
+        Orden orden = ordenConPollo(OrdenEstado.RECIBIDO, 15);
+        when(ordenRepository.findById(1L)).thenReturn(Optional.of(orden));
+
+        ordenService.actualizarEstado(1L, cancelar(), 0L);
+
+        assertEquals(15, pollo.getStock());
+        assertTrue(pollo.isDisponible());
+    }
+
+    @Test
+    void losPlatosSeBloqueanSiempreEnElMismoOrdenParaEvitarDeadlocks() {
+        Producto papas = Producto.builder().id(5L).nombre("Papas")
+                .precio(new BigDecimal("10.00")).disponible(true).stock(10).build();
+        when(productoService.buscarConBloqueo(5L)).thenReturn(papas);
+        CrearOrdenRequest req = recojo(1);
+        OrdenItemRequest itemPapas = new OrdenItemRequest();
+        itemPapas.setProductoId(5L);
+        itemPapas.setCantidad(1);
+        req.setItems(List.of(item(1), itemPapas));
+
+        ordenService.crear(req, 0L);
+
+        // The first lock taken must be the lowest id, even though the request lists it second.
+        org.mockito.InOrder orden = inOrder(productoService);
+        orden.verify(productoService, calls(1)).buscarConBloqueo(5L);
+        orden.verify(productoService, calls(1)).buscarConBloqueo(10L);
+        assertEquals(39, pollo.getStock());
+        assertEquals(9, papas.getStock());
+    }
+
     private CrearOrdenRequest recojo(int cantidad) {
         CrearOrdenRequest req = new CrearOrdenRequest();
         req.setTipo(OrdenTipo.RECOJO);

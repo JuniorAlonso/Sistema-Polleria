@@ -47,7 +47,7 @@ class OrdenExpiracionSchedulerTest {
                 .build();
         when(ordenRepository.findExpiradosConfirmacion(any(LocalDateTime.class)))
                 .thenReturn(List.of(o));
-        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class)))
+        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(List.of());
         when(ordenRepository.findExpiradosEnPuerta(any(LocalDateTime.class)))
                 .thenReturn(List.of());
@@ -71,7 +71,7 @@ class OrdenExpiracionSchedulerTest {
                 .build();
         when(ordenRepository.findExpiradosConfirmacion(any(LocalDateTime.class)))
                 .thenReturn(List.of());
-        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class)))
+        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(List.of());
         when(ordenRepository.findExpiradosEnPuerta(any(LocalDateTime.class)))
                 .thenReturn(List.of(o));
@@ -93,7 +93,7 @@ class OrdenExpiracionSchedulerTest {
                 .build();
         when(ordenRepository.findExpiradosConfirmacion(any(LocalDateTime.class)))
                 .thenReturn(List.of());
-        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class)))
+        when(ordenRepository.findExpiradosPago(any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(List.of());
         when(ordenRepository.findExpiradosEnPuerta(any(LocalDateTime.class)))
                 .thenReturn(List.of());

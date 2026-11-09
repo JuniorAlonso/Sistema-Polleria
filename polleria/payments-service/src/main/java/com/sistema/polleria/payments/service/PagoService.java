@@ -45,13 +45,6 @@ public class PagoService {
     private final OrdenesClient ordenesClient;
     private final AlmacenComprobantes almacenComprobantes;
 
-    /**
-     * Minutes, counted from the order creation, during which a Yape/Plin capture can still be
-     * approved. Matches the 15-minute PENDIENTE_PAGO timeout of orders-service.
-     */
-    @Value("${pagos.comprobante.ventana-minutos:15}")
-    private long ventanaMinutos = 15;
-
     private static final Set<String> ESTADOS_ORDEN_TERMINALES = Set.of("CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA");
 
     /**
@@ -159,6 +152,11 @@ public class PagoService {
             return PagoResponse.from(existente);
         }
 
+        // S6: stop the order's expiry clock before storing the capture. If orders-service cannot be
+        // told, nothing is stored and the customer is asked to resend (fail closed): otherwise the
+        // order could expire under a customer who already paid.
+        ordenesClient.marcarComprobante(request.ordenId(), true);
+
         boolean esNuevo = existente == null;
         Pago pago = esNuevo ? new Pago() : existente;
         if (esNuevo) {
@@ -217,15 +215,14 @@ public class PagoService {
     /**
      * Verificación del comprobante de Yape por el personal (S3). La ejecutan {@code ADMIN} y
      * {@code CAJERO} (la autorización la aplica {@code PagoController} con {@code @PreAuthorize});
-     * aquí solo se aplica la decisión. Aprobar exige una captura adjunta y que no hayan pasado
-     * {@code pagos.comprobante.ventana-minutos} minutos desde la creación de la orden (HTTP 400);
-     * rechazar sigue permitido. Aprobar también exige que orders-service informe la orden todavía
+     * aquí solo se aplica la decisión. Aprobar exige una captura adjunta (HTTP 400); no hay ventana
+     * por antigüedad del pedido: la captura en revisión detiene su expiración (S6). Aprobar también exige que orders-service informe la orden todavía
      * en {@code PENDIENTE_PAGO} (S2, HTTP 409; si no responde, falla cerrado).
      *
      * <p><b>Aprobar</b>: el pago pasa a {@link EstadoPago#APROBADO} y el pedido avanza con el
      * **mismo mecanismo** que usa el pago aprobado de Mercado Pago
      * ({@code notificarOrdenAsync → NotificadorOrden.notificarPagoAprobado}, que mueve la orden a
-     * {@code EN_PREPARACION}). No se inventa otro camino.
+     * {@code RECIBIDO}, la cola de cocina). No se inventa otro camino.
      *
      * <p><b>Rechazar</b>: el pago pasa a {@link EstadoPago#RECHAZADO} con el motivo obligatorio y
      * la orden **no** avanza: queda impaga esperando un comprobante válido que el cliente puede
@@ -256,6 +253,8 @@ public class PagoService {
             if (motivo.isEmpty()) {
                 throw new IllegalArgumentException("El motivo de rechazo es obligatorio");
             }
+            // S6: the order gets a fresh payment window to resend the capture (fail closed).
+            ordenesClient.marcarComprobante(pago.getOrdenId(), false);
             pago.setEstado(EstadoPago.RECHAZADO);
             pago.setMotivoRechazo(motivo);
             pago.setVerificadoPor(adminEmail);
@@ -280,12 +279,9 @@ public class PagoService {
             throw new IllegalStateException("El pedido #" + pago.getOrdenId() + " ya no está pendiente de pago "
                     + "(estado " + orden.estado() + "): no se puede aprobar el comprobante");
         }
-        LocalDateTime inicioVentana = orden.creadoEn() != null ? orden.creadoEn() : pago.getCreadoEn();
-        if (LocalDateTime.now().isAfter(inicioVentana.plusMinutes(ventanaMinutos))) {
-            throw new IllegalArgumentException(
-                    "Pasaron más de " + ventanaMinutos + " minutos desde que se creó el pedido: "
-                            + "ya no se puede confirmar este pago");
-        }
+        // S6: no creation-time window here. A capture uploaded in time stops the order's expiry in
+        // orders-service, so the cashier may approve it whenever they review it while the order is
+        // still PENDIENTE_PAGO (checked above). Refusing it would leave a paying customer without food.
 
         pago.setEstado(EstadoPago.APROBADO);
         pago.setMotivoRechazo(null);
@@ -533,7 +529,7 @@ public class PagoService {
 
     /**
      * Notifica a orders-service que el pago fue aprobado para avanzar
-     * automáticamente el estado del pedido a EN_PREPARACION (RF21).
+     * automáticamente el estado del pedido a RECIBIDO, la cola de cocina (RF21).
      * Se delega a {@link NotificadorOrden} para que @Async realmente se aplique.
      */
     private void notificarOrdenAsync(Long ordenId, String bearerToken) {

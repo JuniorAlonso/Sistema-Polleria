@@ -30,9 +30,13 @@ public class NotificadorOrden {
     @Value("${orders.service.internal-key:}")
     private String ordersInternalKey;
 
+    /**
+     * The paid order enters the kitchen queue (RECIBIDO, "por preparar"): the kitchen starts it.
+     * Moving it straight to EN_PREPARACION skipped that step.
+     */
     @Async
     public void notificarPagoAprobado(Long ordenId, String bearerToken) {
-        notificarEstado(ordenId, "EN_PREPARACION", bearerToken);
+        notificarEstado(ordenId, "RECIBIDO", bearerToken);
     }
 
     @Async

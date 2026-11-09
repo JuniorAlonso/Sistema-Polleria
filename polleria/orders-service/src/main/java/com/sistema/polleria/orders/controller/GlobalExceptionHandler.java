@@ -133,6 +133,19 @@ public class GlobalExceptionHandler {
                 "status", 405));
     }
 
+    /**
+     * Two orders competing for the last units of a dish: the database gave up waiting for the row
+     * lock (or broke a deadlock). It is a retryable conflict, not a server error.
+     */
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handlePessimisticLock(Exception ex) {
+        log.warn("Conflicto de bloqueo al reservar stock: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "error", "Otro pedido está usando los mismos platos en este momento. Intenta nuevamente.",
+                "status", 409
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
         log.error("Error inesperado: ", ex);
