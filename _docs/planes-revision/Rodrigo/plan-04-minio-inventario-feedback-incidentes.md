@@ -47,7 +47,7 @@ Certificar el almacenamiento de imágenes, la consistencia del stock, el reclamo
 | ¿Se pueden pisar valores de stock? | Sí: `actualizar` y `toggle` no bloquean. | `buscarConBloqueo`. |
 | ¿Reponer deshace un agotado manual? | Sí. | Reactivar solo si el stock estaba en 0. |
 | ¿Qué hace hoy un reembolso en efectivo? | Marca `REEMBOLSADO` sin mover dinero. | Flujo 4.4. |
-| ¿Qué pasa con los webhooks de MP? | `refunded` cancela órdenes entregadas; `approved` regresa un parcial a `APROBADO`. | Los corrige el [Plan 6](../plan-06-mercado-pago.md), sección 5. |
+| ¿Qué pasa con los webhooks de MP? | `refunded` cancela órdenes entregadas; `approved` regresa un parcial a `APROBADO`. | Los corrige el [Plan 6](../Altamirano/plan-06-mercado-pago.md), sección 5. |
 | ¿El cajero puede registrar incidentes? | No tiene UI y `SecurityAuditService` le daría 403. | Reutilizar el modal con `IncidentsApiService`. |
 
 ---

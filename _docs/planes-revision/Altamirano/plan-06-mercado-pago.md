@@ -3,7 +3,7 @@
 **Responsable:** por asignar
 **Servicios:** `payments-service` (8083), `orders-service` (8082), `frontEnd` (`/checkout`, seguimiento, `/admin/ordenes`), despliegue (Cloud Run, Vercel)
 **Tablas:** `pagos`, `ordenes`, `productos` (sin cambios de esquema)
-**Base obligatoria:** [Plan 00](plan-00-base-comun.md)
+**Base obligatoria:** [Plan 00](../plan-00-base-comun.md)
 
 ---
 
@@ -17,15 +17,18 @@ Dejar operativo el cobro con **Mercado Pago Checkout Pro** en el checkout web, d
 
 | # | Bloqueante | Evidencia |
 | :-- | :--- | :--- |
-| 1 | **`POST /pagos/yape-otp` aprueba sin cobrar.** Es público, no llama a Mercado Pago y acepta cualquier código de 6 dígitos distinto de `000000`. | `PagoService.procesarYapeOtp`, `SecurityConfig` |
-| 2 | Faltan variables `MERCADOPAGO_*`, `ORDERS_SERVICE_URL` e `INTERNAL_API_KEY` en compose y deploy. | `docker-compose.local.yml`, `deploy-gcp-cloudrun.ps1` |
-| 3 | `back_urls` con `localhost` por defecto. La documentación indica no usar dominios locales. | `MercadoPagoGateway`, `application.properties` |
-| 4 | El checkout prioriza `sandboxInitPoint`, también en producción. | `checkout.component.ts` |
-| 5 | Si falla el aviso a orders, el pago queda aprobado, la orden se cancela a los 15 minutos y el error se pierde. | `NotificadorOrden`, webhook |
-| 6 | La preferencia no expira: se puede pagar una orden ya cancelada. | `MercadoPagoGateway`, `OrdenExpiracionScheduler` |
-| 7 | Un `rejected` tardío degrada un pago aprobado. `CANCELADO→APROBADO` lanza una excepción que se pierde. | `PagoService` |
-| 8 | "Reintentar" crea otra orden. Hay una ventana de 800 ms para un doble envío. | `checkout-status`, `checkout.component.ts` |
-| 9 | No hay forma de recuperar un webhook perdido. | — |
+| 1 | Faltan variables `MERCADOPAGO_*`, `ORDERS_SERVICE_URL` e `INTERNAL_API_KEY` en compose y deploy. | `docker-compose.local.yml`, `deploy-gcp-cloudrun.ps1` |
+| 2 | `back_urls` con `localhost` por defecto. La documentación indica no usar dominios locales. | `MercadoPagoGateway`, `application.properties` |
+| 3 | El checkout prioriza `sandboxInitPoint`, también en producción. | `checkout.component.ts` |
+| 4 | Si falla el aviso a orders, el pago queda aprobado, la orden se cancela a los 15 minutos y el error se pierde. | `NotificadorOrden`, webhook |
+| 5 | La preferencia no expira: se puede pagar una orden ya cancelada. | `MercadoPagoGateway`, `OrdenExpiracionScheduler` |
+| 6 | Un `rejected` tardío degrada un pago aprobado. `CANCELADO→APROBADO` lanza una excepción que se pierde. | `PagoService` |
+| 7 | "Reintentar" crea otra orden. Hay una ventana de 800 ms para un doble envío. | `checkout-status`, `checkout.component.ts` |
+| 8 | No hay forma de recuperar un webhook perdido. | — |
+
+### Yape simulado (mock temporal)
+
+`POST /pagos/yape-otp` **se mantiene como mock por el momento, hasta que el responsable lo reemplace.** No llama a Mercado Pago ni mueve dinero: es público y aprueba cualquier código de 6 dígitos distinto de `000000`, con lo que la orden pasa a cocina. Sirve para demostraciones y pruebas; no debe ofrecerse a clientes reales mientras siga siendo un mock.
 
 ---
 
@@ -34,8 +37,8 @@ Dejar operativo el cobro con **Mercado Pago Checkout Pro** en el checkout web, d
 | ID | Decisión | Justificación |
 | :--- | :--- | :--- |
 | D6.1 | Se usa Checkout Pro con redirección. No se incorporan Bricks ni Checkout API. | Ya está integrado, y Mercado Pago captura los datos de tarjeta. |
-| D6.2 | El checkout web ofrece **Mercado Pago** y **Efectivo contra entrega**. Los medios dentro de Mercado Pago dependen de la cuenta. | Es lo único que hoy cobra de verdad. Yape dentro de Checkout Pro no pudo confirmarse para esta cuenta. |
-| D6.3 | Se elimina `YAPE_OTP` de frontend y backend. | Es un cobro simulado que entrega comida gratis. El Yape con captura del bot no cambia. |
+| D6.2 | El checkout web mantiene sus tres opciones: **Mercado Pago**, **Yape** (mock) y **Efectivo contra entrega**. Los medios dentro de Mercado Pago dependen de la cuenta. | Yape dentro de Checkout Pro no pudo confirmarse para esta cuenta. |
+| D6.3 | `YAPE_OTP` se conserva como mock y este Plan no lo modifica. Su reemplazo queda a cargo del responsable. | Decisión del equipo. El Yape con captura del bot tampoco cambia. |
 | D6.4 | Una preferencia por orden. Si `pagos.checkout_url` existe y la orden sigue en `PENDIENTE_PAGO`, se reutiliza. | Hoy cada llamada crea otra preferencia pagable, lo que permite doble cobro. |
 | D6.5 | La preferencia expira a los **13 minutos** desde la creación de la orden, con `expires` y `expiration_date_to`. | Debe vencer antes que el scheduler de 15 minutos. |
 | D6.6 | `binary_mode=true` y exclusión de `ticket` y `atm`. | El pago se resuelve al instante, dentro de la ventana de la orden. |
@@ -119,7 +122,6 @@ Sin cambios de esquema. Se usan `pagos.estado`, `referencia_externa`, `detalle` 
 
 | Componente | Cambio | Estado |
 | :--- | :--- | :--- |
-| `PagoController`, `PagoService`, `SecurityConfig`, `YapeOtpPagoRequest` | Elimina `yape-otp` y su `permitAll`. | Corregir |
 | `MercadoPagoGateway.crearPreferencia` | D6.4, D6.5, D6.6, `statement_descriptor`, `checkoutUrl` según ambiente, sin `notification_url` en producción. | Corregir |
 | `OrdenesClient.OrdenInfo` | Agrega `creadoEn`, ya disponible en `OrdenResponse`. | Corregir |
 | `MercadoPagoWebhookController` | Matriz de la sección 5, D6.13, secreto obligatorio en producción, sin registrar el HMAC ni el body completo. | Corregir |
@@ -133,10 +135,9 @@ Sin cambios de esquema. Se usan `pagos.estado`, `referencia_externa`, `detalle` 
 
 | Componente | Cambio | Estado |
 | :--- | :--- | :--- |
-| `checkout.component.ts` | Quita la opción y la rama `YAPE_OTP`, incluido el cambio automático al bloquear contra entrega. Usa `checkoutUrl`. Mantiene `isProcessing` y la orden pendiente hasta navegar. | Corregir |
+| `checkout.component.ts` | En la rama de tarjeta usa `checkoutUrl` y mantiene `isProcessing` y la orden pendiente hasta navegar. La rama `YAPE_OTP` no cambia. | Corregir |
 | `checkout-status.component.ts` | "Reintentar" con la misma orden, "Cambiar método", `sincronizar` al abrir `/failure` y al agotar el polling, resuelve `RECIBIDO` sin `pagoId`. | Corregir |
-| `payments-api.service.ts`, `payment.service.ts` | Quita `yape-otp`, agrega `sincronizar`, adapta `checkoutUrl`. | Corregir |
-| `order.model.ts`, `order-tracking.component.ts` | Quita `YAPE_OTP` del tipo y de las condiciones. | Corregir |
+| `payments-api.service.ts`, `payment.service.ts` | Agrega `sincronizar` y adapta `checkoutUrl`. | Corregir |
 | `admin-ordenes.page.ts` | Referencia de Mercado Pago, detalle y botón "Sincronizar". | Corregir |
 | `index.html`, `environment*.ts`, `CheckoutResultComponent` | Elimina SDK JS, public key y componente sin ruta. | Corregir |
 
@@ -161,7 +162,7 @@ Sin cambios de esquema. Se usan `pagos.estado`, `referencia_externa`, `detalle` 
 
 | ID | Requerimiento | Criterio verificable |
 | :--- | :--- | :--- |
-| R6.1 | Yape simulado | `POST /pagos/yape-otp` no existe. El checkout no ofrece esa opción. |
+| R6.1 | Mock de Yape sin regresión | El flujo `YAPE_OTP` del checkout y los tests `procesarYapeOtp` se comportan igual que antes de este Plan. |
 | R6.2 | Pago aprobado | Con cuenta de prueba: redirige a Mercado Pago, paga, vuelve, la orden pasa a `RECIBIDO`, aparece en KDS y el carrito se limpia. |
 | R6.3 | Preferencia | Dos llamadas sobre la misma orden devuelven la misma URL. Expira a los 13 minutos. |
 | R6.4 | Pago rechazado | La orden sigue viva. "Reintentar" no crea otra orden. |
@@ -180,12 +181,11 @@ Sin cambios de esquema. Se usan `pagos.estado`, `referencia_externa`, `detalle` 
 
 ## 8. Orden de implementación
 
-1. **Seguridad:** eliminar `YAPE_OTP` (R6.1). Se puede integrar de inmediato y sin depender de nada.
-2. **Configuración:** variables, túneles y credenciales de prueba.
-3. **Webhook y estados:** sección 5, D6.8 a D6.13.
-4. **Preferencia:** D6.4 a D6.7.
-5. **Frontend** y `sincronizar`.
-6. **Prueba de punta a punta** con cuentas de prueba, y luego el despliegue.
+1. **Configuración:** variables, túneles y credenciales de prueba.
+2. **Webhook y estados:** sección 5, D6.8 a D6.13.
+3. **Preferencia:** D6.4 a D6.7.
+4. **Frontend** y `sincronizar`.
+5. **Prueba de punta a punta** con cuentas de prueba, y luego el despliegue.
 
 ---
 
@@ -202,7 +202,7 @@ Sin cambios de esquema. Se usan `pagos.estado`, `referencia_externa`, `detalle` 
 
 **Incluye:** Checkout Pro web, webhook, estados, reintentos, sincronización y despliegue.
 
-**No incluye:** Bricks o Checkout API, Yape nativo con token, pagos dentro del bot, suscripciones, compra como invitado, contracargos automatizados, comprobante del delivery prepagado (Plan 3).
+**No incluye:** reemplazo del mock `YAPE_OTP` (D6.3), Bricks o Checkout API, Yape nativo con token, pagos dentro del bot, suscripciones, compra como invitado, contracargos automatizados, comprobante del delivery prepagado (Plan 3).
 
 **Por confirmar al configurar la cuenta:** medios disponibles en Perú, y tarjetas y usuarios de prueba del panel.
 
@@ -220,6 +220,6 @@ cd frontEnd
 npx ng test --watch=false --browsers=ChromeHeadless --include="src/app/features/client/checkout/**/*.spec.ts" --include="src/app/core/services/payment.service.spec.ts"
 ```
 
-**Tests a actualizar o crear:** retirar los casos `procesarYapeOtp` de `PagoServiceTest`; agregar por cada fila de la matriz; campos de la preferencia y su reutilización; fallo del aviso a orders; `sincronizar`; elección de URL; y, en frontend, reintento y doble envío.
+**Tests a actualizar o crear:** los casos `procesarYapeOtp` de `PagoServiceTest` se conservan; agregar por cada fila de la matriz; campos de la preferencia y su reutilización; fallo del aviso a orders; `sincronizar`; elección de URL; y, en frontend, reintento y doble envío.
 
 **Fuentes:** [Webhooks y firma](https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks), [URLs de retorno](https://www.mercadopago.com.ar/developers/es/docs/checkout-pro/checkout-customization/user-interface/redirection), [Crear preferencia](https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-pro-preferences/create-preference/post).

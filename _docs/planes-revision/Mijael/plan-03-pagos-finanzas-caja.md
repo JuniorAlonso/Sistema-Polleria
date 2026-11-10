@@ -153,7 +153,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 
 **Incluye:** pagos en POS, comprobantes, caja, liquidaciones y reportes.
 
-**No incluye:** integración con Mercado Pago ([Plan 6](../plan-06-mercado-pago.md)), envío a SUNAT u OSE, anulación y nota de crédito, efecto fiscal de un reembolso, comprobante del delivery prepagado, vista de comprobantes para clientes.
+**No incluye:** integración con Mercado Pago ([Plan 6](../Altamirano/plan-06-mercado-pago.md)), envío a SUNAT u OSE, anulación y nota de crédito, efecto fiscal de un reembolso, comprobante del delivery prepagado, vista de comprobantes para clientes.
 
 ---
 

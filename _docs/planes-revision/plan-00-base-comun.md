@@ -85,7 +85,7 @@ Los criterios de aceptación usan los nombres del backend. `PAGADO`, `LISTO_COCI
 | `ProductoController`, `ProductoService`, `Producto` | Plan 4 | Plan 1 solicita agregar `COCINA` en `PATCH /productos/{id}/disponibilidad`. |
 | `kitchen-order-card`, `kitchen-kds`, `mozo-menu-picker` | Plan 1 | Plan 2 define la regla del rótulo `MOSTRADOR`. Plan 4 entrega `imagenUrl`. |
 | `products.service.ts`, `product.adapter.ts` | Plan 4 | Plan 1 solo consume `loadProducts`. |
-| `PagoService`, `PagoController` | Plan 3 | Plan 2 aporta el reenvío de notificación en `confirmar`. Plan 4 aporta `reembolsar`. Plan 6 aporta lo de Mercado Pago y retira `yape-otp`. |
+| `PagoService`, `PagoController` | Plan 3 | Plan 2 aporta el reenvío de notificación en `confirmar`. Plan 4 aporta `reembolsar`. Plan 6 aporta lo de Mercado Pago. `yape-otp` sigue como mock hasta que el responsable lo reemplace. |
 | `MercadoPagoGateway`, `MercadoPagoWebhookController`, `checkout-status` | Plan 6 | Plan 4 entrega la lógica de reembolso. |
 | `checkout.component.ts` | Plan 6 | Plan 3 solicita corregir el desglose de IGV. |
 | `deploy-gcp-cloudrun.ps1` | Plan 6 | Plan 5 solo agrega las variables de correo de feedback. |
@@ -120,7 +120,7 @@ Los criterios de aceptación usan los nombres del backend. `PAGADO`, `LISTO_COCI
 5. **Plan 1, segunda entrega:** rondas, anulación y agotado en KDS.
 6. **Plan 4:** puede avanzar en paralelo. Integra el stock después del paso 5.
 7. **Plan 5:** independiente de los demás. Solo requiere rebase sobre los cambios del Plan 4 en `feedback-service` y en el compose.
-8. **Plan 6:** el retiro de `yape-otp` se integra de inmediato. El resto, después de `reembolsar` (Plan 4) y del control de dueño en `GET /pagos` (Plan 3).
+8. **Plan 6:** después de `reembolsar` (Plan 4) y del control de dueño en `GET /pagos` (Plan 3).
 
 ---
 
