@@ -292,12 +292,16 @@ class VerificarComprobanteYapeTest {
     void unPagoSinComprobanteSigueVisibleParaElMozo() throws Exception {
         long ordenId = 978108L;
         String tokenMozo = token(OTRO_ID, "MOZO", "mozo@prueba.local");
+        // Plan 03: MOZO no longer starts payments; the cashier does, and the amount must match the order.
+        String tokenCajero = token(OTRO_ID, "CAJERO", "cajero@prueba.local");
+        org.mockito.Mockito.when(ordenesClient.obtener(ordenId)).thenReturn(new OrdenesClient.OrdenInfo(
+                ordenId, "RECIBIDO", "SALON", new java.math.BigDecimal("42.50"), null, java.time.LocalDateTime.now()));
 
         ResponseEntity<String> alta = rest.exchange(
                 "/pagos",
                 HttpMethod.POST,
                 entidadJson("{\"ordenId\": " + ordenId + ", \"monto\": 42.50, \"metodoPago\": \"CONTRAENTREGA\"}",
-                        tokenMozo),
+                        tokenCajero),
                 String.class);
         assertThat(alta.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         long pagoId = objectMapper.readTree(alta.getBody()).path("id").asLong();

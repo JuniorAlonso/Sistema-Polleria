@@ -8,7 +8,9 @@ import com.sistema.polleria.payments.dto.LiquidarEfectivoRequest;
 import com.sistema.polleria.payments.dto.PagoResponse;
 import com.sistema.polleria.payments.dto.VerificarPagoRequest;
 import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
+import com.sistema.polleria.payments.service.AutorizacionPago;
 import com.sistema.polleria.payments.service.FirmadorComprobantes;
+import com.sistema.polleria.payments.service.ValidadorMontoPago;
 import com.sistema.polleria.payments.service.PagoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,19 +31,22 @@ public class PagoController {
 
     private final PagoService pagoService;
     private final FirmadorComprobantes firmadorComprobantes;
+    private final AutorizacionPago autorizacionPago;
+    private final ValidadorMontoPago validadorMontoPago;
 
     /**
-     * Iniciar pago — CLIENTE, MOZO, CAJERO (para delivery/recojo online y cobro en
-     * caja)
+     * Iniciar pago — CLIENTE (checkout web), ADMIN y CAJERO (cobro en caja). MOZO no inicia pagos:
+     * no tenía consumidores (plan 03). El monto debe coincidir con el total actual de la orden.
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','CAJERO')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','ADMIN','CAJERO')")
     public PagoResponse iniciar(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
 
+        validadorMontoPago.validar(request);
         Long clienteId = extractUserId(principal);
         return pagoService.iniciar(request, clienteId, authorization != null ? authorization : "");
     }
@@ -186,14 +191,18 @@ public class PagoController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse obtener(@PathVariable Long id, Authentication authentication) {
-        return conComprobanteSegunRol(pagoService.obtener(id), authentication);
+        PagoResponse pago = pagoService.obtener(id);
+        autorizacionPago.verificarLectura(pago, authentication);
+        return conComprobanteSegunRol(pago, authentication);
     }
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
     @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
     public PagoResponse porOrden(@PathVariable Long ordenId, Authentication authentication) {
-        return conComprobanteSegunRol(pagoService.obtenerPorOrden(ordenId), authentication);
+        PagoResponse pago = pagoService.obtenerPorOrden(ordenId);
+        autorizacionPago.verificarLectura(pago, authentication);
+        return conComprobanteSegunRol(pago, authentication);
     }
 
     /** Mis pagos — historial del cliente autenticado */
