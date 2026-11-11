@@ -30,7 +30,12 @@ Certificar el circuito de dinero: cobro en POS, emisión de comprobante, registr
 | D3.11 | Una sola caja global abierta, garantizada por índice único parcial. | Hoy solo la protege una comprobación. |
 | D3.12 | El arqueo ciego es de UI: sin esperado ni diferencia hasta confirmar. | El backend ya calcula al cerrar. |
 | D3.13 | Tarjeta y Yape en POS son confirmación manual y no entran al efectivo esperado. | Comportamiento actual, ahora explícito. |
-| D3.14 | La bandeja del POS lista solo comandas con `mesaEstado=POR_COBRAR`. | Hoy lista todo `SALON` activo. |
+| D3.14 | La bandeja del POS lista solo comandas con `mesaEstado=POR_COBRAR`. Si la respuesta no trae `mesaEstado`, conserva el comportamiento actual. La rama tolerante vive en el adaptador y se retira cuando el Plan 1 lo publique. | Hoy lista todo `SALON` activo. La tolerancia evita bloquear la entrega por el avance del Plan 1. |
+| D3.15 | `emitir` ignora el `total` del navegador. Lo obtiene de una `FuenteTotalComprobante`: el monto del pago `APROBADO` de la orden y, si no existe, el total de la orden. | El navegador no puede alterar el monto. El segundo caso cubre la boleta del delivery contraentrega, que se emite al confirmar la llamada, antes del cobro. |
+| D3.16 | finance lee la orden con un `OrdenesClient` nuevo, de solo lectura, sobre `GET /ordenes/{id}` con `X-Internal-Key`. | El endpoint ya acepta la clave interna: orders-service no cambia. No crea dependencia circular. |
+| D3.17 | El reintento del cobro se deriva del backend: pago `APROBADO`, existencia del comprobante y estado de la orden. El navegador no guarda estado propio. | Sobrevive a una recarga y a un cambio de cajero. Solo se consulta para comandas `SALON` con pago `APROBADO`. |
+| D3.18 | La emisión se autoriza con `@PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','INTERNAL')")` y se retira el `permitAll` de `POST /finanzas/comprobantes`. | Hoy la autorización es manual en el controller. Unifica el patrón con payments. |
+| D3.19 | Las extensiones son aditivas (Open/Closed): `ingresoCaja` es opcional y por defecto `false`; la lógica nueva va en componentes propios (`ValidadorDatosFiscales`, `GeneradorCorrelativo`, `RegistradorIngresoCaja`, `AutorizacionPago`) y `ComprobanteService.emitir` y `PagoController` solo los coordinan. | `PagoService` y `cajero-dashboard` son compartidos con los Planes 2, 4 y 6. Cambios mínimos en ellos reducen conflictos al integrar. |
 
 ---
 
@@ -49,6 +54,10 @@ Certificar el circuito de dinero: cobro en POS, emisión de comprobante, registr
 | ¿La liquidación entra a caja? | Solo si está abierta; si no, se pierde. | 409 sin caja abierta. |
 | ¿El monto del modal de liquidación es correcto? | No: usa un acumulado que queda en 0 y fuerza una discrepancia falsa. | Precargar desde `GET /finanzas/liquidaciones/repartidor/{id}/pendiente`. |
 | ¿Admin Finanzas cuadra? | No: incluye fondos, estima órdenes con `arqueos*35` y afirma una conciliación falsa. | Sección 5. |
+| ¿De dónde sale el total del comprobante? | Del `total` que envía el navegador. | D3.15 y D3.16. |
+| ¿Toda emisión tiene un pago aprobado? | No: `confirmarLlamadaPedido` emite la boleta del delivery contraentrega antes del cobro. | D3.15 usa el total de la orden en ese caso. |
+| ¿Quién consume `COCINA` en la emisión y `MOZO` en `POST /pagos`? | Nadie: solo `cajero-dashboard` emite, e `iniciarPago` lo usan el cajero y el checkout (`CLIENTE`). El bot sube comprobantes por `/pagos/orden/{id}/comprobante`. | Se retiran sin romper consumidores. |
+| ¿Cómo se protege `POST /finanzas/comprobantes`? | `permitAll` en `SecurityConfig` y control manual en el controller. La vía `X-Internal-Key` solo la usa `test_lifecycle.ps1`. | D3.18. |
 
 ---
 
@@ -66,6 +75,17 @@ Certificar el circuito de dinero: cobro en POS, emisión de comprobante, registr
 | 6 | Ticket | `cajero-ticket-modal` con los valores de la respuesta | — | — |
 
 **Fallo parcial:** si el paso 4 o 5 falla, la comanda permanece en el POS con pago `APROBADO` y al reintentar se ejecutan solo los pasos pendientes. Es seguro porque `emitir` es idempotente por orden.
+
+**Pasos pendientes (D3.17):** la fachada los calcula consultando el backend, sin estado local:
+
+| Pago `APROBADO` | Comprobante | Orden | Pendiente |
+| :-- | :-- | :-- | :-- |
+| No | — | Activa | Cobrar (pasos 2 a 5) |
+| Sí | No existe | Activa | Emitir y cerrar (pasos 4 y 5) |
+| Sí | Existe | Activa | Cerrar (paso 5) |
+| Sí | Existe | `ENTREGADO` | Nada; sale de la bandeja |
+
+**Total del comprobante (D3.15):** en el paso 4, finance toma el monto del pago `APROBADO` con `PagosClient`. El `total` que envía el navegador se ignora.
 
 ### 4.2 Caja
 
@@ -99,12 +119,21 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 
 | Componente | Cambio | Estado |
 | :--- | :--- | :--- |
-| `ComprobanteService.emitir` | Advisory lock, validación de D3.8, `ingresoCaja` e `INGRESO` también si el comprobante ya existía. Con `ingresoCaja=true` y sin caja, 409. | Corregir |
-| `ComprobanteController` | `usuarioId` del JWT, emisión solo `ADMIN` y `CAJERO` (retirar `COCINA`), aplica D3.5. | Corregir |
+| `ComprobanteService.emitir` | Coordina los componentes de D3.19: total de D3.15, validación de D3.8, correlativo de D3.4 e `INGRESO` también si el comprobante ya existía. Con `ingresoCaja=true` y sin caja, 409. | Corregir |
+| `EmitirComprobanteRequest` | Campo `ingresoCaja` opcional. `total` deja de ser obligatorio y se ignora (D3.15). | Corregir |
+| `FuenteTotalComprobante` | Interfaz con el orden de D3.15: pago `APROBADO` y, si no hay, total de la orden. | Nuevo |
+| `OrdenesClient` (finance) | `GET /ordenes/{id}` con `X-Internal-Key`, mismo patrón que `PagosClient`. | Nuevo |
+| `PagosClient` | Método para el pago de una orden (`GET /pagos/orden/{id}`), reenviando el JWT del emisor. | Corregir |
+| `ValidadorDatosFiscales` | Una regla por `TipoComprobante` (D3.8). | Nuevo |
+| `GeneradorCorrelativo` | `pg_advisory_xact_lock` por tipo y siguiente número (D3.4). Reemplaza el `COUNT+1`. | Nuevo |
+| `RegistradorIngresoCaja` | `INGRESO` idempotente por `orden_id`; 409 sin caja abierta. | Nuevo |
+| `InicializadorIndicesFinanzas` | Índices de la tabla anterior, con el patrón del Plan 00. | Nuevo |
+| `ComprobanteController`, `SecurityConfig` | D3.18, `usuarioId` del JWT (retira el `1L`), emisión sin `COCINA`, aplica D3.5. | Corregir |
+| `AutorizacionPago` | Control de dueño de D3.7, invocado por `PagoController`; Plan 6 lo reutiliza en `sincronizar`. | Nuevo |
 | `CajaController`, `LiquidacionController` | Quitan los fallbacks a `1L`. | Corregir |
 | `CajaService.cerrar` | Observación obligatoria si `diferencia != 0`, registra `cerrado_por`. | Corregir |
 | `LiquidacionService` | Bloqueo pesimista al cerrar y 409 sin caja abierta. | Corregir |
-| `PagoController` / `PagoService` | D3.7, retirar `MOZO` de `iniciar` (sin consumidores), validar monto contra la orden. | Corregir |
+| `PagoController` / `PagoService` | Delegar D3.7 en `AutorizacionPago`, retirar `MOZO` de `iniciar` (sin consumidores) y una guarda al inicio de `iniciar` que valida el monto contra la orden con el `OrdenesClient` existente. Sin otros cambios: el archivo es compartido. | Corregir |
 | `FinanzasService` | Ventas en efectivo = `INGRESO` menos fondos; excluir fondos de gastos; contar y sumar con `comprobantes_pago`; quitar `arqueos*35`. | Corregir |
 
 ### Frontend
@@ -112,6 +141,8 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | Componente | Cambio | Estado |
 | :--- | :--- | :--- |
 | `finance.service.ts` | Helper `registrarVentaEnCaja`. | Nuevo |
+| `CobroSalonFacade` | Orquesta los pasos de 4.1 y calcula los pendientes de D3.17. `cajero-dashboard` solo le delega `confirmarYRegistrar`. | Nuevo |
+| Adaptador de órdenes | Filtro tolerante de D3.14. | Corregir |
 | `cajero-datos-fiscales` | Consumidor final, DNI o RUC, reutilizable por Plan 2. | Nuevo |
 | `core/utils/api-error.ts` | `mensajeError` extraído. | Nuevo |
 | `cajero-dashboard` (`confirmarYRegistrar`) | Orden de pasos de 4.1, reintento y estado "comprobante pendiente". | Corregir |
@@ -138,6 +169,10 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | R3.8 | Arqueo | No se muestra el esperado antes de confirmar. `esperado = apertura + INGRESO − EGRESO`. Con `diferencia = -5.00` y sin observación: 400; con observación: cierra con `diferencia = -5.00`. |
 | R3.9 | Liquidación | Sin caja: 409. Con caja: precarga el monto correcto, registra un `INGRESO` y no permite liquidar dos veces. |
 | R3.10 | Reportes | Los totales de Admin coinciden con `movimientos_caja` y `comprobantes_pago` de un día de prueba. |
+| R3.11 | Total confiable | Una emisión con `total` alterado en el request usa el monto del pago `APROBADO`. Sin pago aprobado (delivery contraentrega), usa el total de la orden. |
+| R3.12 | Reintento sin estado local | Con pago `APROBADO` y comprobante emitido, recargar la página y reintentar solo cierra la orden: no crea otro pago, comprobante ni `INGRESO`. |
+| R3.13 | Filtro tolerante | Sin `mesaEstado` en la respuesta, el POS lista todo `SALON` activo. Con `mesaEstado`, solo `POR_COBRAR`. |
+| R3.14 | Autorización de emisión | Sin JWT ni clave interna: 401. `CLIENTE`, `MOZO` o `COCINA`: 403. `ADMIN`, `CAJERO` o clave interna: 201. |
 
 ---
 
@@ -145,7 +180,24 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 
 - **Recibe de Plan 1:** `mesaEstado` y la guarda de `ENTREGADO`.
 - **Entrega a Plan 2:** `registrarVentaEnCaja`, `cajaAbierta`, `cajero-datos-fiscales`.
+- **Entrega a Plan 2:** `confirmarLlamadaPedido` sigue funcionando sin cambios (D3.15 cubre la emisión sin pago). Se recomienda migrarlo a `registrarVentaEnCaja`.
 - **Entrega a Plan 4:** `POST /finanzas/caja/movimientos` sin cambios, con 409 si la caja está cerrada.
+- **Entrega a Plan 6:** `AutorizacionPago` (D3.7) para `sincronizar`.
+- **Solicita a Plan 4:** `ORDERS_SERVICE_URL` en el bloque de finance de `docker-compose.local.yml`.
+- **Solicita a Plan 6:** `ORDERS_SERVICE_URL` para finance en `deploy-gcp-cloudrun.ps1`.
+- **`mensajeError`:** este Plan crea `core/utils/api-error.ts` y migra solo sus archivos. Cada dueño migra los suyos (`orders.service`, `checkout`, `admin-ordenes`) en su propio PR.
+
+---
+
+## 7.1 Entregas
+
+| PR | Contenido | Depende de |
+| :-- | :-- | :-- |
+| 1 | Índices e inicializador; `emitir` con `ingresoCaja` y los componentes de D3.19; `FuenteTotalComprobante` y `OrdenesClient`; D3.5 a D3.7 y D3.18; `registrarVentaEnCaja`, `CobroSalonFacade`, input `cajaAbierta` y `api-error.ts`. | — |
+| 2 | Caja y arqueo ciego, liquidación, reportes de `FinanzasService`, ticket real y desglose de IGV del checkout. | PR 1 |
+| 3 | Filtro tolerante de D3.14 y reintento de D3.17. | PR 1 |
+
+El PR 1 corresponde a la primera entrega del Plan 00 (sección 6) y destraba a los Planes 2 y 6. El PR 3 no espera al Plan 1 gracias a D3.14.
 
 ---
 
@@ -169,6 +221,6 @@ cd frontEnd
 npx ng test --watch=false --browsers=ChromeHeadless --include="src/app/features/cajero/**/*.spec.ts" --include="src/app/features/admin/pages/finanzas/**/*.spec.ts"
 ```
 
-**Tests a ampliar o crear:** `ComprobanteServiceTest` (validaciones, idempotencia, `ingresoCaja`), `CajaServiceTest` (observación obligatoria), `PagoServiceTest` (D3.7 y validación de monto) y el nuevo `admin-finanzas.page.spec.ts`.
+**Tests a ampliar o crear:** `ComprobanteServiceTest` (validaciones, idempotencia, `ingresoCaja`, total de D3.15), `CajaServiceTest` (observación obligatoria), `PagoServiceTest` (D3.7 y validación de monto), tests de `FuenteTotalComprobante`, `GeneradorCorrelativo` y `OrdenesClient`, un test de seguridad de la emisión (R3.14), el spec de `CobroSalonFacade` (tabla de pendientes de 4.1) y el nuevo `admin-finanzas.page.spec.ts`.
 
 **Fuentes normativas:** [R.S. 303-2018/SUNAT](https://ww3.sunat.gob.pe/legislacion/superin/2018/anexo-303-2018.pdf), [Preguntas frecuentes de SUNAT](https://orientacion.sunat.gob.pe/node/462).
