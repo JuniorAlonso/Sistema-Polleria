@@ -23,7 +23,7 @@ public class OrdenesClient {
 
     public OrdenesClient(@Value("${orders.service.url}") String ordersUrl,
                          @Value("${internal.api-key:}") String internalKey) {
-        this.restClient = RestClient.builder().baseUrl(ordersUrl).build();
+        this.restClient = RestClient.builder().baseUrl(ordersUrl).requestFactory(TiemposEspera.fabrica()).build();
         this.internalKey = internalKey;
     }
 

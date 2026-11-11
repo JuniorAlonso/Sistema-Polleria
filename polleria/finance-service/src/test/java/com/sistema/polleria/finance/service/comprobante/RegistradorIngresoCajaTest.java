@@ -56,6 +56,18 @@ class RegistradorIngresoCajaTest {
     }
 
     @Test
+    void unReintentoSimultaneoQuePierdeContraElIndiceRespondeConflictoNoErrorInterno() {
+        cajaAbierta(7L);
+        when(movimientos.existsByOrdenIdAndTipo(55L, TipoMovimiento.INGRESO)).thenReturn(false);
+        when(movimientos.saveAndFlush(any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException("uq_movimientos_ingreso_orden"));
+
+        assertThatThrownBy(() -> registrador.registrar(55L, BigDecimal.TEN, "Venta", 9L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Reintenta");
+    }
+
+    @Test
     void sinCajaAbiertaRespondeConflicto() {
         when(arqueos.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.empty());
 

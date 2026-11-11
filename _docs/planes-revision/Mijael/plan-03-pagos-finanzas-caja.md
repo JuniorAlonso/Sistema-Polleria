@@ -172,7 +172,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | R3.11 | Total confiable | Una emisión con `total` alterado en el request usa el monto del pago `APROBADO`. Sin pago aprobado (delivery contraentrega), usa el total de la orden. |
 | R3.12 | Reintento sin estado local | Con pago `APROBADO` y comprobante emitido, recargar la página y reintentar solo cierra la orden: no crea otro pago, comprobante ni `INGRESO`. |
 | R3.13 | Filtro tolerante | Sin `mesaEstado` en la respuesta, el POS lista todo `SALON` activo. Con `mesaEstado`, solo `POR_COBRAR`. |
-| R3.14 | Autorización de emisión | Sin JWT ni clave interna: 403 (finance no define un punto de entrada 401 y este Plan no cambia ese comportamiento global). `CLIENTE`, `MOZO` o `COCINA`: 403. `ADMIN`, `CAJERO` o clave interna: 201. |
+| R3.14 | Autorización de emisión | Sin JWT ni clave interna: 403 (finance no define un punto de entrada 401 y este Plan no cambia ese comportamiento global). `CLIENTE`, `MOZO` o `COCINA`: 403. `ADMIN` o `CAJERO`: 201. La clave interna pasa la autorización, pero sin un JWT reenviado payments no entrega el pago y la emisión responde 503 (limitación conocida: hoy solo la usa `test_lifecycle.ps1`). |
 
 ---
 

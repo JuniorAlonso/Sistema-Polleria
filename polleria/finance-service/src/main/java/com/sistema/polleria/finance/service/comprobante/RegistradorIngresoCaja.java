@@ -8,6 +8,7 @@ import com.sistema.polleria.finance.repository.ArqueoCajaRepository;
 import com.sistema.polleria.finance.repository.MovimientoCajaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -36,15 +37,22 @@ public class RegistradorIngresoCaja {
             return;
         }
 
-        movimientoRepository.saveAndFlush(MovimientoCaja.builder()
-                .arqueoId(caja.getId())
-                .ordenId(ordenId)
-                .tipo(TipoMovimiento.INGRESO)
-                .monto(monto)
-                .motivo(motivo)
-                .registradoPor(usuarioId)
-                .fecha(LocalDateTime.now())
-                .build());
+        try {
+            movimientoRepository.saveAndFlush(MovimientoCaja.builder()
+                    .arqueoId(caja.getId())
+                    .ordenId(ordenId)
+                    .tipo(TipoMovimiento.INGRESO)
+                    .monto(monto)
+                    .motivo(motivo)
+                    .registradoPor(usuarioId)
+                    .fecha(LocalDateTime.now())
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            // A simultaneous retry stored it first. The PostgreSQL transaction is already aborted, so
+            // this request cannot return the receipt: a 409 lets the client retry and get it.
+            throw new IllegalStateException(
+                    "El ingreso de la orden #" + ordenId + " se registró en otra solicitud. Reintenta.", e);
+        }
         log.info("Ingreso de venta registrado: orden #{} S/ {} en caja #{}", ordenId, monto, caja.getId());
     }
 }

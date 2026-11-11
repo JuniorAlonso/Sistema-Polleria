@@ -26,7 +26,7 @@ public class PagosClient {
 
     public PagosClient(@Value("${payments.service.url}") String paymentsUrl,
                        @Value("${internal.api-key:}") String internalKey) {
-        this.restClient = RestClient.builder().baseUrl(paymentsUrl).build();
+        this.restClient = RestClient.builder().baseUrl(paymentsUrl).requestFactory(TiemposEspera.fabrica()).build();
         this.internalKey = internalKey;
     }
 
