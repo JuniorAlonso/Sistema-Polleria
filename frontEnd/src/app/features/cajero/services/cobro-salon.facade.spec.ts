@@ -172,6 +172,18 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     expect(finanzas.registrarVentaEnCaja).not.toHaveBeenCalled();
   });
 
+  it('un 409 al confirmar un pago pendiente desactualizado muestra el motivo del backend', () => {
+    pagos.obtenerPorOrden.and.returnValue(of(pago('PENDIENTE')));
+    pagos.confirmarPago.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'El monto S/ 40 no coincide con el total' } })));
+
+    const { error } = cobrar('TARJETA');
+
+    expect(error?.paso).toBe('PAGO');
+    expect(error?.pagoAprobado).toBeFalse();
+    expect(error?.mensaje).toContain('no coincide');
+    expect(finanzas.registrarVentaEnCaja).not.toHaveBeenCalled();
+  });
+
   it('un 409 por monto distinto al iniciar se informa con el mensaje del backend', () => {
     pagos.obtenerPorOrden.and.returnValue(of(null));
     pagos.iniciarPago.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'El monto S/ 45 no coincide' } })));

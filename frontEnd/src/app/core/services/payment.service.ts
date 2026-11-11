@@ -79,13 +79,16 @@ export class PaymentService {
   /**
    * RF23: Confirmar Pago Manualmente
    */
+  /**
+   * Errors reach the caller: a 409 (for example an amount that no longer matches the order) carries
+   * the reason the cashier must see.
+   */
   confirmarPago(pagoId: number, referencia: string): Observable<PaymentTransaction | null> {
     return this.api.confirmar(pagoId, {
       referenciaExterna: referencia,
       detalle: 'Pago confirmado'
     }).pipe(
-      map(dto => PaymentAdapter.toPaymentTransaction(dto)),
-      catchError(() => of(null))
+      map(dto => PaymentAdapter.toPaymentTransaction(dto))
     );
   }
 
