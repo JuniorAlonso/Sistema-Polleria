@@ -31,6 +31,9 @@ public class SecurityConfig {
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
+    @Value("${internal.api-key:}")
+    private String internalApiKey;
+
     /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
     static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
     static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
@@ -62,7 +65,6 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(org.springframework.http.HttpMethod.POST, "/finanzas/comprobantes").permitAll()
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers
@@ -70,6 +72,7 @@ public class SecurityConfig {
                         .contentTypeOptions(contentType -> {})
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new ClaveInternaFilter(internalApiKey), JwtAuthFilter.class)
                 .build();
     }
 
