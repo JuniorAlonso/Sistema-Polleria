@@ -1,5 +1,6 @@
 package com.sistema.polleria.finance.controller;
 
+import com.sistema.polleria.finance.config.UsuarioAutenticado;
 import com.sistema.polleria.finance.dto.*;
 import com.sistema.polleria.finance.service.LiquidacionService;
 import jakarta.validation.Valid;
@@ -24,7 +25,7 @@ public class LiquidacionController {
     public ResponseEntity<LiquidacionResponse> abrir(
             @Valid @RequestBody AperturaLiquidacionRequest req,
             Authentication authentication) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.status(HttpStatus.CREATED).body(liquidacionService.abrir(req, usuarioId));
     }
 
@@ -34,7 +35,7 @@ public class LiquidacionController {
             @PathVariable Long id,
             @Valid @RequestBody RecargaFondoRequest req,
             Authentication authentication) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.recargarFondo(id, req, usuarioId));
     }
 
@@ -45,7 +46,7 @@ public class LiquidacionController {
             @Valid @RequestBody CierreLiquidacionRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.cerrar(id, req, usuarioId, authorization));
     }
 
@@ -59,7 +60,7 @@ public class LiquidacionController {
             @Valid @RequestBody RegistrarCobroRepartidorRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.registrarCobro(req, usuarioId, authorization));
     }
 
@@ -77,7 +78,7 @@ public class LiquidacionController {
             Authentication authentication) {
         boolean staff = authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
-        if (!staff && !repartidorId.equals(extraerUserId(authentication))) {
+        if (!staff && !repartidorId.equals(UsuarioAutenticado.id(authentication))) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "Un repartidor solo puede consultar sus propios cobros");
         }
@@ -93,7 +94,7 @@ public class LiquidacionController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         boolean staff = authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
-        if (!staff && !repartidorId.equals(extraerUserId(authentication))) {
+        if (!staff && !repartidorId.equals(UsuarioAutenticado.id(authentication))) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "Un repartidor solo puede consultar su propio efectivo");
         }
@@ -111,19 +112,5 @@ public class LiquidacionController {
     public ResponseEntity<List<RepartidorPendienteCobroResponse>> listarRepartidoresConPendiente(
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         return ResponseEntity.ok(liquidacionService.listarRepartidoresConPendiente(authorization));
-    }
-
-    private Long extraerUserId(Authentication authentication) {
-        if (authentication instanceof org.springframework.security.authentication.UsernamePasswordAuthenticationToken token) {
-            Object creds = token.getCredentials();
-            if (creds instanceof Long id) return id;
-            if (creds instanceof Integer id) return id.longValue();
-            if (creds instanceof String s) {
-                try {
-                    return Long.parseLong(s);
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        return 1L;
     }
 }

@@ -12,6 +12,7 @@ import com.sistema.polleria.finance.repository.ArqueoCajaRepository;
 import com.sistema.polleria.finance.repository.MovimientoCajaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,7 +45,13 @@ public class CajaService {
                 .fechaApertura(LocalDateTime.now())
                 .build();
 
-        arqueo = arqueoRepository.save(arqueo);
+        try {
+            // Flush now so the partial unique index uq_arqueos_caja_abierta settles a simultaneous
+            // opening here, as a 409, instead of at commit time as a 500 (R3.1, D3.11).
+            arqueo = arqueoRepository.saveAndFlush(arqueo);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException("Ya existe una caja abierta. Debe cerrarse antes de una nueva apertura.", e);
+        }
         log.info("Caja abierta: #{} con fondo inicial de S/ {}", arqueo.getId(), arqueo.getMontoApertura());
         return ArqueoCajaResponse.from(arqueo);
     }
@@ -107,6 +114,13 @@ public class CajaService {
         BigDecimal totalEsperado = arqueo.getMontoApertura().add(totalIngresosCaja).subtract(totalEgresosCaja);
         BigDecimal diferencia = req.getMontoCierreEfectivo().subtract(totalEsperado);
 
+        // Blind count (D3.12, R3.8): a difference needs a reason. The message never states the
+        // expected amount or the difference, otherwise the cashier could just retype the count.
+        if (diferencia.signum() != 0 && (req.getObservaciones() == null || req.getObservaciones().isBlank())) {
+            throw new IllegalArgumentException(
+                    "El efectivo contado no coincide con el esperado. Vuelve a contar o indica el motivo en las observaciones.");
+        }
+
         arqueo.setFechaCierre(LocalDateTime.now());
         arqueo.setMontoCierreEfectivo(req.getMontoCierreEfectivo());
         arqueo.setMontoCierrePos(req.getMontoCierrePos());
@@ -114,6 +128,7 @@ public class CajaService {
         arqueo.setTotalEsperado(totalEsperado);
         arqueo.setDiferencia(diferencia);
         arqueo.setEstado(EstadoCaja.CERRADA);
+        arqueo.setCerradoPor(usuarioId);
         if (req.getObservaciones() != null) {
             arqueo.setObservaciones(req.getObservaciones());
         }
