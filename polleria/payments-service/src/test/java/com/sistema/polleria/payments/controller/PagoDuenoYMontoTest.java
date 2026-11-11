@@ -90,10 +90,36 @@ class PagoDuenoYMontoTest {
         mvc.perform(get("/pagos/orden/7").header("Authorization", token("CLIENTE", 3L))).andExpect(status().isOk());
     }
 
+    private void ordenDe(long clienteId, String total) {
+        when(ordenesClient.obtener(7L)).thenReturn(
+                new OrdenesClient.OrdenInfo(7L, "EN_PUERTA", "DELIVERY", new BigDecimal(total), clienteId, LocalDateTime.now()));
+    }
+
+    @Test
+    void clienteLeeElPagoQueInicioElPersonalSiLaOrdenEsSuya() throws Exception {
+        PagoResponse delCajero = new PagoResponse(5L, 7L, 9L, new BigDecimal("40.00"), MetodoPago.CONTRAENTREGA,
+                EstadoPago.APROBADO, null, null, LocalDateTime.now(), LocalDateTime.now());
+        when(pagoService.obtenerPorOrden(7L)).thenReturn(delCajero);
+        ordenDe(3L, "40.00");
+
+        mvc.perform(get("/pagos/orden/7").header("Authorization", token("CLIENTE", 3L))).andExpect(status().isOk());
+    }
+
+    @Test
+    void clienteNoConoceElTotalDeUnaOrdenAjenaAlIniciarUnPago() throws Exception {
+        ordenDe(99L, "45.00");
+
+        mvc.perform(post("/pagos").header("Authorization", token("CLIENTE", 3L))
+                        .contentType(MediaType.APPLICATION_JSON).content(iniciarCuerpo("40.00")))
+                .andExpect(status().isNotFound());
+        verify(pagoService, never()).iniciar(any(), anyLong(), anyString());
+    }
+
     @Test
     void clienteNoLeeUnPagoAjeno() throws Exception {
         when(pagoService.obtener(5L)).thenReturn(pagoDe(99L));
         when(pagoService.obtenerPorOrden(7L)).thenReturn(pagoDe(99L));
+        ordenDe(99L, "40.00");
 
         mvc.perform(get("/pagos/5").header("Authorization", token("CLIENTE", 3L))).andExpect(status().isForbidden());
         mvc.perform(get("/pagos/orden/7").header("Authorization", token("CLIENTE", 3L))).andExpect(status().isForbidden());

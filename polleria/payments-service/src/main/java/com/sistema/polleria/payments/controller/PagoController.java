@@ -44,9 +44,10 @@ public class PagoController {
     public PagoResponse iniciar(
             @Valid @RequestBody IniciarPagoRequest request,
             Principal principal,
+            Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
 
-        validadorMontoPago.validar(request);
+        validadorMontoPago.validar(request, authentication);
         Long clienteId = extractUserId(principal);
         return pagoService.iniciar(request, clienteId, authorization != null ? authorization : "");
     }
