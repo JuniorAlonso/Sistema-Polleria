@@ -48,7 +48,7 @@ public class PagosClient {
 
     /** Payment of an order, as payments-service exposes it in {@code GET /pagos/orden/{id}}. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record PagoOrden(Long id, Long ordenId, BigDecimal monto, String estado) {
+    public record PagoOrden(Long id, Long ordenId, BigDecimal monto, String estado, String metodoPago) {
     }
 
     /**

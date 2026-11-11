@@ -20,7 +20,7 @@ class FuenteTotalPagoUOrdenTest {
     @Test
     void usaElMontoDelPagoAprobado() {
         when(pagos.obtenerPagoDeOrden(10L, "Bearer t"))
-                .thenReturn(Optional.of(new PagosClient.PagoOrden(1L, 10L, new BigDecimal("55.90"), "APROBADO")));
+                .thenReturn(Optional.of(new PagosClient.PagoOrden(1L, 10L, new BigDecimal("55.90"), "APROBADO", "TARJETA")));
 
         assertThat(fuente.totalDe(10L, "Bearer t")).isEqualByComparingTo("55.90");
         verifyNoInteractions(ordenes);
@@ -37,7 +37,7 @@ class FuenteTotalPagoUOrdenTest {
     @Test
     void conPagoNoAprobadoUsaElTotalDeLaOrden() {
         when(pagos.obtenerPagoDeOrden(10L, "Bearer t"))
-                .thenReturn(Optional.of(new PagosClient.PagoOrden(1L, 10L, new BigDecimal("1.00"), "PENDIENTE")));
+                .thenReturn(Optional.of(new PagosClient.PagoOrden(1L, 10L, new BigDecimal("1.00"), "PENDIENTE", "TARJETA")));
         when(ordenes.obtenerTotal(10L)).thenReturn(new BigDecimal("82.00"));
 
         assertThat(fuente.totalDe(10L, "Bearer t")).isEqualByComparingTo("82.00");

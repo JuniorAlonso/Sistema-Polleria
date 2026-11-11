@@ -9,6 +9,7 @@ import com.sistema.polleria.finance.service.comprobante.FuenteTotalComprobante;
 import com.sistema.polleria.finance.service.comprobante.GeneradorCorrelativo;
 import com.sistema.polleria.finance.service.comprobante.RegistradorIngresoCaja;
 import com.sistema.polleria.finance.service.comprobante.ValidadorDatosFiscales;
+import com.sistema.polleria.finance.service.comprobante.ValidadorIngresoEfectivo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +39,8 @@ class ComprobanteServiceTest {
     private GeneradorCorrelativo generadorCorrelativo;
     @Mock
     private RegistradorIngresoCaja registradorIngresoCaja;
+    @Mock
+    private ValidadorIngresoEfectivo validadorIngresoEfectivo;
 
     @InjectMocks
     private ComprobanteService comprobanteService;
@@ -134,6 +137,33 @@ class ComprobanteServiceTest {
 
         assertEquals("B001-000008", res.serieCorrelativo());
         verify(comprobanteRepository, never()).save(any(ComprobantePago.class));
+    }
+
+    @Test
+    void unIngresoDeCajaParaUnPagoQueNoFueEnEfectivoSeRechazaSinRegistrarlo() {
+        ComprobantePago existente = ComprobantePago.builder()
+                .id(98L).ordenId(108L).tipo(TipoComprobante.BOLETA).serieCorrelativo("B001-000060")
+                .clienteNombre("X").subtotal(BigDecimal.ONE).igv(BigDecimal.ZERO).total(BigDecimal.ONE)
+                .estadoPagoTexto("PAGADO").build();
+        when(comprobanteRepository.findByOrdenId(108L)).thenReturn(Optional.of(existente));
+        doThrow(new IllegalStateException("El pago de la orden no fue en efectivo"))
+                .when(validadorIngresoEfectivo).validar(108L, BEARER);
+
+        assertThrows(IllegalStateException.class,
+                () -> comprobanteService.emitir(boleta(108L, null, true, null, true), 9L, BEARER));
+        verifyNoInteractions(registradorIngresoCaja);
+    }
+
+    @Test
+    void sinIngresoDeCajaNoSeConsultaElMetodoDelPago() {
+        when(comprobanteRepository.findByOrdenId(109L)).thenReturn(Optional.empty());
+        when(fuenteTotal.totalDe(109L, BEARER)).thenReturn(BigDecimal.TEN);
+        when(generadorCorrelativo.siguiente(TipoComprobante.BOLETA)).thenReturn("B001-000011");
+        guardadoConId(6L);
+
+        comprobanteService.emitir(boleta(109L, null, true, null, false), 9L, BEARER);
+
+        verifyNoInteractions(validadorIngresoEfectivo);
     }
 
     @Test

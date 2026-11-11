@@ -9,6 +9,7 @@ import com.sistema.polleria.finance.service.comprobante.FuenteTotalComprobante;
 import com.sistema.polleria.finance.service.comprobante.GeneradorCorrelativo;
 import com.sistema.polleria.finance.service.comprobante.RegistradorIngresoCaja;
 import com.sistema.polleria.finance.service.comprobante.ValidadorDatosFiscales;
+import com.sistema.polleria.finance.service.comprobante.ValidadorIngresoEfectivo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class ComprobanteService {
     private final ValidadorDatosFiscales validadorDatosFiscales;
     private final GeneradorCorrelativo generadorCorrelativo;
     private final RegistradorIngresoCaja registradorIngresoCaja;
+    private final ValidadorIngresoEfectivo validadorIngresoEfectivo;
 
     private static final BigDecimal IGV_DIVISOR = new BigDecimal("1.18");
 
@@ -43,7 +45,7 @@ public class ComprobanteService {
         var existente = comprobanteRepository.findByOrdenId(req.ordenId());
         if (existente.isPresent()) {
             log.info("Comprobante existente retornado para orden #{}", req.ordenId());
-            return completarIngreso(existente.get(), req, usuarioId);
+            return completarIngreso(existente.get(), req, usuarioId, bearer);
         }
 
         BigDecimal total = fuenteTotal.totalDe(req.ordenId(), bearer).setScale(2, RoundingMode.HALF_UP);
@@ -53,7 +55,7 @@ public class ComprobanteService {
         // Another emission of this order may have committed while we waited for the lock.
         var ganador = comprobanteRepository.findByOrdenId(req.ordenId());
         if (ganador.isPresent()) {
-            return completarIngreso(ganador.get(), req, usuarioId);
+            return completarIngreso(ganador.get(), req, usuarioId, bearer);
         }
 
         BigDecimal subtotal = total.divide(IGV_DIVISOR, 2, RoundingMode.HALF_UP);
@@ -78,12 +80,13 @@ public class ComprobanteService {
                 .build());
         log.info("Comprobante emitido: {} para orden #{} (Total: S/ {})", serieCorrelativo, req.ordenId(), total);
 
-        return completarIngreso(comprobante, req, usuarioId);
+        return completarIngreso(comprobante, req, usuarioId, bearer);
     }
 
     private ComprobanteResponse completarIngreso(ComprobantePago comprobante, EmitirComprobanteRequest req,
-                                                 Long usuarioId) {
+                                                 Long usuarioId, String bearer) {
         if (req.registraIngresoCaja()) {
+            validadorIngresoEfectivo.validar(comprobante.getOrdenId(), bearer);
             registradorIngresoCaja.registrar(comprobante.getOrdenId(), comprobante.getTotal(),
                     "Venta " + comprobante.getSerieCorrelativo() + " - Orden #" + comprobante.getOrdenId(),
                     usuarioId);
