@@ -6,6 +6,7 @@ import { FinanceApiService } from '../../../core/api/finance-api.service';
 import { OrdersService } from '../../../core/services/orders.service';
 import { Order } from '../../../core/models/order.model';
 import { PaymentMethod } from '../../../core/models/order.model';
+import { PaymentTransaction } from '../../../core/models/payment.model';
 import { BackendComprobanteResponse } from '../../../core/models/api-contracts.model';
 import { mensajeError } from '../../../core/utils/api-error';
 import { DatosFiscales } from '../models/datos-fiscales';
@@ -42,21 +43,27 @@ export class CobroSalonFacade {
   private readonly ordenes = inject(OrdersService);
 
   cobrar(orden: Order, metodo: MetodoCobro, referencia: string, datosFiscales: DatosFiscales): Observable<ResultadoCobro> {
-    const esEfectivo = metodo === 'EFECTIVO';
-
-    return this.verificarCaja(esEfectivo).pipe(
-      switchMap(() => this.asegurarPagoAprobado(orden, metodo, referencia)),
-      switchMap(() =>
-        this.finanzas.registrarVentaEnCaja(orden.id, datosFiscales, esEfectivo).pipe(
-          catchError(err => throwError(() => this.error('COMPROBANTE', err, 'No se pudo emitir el comprobante', true)))
-        )
-      ),
+    return this.pagos.obtenerPorOrden(orden.id).pipe(
+      switchMap(existente => {
+        const aprobado = existente?.estado === 'APROBADO';
+        // On a retry the approved payment decides whether cash entered the drawer, never the method
+        // currently selected on screen (D3.13, R3.12).
+        const esEfectivo = aprobado ? existente?.metodo === 'EFECTIVO_CONTRAENTREGA' : metodo === 'EFECTIVO';
+        return this.verificarCaja(esEfectivo, aprobado).pipe(
+          switchMap(() => aprobado ? of(undefined) : this.aprobarPago(existente, orden, metodo, referencia)),
+          switchMap(() =>
+            this.finanzas.registrarVentaEnCaja(orden.id, datosFiscales, esEfectivo).pipe(
+              catchError(err => throwError(() => this.error('COMPROBANTE', err, 'No se pudo emitir el comprobante', true)))
+            )
+          )
+        );
+      }),
       switchMap(comprobante => this.cerrarOrden(orden, comprobante))
     );
   }
 
   /** Fresh read of the cash register: the cached signal may be stale (R3.7). */
-  private verificarCaja(esEfectivo: boolean): Observable<void> {
+  private verificarCaja(esEfectivo: boolean, pagoAprobado: boolean): Observable<void> {
     if (!esEfectivo) return of(undefined);
     return this.finanzasApi.obtenerCajaActual().pipe(
       catchError(() => of(null)),
@@ -64,33 +71,30 @@ export class CobroSalonFacade {
         ? of(undefined)
         : throwError(() => ({
             paso: 'CAJA',
-            mensaje: 'No hay una caja abierta. Abre la caja para cobrar en efectivo; tarjeta y Yape siguen disponibles.',
-            pagoAprobado: false
+            mensaje: pagoAprobado
+              ? 'El cobro en efectivo ya está aprobado, pero no hay una caja abierta para registrar el ingreso. Abre la caja y vuelve a confirmar.'
+              : 'No hay una caja abierta. Abre la caja para cobrar en efectivo; tarjeta y Yape siguen disponibles.',
+            pagoAprobado
           } satisfies ErrorCobro)))
     );
   }
 
-  private asegurarPagoAprobado(orden: Order, metodo: MetodoCobro, referencia: string): Observable<void> {
-    return this.pagos.obtenerPorOrden(orden.id).pipe(
-      switchMap(existente => {
-        if (existente?.estado === 'APROBADO') return of(undefined);
-        if (existente?.estado === 'CANCELADO') {
-          return throwError(() => ({
-            paso: 'PAGO', mensaje: 'El pago de esta orden fue cancelado; no se puede cobrar.', pagoAprobado: false
-          } satisfies ErrorCobro));
-        }
-        const pagoId$ = existente
-          ? of(Number(existente.id))
-          : this.pagos.iniciarPago(orden.id, orden.total, metodo as unknown as PaymentMethod).pipe(map(tx => Number(tx.id)));
-        return pagoId$.pipe(
-          switchMap(pagoId => this.pagos.confirmarPago(pagoId, referencia)),
-          switchMap(confirmado => confirmado?.estado === 'APROBADO'
-            ? of(undefined)
-            : throwError(() => ({
-                paso: 'PAGO', mensaje: 'No se pudo confirmar el cobro en el servicio de pagos.', pagoAprobado: false
-              } satisfies ErrorCobro)))
-        );
-      }),
+  private aprobarPago(existente: PaymentTransaction | null, orden: Order, metodo: MetodoCobro, referencia: string): Observable<void> {
+    if (existente?.estado === 'CANCELADO') {
+      return throwError(() => ({
+        paso: 'PAGO', mensaje: 'El pago de esta orden fue cancelado; no se puede cobrar.', pagoAprobado: false
+      } satisfies ErrorCobro));
+    }
+    const pagoId$ = existente
+      ? of(Number(existente.id))
+      : this.pagos.iniciarPago(orden.id, orden.total, metodo as unknown as PaymentMethod).pipe(map(tx => Number(tx.id)));
+    return pagoId$.pipe(
+      switchMap(pagoId => this.pagos.confirmarPago(pagoId, referencia)),
+      switchMap(confirmado => confirmado?.estado === 'APROBADO'
+        ? of(undefined)
+        : throwError(() => ({
+            paso: 'PAGO', mensaje: 'No se pudo confirmar el cobro en el servicio de pagos.', pagoAprobado: false
+          } satisfies ErrorCobro))),
       catchError(err => throwError(() => this.esErrorCobro(err)
         ? err
         : this.error('PAGO', err, 'No se pudo registrar el cobro', false)))

@@ -88,6 +88,34 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     expect(resultado).toBeTruthy();
   });
 
+  it('reintento: un pago aprobado con tarjeta no registra ingreso aunque la pantalla diga efectivo (D3.13, R3.12)', () => {
+    pagos.obtenerPorOrden.and.returnValue(of({ id: '9', estado: 'APROBADO', metodo: 'TARJETA' } as PaymentTransaction));
+
+    cobrar('EFECTIVO');
+
+    expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), false);
+    expect(finanzasApi.obtenerCajaActual).not.toHaveBeenCalled();
+  });
+
+  it('reintento: un pago aprobado en efectivo registra el ingreso aunque la pantalla diga tarjeta', () => {
+    pagos.obtenerPorOrden.and.returnValue(of({ id: '9', estado: 'APROBADO', metodo: 'EFECTIVO_CONTRAENTREGA' } as PaymentTransaction));
+
+    cobrar('TARJETA');
+
+    expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), true);
+  });
+
+  it('reintento: un pago aprobado en efectivo con la caja cerrada informa que el pago ya está aprobado', () => {
+    pagos.obtenerPorOrden.and.returnValue(of({ id: '9', estado: 'APROBADO', metodo: 'EFECTIVO_CONTRAENTREGA' } as PaymentTransaction));
+    finanzasApi.obtenerCajaActual.and.returnValue(throwError(() => ({ status: 404 })));
+
+    const { error } = cobrar('TARJETA');
+
+    expect(error?.paso).toBe('CAJA');
+    expect(error?.pagoAprobado).toBeTrue();
+    expect(finanzas.registrarVentaEnCaja).not.toHaveBeenCalled();
+  });
+
   it('en efectivo sin caja abierta no cobra nada (R3.7)', () => {
     finanzasApi.obtenerCajaActual.and.returnValue(throwError(() => ({ status: 404 })));
     pagos.obtenerPorOrden.and.returnValue(of(null));
