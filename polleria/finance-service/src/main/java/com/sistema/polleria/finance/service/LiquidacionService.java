@@ -146,12 +146,13 @@ public class LiquidacionService {
 
     @Transactional
     public LiquidacionResponse cerrar(Long id, CierreLiquidacionRequest req, Long cajeroId, String bearer) {
-        LiquidacionRepartidor liq = liquidacionRepository.findById(id)
+        LiquidacionRepartidor liq = liquidacionRepository.findByIdParaActualizar(id)
                 .orElseThrow(() -> new NoSuchElementException("Liquidación no encontrada: " + id));
 
         if (liq.getEstado() == EstadoLiquidacion.CERRADA || liq.getEstado() == EstadoLiquidacion.DISCREPANCIA) {
             throw new IllegalStateException("La liquidación #" + id + " ya fue cerrada anteriormente (estado: " + liq.getEstado() + ").");
         }
+        ArqueoCaja caja = exigirCajaAbierta();
 
         // S6/S8: expected cash is every cash payment of the courier not yet linked to a settlement, with no
         // time cutoff (payments-service already excludes linked payments); fail closed if unreachable.
@@ -192,10 +193,9 @@ public class LiquidacionService {
         }
 
         // Registrar ingreso del remanente efectivo en la caja activa del cajero (solo el incremental para no duplicar)
-        var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
-        if (arqueoOpt.isPresent() && incrementalCierre.compareTo(BigDecimal.ZERO) > 0) {
+        if (incrementalCierre.compareTo(BigDecimal.ZERO) > 0) {
             MovimientoCaja ingreso = MovimientoCaja.builder()
-                    .arqueoId(arqueoOpt.get().getId())
+                    .arqueoId(caja.getId())
                     .tipo(TipoMovimiento.INGRESO)
                     .monto(incrementalCierre)
                     .motivo("Rendición y liquidación de repartidor " + liq.getRepartidorNombre() + " (Liq #" + liq.getId() + ")")
@@ -208,7 +208,7 @@ public class LiquidacionService {
             CobroRepartidor cobroCierre = CobroRepartidor.builder()
                     .repartidorId(liq.getRepartidorId())
                     .monto(incrementalCierre)
-                    .arqueoCajaId(arqueoOpt.get().getId())
+                    .arqueoCajaId(caja.getId())
                     .cobradoPor(cajeroId)
                     .fecha(LocalDateTime.now())
                     .observaciones("Cierre y liquidación final (Liq #" + liq.getId() + ")")
@@ -264,6 +264,8 @@ public class LiquidacionService {
      */
     @Transactional
     public CobroRepartidorResponse registrarCobro(RegistrarCobroRepartidorRequest req, Long operadorId, String bearer) {
+        // Cash handed in without an open register would never reach any cash count (R3.9).
+        ArqueoCaja caja = exigirCajaAbierta();
         // 1. Obtener o crear la liquidación abierta para este repartidor
         LiquidacionRepartidor liq = liquidacionRepository
                 .findFirstByRepartidorIdAndEstado(req.repartidorId(), EstadoLiquidacion.ABIERTA)
@@ -271,11 +273,10 @@ public class LiquidacionService {
                     String nombre = req.repartidorNombre() != null && !req.repartidorNombre().isBlank()
                             ? req.repartidorNombre()
                             : "Repartidor #" + req.repartidorId();
-                    var arqueoActivo = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
                     LiquidacionRepartidor nueva = LiquidacionRepartidor.builder()
                             .repartidorId(req.repartidorId())
                             .repartidorNombre(nombre)
-                            .arqueoCajaId(arqueoActivo.map(ArqueoCaja::getId).orElse(null))
+                            .arqueoCajaId(caja.getId())
                             .fondoInicial(BigDecimal.ZERO)
                             .totalCobradoEfectivo(BigDecimal.ZERO)
                             .totalRendido(BigDecimal.ZERO)
@@ -309,8 +310,7 @@ public class LiquidacionService {
         }
 
         // 4. Buscar arqueo activo para registrar el ingreso a caja física
-        var arqueoOpt = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA);
-        Long arqueoId = arqueoOpt.map(ArqueoCaja::getId).orElse(null);
+        Long arqueoId = caja.getId();
 
         // 5. Guardar el cobro
         CobroRepartidor cobro = CobroRepartidor.builder()
@@ -324,18 +324,15 @@ public class LiquidacionService {
                 .build();
         cobro = cobroRepartidorRepository.save(cobro);
 
-        // 6. Si hay caja abierta, registrar movimiento de INGRESO
-        if (arqueoOpt.isPresent()) {
-            MovimientoCaja ingreso = MovimientoCaja.builder()
-                    .arqueoId(arqueoOpt.get().getId())
-                    .tipo(TipoMovimiento.INGRESO)
-                    .monto(req.monto())
-                    .motivo("Cobro de efectivo a repartidor " + liq.getRepartidorNombre() + " (Cobro #" + cobro.getId() + ")")
-                    .registradoPor(operadorId)
-                    .fecha(LocalDateTime.now())
-                    .build();
-            movimientoRepository.save(ingreso);
-        }
+        // 6. Registrar el INGRESO en la caja abierta
+        movimientoRepository.save(MovimientoCaja.builder()
+                .arqueoId(arqueoId)
+                .tipo(TipoMovimiento.INGRESO)
+                .monto(req.monto())
+                .motivo("Cobro de efectivo a repartidor " + liq.getRepartidorNombre() + " (Cobro #" + cobro.getId() + ")")
+                .registradoPor(operadorId)
+                .fecha(LocalDateTime.now())
+                .build());
 
         // 7. Actualizar la liquidación
         BigDecimal nuevoTotalRendido = totalRendidoPrevio.add(req.monto());
@@ -401,5 +398,11 @@ public class LiquidacionService {
     public List<LiquidacionResponse> listarAbiertas() {
         return liquidacionRepository.findByEstadoOrderByCreadoEnDesc(EstadoLiquidacion.ABIERTA)
                 .stream().map(LiquidacionResponse::from).toList();
+    }
+
+    private ArqueoCaja exigirCajaAbierta() {
+        return arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+                .orElseThrow(() -> new IllegalStateException(
+                        "No hay una caja abierta: abre la caja antes de recibir efectivo del repartidor"));
     }
 }

@@ -50,6 +50,7 @@ public class CajaService {
             // opening here, as a 409, instead of at commit time as a 500 (R3.1, D3.11).
             arqueo = arqueoRepository.saveAndFlush(arqueo);
         } catch (DataIntegrityViolationException e) {
+            log.warn("Apertura de caja rechazada por la base: {}", e.getMostSpecificCause().getMessage());
             throw new IllegalStateException("Ya existe una caja abierta. Debe cerrarse antes de una nueva apertura.", e);
         }
         log.info("Caja abierta: #{} con fondo inicial de S/ {}", arqueo.getId(), arqueo.getMontoApertura());
