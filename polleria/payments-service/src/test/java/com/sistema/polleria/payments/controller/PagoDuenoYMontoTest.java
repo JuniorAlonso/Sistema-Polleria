@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -150,6 +151,46 @@ class PagoDuenoYMontoTest {
                         .contentType(MediaType.APPLICATION_JSON).content(iniciarCuerpo("40.00")))
                 .andExpect(status().isConflict());
         verify(pagoService, never()).iniciar(any(), anyLong(), anyString());
+    }
+
+    private static PagoResponse pendiente(String monto) {
+        return new PagoResponse(5L, 7L, 3L, new BigDecimal(monto), MetodoPago.CONTRAENTREGA,
+                EstadoPago.PENDIENTE, null, null, LocalDateTime.now(), LocalDateTime.now());
+    }
+
+    private static final String CONFIRMAR = "{\"referenciaExterna\":\"POS-1\"}";
+
+    @Test
+    void confirmarUnPagoPendienteConMontoDesactualizadoEsConflicto() throws Exception {
+        when(pagoService.obtener(5L)).thenReturn(pendiente("40.00"));
+        ordenConTotal("52.00");
+
+        mvc.perform(patch("/pagos/5/confirmar").header("Authorization", token("CAJERO", 9L))
+                        .contentType(MediaType.APPLICATION_JSON).content(CONFIRMAR))
+                .andExpect(status().isConflict());
+        verify(pagoService, never()).confirmar(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void confirmarUnPagoPendienteConElTotalVigenteLoAprueba() throws Exception {
+        when(pagoService.obtener(5L)).thenReturn(pendiente("40.00"));
+        ordenConTotal("40.0");
+        when(pagoService.confirmar(anyLong(), any(), anyString())).thenReturn(pagoDe(3L));
+
+        mvc.perform(patch("/pagos/5/confirmar").header("Authorization", token("CAJERO", 9L))
+                        .contentType(MediaType.APPLICATION_JSON).content(CONFIRMAR))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void confirmarUnPagoYaAprobadoNoConsultaLaOrden() throws Exception {
+        when(pagoService.obtener(5L)).thenReturn(pagoDe(3L));
+        when(pagoService.confirmar(anyLong(), any(), anyString())).thenReturn(pagoDe(3L));
+
+        mvc.perform(patch("/pagos/5/confirmar").header("Authorization", token("CAJERO", 9L))
+                        .contentType(MediaType.APPLICATION_JSON).content(CONFIRMAR))
+                .andExpect(status().isOk());
+        verifyNoInteractions(ordenesClient);
     }
 
     @Test

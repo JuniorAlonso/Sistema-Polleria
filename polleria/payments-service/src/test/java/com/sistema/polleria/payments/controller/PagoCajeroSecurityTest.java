@@ -46,6 +46,10 @@ class PagoCajeroSecurityTest {
     @MockitoBean
     private WhatsappNotificationClient whatsappNotificationClient;
 
+    /** Plan 03: confirming checks the amount against the order total in orders-service. */
+    @MockitoBean
+    private com.sistema.polleria.payments.service.OrdenesClient ordenesClient;
+
     @Value("${jwt.secret}")
     private String jwtSecret;
 
@@ -125,6 +129,9 @@ class PagoCajeroSecurityTest {
     @DisplayName("CAJERO puede confirmar un pago en caja; CLIENTE recibe 403")
     void confirmarPago_cajeroAutorizado_clienteProhibido() {
         Pago pago = crearPago(103L, 7L, "88.00");
+        org.mockito.Mockito.when(ordenesClient.obtener(103L)).thenReturn(
+                new com.sistema.polleria.payments.service.OrdenesClient.OrdenInfo(
+                        103L, "RECIBIDO", "SALON", new BigDecimal("88.00"), 7L, java.time.LocalDateTime.now()));
 
         ConfirmarPagoRequest req = new ConfirmarPagoRequest("CAJA-TICKET-001", "Pago en efectivo en caja");
 

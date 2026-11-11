@@ -241,6 +241,7 @@ public class PagoController {
             @Valid @RequestBody ConfirmarPagoRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
+        validadorMontoPago.validarConfirmacion(pagoService.obtener(id));
         return soloAdminVeElComprobante(
                 pagoService.confirmar(id, req, authorization != null ? authorization : ""),
                 authentication);

@@ -1,10 +1,13 @@
 package com.sistema.polleria.payments.service;
 
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
+import com.sistema.polleria.payments.dto.PagoResponse;
+import com.sistema.polleria.payments.entity.EstadoPago;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
@@ -37,8 +40,29 @@ public class ValidadorMontoPago {
                 && !Objects.equals(AutorizacionPago.usuarioId(authentication), orden.clienteId())) {
             throw new NoSuchElementException("Orden no encontrada: " + request.ordenId());
         }
-        if (orden.total().compareTo(request.monto()) != 0) {
-            throw new IllegalStateException("El monto S/ " + request.monto() + " no coincide con el total"
+        exigirTotal(request.monto(), orden);
+    }
+
+    /**
+     * Same rule when a payment created earlier (for example at checkout) is confirmed later: the
+     * order may have grown since. An already approved payment is left to the service's idempotency.
+     * Confirmation is staff-only, so the message may show the order total.
+     */
+    public void validarConfirmacion(PagoResponse pago) {
+        if (pago.estado() == EstadoPago.APROBADO) {
+            return;
+        }
+        OrdenesClient.OrdenInfo orden = ordenesClient.obtener(pago.ordenId());
+        if (orden == null || orden.total() == null) {
+            throw new OrdenesClient.OrdenNoDisponibleException(
+                    "No se pudo verificar el total de la orden " + pago.ordenId(), null);
+        }
+        exigirTotal(pago.monto(), orden);
+    }
+
+    private static void exigirTotal(BigDecimal monto, OrdenesClient.OrdenInfo orden) {
+        if (orden.total().compareTo(monto) != 0) {
+            throw new IllegalStateException("El monto S/ " + monto + " no coincide con el total"
                     + " actual de la orden (S/ " + orden.total() + "). Actualiza la comanda y vuelve a cobrar.");
         }
     }
