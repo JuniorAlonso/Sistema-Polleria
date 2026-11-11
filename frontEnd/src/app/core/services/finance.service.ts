@@ -165,6 +165,31 @@ export class FinanceService {
     return this.api.emitirComprobante(req);
   }
 
+  /**
+   * Receipt and cash income of a charged sale, in one backend transaction (D3.1, D3.2). Idempotent
+   * per order: a retry returns the same receipt and never adds the income twice. Errors reach the
+   * caller untouched so it can show the backend message and keep the sale pending.
+   *
+   * @param ingresoCaja true only for cash charges: card and Yape do not enter the drawer (D3.13)
+   */
+  registrarVentaEnCaja(
+    ordenId: number | string,
+    datosFiscales: { tipo: 'BOLETA' | 'FACTURA'; tipoDoc?: string; numDoc?: string; nombre: string; direccion?: string },
+    ingresoCaja: boolean
+  ): Observable<BackendComprobanteResponse> {
+    const req: EmitirComprobanteRequest = {
+      ordenId: Number(String(ordenId).replace(/\D/g, '')),
+      tipo: datosFiscales.tipo,
+      clienteNombre: datosFiscales.nombre,
+      pagadoDigitalmente: true,
+      ingresoCaja
+    };
+    if (datosFiscales.tipoDoc) req.clienteTipoDoc = datosFiscales.tipoDoc;
+    if (datosFiscales.numDoc?.trim()) req.clienteNumDoc = datosFiscales.numDoc.trim();
+    if (datosFiscales.direccion?.trim()) req.clienteDireccion = datosFiscales.direccion.trim();
+    return this.api.emitirComprobante(req);
+  }
+
   obtenerComprobantePorOrden(ordenId: number | string): Observable<BackendComprobanteResponse> {
     return this.api.obtenerComprobantePorOrden(ordenId);
   }

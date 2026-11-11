@@ -95,9 +95,12 @@ export interface EmitirComprobanteRequest {
   clienteNumDoc?: string;
   clienteNombre: string;
   clienteDireccion?: string;
-  total: number;
+  /** Ignored by finance since D3.15: it takes the total from the approved payment or the order. */
+  total?: number;
   pagadoDigitalmente: boolean;
   vueltoEstimado?: number;
+  /** D3.2: registers the cash income of the sale once per order. */
+  ingresoCaja?: boolean;
 }
 
 export interface AbrirLiquidacionRequest {

@@ -31,6 +31,9 @@ import { CajeroNuevaLiquidacionModalComponent } from './components/cajero-nueva-
 import { CajeroRecargaFondoModalComponent } from './components/cajero-recarga-fondo-modal.component';
 import { CajeroCierreLiquidacionModalComponent } from './components/cajero-cierre-liquidacion-modal.component';
 import { CajeroCobroRepartidorModalComponent } from './components/cajero-cobro-repartidor-modal.component';
+import { CobroSalonFacade, ErrorCobro } from './services/cobro-salon.facade';
+import { DatosFiscales, consumidorFinal, motivoDatosFiscalesInvalidos } from './models/datos-fiscales';
+import { mensajeError } from '../../core/utils/api-error';
 
 export type { CajeroTab, MetodoCobro };
 
@@ -180,6 +183,8 @@ export type { CajeroTab, MetodoCobro };
           [vuelto]="vueltoCalculado()"
           [cobroValido]="esCobroValido()"
           [procesando]="procesandoAccion()"
+          [cajaAbierta]="cajaAbierta()"
+          [(datosFiscales)]="datosFiscalesCobro"
           (cerrar)="cerrarModalCobro()"
           (confirmar)="confirmarCobroComanda()"
           (exacto)="efectivoRecibidoInput = ordenSeleccionada()?.total || 0"
@@ -278,6 +283,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly repartidoresService = inject(RepartidoresService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
+  private readonly cobroSalon = inject(CobroSalonFacade);
   private router = inject(Router);
   private platformId = inject(PLATFORM_ID);
 
@@ -300,6 +306,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   // Ticket emitido
   readonly ticketEmitido = signal<any | null>(null);
+  readonly datosFiscalesCobro = signal<DatosFiscales>(consumidorFinal());
 
   // Modales de Caja
   montoAperturaInput = 200;
@@ -499,7 +506,9 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   seleccionarOrdenParaCobro(orden: Order): void {
     this.ordenSeleccionada.set(orden);
-    this.metodoCobroSeleccionado.set('EFECTIVO');
+    // Without an open register cash is blocked (R3.7): start on card so the cashier is not stuck.
+    this.metodoCobroSeleccionado.set(this.cajaAbierta() ? 'EFECTIVO' : 'TARJETA');
+    this.datosFiscalesCobro.set(consumidorFinal());
     this.efectivoRecibidoInput = orden.total;
     this.referenciaPagoInput = '';
   }
@@ -515,8 +524,10 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   esCobroValido(): boolean {
     const orden = this.ordenSeleccionada();
     if (!orden) return false;
+    if (motivoDatosFiscalesInvalidos(this.datosFiscalesCobro(), orden.total)) return false;
 
     if (this.metodoCobroSeleccionado() === 'EFECTIVO') {
+      if (!this.cajaAbierta()) return false;
       return (Number(this.efectivoRecibidoInput) || 0) >= orden.total;
     }
     return !!this.referenciaPagoInput.trim();
@@ -528,108 +539,53 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
     this.procesandoAccion.set(true);
     const metodo = this.metodoCobroSeleccionado();
-    const referencia = metodo === 'EFECTIVO' 
-      ? `Efectivo en caja (Recibido S/ ${this.efectivoRecibidoInput.toFixed(2)}, Vuelto S/ ${this.vueltoCalculado().toFixed(2)})`
+    const efectivoRecibido = this.efectivoRecibidoInput;
+    const vuelto = this.vueltoCalculado();
+    const referencia = metodo === 'EFECTIVO'
+      ? `Efectivo en caja (Recibido S/ ${efectivoRecibido.toFixed(2)}, Vuelto S/ ${vuelto.toFixed(2)})`
       : this.referenciaPagoInput.trim();
+    const codigo = orden.codigoSeguimiento || orden.id;
 
-    // 1. ¿La orden ya tiene un pago? (el checkout del cliente crea uno PENDIENTE).
-    //    El backend solo admite un pago por orden: crear otro devuelve 409.
-    this.paymentService.obtenerPorOrden(orden.id).subscribe(existente => {
-      if (existente?.estado === 'APROBADO') {
+    // Plan 03, 4.1: payment, then receipt + cash income, then closing; retry-safe (D3.17).
+    this.cobroSalon.cobrar(orden, metodo, referencia, this.datosFiscalesCobro()).subscribe({
+      next: ({ comprobante }) => {
+        this.ticketEmitido.set({
+          id: Date.now(),
+          fechaHora: new Date().toISOString(),
+          ordenId: orden.id,
+          codigoOrden: codigo,
+          cliente: orden.cliente.nombre || 'Cliente General',
+          clienteNombre: orden.cliente.nombre || 'Cliente General',
+          tipo: orden.tipo,
+          tipoOrden: orden.tipo,
+          metodo,
+          total: comprobante?.total ?? orden.total,
+          monto: comprobante?.total ?? orden.total,
+          referencia,
+          items: orden.items,
+          cajero: this.auth.currentUser()?.nombre || 'Cajero de Turno',
+          efectivoRecibido,
+          vuelto,
+          comprobante
+        });
+        this.notify.showSuccess(`Comanda #${codigo} cobrada`, `Comprobante ${comprobante?.serieCorrelativo ?? ''}`.trim());
         this.procesandoAccion.set(false);
-        this.notify.showInfo('Comanda ya cobrada', `La comanda #${orden.codigoSeguimiento || orden.id} ya tiene un pago aprobado.`);
         this.cerrarModalCobro();
         this.refrescarTodo();
-        return;
-      }
-      if (existente?.estado === 'CANCELADO') {
+      },
+      error: (err: ErrorCobro) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('El pago de esta orden fue cancelado; no se puede cobrar.');
-        return;
-      }
-      if (existente) {
-        // Reutilizar el pago PENDIENTE existente
-        this.confirmarYRegistrar(orden, Number(existente.id), metodo, referencia);
-        return;
-      }
-      // 2. No hay pago: crearlo y confirmarlo
-      this.paymentService.iniciarPago(orden.id, orden.total, metodo as any).subscribe({
-        next: (tx) => this.confirmarYRegistrar(orden, Number(tx.id), metodo, referencia),
-        error: (err) => {
-          this.procesandoAccion.set(false);
-          this.notify.showError(this.mensajeError(err, 'No se pudo iniciar la transacción de cobro'));
+        if (err?.pagoAprobado) {
+          // The money is taken: never offer to charge again, only to finish what is missing.
+          const pendiente = err.paso === 'CIERRE' ? 'cierre de la comanda pendiente' : 'comprobante pendiente';
+          this.notify.showError(`Pago OK, ${pendiente}`,
+            `La comanda #${codigo} ya está cobrada. ${err.mensaje} Vuelve a confirmar para completar sin cobrar de nuevo.`);
+        } else {
+          this.notify.showError(err?.mensaje || 'No se pudo registrar el cobro');
         }
-      });
+        this.refrescarTodo();
+      }
     });
-  }
-
-  private mensajeError(err: any, fallback: string): string {
-    return err?.error?.detail || err?.error?.error || err?.error?.message || fallback;
-  }
-
-  private confirmarYRegistrar(orden: Order, pagoId: number, metodo: MetodoCobro, referencia: string): void {
-        this.paymentService.confirmarPago(pagoId, referencia).subscribe({
-          next: (confirmado) => {
-            // confirmarPago devuelve null cuando el backend falla: no mostrar un falso éxito
-            if (!confirmado) {
-              this.procesandoAccion.set(false);
-              this.notify.showError('No se pudo confirmar el cobro en el servicio de pagos');
-              return;
-            }
-            // 3. Si es efectivo y la caja está abierta, registrar en movimientos de caja
-            if (metodo === 'EFECTIVO' && this.cajaAbierta()) {
-              this.financeService.registrarMovimiento({
-                tipo: 'INGRESO',
-                monto: orden.total,
-                motivo: `Cobro Comanda #${orden.codigoSeguimiento || orden.id} (${orden.cliente.nombre})`
-              }).subscribe({
-                // The payment is already confirmed: the cashier must record the income by hand.
-                error: (err) => this.notify.showError(
-                  'No se registró el ingreso en caja',
-                  `El cobro de la comanda #${orden.codigoSeguimiento || orden.id} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${this.mensajeError(err, '')}`.trim()
-                )
-              });
-            }
-
-            // 4. Cerrar la comanda en salón y liberar la mesa en orders-service
-            this.ordersService.completarOrdenSalon(orden.id, orden.estado).subscribe({
-              error: (err) => this.notify.showError(
-                'No se pudo cerrar la comanda',
-                `El cobro de la comanda #${orden.codigoSeguimiento || orden.id} se registró, pero no se pudo completar la orden. ${this.mensajeError(err, '')}`.trim()
-              )
-            });
-
-            // Registrar en historial local
-            const cobroReg = {
-              id: Date.now(),
-              fechaHora: new Date().toISOString(),
-              ordenId: orden.id,
-              codigoOrden: orden.codigoSeguimiento || orden.id,
-              cliente: orden.cliente.nombre || 'Cliente General',
-              clienteNombre: orden.cliente.nombre || 'Cliente General',
-              tipo: orden.tipo,
-              tipoOrden: orden.tipo,
-              metodo: metodo,
-              total: orden.total,
-              monto: orden.total,
-              referencia: referencia,
-              items: orden.items,
-              cajero: this.auth.currentUser()?.nombre || 'Cajero de Turno',
-              efectivoRecibido: this.efectivoRecibidoInput,
-              vuelto: this.vueltoCalculado()
-            };
-            // Generar Ticket
-            this.ticketEmitido.set(cobroReg);
-            this.notify.showSuccess(`Comanda #${orden.codigoSeguimiento || orden.id} cobrada exitosamente`);
-            this.procesandoAccion.set(false);
-            this.cerrarModalCobro();
-            this.refrescarTodo();
-          },
-          error: (err) => {
-            this.procesandoAccion.set(false);
-            this.notify.showError(this.mensajeError(err, 'No se pudo confirmar el cobro en el servicio de pagos'));
-          }
-        });
   }
 
   imprimirTicket(): void {
@@ -750,13 +706,13 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
           vueltoEstimado: o.vueltoEstimado
         }).subscribe({
           error: (err) => this.notify.showError('No se emitió la boleta',
-            `El pedido #${codigo} sí quedó confirmado. ${this.mensajeError(err, 'Emítela desde Arqueo.')}`.trim())
+            `El pedido #${codigo} sí quedó confirmado. ${mensajeError(err, 'Emítela desde Arqueo.')}`.trim())
         });
         this.refrescarTodo();
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo confirmar la llamada', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.notify.showError('No se pudo confirmar la llamada', mensajeError(err, 'Intenta nuevamente.'));
         this.refrescarTodo();
       }
     });
@@ -776,7 +732,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo registrar el intento', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.notify.showError('No se pudo registrar el intento', mensajeError(err, 'Intenta nuevamente.'));
         this.refrescarTodo();
       }
     });
@@ -795,7 +751,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo cancelar el pedido', this.mensajeError(err, 'Intenta nuevamente.'));
+        this.notify.showError('No se pudo cancelar el pedido', mensajeError(err, 'Intenta nuevamente.'));
         this.refrescarTodo();
       }
     });
@@ -875,7 +831,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
               // The cash is already collected: the cashier must record the income by hand.
               error: (err) => this.notify.showError(
                 'No se registró el ingreso en caja',
-                `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${this.mensajeError(err, err?.message || '')}`.trim()
+                `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${mensajeError(err, err?.message || '')}`.trim()
               )
             });
           }
@@ -885,7 +841,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
         },
         error: (err) => {
           this.procesandoAccion.set(false);
-          this.notify.showError('No se pudo registrar el cobro en efectivo', this.mensajeError(err, err?.message || ''));
+          this.notify.showError('No se pudo registrar el cobro en efectivo', mensajeError(err, err?.message || ''));
         }
       });
       return;
@@ -899,7 +855,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo entregar el pedido', this.mensajeError(err, err?.message || ''));
+        this.notify.showError('No se pudo entregar el pedido', mensajeError(err, err?.message || ''));
       }
     });
   }
@@ -916,7 +872,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo declarar el pedido fantasma', this.mensajeError(err, err?.message || ''));
+        this.notify.showError('No se pudo declarar el pedido fantasma', mensajeError(err, err?.message || ''));
       }
     });
   }

@@ -10,6 +10,8 @@ import { PaymentTransaction } from '../../core/models/payment.model';
 import { PaymentService } from '../../core/services/payment.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { of, throwError } from 'rxjs';
+import { CobroSalonFacade } from './services/cobro-salon.facade';
+import { consumidorFinal } from './models/datos-fiscales';
 
 describe('CajeroDashboardComponent', () => {
   let component: CajeroDashboardComponent;
@@ -75,7 +77,10 @@ describe('CajeroDashboardComponent', () => {
     expect(component.activeTab()).toBe('POS');
   });
 
+  const abrirCaja = () => financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
+
   it('debe seleccionar una comanda para cobro y calcular vuelto exacto inicial', () => {
+    abrirCaja();
     component.seleccionarOrdenParaCobro(mockOrder);
 
     expect(component.ordenSeleccionada()).toEqual(mockOrder);
@@ -86,6 +91,7 @@ describe('CajeroDashboardComponent', () => {
   });
 
   it('debe calcular vuelto positivo cuando el efectivo recibido es mayor', () => {
+    abrirCaja();
     component.seleccionarOrdenParaCobro(mockOrder);
     component.efectivoRecibidoInput = 50.0;
 
@@ -94,6 +100,7 @@ describe('CajeroDashboardComponent', () => {
   });
 
   it('debe invalidar cobro en efectivo si el monto recibido es menor', () => {
+    abrirCaja();
     component.seleccionarOrdenParaCobro(mockOrder);
     component.efectivoRecibidoInput = 30.0;
 
@@ -110,6 +117,24 @@ describe('CajeroDashboardComponent', () => {
 
     component.referenciaPagoInput = 'POS-123456';
     expect(component.esCobroValido()).toBeTrue();
+  });
+
+  it('R3.7: sin caja abierta el efectivo queda bloqueado y el cobro arranca en tarjeta', () => {
+    financeService.cajaActual.set(null);
+    component.seleccionarOrdenParaCobro(mockOrder);
+
+    expect(component.metodoCobroSeleccionado()).toBe('TARJETA');
+    component.metodoCobroSeleccionado.set('EFECTIVO');
+    component.efectivoRecibidoInput = 50;
+    expect(component.esCobroValido()).toBeFalse();
+  });
+
+  it('D3.8: datos fiscales inválidos impiden cobrar', () => {
+    abrirCaja();
+    component.seleccionarOrdenParaCobro(mockOrder);
+    component.datosFiscalesCobro.set({ tipo: 'FACTURA', tipoDoc: 'RUC', numDoc: '123', nombre: 'ACME' });
+
+    expect(component.esCobroValido()).toBeFalse();
   });
 
   it('debe cambiar de pestañas entre POS, ARQUEO e HISTORIAL', () => {
@@ -311,33 +336,46 @@ describe('CajeroDashboardComponent', () => {
       expect(component.comandasPorCobrar().map(o => o.id)).toEqual(['51']);
     });
 
-    it('POS: si el ingreso en caja falla después de cobrar, el cajero se entera', () => {
-      financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
-      spyOn(paymentService, 'obtenerPorOrden').and.returnValue(of({ id: '9', estado: 'PENDIENTE' } as PaymentTransaction));
-      spyOn(paymentService, 'confirmarPago').and.returnValue(of({ id: '9', estado: 'APROBADO' } as PaymentTransaction));
-      spyOn(financeService, 'registrarMovimiento').and.returnValue(throwError(() => ({ status: 503, error: { error: 'caja caída' } })));
-      spyOn(ordersService, 'completarOrdenSalon').and.returnValue(of(mockOrder));
+    it('POS: delega el cobro en la fachada con los datos fiscales y arma el ticket con el comprobante real', () => {
+      abrirCaja();
+      const comprobante = { serieCorrelativo: 'B001-000007', total: 45 } as never;
+      const cobrar = spyOn(TestBed.inject(CobroSalonFacade), 'cobrar').and.returnValue(of({ comprobante }));
       component.seleccionarOrdenParaCobro(mockOrder);
       component.efectivoRecibidoInput = 50;
 
       component.confirmarCobroComanda();
 
-      expect(notify.showError).toHaveBeenCalledWith('No se registró el ingreso en caja', jasmine.stringMatching(/manualmente/));
-    });
-
-    it('POS: al cobrar una comanda de salón, completa la orden para cerrar la mesa en el backend', () => {
-      spyOn(paymentService, 'obtenerPorOrden').and.returnValue(of({ id: '9', estado: 'PENDIENTE' } as PaymentTransaction));
-      spyOn(paymentService, 'confirmarPago').and.returnValue(of({ id: '9', estado: 'APROBADO' } as PaymentTransaction));
-      const completarSpy = spyOn(ordersService, 'completarOrdenSalon').and.returnValue(of(mockOrder));
-      component.seleccionarOrdenParaCobro(mockOrder);
-      component.efectivoRecibidoInput = 50;
-
-      component.confirmarCobroComanda();
-
-      expect(completarSpy).toHaveBeenCalledWith('101', 'LISTO');
-      expect(component.ticketEmitido()).toBeTruthy();
+      expect(cobrar).toHaveBeenCalledWith(mockOrder, 'EFECTIVO', jasmine.stringMatching(/Recibido S\/ 50.00/), consumidorFinal());
+      expect(component.ticketEmitido().comprobante).toBe(comprobante);
       expect(component.ticketEmitido().clienteNombre).toBe('Juan Perez');
       expect(component.ticketEmitido().total).toBe(45);
+      expect(component.ordenSeleccionada()).toBeNull();
+    });
+
+    it('POS: si el pago pasó pero el comprobante falla, avisa "Pago OK, comprobante pendiente" sin ticket', () => {
+      abrirCaja();
+      spyOn(TestBed.inject(CobroSalonFacade), 'cobrar').and.returnValue(throwError(() => ({
+        paso: 'COMPROBANTE', mensaje: 'No hay una caja abierta', pagoAprobado: true
+      })));
+      component.seleccionarOrdenParaCobro(mockOrder);
+
+      component.confirmarCobroComanda();
+
+      expect(notify.showError).toHaveBeenCalledWith('Pago OK, comprobante pendiente', jasmine.stringMatching(/sin cobrar de nuevo/));
+      expect(component.ticketEmitido()).toBeNull();
+      expect(component.procesandoAccion()).toBeFalse();
+    });
+
+    it('POS: si el cobro no llegó a aprobarse, muestra el motivo del backend', () => {
+      spyOn(TestBed.inject(CobroSalonFacade), 'cobrar').and.returnValue(throwError(() => ({
+        paso: 'PAGO', mensaje: 'El monto S/ 45 no coincide', pagoAprobado: false
+      })));
+      component.seleccionarOrdenParaCobro(mockOrder);
+      component.referenciaPagoInput = 'POS-1';
+
+      component.confirmarCobroComanda();
+
+      expect(notify.showError).toHaveBeenCalledWith('El monto S/ 45 no coincide');
     });
 
     it('capturas: muestra motivo de bloqueo si falta la captura de pago', () => {

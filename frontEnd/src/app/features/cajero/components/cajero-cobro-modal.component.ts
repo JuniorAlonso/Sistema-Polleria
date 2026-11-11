@@ -4,11 +4,13 @@ import { FormsModule } from '@angular/forms';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { Order } from '../../../core/models/order.model';
 import { MetodoCobro } from '../models/cajero.models';
+import { DatosFiscales, consumidorFinal, motivoDatosFiscalesInvalidos } from '../models/datos-fiscales';
+import { CajeroDatosFiscalesComponent } from './cajero-datos-fiscales.component';
 
 @Component({
   selector: 'app-cajero-cobro-modal',
   standalone: true,
-  imports: [CommonModule, FormsModule, CurrencyPENPipe],
+  imports: [CommonModule, FormsModule, CurrencyPENPipe, CajeroDatosFiscalesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'contents' },
   template: `
@@ -77,8 +79,11 @@ import { MetodoCobro } from '../models/cajero.models';
                 <div class="grid grid-cols-3 gap-2.5">
                   <button
                     type="button"
+                    data-testid="metodo-efectivo"
                     (click)="metodo.set('EFECTIVO')"
-                    class="p-3 rounded-xl border text-center transition cursor-pointer flex flex-col items-center gap-1.5"
+                    [disabled]="!cajaAbierta()"
+                    [attr.title]="cajaAbierta() ? null : 'Abre la caja para cobrar en efectivo'"
+                    class="p-3 rounded-xl border text-center transition cursor-pointer flex flex-col items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     [ngClass]="metodo() === 'EFECTIVO' ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-md' : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'"
                   >
                     <span class="text-xl">💵</span>
@@ -213,6 +218,8 @@ import { MetodoCobro } from '../models/cajero.models';
                 </div>
               }
 
+              <app-cajero-datos-fiscales [(datos)]="datosFiscales" [total]="orden().total || 0" />
+
             </div>
 
             <!-- Modal Footer con Acción -->
@@ -258,8 +265,11 @@ export class CajeroCobroModalComponent {
   readonly vuelto = input<number>(0);
   readonly cobroValido = input<boolean>(false);
   readonly procesando = input<boolean>(false);
+  /** Without an open register cash is blocked; card and Yape stay available (R3.7). */
+  readonly cajaAbierta = input<boolean>(true);
 
   readonly metodo = model<MetodoCobro>('EFECTIVO');
+  readonly datosFiscales = model<DatosFiscales>(consumidorFinal());
   readonly efectivoRecibido = model<number>(0);
   readonly referencia = model<string>('');
 
@@ -275,6 +285,13 @@ export class CajeroCobroModalComponent {
   }
 
   protected get motivoBloqueo(): string | null {
+    if (this.metodo() === 'EFECTIVO' && !this.cajaAbierta()) {
+      return 'No hay una caja abierta: abre la caja para cobrar en efectivo, o cobra con tarjeta o Yape.';
+    }
+    const motivoFiscal = motivoDatosFiscalesInvalidos(this.datosFiscales(), this.orden()?.total || 0);
+    if (motivoFiscal) {
+      return motivoFiscal;
+    }
     if (this.metodo() === 'EFECTIVO') {
       const falta = this.faltaEfectivo;
       if (falta > 0) {
