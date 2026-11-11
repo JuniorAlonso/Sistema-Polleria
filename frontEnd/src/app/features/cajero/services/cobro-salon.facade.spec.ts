@@ -27,7 +27,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos = jasmine.createSpyObj('PaymentService', ['obtenerPorOrden', 'iniciarPago', 'confirmarPago']);
     finanzas = jasmine.createSpyObj('FinanceService', ['registrarVentaEnCaja']);
     finanzasApi = jasmine.createSpyObj('FinanceApiService', ['obtenerCajaActual']);
-    ordenes = jasmine.createSpyObj('OrdersService', ['completarOrdenSalon']);
+    ordenes = jasmine.createSpyObj('OrdersService', ['completarOrdenSalon', 'obtenerOrden']);
     TestBed.configureTestingModule({
       providers: [
         CobroSalonFacade,
@@ -41,6 +41,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     finanzasApi.obtenerCajaActual.and.returnValue(of({ estado: 'ABIERTA' } as unknown as ArqueoCaja));
     finanzas.registrarVentaEnCaja.and.returnValue(of(comprobante));
     ordenes.completarOrdenSalon.and.returnValue(of(orden));
+    ordenes.obtenerOrden.and.returnValue(of({ ...orden, mesaEstado: 'POR_COBRAR' } as Order));
   });
 
   function cobrar(metodo: 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN' = 'EFECTIVO') {
@@ -192,5 +193,48 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
 
     expect(error?.paso).toBe('PAGO');
     expect(error?.mensaje).toContain('no coincide');
+  });
+
+  describe('mesa que no pidió la cuenta (D1.2 del plan 01)', () => {
+    beforeEach(() => pagos.obtenerPorOrden.and.returnValue(of(null)));
+
+    it('no cobra nada si la mesa todavía no está en POR_COBRAR: el cierre sería rechazado', () => {
+      ordenes.obtenerOrden.and.returnValue(of({ ...orden, mesaEstado: 'OCUPADA' } as Order));
+
+      const { error } = cobrar('TARJETA');
+
+      expect(error?.paso).toBe('MESA');
+      expect(error?.pagoAprobado).toBeFalse();
+      expect(error?.mensaje).toContain('POR_COBRAR');
+      expect(pagos.iniciarPago).not.toHaveBeenCalled();
+      expect(finanzas.registrarVentaEnCaja).not.toHaveBeenCalled();
+    });
+
+    it('si no puede leer la orden, no cobra', () => {
+      ordenes.obtenerOrden.and.returnValue(throwError(() => new Error('orders caído')));
+
+      const { error } = cobrar('TARJETA');
+
+      expect(error?.paso).toBe('MESA');
+      expect(pagos.iniciarPago).not.toHaveBeenCalled();
+    });
+
+    it('sin mesaEstado publicado (backend anterior) cobra como antes', () => {
+      ordenes.obtenerOrden.and.returnValue(of(orden));
+      pagos.iniciarPago.and.returnValue(of(pago('PENDIENTE')));
+      pagos.confirmarPago.and.returnValue(of(pago('APROBADO')));
+
+      const { resultado } = cobrar('TARJETA');
+
+      expect(resultado?.comprobante).toBe(comprobante);
+    });
+
+    it('con el pago ya APROBADO no vuelve a consultar la mesa: solo completa lo pendiente', () => {
+      pagos.obtenerPorOrden.and.returnValue(of(pago('APROBADO')));
+
+      cobrar('TARJETA');
+
+      expect(ordenes.obtenerOrden).not.toHaveBeenCalled();
+    });
   });
 });

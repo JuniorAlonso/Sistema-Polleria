@@ -183,6 +183,7 @@ export class OrderAdapter {
       // Solo el id: el nombre del motorizado vive en el roster de auth-service (solo ADMIN),
       // así que aquí no se fabrica un "Repartidor #7".
       repartidorId: dto.repartidorId,
+      mesaEstado: dto.mesaEstado || undefined,
       // Marca persistida de "ya se sirvió en mesa"; el estado sigue siendo LISTO hasta el cobro.
       servidoEn: dto.servidoEn || undefined,
       servidoPor: dto.servidoPor ?? undefined,

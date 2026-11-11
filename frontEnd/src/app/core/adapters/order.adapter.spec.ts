@@ -125,6 +125,11 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
     expect(orden.repartidorId == null).toBeTrue();
   });
 
+  it('propaga el estado de la mesa de la comanda (D3.14)', () => {
+    expect(OrderAdapter.toOrder({ ...dto, mesaEstado: 'POR_COBRAR' } as never).mesaEstado).toBe('POR_COBRAR');
+    expect(OrderAdapter.toOrder(dto as never).mesaEstado).toBeUndefined();
+  });
+
   it('propaga la marca persistida de servido en mesa', () => {
     const orden = OrderAdapter.toOrder({
       ...dto,

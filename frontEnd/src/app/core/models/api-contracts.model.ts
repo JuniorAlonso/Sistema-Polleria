@@ -150,6 +150,8 @@ export interface BackendOrdenResponse {
   vueltoEstimado?: number | null;
   motivoFantasma?: string | null;
   mesaNumero?: number;
+  /** Table state of a SALON order (LIBRE, OCUPADA, POR_COBRAR, ...). */
+  mesaEstado?: string | null;
   direccionEntrega?: string;
   referencia?: string;
   nombreCliente?: string;

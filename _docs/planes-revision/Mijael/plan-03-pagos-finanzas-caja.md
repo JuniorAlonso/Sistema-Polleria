@@ -178,7 +178,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 
 ## 7. Contratos con otros planes
 
-- **Recibe de Plan 1:** `mesaEstado` y la guarda de `ENTREGADO`.
+- **Recibe de Plan 1:** la guarda de `ENTREGADO` (llegó en `924104d`). `mesaEstado` en `OrdenResponse` lo agregó el Plan 3 (campo opcional) porque el cajero no puede leer `/mesas`.
 - **Entrega a Plan 2:** `registrarVentaEnCaja`, `cajaAbierta`, `cajero-datos-fiscales`.
 - **Entrega a Plan 2:** `confirmarLlamadaPedido` sigue funcionando sin cambios (D3.15 cubre la emisión sin pago). Se recomienda migrarlo a `registrarVentaEnCaja`.
 - **Entrega a Plan 4:** `POST /finanzas/caja/movimientos` sin cambios, con 409 si la caja está cerrada.
@@ -195,7 +195,8 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | :-- | :-- | :-- |
 | 1 | Índices e inicializador; `emitir` con `ingresoCaja` y los componentes de D3.19; `FuenteTotalComprobante` y `OrdenesClient`; D3.5 a D3.7 y D3.18; `registrarVentaEnCaja`, `CobroSalonFacade`, input `cajaAbierta` y `api-error.ts`. | — |
 | 2 | Caja y arqueo ciego, liquidación, reportes de `FinanzasService`, ticket real y desglose de IGV del checkout. | PR 1 |
-| 3 | Filtro tolerante de D3.14 y reintento de D3.17. | PR 1 |
+| 2a | Adelantado de PR 3: filtro tolerante de D3.14 (`mesaEstado` en `OrdenResponse`) y verificación de la mesa en `CobroSalonFacade` antes de cobrar. Evita cobrar una comanda que la guarda de `ENTREGADO` del Plan 1 no deja cerrar. | PR 1 |
+| 3 | Reintento visible de D3.17. | PR 1 |
 
 El PR 1 corresponde a la primera entrega del Plan 00 (sección 6) y destraba a los Planes 2 y 6. El PR 3 no espera al Plan 1 gracias a D3.14.
 

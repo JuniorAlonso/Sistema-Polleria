@@ -417,6 +417,9 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     return this.ordersService.orders().filter(o => {
       if (o.tipo !== 'SALON') return false;
       if (['CANCELADO', 'COMPLETADO', 'PEDIDO_FANTASMA'].includes(o.estado)) return false;
+      // D3.14: only tables that asked for the bill; orders-service rejects closing any other one.
+      // Without mesaEstado (older backend) the previous behavior stays.
+      if (o.mesaEstado && o.mesaEstado !== 'POR_COBRAR') return false;
       const pago = pagosMap.get(String(o.id));
       return !pago || pago.estado !== 'APROBADO';
     });

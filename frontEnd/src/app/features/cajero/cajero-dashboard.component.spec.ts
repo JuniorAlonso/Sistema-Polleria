@@ -336,6 +336,18 @@ describe('CajeroDashboardComponent', () => {
       expect(component.comandasPorCobrar().map(o => o.id)).toEqual(['51']);
     });
 
+    it('POS: con el estado de la mesa publicado, solo lista las mesas que pidieron la cuenta (D3.14)', () => {
+      ordersService.orders.set([
+        orden({ id: '61', tipo: 'SALON', estado: 'LISTO' as never, mesaEstado: 'POR_COBRAR' }),
+        orden({ id: '62', tipo: 'SALON', estado: 'LISTO' as never, mesaEstado: 'OCUPADA' }),
+        orden({ id: '63', tipo: 'SALON', estado: 'LISTO' as never })
+      ]);
+
+      expect(component.comandasPorCobrar().map(o => o.id))
+        .withContext('sin mesaEstado (backend anterior) se conserva el comportamiento actual')
+        .toEqual(['61', '63']);
+    });
+
     it('POS: delega el cobro en la fachada con los datos fiscales y arma el ticket con el comprobante real', () => {
       abrirCaja();
       const comprobante = { serieCorrelativo: 'B001-000007', total: 45 } as never;

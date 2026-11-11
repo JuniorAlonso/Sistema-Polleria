@@ -13,7 +13,7 @@ import { DatosFiscales } from '../models/datos-fiscales';
 import { MetodoCobro } from '../models/cajero.models';
 
 /** Step of the charge that failed. */
-export type PasoCobro = 'CAJA' | 'PAGO' | 'COMPROBANTE' | 'CIERRE';
+export type PasoCobro = 'MESA' | 'CAJA' | 'PAGO' | 'COMPROBANTE' | 'CIERRE';
 
 export interface ErrorCobro {
   paso: PasoCobro;
@@ -49,7 +49,9 @@ export class CobroSalonFacade {
         // On a retry the approved payment decides whether cash entered the drawer, never the method
         // currently selected on screen (D3.13, R3.12).
         const esEfectivo = aprobado ? existente?.metodo === 'EFECTIVO_CONTRAENTREGA' : metodo === 'EFECTIVO';
-        return this.verificarCaja(esEfectivo, aprobado).pipe(
+        const mesa$ = aprobado ? of(undefined) : this.verificarMesa(orden);
+        return mesa$.pipe(
+          switchMap(() => this.verificarCaja(esEfectivo, aprobado)),
           switchMap(() => aprobado ? of(undefined) : this.aprobarPago(existente, orden, metodo, referencia)),
           switchMap(() =>
             this.finanzas.registrarVentaEnCaja(orden.id, datosFiscales, esEfectivo).pipe(
@@ -59,6 +61,21 @@ export class CobroSalonFacade {
         );
       }),
       switchMap(comprobante => this.cerrarOrden(orden, comprobante))
+    );
+  }
+
+  /**
+   * Fresh read of the table state before taking any money: orders-service only closes a SALON
+   * comanda whose table is in POR_COBRAR (plan 01, D1.2), so charging any other one would leave
+   * money taken and the comanda open. Without mesaEstado (older backend) the charge goes on.
+   */
+  private verificarMesa(orden: Order): Observable<void> {
+    const bloqueo = (mensaje: string) => throwError(() => ({ paso: 'MESA', mensaje, pagoAprobado: false } satisfies ErrorCobro));
+    return this.ordenes.obtenerOrden(orden.id).pipe(
+      catchError(() => bloqueo('No se pudo verificar el estado de la mesa. Intenta de nuevo; no se cobró nada.')),
+      switchMap(actual => !actual.mesaEstado || actual.mesaEstado === 'POR_COBRAR'
+        ? of(undefined)
+        : bloqueo(`La mesa todavía no pidió la cuenta (estado ${actual.mesaEstado}). El mozo debe pasarla a POR_COBRAR antes del cobro.`))
     );
   }
 
