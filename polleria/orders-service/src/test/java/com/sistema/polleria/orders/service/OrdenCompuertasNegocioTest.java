@@ -166,10 +166,12 @@ class OrdenCompuertasNegocioTest {
         assertEquals(OrdenEstado.EN_PUERTA, o.getEstado());
     }
 
-    // Salón no se ve afectado
+    // Salón: EN_PREPARACION y LISTO pasan sin las compuertas de pago/llamada; ENTREGADO exige mesa en POR_COBRAR (D1.2)
     @Test
     void salonNoSeVeAfectadoPorLasCompuertas() {
+        Mesa mesaSalon = Mesa.builder().id(1L).numero(1).estado(MesaEstado.POR_COBRAR).build();
         Orden o = orden(OrdenTipo.SALON, OrdenEstado.RECIBIDO);
+        o.setMesa(mesaSalon);
         cargar(o);
         when(ordenRepository.save(any(Orden.class))).thenReturn(o);
 
@@ -178,6 +180,23 @@ class OrdenCompuertasNegocioTest {
         ordenService.actualizarEstado(1L, req(OrdenEstado.LISTO), 7L, false);
         ordenService.actualizarEstado(1L, req(OrdenEstado.ENTREGADO), 7L, false);
         assertEquals(OrdenEstado.ENTREGADO, o.getEstado());
+    }
+
+    @Test
+    void salonEntregadoConMesaFueraDePorCobrarDevuelveConflicto() {
+        for (MesaEstado estadoMesa : List.of(MesaEstado.OCUPADA, MesaEstado.LIBRE, MesaEstado.EN_LIMPIEZA, MesaEstado.RESERVADA)) {
+            Mesa mesaSalon = Mesa.builder().id(1L).numero(5).estado(estadoMesa).build();
+            Orden o = orden(OrdenTipo.SALON, OrdenEstado.LISTO);
+            o.setMesa(mesaSalon);
+            cargar(o);
+
+            ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                    () -> ordenService.actualizarEstado(1L, req(OrdenEstado.ENTREGADO), 7L, false),
+                    "Estado de mesa " + estadoMesa + " debe rechazarse con 409");
+            assertTrue(ex.getMessage().contains("POR_COBRAR"), ex.getMessage());
+            assertEquals(OrdenEstado.LISTO, o.getEstado());
+        }
+        verify(ordenRepository, never()).save(any());
     }
 
     // Plazo del pedido fantasma

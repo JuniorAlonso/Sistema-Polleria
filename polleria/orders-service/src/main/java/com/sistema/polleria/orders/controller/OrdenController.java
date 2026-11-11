@@ -32,6 +32,7 @@ import java.util.Set;
 public class OrdenController {
 
     private static final Set<String> ROLES_PERSONAL = Set.of("ADMIN", "MOZO", "COCINA", "REPARTIDOR", "CAJERO");
+    private static final Set<String> ROLES_CIERRE_SALON = Set.of("ADMIN", "CAJERO");
 
     private final OrdenService ordenService;
 
@@ -292,8 +293,26 @@ public class OrdenController {
             return ResponseEntity.ok(ordenService.cancelarComoCliente(id, extraerUserId(authentication)));
         }
 
+        // D1.2: ENTREGADO y CANCELADO de una orden SALON solo los ejecutan CAJERO, ADMIN o una
+        // llamada con clave interna. MOZO y COCINA no pueden cerrar ni cancelar la comanda.
+        if (!esLlamadaInterna(claveInterna)
+                && (request.getEstado() == OrdenEstado.ENTREGADO || request.getEstado() == OrdenEstado.CANCELADO)
+                && !puedeCerrarComandaSalon(authentication)) {
+            OrdenResponse orden = ordenService.obtener(id);
+            if (orden.getTipo() == OrdenTipo.SALON) {
+                throw new AccessDeniedException(
+                        "Solo CAJERO o ADMIN pueden marcar como " + request.getEstado()
+                        + " una comanda de salón.");
+            }
+        }
+
         return ResponseEntity.ok(ordenService.actualizarEstado(
                 id, request, extraerUserId(authentication), esLlamadaInterna(claveInterna)));
+    }
+
+    private boolean puedeCerrarComandaSalon(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> ROLES_CIERRE_SALON.contains(a.getAuthority()));
     }
 
     private boolean esLlamadaInterna(String claveInterna) {

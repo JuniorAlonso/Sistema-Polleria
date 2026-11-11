@@ -204,6 +204,98 @@ class OrdenServiceFase2Test {
         verify(salonEventPublisher).notificarNuevaComanda(orden);
     }
 
+    // F-03: agregar una nueva ronda limpia servidoEn y servidoPor y permite volver a servir
+    @Test
+    void testAgregarItemsLimpiaServidoEnYServidoPorYPuedeVolverAServirse() {
+        Mesa mesaComanda = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.OCUPADA).build();
+        Orden orden = comandaDeSalon(100L, mesaComanda, OrdenEstado.LISTO, 1);
+        LocalDateTime primerServido = LocalDateTime.now().minusMinutes(10);
+        orden.setServidoEn(primerServido);
+        orden.setServidoPor(2L);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaComanda));
+
+        var trasRonda = ordenService.agregarItems(100L, List.of(nuevo), 2L);
+
+        assertNull(orden.getServidoEn(), "agregar nueva ronda debe limpiar servidoEn");
+        assertNull(orden.getServidoPor(), "agregar nueva ronda debe limpiar servidoPor");
+        assertNull(trasRonda.getServidoEn());
+        assertNull(trasRonda.getServidoPor());
+        assertEquals(OrdenEstado.EN_PREPARACION, orden.getEstado());
+
+        // Mientras la segunda ronda está en preparación, no puede marcarse como servida
+        assertThrows(ConflictoDeEstadoException.class, () -> ordenService.marcarServido(100L, 5L));
+
+        // Cuando cocina marca LISTO la nueva ronda, el mozo puede volver a servirla
+        orden.setEstado(OrdenEstado.LISTO);
+        var servidaSegundaRonda = ordenService.marcarServido(100L, 5L);
+
+        assertNotNull(orden.getServidoEn(), "la segunda ronda debe registrar su propia marca de servido");
+        assertEquals(5L, orden.getServidoPor());
+        assertNotNull(servidaSegundaRonda.getServidoEn());
+        assertEquals(5L, servidaSegundaRonda.getServidoPor());
+    }
+
+    // F-04: agregar productos cuando la mesa está en POR_COBRAR devuelve la mesa a OCUPADA
+    @Test
+    void testAgregarItemsConMesaPorCobrarDevuelveMesaAOcupada() {
+        Mesa mesaPorCobrar = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.POR_COBRAR).build();
+        Orden orden = comandaDeSalon(100L, mesaPorCobrar, OrdenEstado.LISTO, 1);
+        orden.setServidoEn(LocalDateTime.now().minusMinutes(5));
+        orden.setServidoPor(2L);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesaPorCobrar));
+
+        ordenService.agregarItems(100L, List.of(nuevo), 2L);
+
+        assertEquals(MesaEstado.OCUPADA, mesaPorCobrar.getEstado(),
+                "la mesa en POR_COBRAR debe volver a OCUPADA al recibir una nueva ronda");
+        assertEquals(OrdenEstado.EN_PREPARACION, orden.getEstado(),
+                "la comanda LISTO debe volver a EN_PREPARACION");
+        assertNull(orden.getServidoEn(), "servidoEn debe limpiarse");
+        assertNull(orden.getServidoPor(), "servidoPor debe limpiarse");
+    }
+
+    @Test
+    void testAgregarItemsCuandoFallaValidacionNoAlteraEstadoDeMesaNiServidoEn() {
+        LocalDateTime servidoPrevio = LocalDateTime.now().minusMinutes(5);
+        Mesa mesaPorCobrar = Mesa.builder().id(1L).numero(3).capacidad(4).estado(MesaEstado.POR_COBRAR).build();
+        Orden orden = comandaDeSalon(100L, mesaPorCobrar, OrdenEstado.LISTO, 1);
+        orden.setServidoEn(servidoPrevio);
+        orden.setServidoPor(2L);
+        producto.setDisponible(false);
+
+        OrdenItemRequest nuevo = new OrdenItemRequest();
+        nuevo.setProductoId(10L);
+        nuevo.setCantidad(1);
+
+        when(ordenRepository.buscarConBloqueo(100L)).thenReturn(Optional.of(orden));
+        when(productoService.buscarConBloqueo(10L)).thenReturn(producto);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> ordenService.agregarItems(100L, List.of(nuevo), 2L));
+
+        assertEquals(MesaEstado.POR_COBRAR, mesaPorCobrar.getEstado());
+        assertEquals(OrdenEstado.LISTO, orden.getEstado());
+        assertEquals(servidoPrevio, orden.getServidoEn());
+        assertEquals(2L, orden.getServidoPor());
+        verify(ordenRepository, never()).save(any());
+    }
+
     @Test
     void testAgregarItemsAComandaEntregadaLanzaConflicto() {
         Orden orden = Orden.builder()
@@ -416,7 +508,7 @@ class OrdenServiceFase2Test {
 
     @Test
     void testActualizarEstadoAEntregadoLiberaMesa() {
-        mesa.setEstado(MesaEstado.OCUPADA);
+        mesa.setEstado(MesaEstado.POR_COBRAR);
         Orden orden = Orden.builder()
                 .id(100L)
                 .tipo(OrdenTipo.SALON)
@@ -437,6 +529,29 @@ class OrdenServiceFase2Test {
         assertEquals(OrdenEstado.ENTREGADO, orden.getEstado());
         assertEquals(MesaEstado.LIBRE, mesa.getEstado());
         verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
+
+    @Test
+    void testActualizarEstadoAEntregadoConMesaOcupadaLanzaConflicto() {
+        mesa.setEstado(MesaEstado.OCUPADA);
+        Orden orden = Orden.builder()
+                .id(100L)
+                .tipo(OrdenTipo.SALON)
+                .mesa(mesa)
+                .estado(OrdenEstado.LISTO)
+                .items(new ArrayList<>())
+                .build();
+
+        when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
+
+        ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+        req.setEstado(OrdenEstado.ENTREGADO);
+
+        assertThrows(ConflictoDeEstadoException.class,
+                () -> ordenService.actualizarEstado(100L, req, 2L));
+        assertEquals(OrdenEstado.LISTO, orden.getEstado());
+        assertEquals(MesaEstado.OCUPADA, mesa.getEstado());
+        verify(ordenRepository, never()).save(any());
     }
 
     @Test
@@ -499,14 +614,17 @@ class OrdenServiceFase2Test {
 
     @Test
     void testSalonNoGuardaRepartidorAunqueLoEnvieElRequest() {
+        mesa.setEstado(MesaEstado.POR_COBRAR);
         Orden orden = Orden.builder()
                 .id(100L)
                 .tipo(OrdenTipo.SALON)
+                .mesa(mesa)
                 .estado(OrdenEstado.LISTO)
                 .items(new ArrayList<>())
                 .build();
         when(ordenRepository.findById(100L)).thenReturn(Optional.of(orden));
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);
+        when(mesaService.mapearMesaConOrdenActiva(any(Mesa.class))).thenReturn(MesaResponse.from(mesa));
 
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
         req.setEstado(OrdenEstado.ENTREGADO);

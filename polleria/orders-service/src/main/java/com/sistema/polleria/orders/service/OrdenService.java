@@ -173,9 +173,15 @@ public class OrdenService {
 
         orden.getItems().addAll(nuevos);
         orden.recalcularTotal();
+        orden.setServidoEn(null);
+        orden.setServidoPor(null);
 
         if (orden.getEstado().esListo()) {
             orden.setEstado(OrdenEstado.EN_PREPARACION);
+        }
+
+        if (orden.getMesa() != null && orden.getMesa().getEstado() == MesaEstado.POR_COBRAR) {
+            orden.getMesa().setEstado(MesaEstado.OCUPADA);
         }
 
         ordenRepository.save(orden);
@@ -353,6 +359,7 @@ public class OrdenService {
     public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId,
                                           boolean llamadaInterna) {
         Orden orden = buscarOFallar(id);
+        validarMesaPorCobrarEnSalon(orden, request.getEstado());
         validarTransicionEstado(orden.getEstado(), request.getEstado(), orden.getTipo());
         if (!llamadaInterna) {
             validarCompuertasDeNegocio(orden, request.getEstado());
@@ -497,6 +504,25 @@ public class OrdenService {
     }
 
     /**
+     * D1.2: una comanda de salón solo puede marcarse como ENTREGADO cuando su mesa está en
+     * POR_COBRAR. Evita cerrar comandas en salón sin haber pasado por la solicitud de cobro.
+     */
+    private void validarMesaPorCobrarEnSalon(Orden orden, OrdenEstado nuevo) {
+        if (orden.getTipo() != OrdenTipo.SALON
+                || nuevo != OrdenEstado.ENTREGADO
+                || ESTADOS_TERMINALES.contains(orden.getEstado())) {
+            return;
+        }
+        if (orden.getMesa() == null || orden.getMesa().getEstado() != MesaEstado.POR_COBRAR) {
+            String estadoMesa = orden.getMesa() != null ? orden.getMesa().getEstado().name() : "SIN_MESA";
+            throw new ConflictoDeEstadoException(
+                    "La comanda #" + orden.getId()
+                    + " no puede marcarse como ENTREGADO porque la mesa no está en POR_COBRAR (estado actual: "
+                    + estadoMesa + ").");
+        }
+    }
+
+    /**
      * A RECOJO order is handed over only against its ticket (POL-&lt;order id&gt;), compared ignoring
      * case, spaces and dashes. The customer number is not accepted: it is short and guessable.
      */
@@ -537,14 +563,14 @@ public class OrdenService {
                     + " y no puede marcarse como servida.");
         }
 
-        if (orden.getServidoEn() != null) {
-            return OrdenResponse.from(orden);
-        }
-
         if (!orden.getEstado().esListo()) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " todavía no está lista (estado actual: "
                     + orden.getEstado() + ").");
+        }
+
+        if (orden.getServidoEn() != null) {
+            return OrdenResponse.from(orden);
         }
 
         orden.setServidoEn(LocalDateTime.now());

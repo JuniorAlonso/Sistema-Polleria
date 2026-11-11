@@ -108,7 +108,7 @@ class MesaForzarTest {
                     .orElse(false);
             if (activa) {
                 rest.exchange("/ordenes/" + ordenId + "/estado", HttpMethod.PATCH,
-                        new HttpEntity<>(Map.of("estado", "CANCELADO"), cabecerasDe(tokenDe(MOZO_ID, "MOZO"))),
+                        new HttpEntity<>(Map.of("estado", "CANCELADO"), cabecerasDe(tokenDe(ADMIN_ID, "ADMIN"))),
                         String.class);
             }
         }

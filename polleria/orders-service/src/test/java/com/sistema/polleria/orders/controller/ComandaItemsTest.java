@@ -99,7 +99,7 @@ class ComandaItemsTest {
                             && o.getEstado() != OrdenEstado.ENTREGADO)
                     .orElse(false);
             if (activa) {
-                cambiarEstado(ordenId, "CANCELADO", tokenDeMozo());
+                cambiarEstado(ordenId, "CANCELADO", tokenDe(MOZO_ID + 1, "ADMIN"));
             }
         }
         ordenesCreadas.clear();
@@ -158,14 +158,17 @@ class ComandaItemsTest {
     @Test
     void unaComandaCobradaNoAdmiteItemsNuevos() {
         Long ordenId = crearComandaDeSalon();
-        String token = tokenDeMozo();
+        String tokenMozo = tokenDeMozo();
+        String tokenCajero = tokenDe(7777L, "CAJERO");
 
-        // Secuencia completa del salón: la comanda nace RECIBIDO.
-        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "EN_PREPARACION", token).getStatusCode());
-        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "LISTO", token).getStatusCode());
-        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "ENTREGADO", token).getStatusCode());
+        // Secuencia completa del salón (D1.2 y D1.6): cocina -> servir -> POR_COBRAR -> cobro en caja (ENTREGADO).
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "EN_PREPARACION", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "LISTO", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, servir(ordenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstadoMesa(mesaId, "POR_COBRAR", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "ENTREGADO", tokenCajero).getStatusCode());
 
-        ResponseEntity<String> intento = agregarItems(ordenId, 1, token);
+        ResponseEntity<String> intento = agregarItems(ordenId, 1, tokenMozo);
 
         assertEquals(HttpStatus.CONFLICT, intento.getStatusCode(),
                 "una comanda cobrada se rechaza con 409: " + intento.getBody());
@@ -174,6 +177,27 @@ class ComandaItemsTest {
         assertEquals(OrdenEstado.ENTREGADO, estadoEnBaseDeDatos(ordenId),
                 "la comanda debe seguir ENTREGADO");
         assertEquals(1, itemsEnBaseDeDatos(ordenId), "la comanda no debe modificarse");
+    }
+
+    @Test
+    void agregarItemsCuandoMesaEstaPorCobrarDevuelveMesaAOcupada() {
+        Long ordenId = crearComandaDeSalon();
+        String tokenMozo = tokenDeMozo();
+
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "EN_PREPARACION", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "LISTO", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, servir(ordenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstadoMesa(mesaId, "POR_COBRAR", tokenMozo).getStatusCode());
+
+        ResponseEntity<String> agregado = agregarItems(ordenId, 1, tokenMozo);
+
+        assertEquals(HttpStatus.OK, agregado.getStatusCode(),
+                "el mozo puede agregar una ronda aunque la mesa estuviera en POR_COBRAR: " + agregado.getBody());
+        assertEquals(com.sistema.polleria.orders.entity.MesaEstado.OCUPADA,
+                mesaRepository.findById(mesaId).orElseThrow().getEstado(),
+                "la mesa debe volver a OCUPADA tras recibir nuevos productos");
+        assertEquals(OrdenEstado.EN_PREPARACION, estadoEnBaseDeDatos(ordenId),
+                "la comanda debe volver a EN_PREPARACION");
     }
 
     private Long crearComandaDeSalon() {
@@ -222,6 +246,21 @@ class ComandaItemsTest {
         cabeceras.setBearerAuth(token);
 
         return rest.exchange("/ordenes/" + ordenId + "/estado", HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("estado", estado), cabeceras), String.class);
+    }
+
+    private ResponseEntity<String> servir(Long ordenId, String token) {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setBearerAuth(token);
+        return rest.exchange("/ordenes/" + ordenId + "/servir", HttpMethod.POST,
+                new HttpEntity<>(cabeceras), String.class);
+    }
+
+    private ResponseEntity<String> cambiarEstadoMesa(Long idMesa, String estado, String token) {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        cabeceras.setBearerAuth(token);
+        return rest.exchange("/mesas/" + idMesa + "/estado", HttpMethod.PUT,
                 new HttpEntity<>(Map.of("estado", estado), cabeceras), String.class);
     }
 

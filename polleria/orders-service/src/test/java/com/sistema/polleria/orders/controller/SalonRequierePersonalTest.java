@@ -114,7 +114,7 @@ class SalonRequierePersonalTest {
                     .orElse(false);
             if (activa) {
                 rest.exchange("/ordenes/" + ordenId + "/estado", HttpMethod.PATCH,
-                        new HttpEntity<>(Map.of("estado", "CANCELADO"), cabecerasDeMozo()), String.class);
+                        new HttpEntity<>(Map.of("estado", "CANCELADO"), cabecerasDeAdmin()), String.class);
             }
         }
         ordenesCreadas.clear();
@@ -163,14 +163,169 @@ class SalonRequierePersonalTest {
     }
 
     @Test
-    void unMicroservicioConClaveInternaPuedeTomarComandaDeSalon() {
+    void unMicroservicioConClaveInternaPuedeTomarComandaDeSalon() throws Exception {
         ResponseEntity<String> creada = postSalon(CLAVE_INTERNA_VALOR, null);
 
         assertEquals(HttpStatus.CREATED, creada.getStatusCode(),
                 "la llamada interna debe poder crear la comanda: " + creada.getBody());
+        ordenesCreadas.add(objectMapper.readTree(creada.getBody()).path("id").asLong());
         assertTrue(creada.getBody() != null && creada.getBody().contains("\"tipo\":\"SALON\""),
                 "la comanda creada debe ser de salón. Cuerpo: " + creada.getBody());
         assertEquals(MesaEstado.OCUPADA, estadoDeLaMesa());
+    }
+
+    @Test
+    void mozoNoPuedeEntregarNiCancelarUnaOrdenSalon() throws Exception {
+        Long ordenId = abrirComandaSalon();
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+
+        ResponseEntity<String> intentoCancelar = patchEstadoOrden(ordenId, "CANCELADO", tokenMozo, null);
+        assertEquals(HttpStatus.FORBIDDEN, intentoCancelar.getStatusCode(),
+                "MOZO no puede cancelar una comanda SALON: " + intentoCancelar.getBody());
+
+        // Avanzar hasta LISTO, servir y poner mesa en POR_COBRAR
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "EN_PREPARACION", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "LISTO", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, postServir(ordenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode());
+
+        ResponseEntity<String> intentoEntregar = patchEstadoOrden(ordenId, "ENTREGADO", tokenMozo, null);
+        assertEquals(HttpStatus.FORBIDDEN, intentoEntregar.getStatusCode(),
+                "MOZO no puede entregar una comanda SALON: " + intentoEntregar.getBody());
+        assertEquals(MesaEstado.POR_COBRAR, estadoDeLaMesa(),
+                "la mesa debe permanecer en POR_COBRAR si el mozo intenta entregar");
+    }
+
+    @Test
+    void cocinaNoPuedeEntregarNiCancelarUnaOrdenSalon() throws Exception {
+        Long ordenId = abrirComandaSalon();
+        String tokenCocina = tokenDe(6600L, "COCINA");
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+
+        ResponseEntity<String> intentoCancelar = patchEstadoOrden(ordenId, "CANCELADO", tokenCocina, null);
+        assertEquals(HttpStatus.FORBIDDEN, intentoCancelar.getStatusCode(),
+                "COCINA no puede cancelar una comanda SALON: " + intentoCancelar.getBody());
+
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "EN_PREPARACION", tokenCocina, null).getStatusCode());
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "LISTO", tokenCocina, null).getStatusCode());
+        assertEquals(HttpStatus.OK, postServir(ordenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode());
+
+        ResponseEntity<String> intentoEntregar = patchEstadoOrden(ordenId, "ENTREGADO", tokenCocina, null);
+        assertEquals(HttpStatus.FORBIDDEN, intentoEntregar.getStatusCode(),
+                "COCINA no puede entregar una comanda SALON: " + intentoEntregar.getBody());
+    }
+
+    @Test
+    void cajeroYAdminConservanPermisosParaCancelarYEntregarSalonYEntregadoExigePorCobrar() throws Exception {
+        Long ordenId = abrirComandaSalon();
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+        String tokenCajero = tokenDe(7700L, "CAJERO");
+        String tokenAdmin = tokenDe(8800L, "ADMIN");
+
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "EN_PREPARACION", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "LISTO", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, postServir(ordenId, tokenMozo).getStatusCode());
+
+        // Mesa todavía en OCUPADA -> ENTREGADO devuelve 409 aunque sea CAJERO, ADMIN o clave interna
+        assertEquals(HttpStatus.CONFLICT,
+                patchEstadoOrden(ordenId, "ENTREGADO", tokenCajero, null).getStatusCode(),
+                "ENTREGADO fuera de POR_COBRAR debe devolver 409");
+        assertEquals(HttpStatus.CONFLICT,
+                patchEstadoOrden(ordenId, "ENTREGADO", tokenAdmin, null).getStatusCode(),
+                "ENTREGADO fuera de POR_COBRAR por ADMIN también devuelve 409");
+        assertEquals(HttpStatus.CONFLICT,
+                patchEstadoOrden(ordenId, "ENTREGADO", null, CLAVE_INTERNA_VALOR).getStatusCode(),
+                "ENTREGADO fuera de POR_COBRAR por clave interna también devuelve 409");
+
+        // Cuando la mesa pasa a POR_COBRAR, CAJERO puede marcar ENTREGADO
+        assertEquals(HttpStatus.OK, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode());
+        ResponseEntity<String> entregado = patchEstadoOrden(ordenId, "ENTREGADO", tokenCajero, null);
+        assertEquals(HttpStatus.OK, entregado.getStatusCode(),
+                "CAJERO puede entregar una comanda SALON cuando la mesa está en POR_COBRAR: " + entregado.getBody());
+        assertEquals(MesaEstado.LIBRE, estadoDeLaMesa(), "al entregar la comanda la mesa queda LIBRE");
+
+        // Nueva comanda cancelada por CAJERO
+        Long segundaOrdenId = abrirComandaSalon();
+        ResponseEntity<String> canceladoPorCajero = patchEstadoOrden(segundaOrdenId, "CANCELADO", tokenCajero, null);
+        assertEquals(HttpStatus.OK, canceladoPorCajero.getStatusCode(),
+                "CAJERO puede cancelar una comanda SALON: " + canceladoPorCajero.getBody());
+        assertEquals(MesaEstado.LIBRE, estadoDeLaMesa(), "al cancelar la comanda la mesa queda LIBRE");
+
+        // Nueva comanda entregada por clave interna con mesa en POR_COBRAR
+        Long terceraOrdenId = abrirComandaSalon();
+        assertEquals(HttpStatus.OK, patchEstadoOrden(terceraOrdenId, "EN_PREPARACION", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, patchEstadoOrden(terceraOrdenId, "LISTO", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, postServir(terceraOrdenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK,
+                patchEstadoOrden(terceraOrdenId, "ENTREGADO", null, CLAVE_INTERNA_VALOR).getStatusCode(),
+                "La clave interna conserva autorización cuando la mesa está en POR_COBRAR");
+    }
+
+    @Test
+    void porCobrarExigeComandaActivaListaYServida() throws Exception {
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+
+        // Mesa OCUPADA sin comanda activa -> 409 al intentar POR_COBRAR
+        assertEquals(HttpStatus.OK, putEstadoMesa("OCUPADA", tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode(),
+                "POR_COBRAR sin comanda activa devuelve 409");
+        assertEquals(HttpStatus.OK, putEstadoMesa("LIBRE", tokenMozo).getStatusCode());
+
+        // Con comanda en RECIBIDO (no LISTO) -> 409
+        Long ordenId = abrirComandaSalon();
+        assertEquals(HttpStatus.CONFLICT, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode(),
+                "POR_COBRAR con comanda no LISTO devuelve 409");
+
+        // Con comanda en LISTO pero no servida -> 409
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "EN_PREPARACION", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.OK, patchEstadoOrden(ordenId, "LISTO", tokenMozo, null).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode(),
+                "POR_COBRAR con comanda no servida devuelve 409");
+
+        // Una vez servida -> permite POR_COBRAR
+        assertEquals(HttpStatus.OK, postServir(ordenId, tokenMozo).getStatusCode());
+        assertEquals(HttpStatus.OK, putEstadoMesa("POR_COBRAR", tokenMozo).getStatusCode(),
+                "Comanda lista y servida permite POR_COBRAR");
+        assertEquals(MesaEstado.POR_COBRAR, estadoDeLaMesa());
+    }
+
+    private Long abrirComandaSalon() throws Exception {
+        ResponseEntity<String> creada = postSalon(null, tokenDe(MOZO_ID, "MOZO"));
+        assertEquals(HttpStatus.CREATED, creada.getStatusCode(),
+                "no se pudo crear la comanda de salón: " + creada.getBody());
+        Long id = objectMapper.readTree(creada.getBody()).path("id").asLong();
+        ordenesCreadas.add(id);
+        return id;
+    }
+
+    private ResponseEntity<String> patchEstadoOrden(Long ordenId, String estado, String token, String claveInterna) {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        if (token != null) {
+            cabeceras.setBearerAuth(token);
+        }
+        if (claveInterna != null) {
+            cabeceras.set(CLAVE_INTERNA, claveInterna);
+        }
+        return rest.exchange("/ordenes/" + ordenId + "/estado", HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("estado", estado), cabeceras), String.class);
+    }
+
+    private ResponseEntity<String> postServir(Long ordenId, String token) {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setBearerAuth(token);
+        return rest.exchange("/ordenes/" + ordenId + "/servir", HttpMethod.POST,
+                new HttpEntity<>(cabeceras), String.class);
+    }
+
+    private ResponseEntity<String> putEstadoMesa(String estado, String token) {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        cabeceras.setBearerAuth(token);
+        return rest.exchange("/mesas/" + mesaId + "/estado", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("estado", estado), cabeceras), String.class);
     }
 
     private ResponseEntity<String> postSalon(String claveInterna, String token) {
@@ -191,6 +346,16 @@ class SalonRequierePersonalTest {
 
         return rest.exchange("/ordenes", HttpMethod.POST,
                 new HttpEntity<>(pedido, cabeceras), String.class);
+    }
+
+    /**
+     * D1.2: cancelar una comanda de salón (limpieza) lo hace un ADMIN, no el mozo.
+     */
+    private HttpHeaders cabecerasDeAdmin() {
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        cabeceras.setBearerAuth(tokenDe(MOZO_ID + 1, "ADMIN"));
+        return cabeceras;
     }
 
     private HttpHeaders cabecerasDeMozo() {

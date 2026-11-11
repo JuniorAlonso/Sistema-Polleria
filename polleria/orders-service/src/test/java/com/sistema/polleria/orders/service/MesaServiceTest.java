@@ -350,4 +350,75 @@ class MesaServiceTest {
         verify(ordenRepository, times(1)).findByMesaIdInAndEstadoNotIn(anyList(), anyList());
         verify(ordenRepository, never()).findByMesaIdAndEstadoNotIn(anyLong(), anyList());
     }
+
+    // D1.6 / F-02 — Solicitar cobro (POR_COBRAR) exige comanda activa, en LISTO y servida en mesa
+    @Test
+    void testPasarMesaAPorCobrarSinComandaValidaLanzaConflicto() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of());
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> mesaService.actualizarEstado(2L, MesaEstado.POR_COBRAR));
+
+        assertTrue(ex.getMessage().contains("no tiene una comanda activa"), ex.getMessage());
+        assertEquals(MesaEstado.OCUPADA, mesaOcupada.getEstado());
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testPasarMesaAPorCobrarConComandaNoListoLanzaConflicto() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        Orden enPreparacion = Orden.builder()
+                .id(88L)
+                .estado(OrdenEstado.EN_PREPARACION)
+                .build();
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(enPreparacion));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> mesaService.actualizarEstado(2L, MesaEstado.POR_COBRAR));
+
+        assertTrue(ex.getMessage().contains("todavía no está lista"), ex.getMessage());
+        assertEquals(MesaEstado.OCUPADA, mesaOcupada.getEstado());
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testPasarMesaAPorCobrarConComandaNoServidaLanzaConflicto() {
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        Orden listaSinServir = Orden.builder()
+                .id(89L)
+                .estado(OrdenEstado.LISTO)
+                .servidoEn(null)
+                .build();
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(listaSinServir));
+
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> mesaService.actualizarEstado(2L, MesaEstado.POR_COBRAR));
+
+        assertTrue(ex.getMessage().contains("servida"), ex.getMessage());
+        assertEquals(MesaEstado.OCUPADA, mesaOcupada.getEstado());
+        verify(mesaRepository, never()).save(any());
+    }
+
+    @Test
+    void testPasarMesaAPorCobrarConComandaValidaListaYServidaPermite() {
+        Orden listaYServida = Orden.builder()
+                .id(90L)
+                .mesa(mesaOcupada)
+                .estado(OrdenEstado.LISTO)
+                .servidoEn(LocalDateTime.now().minusMinutes(3))
+                .servidoPor(4L)
+                .total(new BigDecimal("55.00"))
+                .build();
+        when(mesaRepository.findById(2L)).thenReturn(Optional.of(mesaOcupada));
+        when(ordenRepository.findByMesaIdAndEstadoNotIn(eq(2L), anyList())).thenReturn(List.of(listaYServida));
+        when(mesaRepository.save(any(Mesa.class))).thenReturn(mesaOcupada);
+
+        MesaResponse response = mesaService.actualizarEstado(2L, MesaEstado.POR_COBRAR);
+
+        assertEquals(MesaEstado.POR_COBRAR, response.getEstado());
+        assertEquals(MesaEstado.POR_COBRAR, mesaOcupada.getEstado());
+        verify(mesaRepository).save(mesaOcupada);
+        verify(salonEventPublisher).notificarMesaActualizada(any(MesaResponse.class));
+    }
 }

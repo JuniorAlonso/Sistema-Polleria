@@ -195,6 +195,36 @@ public class MesaService {
             }
         }
 
+        // D1.6: solicitar el cobro (POR_COBRAR) exige una comanda activa lista y ya servida en mesa.
+        if (!esForzado && nuevoEstado == MesaEstado.POR_COBRAR) {
+            List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
+            if (comandasActivas.isEmpty()) {
+                String errorMsg = String.format(
+                        "No se puede pasar la mesa #%d a POR_COBRAR porque no tiene una comanda activa.",
+                        mesa.getNumero()
+                );
+                log.warn(errorMsg);
+                throw new ConflictoDeEstadoException(errorMsg);
+            }
+            Orden comanda = comandasActivas.get(0);
+            if (!comanda.getEstado().esListo()) {
+                String errorMsg = String.format(
+                        "No se puede pasar la mesa #%d a POR_COBRAR porque la comanda #%d todavía no está lista (estado actual: %s).",
+                        mesa.getNumero(), comanda.getId(), comanda.getEstado()
+                );
+                log.warn(errorMsg);
+                throw new ConflictoDeEstadoException(errorMsg);
+            }
+            if (comanda.getServidoEn() == null) {
+                String errorMsg = String.format(
+                        "No se puede pasar la mesa #%d a POR_COBRAR porque la comanda #%d aún no ha sido servida en mesa.",
+                        mesa.getNumero(), comanda.getId()
+                );
+                log.warn(errorMsg);
+                throw new ConflictoDeEstadoException(errorMsg);
+            }
+        }
+
         mesa.setEstado(nuevoEstado);
         mesaRepository.save(mesa);
         log.info("Mesa {} transición de estado: {} → {} (forzado: {})", mesa.getNumero(), actual, nuevoEstado, esForzado);

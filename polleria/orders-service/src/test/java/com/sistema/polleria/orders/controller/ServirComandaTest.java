@@ -110,7 +110,7 @@ class ServirComandaTest {
                             && o.getEstado() != OrdenEstado.ENTREGADO)
                     .orElse(false);
             if (activa) {
-                cambiarEstado(ordenId, "CANCELADO", tokenDeMozo());
+                cambiarEstado(ordenId, "CANCELADO", tokenDe(MOZO_ID + 1, "ADMIN"));
             }
         }
         ordenesCreadas.clear();
@@ -180,6 +180,33 @@ class ServirComandaTest {
         assertEquals(primeraMarca.truncatedTo(ChronoUnit.MILLIS),
                 repetidaMarca.truncatedTo(ChronoUnit.MILLIS),
                 "la marca original no se reescribe");
+    }
+
+    @Test
+    void segundaRondaLimpiaServidoYPuedeVolverAServirse() throws Exception {
+        Long ordenId = crearComandaDeSalon();
+        String token = tokenDeMozo();
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "EN_PREPARACION", token).getStatusCode());
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "LISTO", token).getStatusCode());
+        assertEquals(HttpStatus.OK, servir(ordenId, token).getStatusCode());
+        assertNotNull(estadoServidoEnBaseDeDatos(ordenId));
+
+        HttpHeaders cabeceras = new HttpHeaders();
+        cabeceras.setContentType(MediaType.APPLICATION_JSON);
+        cabeceras.setBearerAuth(token);
+        Map<String, Object> nuevaRonda = Map.of(
+                "items", List.of(Map.of("productoId", productoIdDisponible(), "cantidad", 1)));
+        ResponseEntity<String> ampliada = rest.exchange("/ordenes/" + ordenId + "/items", HttpMethod.POST,
+                new HttpEntity<>(nuevaRonda, cabeceras), String.class);
+
+        assertEquals(HttpStatus.OK, ampliada.getStatusCode());
+        assertNull(estadoServidoEnBaseDeDatos(ordenId), "la nueva ronda limpia servidoEn");
+
+        // Cuando cocina vuelve a marcar LISTO, se puede servir nuevamente
+        assertEquals(HttpStatus.OK, cambiarEstado(ordenId, "LISTO", token).getStatusCode());
+        ResponseEntity<String> servidaDeNuevo = servir(ordenId, token);
+        assertEquals(HttpStatus.OK, servidaDeNuevo.getStatusCode());
+        assertNotNull(estadoServidoEnBaseDeDatos(ordenId), "la segunda ronda queda servida");
     }
 
     @Test
