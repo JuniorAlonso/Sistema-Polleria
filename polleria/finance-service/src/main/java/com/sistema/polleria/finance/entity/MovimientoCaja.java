@@ -37,6 +37,10 @@ public class MovimientoCaja {
     @Column(name = "registrado_por")
     private Long registradoPor;
 
+    /** Order of a sale income; null for manual movements. Unique for INGRESO (D3.2). */
+    @Column(name = "orden_id")
+    private Long ordenId;
+
     @Builder.Default
     @Column(nullable = false)
     private LocalDateTime fecha = LocalDateTime.now();

@@ -59,4 +59,8 @@ public class ArqueoCaja {
 
     @Column(length = 1000)
     private String observaciones;
+
+    /** User who closed the register; filled from PR 2 on (CajaService.cerrar). */
+    @Column(name = "cerrado_por")
+    private Long cerradoPor;
 }
