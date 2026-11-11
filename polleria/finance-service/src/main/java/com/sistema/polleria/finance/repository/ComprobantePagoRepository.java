@@ -12,6 +12,9 @@ public interface ComprobantePagoRepository extends JpaRepository<ComprobantePago
 
     Optional<ComprobantePago> findByOrdenId(Long ordenId);
 
+    /** Receipts issued in a time window: the daily report counts orders and sales from them. */
+    java.util.List<ComprobantePago> findByEmitidoEnBetween(java.time.LocalDateTime inicio, java.time.LocalDateTime fin);
+
     @Query("SELECT COUNT(c) FROM ComprobantePago c WHERE c.tipo = :tipo")
     long contarPorTipo(@Param("tipo") TipoComprobante tipo);
 }

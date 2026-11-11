@@ -5,6 +5,7 @@ import com.sistema.polleria.finance.dto.ArqueoCajaResponse;
 import com.sistema.polleria.finance.dto.CierreCajaRequest;
 import com.sistema.polleria.finance.dto.MovimientoCajaRequest;
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -82,6 +83,7 @@ public class CajaService {
         MovimientoCaja movimiento = MovimientoCaja.builder()
                 .arqueoId(actual.getId())
                 .tipo(req.getTipo())
+                .categoria(CategoriaMovimiento.MANUAL)
                 .monto(req.getMonto())
                 .motivo(req.getMotivo())
                 .registradoPor(usuarioId)

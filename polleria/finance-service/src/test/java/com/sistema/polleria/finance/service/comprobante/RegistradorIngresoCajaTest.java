@@ -1,6 +1,7 @@
 package com.sistema.polleria.finance.service.comprobante;
 
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -43,6 +44,7 @@ class RegistradorIngresoCajaTest {
         assertThat(guardado.getTipo()).isEqualTo(TipoMovimiento.INGRESO);
         assertThat(guardado.getMonto()).isEqualByComparingTo("42.50");
         assertThat(guardado.getRegistradoPor()).isEqualTo(9L);
+        assertThat(guardado.getCategoria()).isEqualTo(CategoriaMovimiento.VENTA);
     }
 
     @Test

@@ -162,7 +162,8 @@ class LiquidacionServiceTest {
 
         assertEquals(EstadoLiquidacion.CERRADA, res.estado());
         assertEquals(new BigDecimal("0.00"), res.diferencia());
-        verify(movimientoRepository).save(any(MovimientoCaja.class)); // ingreso registrado en caja
+        // fondo devuelto (50) y rendición de ventas (150) como movimientos separados
+        verify(movimientoRepository, times(2)).save(any(MovimientoCaja.class));
     }
 
     @Test
@@ -349,7 +350,7 @@ class LiquidacionServiceTest {
         assertEquals(new BigDecimal("70.00"), res.saldoRestante());
         assertEquals(new BigDecimal("50.00"), liq.getTotalRendido());
         assertEquals(EstadoLiquidacion.ABIERTA, liq.getEstado());
-        verify(movimientoRepository).save(any(MovimientoCaja.class)); // Ingreso a caja registrado
+        verify(movimientoRepository, times(2)).save(any(MovimientoCaja.class)); // fondo 20 + rendición 30
         verify(pagosClient, never()).liquidar(any(), any(), any()); // No liquida aún porque queda saldo
     }
 
@@ -535,5 +536,68 @@ class LiquidacionServiceTest {
         assertTrue(e.getMessage().contains("caja abierta"));
         verifyNoInteractions(cobroRepartidorRepository, movimientoRepository, pagosClient);
         verify(liquidacionRepository, never()).save(any());
+    }
+
+    private List<MovimientoCaja> movimientosGuardados(int veces) {
+        org.mockito.ArgumentCaptor<MovimientoCaja> captor = org.mockito.ArgumentCaptor.forClass(MovimientoCaja.class);
+        verify(movimientoRepository, times(veces)).save(captor.capture());
+        return captor.getAllValues();
+    }
+
+    @Test
+    void abrirRegistraElFondoEntregadoComoFondoDelRepartidorYNoComoGasto() {
+        cajaAbierta();
+        when(liquidacionRepository.findFirstByRepartidorIdAndEstado(4L, EstadoLiquidacion.ABIERTA)).thenReturn(Optional.empty());
+        when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> {
+            LiquidacionRepartidor l = inv.getArgument(0);
+            l.setId(40L);
+            return l;
+        });
+
+        liquidacionService.abrir(new AperturaLiquidacionRequest(4L, "Juan", new BigDecimal("50.00"), null), 2L);
+
+        MovimientoCaja egreso = movimientosGuardados(1).get(0);
+        assertEquals(TipoMovimiento.EGRESO, egreso.getTipo());
+        assertEquals(CategoriaMovimiento.FONDO_REPARTIDOR, egreso.getCategoria());
+    }
+
+    @Test
+    void cerrarSeparaElFondoDevueltoDeLaRendicionDeVentas() {
+        cajaAbierta();
+        LiquidacionRepartidor liq = LiquidacionRepartidor.builder()
+                .id(41L).repartidorId(4L).repartidorNombre("Juan")
+                .fondoInicial(new BigDecimal("50.00")).estado(EstadoLiquidacion.ABIERTA).build();
+        when(liquidacionRepository.findByIdParaActualizar(41L)).thenReturn(Optional.of(liq));
+        when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(pagosClient.obtenerPendiente(any(), any(), any())).thenReturn(pendienteDe("150.00"));
+
+        liquidacionService.cerrar(41L, new CierreLiquidacionRequest(new BigDecimal("200.00"), null, null), 2L, "Bearer t");
+
+        List<MovimientoCaja> ingresos = movimientosGuardados(2);
+        assertEquals(CategoriaMovimiento.FONDO_REPARTIDOR, ingresos.get(0).getCategoria());
+        assertEquals(0, ingresos.get(0).getMonto().compareTo(new BigDecimal("50.00")));
+        assertEquals(CategoriaMovimiento.RENDICION_REPARTIDOR, ingresos.get(1).getCategoria());
+        assertEquals(0, ingresos.get(1).getMonto().compareTo(new BigDecimal("150.00")));
+        assertTrue(ingresos.stream().allMatch(m -> m.getTipo() == TipoMovimiento.INGRESO));
+    }
+
+    @Test
+    void unCobroPosteriorAlFondoYaDevueltoEsSoloRendicion() {
+        cajaAbierta();
+        LiquidacionRepartidor liq = LiquidacionRepartidor.builder()
+                .id(42L).repartidorId(4L).repartidorNombre("Juan")
+                .fondoInicial(new BigDecimal("20.00")).totalRendido(new BigDecimal("30.00"))
+                .estado(EstadoLiquidacion.ABIERTA).build();
+        when(liquidacionRepository.findFirstByRepartidorIdAndEstado(4L, EstadoLiquidacion.ABIERTA)).thenReturn(Optional.of(liq));
+        when(pagosClient.obtenerPendiente(4L, null, "Bearer t")).thenReturn(pendienteDe("100.00"));
+        when(cobroRepartidorRepository.sumMontoByLiquidacionId(42L)).thenReturn(new BigDecimal("30.00"));
+        when(cobroRepartidorRepository.save(any(CobroRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(liquidacionRepository.save(any(LiquidacionRepartidor.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        liquidacionService.registrarCobro(new RegistrarCobroRepartidorRequest(4L, "Juan", new BigDecimal("10.00"), null), 2L, "Bearer t");
+
+        MovimientoCaja ingreso = movimientosGuardados(1).get(0);
+        assertEquals(CategoriaMovimiento.RENDICION_REPARTIDOR, ingreso.getCategoria());
+        assertEquals(0, ingreso.getMonto().compareTo(new BigDecimal("10.00")));
     }
 }

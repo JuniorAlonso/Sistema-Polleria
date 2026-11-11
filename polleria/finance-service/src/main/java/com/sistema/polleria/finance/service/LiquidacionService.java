@@ -58,6 +58,7 @@ public class LiquidacionService {
             MovimientoCaja egreso = MovimientoCaja.builder()
                     .arqueoId(arqueoOpt.get().getId())
                     .tipo(TipoMovimiento.EGRESO)
+                    .categoria(CategoriaMovimiento.FONDO_REPARTIDOR)
                     .monto(req.fondoInicial())
                     .motivo("Fondo de vueltos entregado al repartidor " + req.repartidorNombre() + " (Liq #" + liq.getId() + ")")
                     .registradoPor(cajeroId)
@@ -106,6 +107,7 @@ public class LiquidacionService {
         MovimientoCaja egreso = MovimientoCaja.builder()
                 .arqueoId(arqueoOpt.get().getId())
                 .tipo(TipoMovimiento.EGRESO)
+                    .categoria(CategoriaMovimiento.FONDO_REPARTIDOR)
                 .monto(req.monto())
                 .motivo(motivoEgreso)
                 .registradoPor(cajeroId)
@@ -194,15 +196,9 @@ public class LiquidacionService {
 
         // Registrar ingreso del remanente efectivo en la caja activa del cajero (solo el incremental para no duplicar)
         if (incrementalCierre.compareTo(BigDecimal.ZERO) > 0) {
-            MovimientoCaja ingreso = MovimientoCaja.builder()
-                    .arqueoId(caja.getId())
-                    .tipo(TipoMovimiento.INGRESO)
-                    .monto(incrementalCierre)
-                    .motivo("Rendición y liquidación de repartidor " + liq.getRepartidorNombre() + " (Liq #" + liq.getId() + ")")
-                    .registradoPor(cajeroId)
-                    .fecha(LocalDateTime.now())
-                    .build();
-            movimientoRepository.save(ingreso);
+            registrarIngresoRepartidor(liq, caja, incrementalCierre, totalRendidoPrevio,
+                    "Rendición y liquidación de repartidor " + liq.getRepartidorNombre() + " (Liq #" + liq.getId() + ")",
+                    cajeroId);
 
             // Registrar también en el libro mayor de cobros a repartidores
             CobroRepartidor cobroCierre = CobroRepartidor.builder()
@@ -325,14 +321,9 @@ public class LiquidacionService {
         cobro = cobroRepartidorRepository.save(cobro);
 
         // 6. Registrar el INGRESO en la caja abierta
-        movimientoRepository.save(MovimientoCaja.builder()
-                .arqueoId(arqueoId)
-                .tipo(TipoMovimiento.INGRESO)
-                .monto(req.monto())
-                .motivo("Cobro de efectivo a repartidor " + liq.getRepartidorNombre() + " (Cobro #" + cobro.getId() + ")")
-                .registradoPor(operadorId)
-                .fecha(LocalDateTime.now())
-                .build());
+        registrarIngresoRepartidor(liq, caja, req.monto(), totalRendidoPrevio,
+                "Cobro de efectivo a repartidor " + liq.getRepartidorNombre() + " (Cobro #" + cobro.getId() + ")",
+                operadorId);
 
         // 7. Actualizar la liquidación
         BigDecimal nuevoTotalRendido = totalRendidoPrevio.add(req.monto());
@@ -404,5 +395,38 @@ public class LiquidacionService {
         return arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new IllegalStateException(
                         "No hay una caja abierta: abre la caja antes de recibir efectivo del repartidor"));
+    }
+
+    /**
+     * Cash a courier hands in returns the change float first and only the rest is sales cash, so the
+     * daily report counts neither the float as a sale nor its handover as an expense (R3.10). The
+     * drawer total is the same as one single movement.
+     */
+    private void registrarIngresoRepartidor(LiquidacionRepartidor liq, ArqueoCaja caja, BigDecimal monto,
+                                            BigDecimal rendidoPrevio, String motivo, Long usuarioId) {
+        BigDecimal fondo = liq.getFondoInicial() != null ? liq.getFondoInicial() : BigDecimal.ZERO;
+        BigDecimal fondoPorDevolver = fondo.subtract(rendidoPrevio).max(BigDecimal.ZERO);
+        BigDecimal parteFondo = monto.min(fondoPorDevolver);
+        BigDecimal parteVentas = monto.subtract(parteFondo);
+        if (parteFondo.signum() > 0) {
+            movimientoRepository.save(ingreso(caja, parteFondo, CategoriaMovimiento.FONDO_REPARTIDOR,
+                    "Devolución de fondo de vueltos · " + motivo, usuarioId));
+        }
+        if (parteVentas.signum() > 0) {
+            movimientoRepository.save(ingreso(caja, parteVentas, CategoriaMovimiento.RENDICION_REPARTIDOR, motivo, usuarioId));
+        }
+    }
+
+    private static MovimientoCaja ingreso(ArqueoCaja caja, BigDecimal monto, CategoriaMovimiento categoria,
+                                          String motivo, Long usuarioId) {
+        return MovimientoCaja.builder()
+                .arqueoId(caja.getId())
+                .tipo(TipoMovimiento.INGRESO)
+                .categoria(categoria)
+                .monto(monto)
+                .motivo(motivo.length() > 255 ? motivo.substring(0, 255) : motivo)
+                .registradoPor(usuarioId)
+                .fecha(LocalDateTime.now())
+                .build();
     }
 }

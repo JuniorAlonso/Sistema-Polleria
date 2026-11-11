@@ -1,6 +1,7 @@
 package com.sistema.polleria.finance.service.comprobante;
 
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -42,6 +43,7 @@ public class RegistradorIngresoCaja {
                     .arqueoId(caja.getId())
                     .ordenId(ordenId)
                     .tipo(TipoMovimiento.INGRESO)
+                    .categoria(CategoriaMovimiento.VENTA)
                     .monto(monto)
                     .motivo(motivo)
                     .registradoPor(usuarioId)

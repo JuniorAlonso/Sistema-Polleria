@@ -5,6 +5,7 @@ import com.sistema.polleria.finance.dto.ArqueoCajaResponse;
 import com.sistema.polleria.finance.dto.CierreCajaRequest;
 import com.sistema.polleria.finance.dto.MovimientoCajaRequest;
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -27,6 +28,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -125,7 +127,7 @@ class CajaServiceTest {
         assertThat(res.getArqueoId()).isEqualTo(1L);
         assertThat(res.getTipo()).isEqualTo(TipoMovimiento.EGRESO);
         assertThat(res.getMonto()).isEqualByComparingTo("25.50");
-        verify(movimientoRepository).save(any(MovimientoCaja.class));
+        verify(movimientoRepository).save(argThat(m -> m.getCategoria() == CategoriaMovimiento.MANUAL));
     }
 
     @Test

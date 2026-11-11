@@ -41,6 +41,11 @@ public class MovimientoCaja {
     @Column(name = "orden_id")
     private Long ordenId;
 
+    /** Null for movements stored before the column existed. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private CategoriaMovimiento categoria;
+
     @Builder.Default
     @Column(nullable = false)
     private LocalDateTime fecha = LocalDateTime.now();
