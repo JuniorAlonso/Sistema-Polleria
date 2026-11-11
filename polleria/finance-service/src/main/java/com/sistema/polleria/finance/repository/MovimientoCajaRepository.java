@@ -16,4 +16,6 @@ public interface MovimientoCajaRepository extends JpaRepository<MovimientoCaja, 
     List<MovimientoCaja> findByFechaBetweenOrderByFechaDesc(LocalDateTime desde, LocalDateTime hasta);
 
     List<MovimientoCaja> findByArqueoIdAndTipo(Long arqueoId, TipoMovimiento tipo);
+
+    boolean existsByOrdenIdAndTipo(Long ordenId, TipoMovimiento tipo);
 }

@@ -34,6 +34,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
     }
 
+    @ExceptionHandler(com.sistema.polleria.finance.service.OrdenesClient.OrdenesNoDisponibleException.class)
+    public ResponseEntity<Map<String, String>> handleOrdenesNoDisponible(
+            com.sistema.polleria.finance.service.OrdenesClient.OrdenesNoDisponibleException e) {
+        log.warn("orders-service unavailable: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
+    }
+
     @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> handleAccessDenied(
             org.springframework.security.access.AccessDeniedException e) {

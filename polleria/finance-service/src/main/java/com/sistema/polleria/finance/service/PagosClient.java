@@ -9,6 +9,8 @@ import org.springframework.web.client.RestClient;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /**
  * Reads and settles courier cash payments held by payments-service (S6). It forwards the caller's JWT
@@ -41,6 +43,34 @@ public class PagosClient {
     public static class PagosNoDisponibleException extends RuntimeException {
         public PagosNoDisponibleException(String message, Throwable cause) {
             super(message, cause);
+        }
+    }
+
+    /** Payment of an order, as payments-service exposes it in {@code GET /pagos/orden/{id}}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PagoOrden(Long id, Long ordenId, BigDecimal monto, String estado) {
+    }
+
+    /**
+     * Payment of the order, or empty when it has none (404). It forwards the caller's JWT: the
+     * main security chain of payments only reads Bearer tokens (D3.15).
+     */
+    public Optional<PagoOrden> obtenerPagoDeOrden(Long ordenId, String bearer) {
+        try {
+            PagoOrden pago = restClient.get().uri("/pagos/orden/{id}", ordenId)
+                    .headers(h -> aplicarCabeceras(h, bearer))
+                    .retrieve()
+                    .onStatus(s -> s.value() == 404, (req, res) -> {
+                        throw new NoSuchElementException("Sin pago para la orden " + ordenId);
+                    })
+                    .body(PagoOrden.class);
+            return Optional.ofNullable(pago);
+        } catch (NoSuchElementException e) {
+            return Optional.empty();
+        } catch (Exception e) {
+            log.warn("No se pudo leer el pago de la orden {}: {}", ordenId, e.getMessage());
+            throw new PagosNoDisponibleException(
+                    "No se pudo verificar el pago de la orden " + ordenId + " en este momento. Intenta nuevamente.", e);
         }
     }
 

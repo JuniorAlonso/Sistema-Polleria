@@ -31,6 +31,7 @@ public class ComprobanteController {
     public ResponseEntity<ComprobanteResponse> emitir(
             @Valid @RequestBody EmitirComprobanteRequest request,
             @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
             Authentication authentication) {
 
         boolean esInterno = esLlamadaInterna(claveInterna);
@@ -42,7 +43,7 @@ public class ComprobanteController {
         }
 
         Long usuarioId = authentication != null ? 1L : 0L;
-        return ResponseEntity.status(HttpStatus.CREATED).body(comprobanteService.emitir(request, usuarioId));
+        return ResponseEntity.status(HttpStatus.CREATED).body(comprobanteService.emitir(request, usuarioId, authorization));
     }
 
     @GetMapping("/orden/{ordenId}")

@@ -1,7 +1,6 @@
 package com.sistema.polleria.finance.dto;
 
 import com.sistema.polleria.finance.entity.TipoComprobante;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -22,12 +21,29 @@ public record EmitirComprobanteRequest(
 
         String clienteDireccion,
 
-        @NotNull(message = "El total es obligatorio")
-        @DecimalMin(value = "0.10", message = "El total debe ser mayor a 0")
+        /**
+         * Ignored since D3.15: finance takes the total from the approved payment or the order.
+         * Kept so existing clients that still send it keep working.
+         */
         BigDecimal total,
 
         @NotNull(message = "Debe indicar si el pedido ya fue pagado o es contraentrega")
         Boolean pagadoDigitalmente,
 
-        BigDecimal vueltoEstimado
-) {}
+        BigDecimal vueltoEstimado,
+
+        /** Optional (D3.2): when true, the cash income of the sale is registered once per order. */
+        Boolean ingresoCaja
+) {
+    /** Shape used before {@code ingresoCaja} existed; equivalent to {@code ingresoCaja=false}. */
+    public EmitirComprobanteRequest(Long ordenId, TipoComprobante tipo, String clienteTipoDoc,
+                                    String clienteNumDoc, String clienteNombre, String clienteDireccion,
+                                    BigDecimal total, Boolean pagadoDigitalmente, BigDecimal vueltoEstimado) {
+        this(ordenId, tipo, clienteTipoDoc, clienteNumDoc, clienteNombre, clienteDireccion, total,
+                pagadoDigitalmente, vueltoEstimado, null);
+    }
+
+    public boolean registraIngresoCaja() {
+        return Boolean.TRUE.equals(ingresoCaja);
+    }
+}
