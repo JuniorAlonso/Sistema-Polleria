@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { CurrencyPENPipe } from '../../../../shared/pipes/currency-pen.pipe';
 import { ArqueoCaja, BalanceDiario } from '../../../../core/models/finance.model';
@@ -32,35 +32,39 @@ import { ArqueoCaja, BalanceDiario } from '../../../../core/models/finance.model
             }
           </div>
 
-          <!-- Financial Metrics Grid -->
+          <!-- Financial Metrics Grid: same daily figures the backend computes (GET /finanzas/balance/diario) -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
               <span class="text-[11px] text-slate-400 uppercase font-bold">Ventas Totales del Día</span>
-              <p class="font-display text-2xl font-black text-white">
-                {{ (balanceDiario()?.totalVentas || 0) | currencyPEN }}
+              <p data-testid="summary-total" class="font-display text-2xl font-black text-white">
+                {{ (balanceDiario()?.ingresos?.totalIngresos || 0) | currencyPEN }}
               </p>
-              <p class="text-[10px] text-emerald-400">Conciliado con orders-service</p>
+              <p class="text-[10px] text-slate-400">
+                {{ balanceDiario()?.ordenesAtendidas || 0 }} comprobantes • Ticket promedio {{ (balanceDiario()?.ticketPromedio || 0) | currencyPEN }}
+              </p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
               <span class="text-[11px] text-slate-400 uppercase font-bold">Caja Salón (Efectivo)</span>
-              <p class="font-display text-2xl font-black text-polleria-gold">
-                {{ (cajaActual()?.ventasEfectivo || 0) | currencyPEN }}
+              <p data-testid="summary-cash" class="font-display text-2xl font-black text-polleria-gold">
+                {{ (balanceDiario()?.ingresos?.efectivoSalon || 0) | currencyPEN }}
               </p>
-              <p class="text-[10px] text-slate-400">Físico a rendir en gaveta</p>
+              <p class="text-[10px] text-slate-400">Ventas en efectivo del día</p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
               <span class="text-[11px] text-slate-400 uppercase font-bold">Pasarelas (Yape / Tarjetas)</span>
-              <p class="font-display text-2xl font-black text-sky-400">
-                {{ (cajaActual()?.ventasDigital || 0) | currencyPEN }}
+              <p data-testid="summary-digital" class="font-display text-2xl font-black text-sky-400">
+                {{ ventasNoEfectivo() | currencyPEN }}
               </p>
-              <p class="text-[10px] text-slate-400">Acreditación automática en cuenta</p>
+              <p class="text-[10px] text-slate-400">
+                Digital {{ (balanceDiario()?.ingresos?.pasarelaDigital || 0) | currencyPEN }} • POS {{ (balanceDiario()?.ingresos?.posFisicoSalon || 0) | currencyPEN }}
+              </p>
             </div>
             <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
               <span class="text-[11px] text-slate-400 uppercase font-bold">Saldo Neto Consolidado</span>
-              <p class="font-display text-2xl font-black text-emerald-400">
-                {{ (balanceDiario()?.saldoNeto || 0) | currencyPEN }}
+              <p data-testid="summary-net" class="font-display text-2xl font-black text-emerald-400">
+                {{ (balanceDiario()?.balanceNeto || 0) | currencyPEN }}
               </p>
-              <p class="text-[10px] text-slate-400">Gastos: {{ (balanceDiario()?.totalGastos || 0) | currencyPEN }}</p>
+              <p class="text-[10px] text-slate-400">Gastos: {{ (balanceDiario()?.egresos?.totalEgresos || 0) | currencyPEN }}</p>
             </div>
           </div>
   `
@@ -70,4 +74,10 @@ export class CashSummaryComponent {
   readonly balanceDiario = input.required<BalanceDiario | null>();
   /** Nombre del usuario en sesión (cajero por defecto si la caja no lo trae). */
   readonly userName = input<string | undefined>();
+
+  /** Non-cash sales of the day: digital gateways plus the physical card terminal. */
+  protected readonly ventasNoEfectivo = computed(() => {
+    const ingresos = this.balanceDiario()?.ingresos;
+    return (ingresos?.pasarelaDigital || 0) + (ingresos?.posFisicoSalon || 0);
+  });
 }

@@ -4,6 +4,7 @@ import { AuthService } from '../../../../core/services/auth.service';
 import { FinanceService } from '../../../../core/services/finance.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { TipoMovimiento } from '../../../../core/models/finance.model';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { CashHeaderComponent } from '../../components/finanzas/cash-header.component';
 import { CashSummaryComponent } from '../../components/finanzas/cash-summary.component';
 import { CashMovementsTableComponent } from '../../components/finanzas/cash-movements-table.component';
@@ -71,6 +72,7 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
       <app-cash-close-modal
         [cajaActual]="financeService.cajaActual()"
         [initial]="{ efectivoReal: cierreEfectivoReal, observaciones: cierreObservaciones }"
+        [errorMessage]="cierreError"
         (closed)="showCerrarCajaModal = false"
         (confirmed)="cierreEfectivoReal = $event.efectivoReal; cierreObservaciones = $event.observaciones; confirmarCierreCaja()"
       />
@@ -113,8 +115,11 @@ export class AdminFinanzasPage implements OnInit {
 
   // Modal de Cierre / Arqueo de Caja (Fase 6)
   showCerrarCajaModal = false;
-  cierreEfectivoReal = 0;
+  /** Blind count (D3.12): starts empty, never pre-filled with the expected cash. */
+  cierreEfectivoReal: number | null = null;
   cierreObservaciones = '';
+  /** Backend message of the last failed close, shown inside the modal. */
+  cierreError: string | null = null;
 
   // Modal de Movimiento de Caja Menor (Fase 6)
   showMovimientoCajaModal = false;
@@ -137,14 +142,15 @@ export class AdminFinanzasPage implements OnInit {
   }
 
   abrirModalCierreCaja(): void {
-    const caja = this.financeService.cajaActual();
-    const esperado = (caja?.montoInicial || 0) + (caja?.ventasEfectivo || 0);
-    this.cierreEfectivoReal = esperado;
-    this.cierreObservaciones = 'Cierre de turno regular sin novedades';
+    this.cierreEfectivoReal = null;
+    this.cierreObservaciones = '';
+    this.cierreError = null;
     this.showCerrarCajaModal = true;
   }
 
   confirmarCierreCaja(): void {
+    if (this.cierreEfectivoReal === null || this.cierreEfectivoReal < 0) return;
+    this.cierreError = null;
     this.financeService.cerrarCaja(this.cierreEfectivoReal, this.cierreObservaciones).subscribe({
       next: (cierre) => {
         const disc = cierre.discrepancia || 0;
@@ -154,9 +160,14 @@ export class AdminFinanzasPage implements OnInit {
           this.notify.showSuccess('Arqueo de caja cuadrado a la perfección');
         }
         this.showCerrarCajaModal = false;
+        this.financeService.cargarBalanceDiario();
+        this.financeService.cargarCajaActual();
+        this.financeService.cargarMovimientos();
       },
-      error: () => {
-        this.notify.showError('No se pudo cerrar la caja del turno');
+      error: (err: unknown) => {
+        // Keep the modal open so the admin can recount or add the reason (400 without observaciones).
+        this.cierreError = mensajeError(err, 'No se pudo cerrar la caja del turno');
+        this.notify.showError(this.cierreError);
       }
     });
   }
