@@ -556,12 +556,16 @@ export class CheckoutComponent implements OnInit {
     return paga > total ? Math.round((paga - total) * 100) / 100 : 0;
   }
 
+  /** D3.9: prices include IGV, so base = total / 1.18 rounded HALF_UP to 2 decimals. */
   getSubtotalNeto(): number {
-    return Math.round((this.cart.subtotal() * 0.82) * 100) / 100;
+    const base = this.cart.subtotal() / 1.18;
+    // toFixed(8) removes binary noise (e.g. 8.474999...) before rounding half up.
+    return Math.round(Number((base * 100).toFixed(8))) / 100;
   }
 
+  /** D3.9: igv = total - base, so base + igv equals the total exactly. */
   getIgv(): number {
-    return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
+    return Math.round((this.cart.subtotal() - this.getSubtotalNeto()) * 100) / 100;
   }
 
   irALogin(): void {

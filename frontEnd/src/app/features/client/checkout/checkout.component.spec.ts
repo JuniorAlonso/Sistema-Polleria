@@ -327,4 +327,28 @@ describe('CheckoutComponent', () => {
       expect(component.sancionActiva()).toBeTrue();
     });
   });
+  describe('S10: IGV breakdown (D3.9, prices include IGV)', () => {
+    const setTotal = (total: number) => {
+      cart.items.set([{
+        product: { id: 'p1', nombre: 'Pollo', descripcion: '', precio: total, categoria: 'POLLOS_A_LA_BRASA', imagenUrl: '', agotado: false } as never,
+        cantidad: 1,
+        subtotal: total
+      }]);
+    };
+
+    it('derives base = total / 1.18 rounded HALF_UP and igv = total - base, so they add up to the total', () => {
+      setTotal(10);
+      expect(component.getSubtotalNeto()).toBe(8.47);
+      expect(component.getIgv()).toBe(1.53);
+      expect(Math.round((component.getSubtotalNeto() + component.getIgv()) * 100) / 100).toBe(10);
+    });
+
+    it('shows the same base and IGV in the summary', () => {
+      setTotal(10);
+      fixture.detectChanges();
+      const texto = (fixture.nativeElement as HTMLElement).textContent ?? '';
+      expect(texto).toContain('8.47');
+      expect(texto).toContain('1.53');
+    });
+  });
 });
