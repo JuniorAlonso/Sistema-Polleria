@@ -1,19 +1,16 @@
 package com.sistema.polleria.feedback.service;
 
+import io.minio.*;
+import io.minio.errors.MinioException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.io.InputStream;
 import java.util.Set;
 import java.util.UUID;
 
@@ -26,16 +23,18 @@ public class FileStorageService {
             "image/jpeg", "image/png", "image/webp"
     );
 
-    private final Path storageLocation;
+    // Magic bytes para validar firmas de archivo (D4.5)
+    private static final byte[] JPEG_MAGIC = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF};
+    private static final byte[] PNG_MAGIC  = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47};
 
-    public FileStorageService(@Value("${storage.upload-dir:./uploads/evidencias}") String uploadDir) {
-        this.storageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(this.storageLocation);
-        } catch (IOException e) {
-            log.error("No se pudo inicializar directorio de almacenamiento: {}", e.getMessage());
-            throw new IllegalStateException("No se pudo inicializar el almacenamiento de archivos", e);
-        }
+    private final MinioClient minioClient;
+    private final String bucket;
+
+    public FileStorageService(
+            MinioClient minioClient,
+            @Value("${minio.bucket.feedback:polleria-feedback}") String bucket) {
+        this.minioClient = minioClient;
+        this.bucket = bucket;
     }
 
     public String guardarArchivo(MultipartFile file) {
@@ -49,54 +48,105 @@ public class FileStorageService {
             throw new IllegalArgumentException("Tipo de archivo no permitido. Solo se aceptan JPEG, PNG y WEBP.");
         }
 
-        // 2. Extraer y validar extensión
+        // 2. Validar extensión
         String originalFilename = file.getOriginalFilename();
         String extension = "";
         if (originalFilename != null && originalFilename.contains(".")) {
             extension = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase();
         }
-
         if (!EXTENSIONES_VALIDAS.contains(extension)) {
-            throw new IllegalArgumentException("Extensión de archivo no permitida. Solo se aceptan: " + EXTENSIONES_VALIDAS);
+            throw new IllegalArgumentException("Extensión no permitida. Solo: " + EXTENSIONES_VALIDAS);
         }
 
         try {
-            // 3. Generar UUID seguro para evitar inyección en nombres
-            String fileName = UUID.randomUUID().toString() + extension;
-            Path targetLocation = this.storageLocation.resolve(fileName).normalize();
+            byte[] bytes = file.getBytes();
 
-            if (!targetLocation.startsWith(this.storageLocation)) {
-                throw new SecurityException("Intento de path traversal detectado al guardar");
+            // 3. Validar firma (magic bytes) — D4.5
+            if (!coincideConFirma(bytes, contentType)) {
+                throw new IllegalArgumentException("El contenido del archivo no coincide con su extensión declarada.");
             }
 
-            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
-            log.info("Evidencia guardada exitosamente: {}", fileName);
-            return "/feedback/evidencias/" + fileName;
-        } catch (IOException e) {
-            log.error("Error al guardar archivo de evidencia: {}", e.getMessage());
+            String objectName = UUID.randomUUID() + extension;
+
+            // 4. Subir a MinIO — 503 si falla (D4.4)
+            try {
+                minioClient.putObject(PutObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(objectName)
+                        .stream(new java.io.ByteArrayInputStream(bytes), bytes.length, -1)
+                        .contentType(contentType)
+                        .build());
+                log.info("Evidencia subida a MinIO: bucket={}, object={}", bucket, objectName);
+            } catch (Exception e) {
+                log.error("MinIO no disponible al subir evidencia: {}", e.getMessage());
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "El almacenamiento de evidencias no está disponible en este momento. Intenta de nuevo en unos minutos.");
+            }
+
+            return "/feedback/evidencias/" + objectName;
+
+        } catch (ResponseStatusException | IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Error al procesar la evidencia: {}", e.getMessage());
             throw new RuntimeException("Error al procesar la evidencia fotográfica", e);
         }
     }
 
-    public Resource cargarComoRecurso(String fileName) throws IOException {
-        if (fileName == null || fileName.contains("..") || fileName.contains("/") || fileName.contains("\\")) {
-            throw new SecurityException("Nombre de archivo inválido: " + fileName);
+    public byte[] leerArchivo(String objectName) {
+        validarNombreObjeto(objectName);
+        try (InputStream is = minioClient.getObject(GetObjectArgs.builder()
+                .bucket(bucket)
+                .object(objectName)
+                .build())) {
+            return is.readAllBytes();
+        } catch (Exception e) {
+            log.warn("No se pudo leer la evidencia '{}' de MinIO: {}", objectName, e.getMessage());
+            throw new java.util.NoSuchElementException("Evidencia no encontrada: " + objectName);
         }
-
-        Path filePath = this.storageLocation.resolve(fileName).normalize();
-        if (!filePath.startsWith(this.storageLocation)) {
-            throw new SecurityException("Acceso a ruta no permitido: " + fileName);
-        }
-
-        if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
-            throw new FileNotFoundException("Archivo de evidencia no encontrado: " + fileName);
-        }
-
-        return new UrlResource(filePath.toUri());
     }
 
-    public byte[] leerArchivo(String fileName) throws IOException {
-        Resource resource = cargarComoRecurso(fileName);
-        return resource.getContentAsByteArray();
+    public String resolverContentType(String objectName) {
+        if (objectName == null) return MediaType.APPLICATION_OCTET_STREAM_VALUE;
+        String lower = objectName.toLowerCase();
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".webp")) return "image/webp";
+        return MediaType.APPLICATION_OCTET_STREAM_VALUE;
+    }
+
+    private static void validarNombreObjeto(String nombre) {
+        if (nombre == null || nombre.isBlank() || nombre.contains("..") || nombre.contains("/") || nombre.contains("\\")) {
+            throw new SecurityException("Nombre de objeto inválido: " + nombre);
+        }
+        // Solo UUIDs con extensión de imagen (D4.5)
+        if (!nombre.matches("^[0-9a-f\\-]{36}\\.(jpg|jpeg|png|webp)$")) {
+            throw new SecurityException("Nombre de objeto no válido para evidencias: " + nombre);
+        }
+    }
+
+    private static boolean coincideConFirma(byte[] bytes, String contentType) {
+        if (bytes.length < 4) return false;
+        if (contentType.contains("jpeg") || contentType.contains("jpg")) {
+            return startsWith(bytes, JPEG_MAGIC);
+        }
+        if (contentType.contains("png")) {
+            return startsWith(bytes, PNG_MAGIC);
+        }
+        // webp: starts with RIFF....WEBP
+        if (contentType.contains("webp")) {
+            return bytes.length >= 12
+                    && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                    && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+        }
+        return true;
+    }
+
+    private static boolean startsWith(byte[] data, byte[] prefix) {
+        if (data.length < prefix.length) return false;
+        for (int i = 0; i < prefix.length; i++) {
+            if (data[i] != prefix[i]) return false;
+        }
+        return true;
     }
 }

@@ -167,7 +167,8 @@ public class MercadoPagoGateway implements PaymentGateway {
         if (pago == null) return false;
         String ref = pago.getReferenciaExterna();
         String detalle = pago.getDetalle();
-        return (ref != null && (ref.startsWith("MP-") || ref.matches("^\\d+$") || ref.contains("-")))
+        // D4.6: ref.contains("-") daba falsos positivos (UUIDs, tickets). Solo patrones MP.
+        return (ref != null && (ref.matches("^MP-\\d+$") || ref.matches("^\\d+$")))
                 || (detalle != null && detalle.toLowerCase().contains("mercado pago"));
     }
 

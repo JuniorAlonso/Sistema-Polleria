@@ -23,6 +23,7 @@ import { CajeroArqueoTabComponent } from './components/cajero-arqueo-tab.compone
 import { CajeroHistorialTabComponent } from './components/cajero-historial-tab.component';
 import { CajeroLlamadasTabComponent } from './components/cajero-llamadas-tab.component';
 import { CajeroLiquidacionesTabComponent } from './components/cajero-liquidaciones-tab.component';
+import { CajeroDevolucionesTabComponent } from './components/cajero-devoluciones-tab.component';
 import { CajeroCobroModalComponent } from './components/cajero-cobro-modal.component';
 import { CajeroTicketModalComponent } from './components/cajero-ticket-modal.component';
 import { CajeroMovimientoModalComponent } from './components/cajero-movimiento-modal.component';
@@ -34,6 +35,10 @@ import { CajeroCobroRepartidorModalComponent } from './components/cajero-cobro-r
 import { CobroSalonFacade, ErrorCobro } from './services/cobro-salon.facade';
 import { DatosFiscales, consumidorFinal, motivoDatosFiscalesInvalidos } from './models/datos-fiscales';
 import { mensajeError } from '../../core/utils/api-error';
+import { FeedbackService } from '../../core/services/feedback.service';
+import { SecurityAuditService } from '../../core/services/security-audit.service';
+import { IncidentCreateModalComponent } from '../admin/components/soporte/incident-create-modal.component';
+import { IncidenteForm } from '../admin/models/admin-forms';
 
 export type { CajeroTab, MetodoCobro };
 
@@ -50,6 +55,8 @@ export type { CajeroTab, MetodoCobro };
     CajeroCapturasTabComponent,
     CajeroRecojoTabComponent,
     CajeroLiquidacionesTabComponent,
+    CajeroDevolucionesTabComponent,
+    IncidentCreateModalComponent,
     CajeroCobroModalComponent,
     CajeroTicketModalComponent,
     CajeroMovimientoModalComponent,
@@ -74,6 +81,7 @@ export type { CajeroTab, MetodoCobro };
         [totalRecojo]="ordenesRecojo().length"
         [totalLiquidaciones]="liquidacionesAbiertas().length"
         [totalCobros]="cobrosDelDia().length"
+        [totalDevoluciones]="feedbackService.devolucionesPendientes().length"
         [usuarioNombre]="auth.currentUser()?.nombre"
         (logout)="cerrarSesion()"
       />
@@ -170,7 +178,30 @@ export type { CajeroTab, MetodoCobro };
             />
           }
 
+          @if (activeTab() === 'DEVOLUCIONES') {
+            <app-cajero-devoluciones-tab
+              [devoluciones]="feedbackService.devolucionesPendientes()"
+              [procesando]="procesandoAccion()"
+              (refresh)="feedbackService.cargarDevolucionesPendientes()"
+              (entregar)="entregarDevolucion($event)"
+            />
+          }
+
         </div>
+
+        <!-- Botón flotante: reportar incidente operativo -->
+        <div class="fixed bottom-6 right-6 z-30">
+          <button
+            type="button"
+            (click)="mostrarModalIncidente.set(true)"
+            class="flex items-center gap-2 px-4 py-3 rounded-2xl bg-amber-600/90 hover:bg-amber-500 text-white text-xs font-bold shadow-2xl shadow-amber-900/40 backdrop-blur-sm border border-amber-500/50 transition cursor-pointer"
+            title="Reportar incidente operativo"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <span>Incidente</span>
+          </button>
+        </div>
+
       </main>
 
       <!-- ================= MODAL DE COBRO DE ORDEN ================= -->
@@ -273,6 +304,15 @@ export type { CajeroTab, MetodoCobro };
         />
       }
 
+      <!-- MODAL: DOCUMENTAR INCIDENTE OPERATIVO (CAJERO) -->
+      @if (mostrarModalIncidente()) {
+        <app-incident-create-modal
+          [initial]="incidenteFormCajero"
+          (closed)="mostrarModalIncidente.set(false)"
+          (confirmed)="incidenteFormCajero = $event; confirmarIncidenteCajero()"
+        />
+      }
+
     </div>
   `
 })
@@ -281,6 +321,8 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
   readonly repartidoresService = inject(RepartidoresService);
+  readonly feedbackService = inject(FeedbackService);
+  readonly securityAuditService = inject(SecurityAuditService);
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private readonly cobroSalon = inject(CobroSalonFacade);
@@ -501,6 +543,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.financeService.cargarMovimientos();
     this.cargarLiquidaciones();
     this.cargarCapturas();
+    this.feedbackService.cargarDevolucionesPendientes();
     setTimeout(() => this.cargando.set(false), 800);
   }
 
@@ -983,6 +1026,49 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       error: (err) => {
         this.notify.showError('Error al cerrar liquidación', err?.error?.message || err?.message);
       }
+    });
+  }
+
+  // --- Devoluciones en Ventanilla ---
+  entregarDevolucion(id: number): void {
+    this.procesandoAccion.set(true);
+    this.feedbackService.marcarDevuelto(id).subscribe({
+      next: () => this.procesandoAccion.set(false),
+      error: err => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo registrar la entrega', err?.error?.message || 'Intenta de nuevo.');
+      }
+    });
+  }
+
+  // --- Incidente Operativo (Cajero) ---
+  readonly mostrarModalIncidente = signal<boolean>(false);
+  incidenteFormCajero: IncidenteForm = {
+    titulo: '',
+    modulo: 'COCINA_HORNO',
+    severidad: 'MEDIA',
+    causaRaiz: '',
+    solucionAplicada: ''
+  };
+
+  confirmarIncidenteCajero(): void {
+    if (!this.incidenteFormCajero.titulo.trim() || !this.incidenteFormCajero.causaRaiz.trim()) {
+      this.notify.showWarning('Por favor ingresa título y causa raíz');
+      return;
+    }
+    this.securityAuditService.registrarIncidente({
+      titulo: this.incidenteFormCajero.titulo,
+      modulo: this.incidenteFormCajero.modulo,
+      severidad: this.incidenteFormCajero.severidad,
+      causaRaiz: this.incidenteFormCajero.causaRaiz,
+      solucionAplicada: this.incidenteFormCajero.solucionAplicada || 'Reportado por cajero',
+      reportadoPor: this.auth.currentUser()?.nombre || 'Cajero de Turno'
+    }).subscribe({
+      next: () => {
+        this.mostrarModalIncidente.set(false);
+        this.incidenteFormCajero = { titulo: '', modulo: 'COCINA_HORNO', severidad: 'MEDIA', causaRaiz: '', solucionAplicada: '' };
+      },
+      error: () => this.notify.showError('No se pudo registrar el incidente')
     });
   }
 

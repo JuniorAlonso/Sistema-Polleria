@@ -106,8 +106,17 @@ services:
       # Inside docker the defaults (localhost) never reach these services.
       AUTH_SERVICE_URL: http://auth-service:8081
       INCIDENT_SERVICE_URL: http://incident-service:8088
+      # MinIO para imágenes de catálogo de productos
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET_CATALOGO: polleria-catalogo
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     networks:
       - polleria-network
@@ -169,11 +178,22 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:80,http://localhost
       ORDERS_SERVICE_URL: http://orders-service:8082
       PAYMENTS_SERVICE_URL: http://payments-service:8083
+      FINANCE_SERVICE_URL: http://finance-service:8087
+      INTERNAL_API_KEY: sanpollo-dev-internal-key
+      # MinIO para evidencias fotográficas de reclamos
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET_FEEDBACK: polleria-feedback
     depends_on:
       postgres:
         condition: service_healthy
       payments-service:
         condition: service_started
+      minio:
+        condition: service_healthy
     networks:
       - polleria-network
 

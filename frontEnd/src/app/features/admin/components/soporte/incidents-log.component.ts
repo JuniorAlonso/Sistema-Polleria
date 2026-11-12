@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Incidente } from '../../../../core/models/incident.model';
 
@@ -21,9 +21,9 @@ import { Incidente } from '../../../../core/models/incident.model';
                       </span>
                       <h3 class="font-bold text-base text-white">{{ inc.titulo }}</h3>
                     </div>
-                    <span 
+                    <span
                       class="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
-                      [ngClass]="inc.estado === 'RESUELTO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'"
+                      [ngClass]="inc.estado === 'RESUELTO' ? 'bg-emerald-500/20 text-emerald-400' : inc.estado === 'EN_PROCESO' ? 'bg-sky-500/20 text-sky-400' : 'bg-rose-500/20 text-rose-400'"
                     >
                       {{ inc.estado }}
                     </span>
@@ -44,6 +44,19 @@ import { Incidente } from '../../../../core/models/incident.model';
                     <span>Módulo: {{ inc.modulo }} • Severidad: {{ inc.severidad }}</span>
                     <span>Reportado por: {{ inc.reportadoPor }} • {{ inc.fechaHora }}</span>
                   </div>
+
+                  @if (inc.estado !== 'RESUELTO') {
+                    <div class="flex justify-end pt-2 border-t border-white/5">
+                      <button
+                        type="button"
+                        (click)="resolveRequested.emit(inc)"
+                        class="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        Marcar Resuelto
+                      </button>
+                    </div>
+                  }
                 </div>
               }
             </div>
@@ -52,4 +65,5 @@ import { Incidente } from '../../../../core/models/incident.model';
 })
 export class IncidentsLogComponent {
   readonly incidentes = input.required<Incidente[]>();
+  readonly resolveRequested = output<Incidente>();
 }

@@ -136,21 +136,27 @@ export class ProductsService {
   /**
    * RF08: Crear Producto (Admin)
    */
-  createProduct(product: Omit<Product, 'id'>): void {
+  createProduct(product: Omit<Product, 'id'>): Observable<Product> {
     const backendReq = ProductAdapter.toBackendRequest(product);
+    return this.http.post<BackendProductoResponse>(`${this.API_URL}/productos`, backendReq).pipe(
+      map(res => ProductAdapter.toProduct(res)),
+      tap(created => this._products.update(prev => [created, ...prev]))
+    );
+  }
 
-    this.http.post<BackendProductoResponse>(`${this.API_URL}/productos`, backendReq).pipe(
-      tap(res => {
-        if (res && res.id) {
-          const created = ProductAdapter.toProduct(res);
-          this._products.update(prev => [created, ...prev]);
-        }
-      }),
-      catchError(() => {
-        // Un alta rechazada por el backend no se muestra en la carta.
-        return of(null);
-      })
-    ).subscribe();
+  /**
+   * Sube o reemplaza la imagen de un producto (POST /productos/{id}/imagen).
+   */
+  uploadProductImage(productId: string, file: File): Observable<Product> {
+    const cleanId = this.extractNumericId(productId);
+    const formData = new FormData();
+    formData.append('imagen', file, file.name);
+    return this.http.post<BackendProductoResponse>(`${this.API_URL}/productos/${cleanId}/imagen`, formData).pipe(
+      map(res => ProductAdapter.toProduct(res)),
+      tap(updated => this._products.update(products =>
+        products.map(p => p.id === productId ? updated : p)
+      ))
+    );
   }
 
   /**

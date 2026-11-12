@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed, PLATFORM_ID } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { isPlatformBrowser } from '@angular/common';
-import { Observable, Subject, tap, catchError, of } from 'rxjs';
+import { Observable, Subject, tap, catchError, of, map } from 'rxjs';
 import { Resenia, CrearReseniaRequest, ReporteIncidencia, CrearReporteRequest, ResolverReporteRequest, MotivoReclamo, EstadoReclamo } from '../models/feedback.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
@@ -22,6 +22,7 @@ export class FeedbackService {
   readonly isLoading = signal<boolean>(false);
   readonly wsConnected = signal<boolean>(false);
   readonly nuevoReclamo$ = new Subject<ReporteIncidencia>();
+  readonly devolucionesPendientes = signal<ReporteIncidencia[]>([]);
 
   private ws: WebSocket | null = null;
   private wsReconnectTimer: any = null;
@@ -366,6 +367,30 @@ export class FeedbackService {
       tap(actualizada => {
         this.resenias.update(prev => prev.map(r => r.id === id ? actualizada : r));
         this.notify.showSuccess(`Reseña #${id} ${visible ? 'visible' : 'oculta'}`);
+      })
+    );
+  }
+
+  getEvidenciaBlobUrl(path: string): Observable<string> {
+    const fullUrl = this.getFotoUrl(path);
+    return this.http.get(fullUrl, { responseType: 'blob' }).pipe(
+      map(blob => URL.createObjectURL(blob)),
+      catchError(() => of(''))
+    );
+  }
+
+  cargarDevolucionesPendientes(): void {
+    this.http.get<ReporteIncidencia[]>(`${this.API_URL}/feedback/devoluciones/pendientes`).pipe(
+      tap(data => this.devolucionesPendientes.set(data || [])),
+      catchError(() => of([]))
+    ).subscribe();
+  }
+
+  marcarDevuelto(id: number): Observable<ReporteIncidencia> {
+    return this.http.patch<ReporteIncidencia>(`${this.API_URL}/feedback/reportes/${id}/entregar`, {}).pipe(
+      tap(() => {
+        this.devolucionesPendientes.update(prev => prev.filter(r => r.id !== id));
+        this.notify.showSuccess(`Devolución #${id} entregada en ventanilla`);
       })
     );
   }

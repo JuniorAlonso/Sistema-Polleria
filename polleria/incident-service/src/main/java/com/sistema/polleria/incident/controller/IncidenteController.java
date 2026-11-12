@@ -30,6 +30,7 @@ public class IncidenteController {
     @Value("${internal.api-key:}")
     private String internalApiKey;
 
+    // D4.11: CAJERO puede registrar incidentes
     @PostMapping
     public ResponseEntity<IncidenteResponse> registrar(
             @Valid @RequestBody CrearIncidenteRequest req,
@@ -38,13 +39,18 @@ public class IncidenteController {
 
         boolean esInterno = esLlamadaInterna(claveInterna);
         boolean esPersonal = authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(a -> List.of("ADMIN", "ROLE_ADMIN", "COCINA", "ROLE_COCINA", "MOZO", "ROLE_MOZO")
+                .anyMatch(a -> List.of("ADMIN", "ROLE_ADMIN", "CAJERO", "ROLE_CAJERO",
+                        "COCINA", "ROLE_COCINA", "MOZO", "ROLE_MOZO")
                         .contains(a.getAuthority()));
 
         if (!esInterno && !esPersonal) {
             throw new AccessDeniedException("No autorizado para registrar incidentes");
         }
-        return ResponseEntity.status(HttpStatus.CREATED).body(incidenteService.registrar(req));
+
+        // D4.11: reportado_por viene del JWT (email del usuario autenticado)
+        String reportadoPor = authentication != null ? authentication.getName() : null;
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(incidenteService.registrar(req, reportadoPor));
     }
 
     private boolean esLlamadaInterna(String claveInterna) {
@@ -67,11 +73,14 @@ public class IncidenteController {
         return ResponseEntity.ok(incidenteService.obtenerPorId(id));
     }
 
+    // D4.11: responsable desde el JWT (nombre/email del admin que resuelve)
     @PatchMapping("/{id}/resolver")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<IncidenteResponse> resolver(
             @PathVariable Long id,
-            @Valid @RequestBody ResolverIncidenteRequest req) {
-        return ResponseEntity.ok(incidenteService.resolver(id, req));
+            @Valid @RequestBody ResolverIncidenteRequest req,
+            Authentication authentication) {
+        String responsableEmail = authentication != null ? authentication.getName() : null;
+        return ResponseEntity.ok(incidenteService.resolver(id, req, responsableEmail));
     }
 }

@@ -4,6 +4,7 @@ import {
   BackendProductoResponse
 } from '../models/api-contracts.model';
 import { Product, ProductCategory } from '../models/product.model';
+import { environment } from '../../../environments/environment';
 
 export class ProductAdapter {
   private static readonly DEFAULT_IMAGES: Record<string, string> = {
@@ -100,6 +101,9 @@ export class ProductAdapter {
     let imagen = dto.imagenUrl?.trim();
     if (!imagen) {
       imagen = this.DEFAULT_IMAGES[categoria] || this.DEFAULT_IMAGES['DEFAULT'];
+    } else if (imagen.startsWith('/')) {
+      const base = (environment.ordersApiUrl || 'http://localhost:8082').replace(/\/$/, '');
+      imagen = `${base}${imagen}`;
     }
 
     return {

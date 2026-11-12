@@ -5,7 +5,7 @@ import { ProductsService } from '../../../../core/services/products.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Product } from '../../../../core/models/product.model';
 import { ProductsTableComponent } from '../../components/inventario/products-table.component';
-import { ProductCreateModalComponent } from '../../components/inventario/product-create-modal.component';
+import { ProductCreateModalComponent, ProductCreateValues } from '../../components/inventario/product-create-modal.component';
 
 /**
  * Contenedor (smart) de la pestaña INVENTARIO & CARTA. El inventario es el stock de cada plato:
@@ -37,9 +37,9 @@ import { ProductCreateModalComponent } from '../../components/inventario/product
     <!-- Modal: crear producto -->
     @if (showCreateProductModal) {
       <app-product-create-modal
-        [initial]="newProduct"
+        [initial]="newProductInitial"
         (closed)="showCreateProductModal = false"
-        (saved)="newProduct = $event; guardarNuevoProducto()"
+        (saved)="guardarNuevoProducto($event)"
       />
     }
   `
@@ -70,7 +70,6 @@ export class AdminInventarioPage implements OnInit {
         stock === null ? `"${p.nombre}" ya no lleva control de stock` : `Stock de "${p.nombre}": ${stock}`
       ),
       error: (err: HttpErrorResponse) => {
-        // Bean validation answers { errors: { stock: '...' } }; business rules answer { error: '...' }.
         const validacion = err.error?.errors ? Object.values(err.error.errors).join('. ') : null;
         this.notify.showError('No se pudo actualizar el stock',
           validacion || err.error?.error || 'Intenta nuevamente.');
@@ -80,34 +79,34 @@ export class AdminInventarioPage implements OnInit {
 
   // Modal para creación de productos
   showCreateProductModal = false;
-  newProduct: Omit<Product, 'id'> = {
+
+  readonly newProductInitial: Omit<Product, 'id'> = {
     nombre: '',
     descripcion: '',
     precio: 0,
     categoria: 'POLLOS_A_LA_BRASA',
-    imagenUrl: '/assets/images/hero-panoramic.jpg',
-    agotado: false,
-    tiempoEstimadoMin: 20
+    imagenUrl: '',
+    agotado: false
   };
 
-  guardarNuevoProducto(): void {
-    if (!this.newProduct.nombre || this.newProduct.precio <= 0) {
+  guardarNuevoProducto(values: ProductCreateValues): void {
+    const { product, imageFile } = values;
+    if (!product.nombre || product.precio <= 0) {
       this.notify.showError('Por favor ingresa nombre y precio válido');
       return;
     }
 
-    this.productsService.createProduct(this.newProduct);
-    this.notify.showSuccess(`Plato "${this.newProduct.nombre}" creado exitosamente`);
-    this.showCreateProductModal = false;
-
-    this.newProduct = {
-      nombre: '',
-      descripcion: '',
-      precio: 0,
-      categoria: 'POLLOS_A_LA_BRASA',
-      imagenUrl: '/assets/images/hero-panoramic.jpg',
-      agotado: false,
-      tiempoEstimadoMin: 20
-    };
+    this.productsService.createProduct(product).subscribe({
+      next: created => {
+        if (imageFile && created?.id) {
+          this.productsService.uploadProductImage(created.id, imageFile).subscribe({
+            error: () => this.notify.showError('Plato creado, pero no se pudo subir la imagen')
+          });
+        }
+        this.notify.showSuccess(`Plato "${product.nombre}" creado exitosamente`);
+        this.showCreateProductModal = false;
+      },
+      error: () => this.notify.showError('No se pudo crear el plato')
+    });
   }
 }

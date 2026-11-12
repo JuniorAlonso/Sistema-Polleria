@@ -408,8 +408,14 @@ public class PagoService {
     @Transactional
     public PagoResponse reembolsar(Long id, BigDecimal monto, String motivo) {
         Pago pago = buscar(id);
+        // D4.7: idempotencia — si ya fue reembolsado en su totalidad, devuelve el estado sin volver a ejecutar
+        if (pago.getEstado() == EstadoPago.REEMBOLSADO) {
+            log.info("Pago id={} ya estaba REEMBOLSADO: idempotencia, sin doble procesamiento", id);
+            return PagoResponse.from(pago);
+        }
+        // D4.7: solo se puede reembolsar desde APROBADO (o parcial para completar el reembolso)
         if (pago.getEstado() != EstadoPago.APROBADO && pago.getEstado() != EstadoPago.REEMBOLSADO_PARCIAL) {
-            throw new IllegalStateException("Solo se pueden reembolsar pagos que hayan sido APROBADOS. Estado actual: " + pago.getEstado());
+            throw new IllegalStateException("Solo se pueden reembolsar pagos APROBADOS. Estado actual: " + pago.getEstado());
         }
 
         // Si es un pago de Mercado Pago, ejecutar reembolso en la pasarela externa

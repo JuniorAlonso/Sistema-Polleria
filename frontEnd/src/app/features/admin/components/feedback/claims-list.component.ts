@@ -132,6 +132,22 @@ import { getMotivoLabel } from '../../shared/admin-format.util';
                           <p class="text-slate-300 text-[11px] italic">
                             "{{ rec.respuestaAdmin || rec.resolucion || 'Reclamo resuelto satisfactoriamente.' }}"
                           </p>
+                          <!-- Canal de devolución -->
+                          @if (rec.canalDevolucion) {
+                            <div class="flex items-center gap-2 pt-0.5">
+                              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Canal:</span>
+                              @if (rec.canalDevolucion === 'MERCADOPAGO') {
+                                <span class="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 text-[10px] font-bold">MercadoPago</span>
+                              } @else {
+                                <span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">Ventanilla (Efectivo)</span>
+                                @if (rec.devueltoEn) {
+                                  <span class="text-[10px] text-slate-400 font-mono">— Entregado {{ rec.devueltoEn | date:'dd/MM HH:mm' }}</span>
+                                } @else {
+                                  <span class="text-[10px] text-amber-400 font-semibold animate-pulse">Pendiente entrega</span>
+                                }
+                              }
+                            </div>
+                          }
                           @if (rec.resueltoEn) {
                             <p class="text-[10px] text-slate-400 font-mono text-right pt-0.5">
                               Resuelto el: {{ rec.resueltoEn | date:'dd/MM/yyyy HH:mm' }}

@@ -26,6 +26,8 @@ public class ReporteResponse {
     private String respuestaAdmin;
     private Boolean reembolsoProcedente;
     private BigDecimal montoReembolso;
+    private String canalDevolucion;
+    private LocalDateTime devueltoEn;
     private LocalDateTime creadoEn;
     private LocalDateTime resueltoEn;
 
@@ -42,6 +44,8 @@ public class ReporteResponse {
                 .respuestaAdmin(r.getRespuestaAdmin())
                 .reembolsoProcedente(r.getReembolsoProcedente())
                 .montoReembolso(r.getMontoReembolso())
+                .canalDevolucion(r.getCanalDevolucion())
+                .devueltoEn(r.getDevueltoEn())
                 .creadoEn(r.getCreadoEn())
                 .resueltoEn(r.getResueltoEn())
                 .build();

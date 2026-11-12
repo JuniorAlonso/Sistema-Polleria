@@ -55,6 +55,8 @@ export interface ReporteIncidencia {
   creadoEn: string;
   resueltoEn?: string;
   esNuevo?: boolean;
+  canalDevolucion?: string;
+  devueltoEn?: string;
 }
 
 export type ReporteReclamo = ReporteIncidencia;

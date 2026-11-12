@@ -10,7 +10,6 @@ import com.sistema.polleria.feedback.service.FileStorageService;
 import com.sistema.polleria.feedback.service.ReporteIncidenciaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -19,10 +18,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.security.Principal;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/feedback")
@@ -32,7 +30,7 @@ public class ReporteIncidenciaController {
     private final ReporteIncidenciaService reporteService;
     private final FileStorageService fileStorageService;
 
-    /** Crear reporte vía JSON directo */
+    /** Crear reporte vía JSON */
     @PostMapping("/reportes")
     @PreAuthorize("hasAnyAuthority('CLIENTE', 'ROLE_CLIENTE', 'ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<ReporteResponse> crearJson(
@@ -43,7 +41,7 @@ public class ReporteIncidenciaController {
                 .body(reporteService.crear(request, null, clienteId));
     }
 
-    /** Crear reporte vía multipart con archivo adjunto */
+    /** Crear reporte vía multipart con foto de evidencia */
     @PostMapping(value = "/reportes/multipart", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyAuthority('CLIENTE', 'ROLE_CLIENTE', 'ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<ReporteResponse> crearMultipart(
@@ -70,15 +68,23 @@ public class ReporteIncidenciaController {
         return ResponseEntity.ok(reporteService.listarPorCliente(clienteId));
     }
 
-    /** Consultar reporte de una orden específica (para seguimiento del cliente) */
+    /**
+     * Consultar reclamo de una orden específica.
+     * Requiere autenticación: cliente solo ve su propio reclamo, admin ve cualquiera.
+     */
     @GetMapping("/reportes/orden/{ordenId}")
-    public ResponseEntity<ReporteResponse> obtenerPorOrden(@PathVariable Long ordenId) {
-        return reporteService.obtenerPorOrden(ordenId)
+    @PreAuthorize("hasAnyAuthority('CLIENTE', 'ROLE_CLIENTE', 'ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
+    public ResponseEntity<ReporteResponse> obtenerPorOrden(
+            @PathVariable Long ordenId,
+            Principal principal) {
+        Long usuarioId = SecurityUtils.obtenerUsuarioIdAutenticado(principal);
+        boolean esAdmin = SecurityUtils.esAdminOCajero(principal);
+        return reporteService.obtenerPorOrden(ordenId, usuarioId, esAdmin)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.noContent().build());
     }
 
-    /** Ver detalle de un reporte con validación de permisos anti-IDOR */
+    /** Ver detalle de un reporte — anti-IDOR: cliente solo ve el suyo */
     @GetMapping("/reportes/{id}")
     @PreAuthorize("hasAnyAuthority('CLIENTE', 'ROLE_CLIENTE', 'ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<ReporteResponse> obtenerPorId(
@@ -98,7 +104,7 @@ public class ReporteIncidenciaController {
         return ResponseEntity.ok(reporteService.listarAdmin(estado, motivo));
     }
 
-    /** Cambiar estado de reclamo (ej. pasar a EN_REVISION) */
+    /** Cambiar estado del reclamo */
     @PatchMapping("/admin/reportes/{id}/estado")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<ReporteResponse> cambiarEstado(
@@ -107,7 +113,7 @@ public class ReporteIncidenciaController {
         return ResponseEntity.ok(reporteService.cambiarEstado(id, estado));
     }
 
-    /** Resolver reclamo y opcionalmente autorizar reembolso */
+    /** Resolver reclamo y opcionalmente autorizar reembolso (canal detectado automáticamente) */
     @PatchMapping("/admin/reportes/{id}/resolver")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<ReporteResponse> resolver(
@@ -117,21 +123,54 @@ public class ReporteIncidenciaController {
         return ResponseEntity.ok(reporteService.resolver(id, request, authorization));
     }
 
-    /** Descargar/ver imagen de evidencia fotográfica por streaming seguro */
+    /** Lista devoluciones en ventanilla pendientes de entrega (para cajero) */
+    @GetMapping("/devoluciones/pendientes")
+    @PreAuthorize("hasAnyAuthority('CAJERO', 'ROLE_CAJERO', 'ADMIN', 'ROLE_ADMIN')")
+    public ResponseEntity<List<ReporteResponse>> devolucionesPendientes() {
+        return ResponseEntity.ok(reporteService.listarDevolucionesPendientes());
+    }
+
+    /** Cajero entrega el efectivo al cliente: registra egreso en caja y sella devueltoEn */
+    @PatchMapping("/reportes/{id}/entregar")
+    @PreAuthorize("hasAnyAuthority('CAJERO', 'ROLE_CAJERO', 'ADMIN', 'ROLE_ADMIN')")
+    public ResponseEntity<ReporteResponse> marcarEntregado(
+            @PathVariable Long id,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return ResponseEntity.ok(reporteService.marcarEntregado(id, authorization));
+    }
+
+    /**
+     * Servir imagen de evidencia fotográfica por streaming desde MinIO.
+     * Requiere autenticación: cliente solo puede ver las evidencias de sus propios reclamos (D4.5).
+     * Se retorna 404 en lugar de 403 para no revelar existencia del recurso.
+     */
     @GetMapping("/evidencias/{fileName:.+}")
-    public ResponseEntity<Resource> verEvidencia(@PathVariable String fileName) {
+    @PreAuthorize("hasAnyAuthority('CLIENTE', 'ROLE_CLIENTE', 'ADMIN', 'ROLE_ADMIN', 'CAJERO', 'ROLE_CAJERO')")
+    public ResponseEntity<byte[]> verEvidencia(
+            @PathVariable String fileName,
+            Principal principal) {
         try {
-            Resource recurso = fileStorageService.cargarComoRecurso(fileName);
-            String contentType = Files.probeContentType(recurso.getFile().toPath());
-            if (contentType == null) {
-                contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
+            // Validar propiedad: buscar si algún reporte del cliente tiene esta evidencia
+            boolean esAdmin = SecurityUtils.esAdminOCajero(principal);
+            if (!esAdmin) {
+                Long usuarioId = SecurityUtils.obtenerUsuarioIdAutenticado(principal);
+                String urlEsperada = "/feedback/evidencias/" + fileName;
+                boolean esPropia = reporteService.listarPorCliente(usuarioId).stream()
+                        .anyMatch(r -> urlEsperada.equals(r.getFotoEvidenciaUrl()));
+                if (!esPropia) {
+                    return ResponseEntity.notFound().build();
+                }
             }
 
+            byte[] bytes = fileStorageService.leerArchivo(fileName);
+            String contentType = fileStorageService.resolverContentType(fileName);
+
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + recurso.getFilename() + "\"")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + fileName + "\"")
                     .contentType(MediaType.parseMediaType(contentType))
-                    .body(recurso);
-        } catch (IOException | SecurityException e) {
+                    .body(bytes);
+
+        } catch (NoSuchElementException | SecurityException e) {
             return ResponseEntity.notFound().build();
         }
     }

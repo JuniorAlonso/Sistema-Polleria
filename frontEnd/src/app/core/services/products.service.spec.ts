@@ -75,7 +75,7 @@ describe('ProductsService — sin carta simulada', () => {
   it('no agrega un producto local cuando el alta es rechazada', () => {
     http.expectOne(esGet).flush([]);
 
-    service.createProduct(productoAdmin);
+    service.createProduct(productoAdmin).subscribe({ error: () => {} });
     http.expectOne(esPost).flush({ message: 'precio inválido' },
       { status: 400, statusText: 'Bad Request' });
 

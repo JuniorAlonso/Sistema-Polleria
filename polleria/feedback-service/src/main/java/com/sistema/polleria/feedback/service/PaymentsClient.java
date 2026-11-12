@@ -20,7 +20,12 @@ public class PaymentsClient {
         this.restClient = RestClient.create();
     }
 
-    public void emitirReembolsoPorOrden(Long ordenId, Long reporteId, BigDecimal monto, String motivo, String bearerToken) {
+    /**
+     * Emite un reembolso en payments-service y retorna el canal de devolución detectado
+     * ("MERCADOPAGO" | "VENTANILLA"). Si no se puede detectar, devuelve "VENTANILLA"
+     * como valor conservador (requiere entrega manual en caja).
+     */
+    public String emitirReembolsoPorOrden(Long ordenId, Long reporteId, BigDecimal monto, String motivo, String bearerToken) {
         try {
             Map<String, Object> body = Map.of(
                     "monto", monto != null ? monto : BigDecimal.ZERO,
@@ -36,15 +41,30 @@ public class PaymentsClient {
                 request.header("Authorization", bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
             }
 
-            request.body(body)
-                    .retrieve()
-                    .toBodilessEntity();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = request.body(body).retrieve().body(Map.class);
 
-            log.info("Reembolso emitido con éxito en payments-service para orden #{}, reporte #{}, monto: S/ {}",
-                    ordenId, reporteId, monto);
+            String canal = detectarCanal(response);
+            log.info("Reembolso emitido para orden #{}, reporte #{}, monto: S/ {}, canal: {}",
+                    ordenId, reporteId, monto, canal);
+            return canal;
+
         } catch (Exception e) {
-            log.error("Fallo crítico al emitir reembolso en payments-service para orden #{}: {}", ordenId, e.getMessage());
+            log.error("Fallo al emitir reembolso en payments-service para orden #{}: {}", ordenId, e.getMessage());
             throw new IllegalStateException("Error al emitir el reembolso en la pasarela/servicio de pagos: " + e.getMessage(), e);
         }
+    }
+
+    private static String detectarCanal(Map<String, Object> response) {
+        if (response == null) return "VENTANILLA";
+        // Intentar leer canalDevolucion si payments-service lo devuelve
+        Object canal = response.get("canalDevolucion");
+        if (canal instanceof String s && !s.isBlank()) return s.toUpperCase();
+        // Inferir desde referenciaPago (D4.6 logic mirror)
+        Object ref = response.get("referenciaPago");
+        if (ref instanceof String r) {
+            if (r.matches("^MP-\\d+$") || r.matches("^\\d+$")) return "MERCADOPAGO";
+        }
+        return "VENTANILLA";
     }
 }

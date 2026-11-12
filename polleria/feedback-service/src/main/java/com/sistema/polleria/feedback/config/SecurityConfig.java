@@ -65,8 +65,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias/producto/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/feedback/resenias").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/feedback/evidencias/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/feedback/reportes/orden/**").permitAll()
+                        // /feedback/evidencias/** y /feedback/reportes/orden/** requieren autenticación (D4.5)
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers
