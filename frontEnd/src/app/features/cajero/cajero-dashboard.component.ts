@@ -10,7 +10,7 @@ import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { TipoMovimiento } from '../../core/models/finance.model';
 import { RepartidoresService } from '../../core/services/repartidores.service';
-import { BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
+import { BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 import { CajeroTab, CapturaPendiente, EntregaRecojoEvent, MetodoCobro, RechazarCapturaEvent } from './models/cajero.models';
 import { normalizarCodigoTicket } from './models/cajero-plazos.helpers';
 import { PagoOrdenAdmin } from '../../core/models/payment.model';
@@ -216,12 +216,12 @@ export type { CajeroTab, MetodoCobro };
       <!-- ================= MODAL CIERRE DE CAJA & ARQUEO ================= -->
       @if (mostrarModalCierre()) {
         <app-cajero-cierre-modal
-          [saldoTeorico]="saldoTeoricoActual()"
-          [diferencia]="diferenciaCierre()"
           [(efectivo)]="efectivoCierreInput"
           [(pos)]="posCierreInput"
           [(digitales)]="digitalesCierreInput"
           [(observaciones)]="observacionesCierreInput"
+          [error]="errorCierre()"
+          [motivoObligatorio]="motivoCierreObligatorio()"
           [procesando]="procesandoAccion()"
           (cancelar)="mostrarModalCierre.set(false)"
           (confirmar)="ejecutarCierreCaja()"
@@ -257,6 +257,9 @@ export type { CajeroTab, MetodoCobro };
       @if (mostrarModalCierreLiquidacion()) {
         <app-cajero-cierre-liquidacion-modal
           [liquidacion]="liquidacionSeleccionada()"
+          [pendiente]="pendienteLiq()"
+          [cargandoPendiente]="cargandoPendienteLiq()"
+          [errorPendiente]="errorPendienteLiq()"
           [(totalRendido)]="totalRendidoLiqInput"
           (cancelar)="mostrarModalCierreLiquidacion.set(false)"
           (confirmar)="confirmarCierreLiquidacion()"
@@ -317,10 +320,14 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   motivoMovimientoInput = '';
 
   readonly mostrarModalCierre = signal<boolean>(false);
-  efectivoCierreInput = 0;
+  /** Counted cash, typed blind by the cashier (never pre-filled with the expected amount). */
+  efectivoCierreInput: number | null = null;
   posCierreInput = 0;
   digitalesCierreInput = 0;
   observacionesCierreInput = '';
+  /** Backend message of the last rejected close (e.g. 400 for an unexplained difference). */
+  readonly errorCierre = signal<string | null>(null);
+  readonly motivoCierreObligatorio = signal<boolean>(false);
 
   // --- Módulos Operativos Nuevos: Llamadas y Liquidaciones ---
   readonly ordenesPendientesLlamada = computed(() =>
@@ -365,7 +372,10 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   fondoInicialLiqInput = 50.0;
   montoRecargaInput = 20;
   motivoRecargaInput = '';
-  totalRendidoLiqInput = 0;
+  totalRendidoLiqInput: number | null = null;
+  readonly pendienteLiq = signal<BackendEfectivoPendienteLiquidacion | null>(null);
+  readonly cargandoPendienteLiq = signal<boolean>(false);
+  readonly errorPendienteLiq = signal<string | null>(null);
   observacionesLiqInput = '';
 
   readonly fondoSugeridoNuevoRepartidor = computed(() => {
@@ -466,10 +476,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     const recibido = Number(this.efectivoRecibidoInput) || 0;
     return Math.max(0, Math.round((recibido - total) * 100) / 100);
   }
-
-  readonly diferenciaCierre = computed(() => {
-    return this.efectivoCierreInput - this.saldoTeoricoActual();
-  });
 
   readonly totalCobradoHoy = computed(() => {
     return this.cobrosDelDia().reduce((sum, c) => sum + (c.monto || 0), 0);
@@ -656,35 +662,57 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   abrirModalCierre(): void {
-    this.efectivoCierreInput = this.saldoTeoricoActual();
+    this.efectivoCierreInput = null;
     this.posCierreInput = 0;
     this.digitalesCierreInput = 0;
     this.observacionesCierreInput = '';
+    this.errorCierre.set(null);
+    this.motivoCierreObligatorio.set(false);
     this.mostrarModalCierre.set(true);
   }
 
   ejecutarCierreCaja(): void {
-    if (this.efectivoCierreInput < 0) {
+    const efectivo = this.efectivoCierreInput;
+    if (efectivo === null || efectivo === undefined || `${efectivo}` === '') {
+      this.notify.showError('Ingresa el efectivo contado en gaveta');
+      return;
+    }
+    if (efectivo < 0) {
       this.notify.showError('El efectivo contado no puede ser negativo');
+      return;
+    }
+    const observaciones = this.observacionesCierreInput?.trim();
+    if (this.motivoCierreObligatorio() && !observaciones) {
+      this.notify.showError('Indica el motivo de la diferencia en las observaciones');
       return;
     }
 
     this.procesandoAccion.set(true);
+    this.errorCierre.set(null);
     this.financeService.cerrarCaja({
-      montoCierreEfectivo: this.efectivoCierreInput,
+      montoCierreEfectivo: efectivo,
       montoCierrePos: this.posCierreInput,
       ventasDigitales: this.digitalesCierreInput,
-      observaciones: this.observacionesCierreInput || undefined
+      observaciones: observaciones || undefined
     }).subscribe({
       next: (arqueoCerrado) => {
         this.procesandoAccion.set(false);
         this.mostrarModalCierre.set(false);
-        this.notify.showSuccess(`Caja cerrada exitosamente. Cuadre: S/ ${arqueoCerrado.diferencia?.toFixed(2) || '0.00'}`);
+        this.motivoCierreObligatorio.set(false);
+        // The expected amount is revealed only after the blind count was confirmed.
+        this.notify.showSuccess(
+          `Caja cerrada. Esperado: S/ ${(arqueoCerrado.totalEsperado ?? 0).toFixed(2)} · Diferencia: S/ ${(arqueoCerrado.diferencia ?? 0).toFixed(2)}`);
         this.refrescarTodo();
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError(err?.error?.error || 'No se pudo realizar el cierre de caja');
+        const mensaje = mensajeError(err, 'No se pudo realizar el cierre de caja');
+        this.errorCierre.set(mensaje);
+        if (err?.status === 400) {
+          this.motivoCierreObligatorio.set(true);
+        } else {
+          this.notify.showError(mensaje);
+        }
       }
     });
   }
@@ -964,16 +992,33 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   abrirModalCierreLiquidacion(liq: BackendLiquidacionResponse): void {
     this.liquidacionSeleccionada.set(liq);
-    this.totalRendidoLiqInput = (liq.fondoInicial || 0) + (liq.totalCobradoEfectivo || 0);
+    this.totalRendidoLiqInput = null;
+    this.pendienteLiq.set(null);
+    this.errorPendienteLiq.set(null);
+    this.cargandoPendienteLiq.set(true);
     this.mostrarModalCierreLiquidacion.set(true);
+
+    // The amount to hand in comes from the backend: fondo inicial + cash payments collected on route.
+    this.financeService.obtenerEfectivoPendienteLiquidacion(liq.repartidorId).subscribe({
+      next: (pendiente) => {
+        this.pendienteLiq.set(pendiente);
+        this.totalRendidoLiqInput = Math.round(((liq.fondoInicial || 0) + (Number(pendiente.total) || 0)) * 100) / 100;
+        this.cargandoPendienteLiq.set(false);
+      },
+      error: (err) => {
+        this.errorPendienteLiq.set(mensajeError(err, 'No se pudo consultar el efectivo pendiente del repartidor.'));
+        this.cargandoPendienteLiq.set(false);
+      }
+    });
   }
 
   confirmarCierreLiquidacion(): void {
     const liq = this.liquidacionSeleccionada();
-    if (!liq) return;
+    const totalRendido = this.totalRendidoLiqInput;
+    if (!liq || totalRendido === null || totalRendido === undefined || !this.pendienteLiq()) return;
 
     this.financeService.cerrarLiquidacion(liq.id, {
-      totalRendido: this.totalRendidoLiqInput,
+      totalRendido,
       totalCobradoEfectivo: liq.totalCobradoEfectivo,
       observaciones: 'Cuadre en caja de turno'
     }).subscribe({

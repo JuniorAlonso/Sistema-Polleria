@@ -2,6 +2,10 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 import { CommonModule } from '@angular/common';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { TicketVista } from '../models/cajero.models';
+import { BackendComprobanteResponse } from '../../../core/models/api-contracts.model';
+
+/** Ticket data plus the receipt the backend emitted (null/absent when emission failed). */
+export type TicketComprobanteVista = TicketVista & { comprobante?: BackendComprobanteResponse | null };
 
 @Component({
   selector: 'app-cajero-ticket-modal',
@@ -25,12 +29,17 @@ import { TicketVista } from '../models/cajero.models';
                 Av. San Martín 456 - Ica, Perú
               </p>
               <div class="pt-2">
-                <span class="text-xs font-bold uppercase tracking-wider bg-slate-100 px-3 py-1 rounded-md">
-                  BOLETA DE VENTA ELECTRÓNICA
-                </span>
-                <p class="text-xs font-mono font-bold mt-1">
-                  B001-{{ ticket().ordenId }}
-                </p>
+                @if (comprobante; as c) {
+                  <span class="text-xs font-bold uppercase tracking-wider bg-slate-100 px-3 py-1 rounded-md">
+                    {{ c.tipo === 'FACTURA' ? 'FACTURA' : 'BOLETA DE VENTA' }}
+                  </span>
+                  <p class="text-xs font-mono font-bold mt-1">{{ c.serieCorrelativo }}</p>
+                } @else {
+                  <span class="text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-3 py-1 rounded-md">
+                    Comprobante pendiente
+                  </span>
+                  <p class="text-[10px] text-slate-500 mt-1">El comprobante aún no se ha emitido para esta venta.</p>
+                }
               </div>
             </div>
 
@@ -48,6 +57,12 @@ import { TicketVista } from '../models/cajero.models';
                 <span>Cliente:</span>
                 <span class="font-bold truncate max-w-[160px]">{{ clienteNombre }}</span>
               </div>
+              @if (comprobante?.clienteNumDoc) {
+                <div class="flex justify-between">
+                  <span>{{ comprobante?.clienteTipoDoc || 'Doc.' }}:</span>
+                  <span>{{ comprobante?.clienteNumDoc }}</span>
+                </div>
+              }
               <div class="flex justify-between">
                 <span>Tipo:</span>
                 <span class="font-bold">{{ tipoOrden }}</span>
@@ -74,14 +89,16 @@ import { TicketVista } from '../models/cajero.models';
 
             <!-- Totales & Cuadre -->
             <div class="space-y-1 text-xs font-mono border-b border-dashed border-slate-300 pb-3">
-              <div class="flex justify-between text-slate-600">
-                <span>OP. GRAVADA:</span>
-                <span>{{ (totalMonto / 1.18) | currencyPEN }}</span>
-              </div>
-              <div class="flex justify-between text-slate-600">
-                <span>I.G.V. (18%):</span>
-                <span>{{ (totalMonto - (totalMonto / 1.18)) | currencyPEN }}</span>
-              </div>
+              @if (comprobante; as c) {
+                <div class="flex justify-between text-slate-600">
+                  <span>OP. GRAVADA:</span>
+                  <span>{{ c.subtotal | currencyPEN }}</span>
+                </div>
+                <div class="flex justify-between text-slate-600">
+                  <span>I.G.V. (18%):</span>
+                  <span>{{ c.igv | currencyPEN }}</span>
+                </div>
+              }
               <div class="flex justify-between font-bold text-base text-slate-900 pt-1">
                 <span>TOTAL:</span>
                 <span>{{ totalMonto | currencyPEN }}</span>
@@ -140,14 +157,19 @@ import { TicketVista } from '../models/cajero.models';
   `
 })
 export class CajeroTicketModalComponent {
-  readonly ticket = input.required<TicketVista>();
+  readonly ticket = input.required<TicketComprobanteVista>();
 
   readonly imprimir = output<void>();
   readonly cerrar = output<void>();
 
+  /** Receipt emitted by the backend; null when emission failed or is unknown. */
+  protected get comprobante(): BackendComprobanteResponse | null {
+    return this.ticket().comprobante ?? null;
+  }
+
   protected get clienteNombre(): string {
     const t = this.ticket() as any;
-    return t?.cliente || t?.clienteNombre || 'Cliente General';
+    return this.comprobante?.clienteNombre || t?.cliente || t?.clienteNombre || 'Cliente General';
   }
 
   protected get tipoOrden(): string {
@@ -157,6 +179,6 @@ export class CajeroTicketModalComponent {
 
   protected get totalMonto(): number {
     const t = this.ticket() as any;
-    return Number(t?.total ?? t?.monto ?? 0);
+    return Number(this.comprobante?.total ?? t?.total ?? t?.monto ?? 0);
   }
 }

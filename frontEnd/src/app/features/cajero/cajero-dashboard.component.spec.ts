@@ -12,6 +12,7 @@ import { NotificationService } from '../../core/services/notification.service';
 import { of, throwError } from 'rxjs';
 import { CobroSalonFacade } from './services/cobro-salon.facade';
 import { consumidorFinal } from './models/datos-fiscales';
+import { ArqueoCaja } from '../../core/models/finance.model';
 
 describe('CajeroDashboardComponent', () => {
   let component: CajeroDashboardComponent;
@@ -401,6 +402,101 @@ describe('CajeroDashboardComponent', () => {
       const botonAprobar = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
         .find(b => (b.textContent || '').includes('Confirmar Pago'))!;
       expect(botonAprobar.disabled).toBeTrue();
+    });
+  });
+  describe('S6/S7: cierre de caja ciego y rendición de repartidor', () => {
+    let notify: NotificationService;
+    const MENSAJE_400 =
+      'El efectivo contado no coincide con el esperado. Vuelve a contar o indica el motivo en las observaciones.';
+
+    beforeEach(() => {
+      notify = TestBed.inject(NotificationService);
+      spyOn(notify, 'showError');
+      spyOn(notify, 'showSuccess');
+      financeService.cajaActual.set({ estado: 'ABIERTA', montoApertura: 100 } as never);
+    });
+
+    it('S6: opening the close modal does not pre-fill the counted cash nor the observations', () => {
+      component.abrirModalCierre();
+      fixture.detectChanges();
+
+      expect(component.efectivoCierreInput).toBeNull();
+      expect(component.observacionesCierreInput).toBe('');
+      expect(component.errorCierre()).toBeNull();
+      expect(component.motivoCierreObligatorio()).toBeFalse();
+    });
+
+    it('S6: a 400 keeps the modal open, shows the backend message and requires a reason before retrying', () => {
+      const cerrar = spyOn(financeService, 'cerrarCaja').and.returnValues(
+        throwError(() => ({ status: 400, error: { error: MENSAJE_400 } })),
+        of({ id: 1, estado: 'CERRADA', totalEsperado: 120, diferencia: -20 } as unknown as ArqueoCaja)
+      );
+      component.abrirModalCierre();
+      component.efectivoCierreInput = 100;
+
+      component.ejecutarCierreCaja();
+      fixture.detectChanges();
+
+      expect(component.mostrarModalCierre()).toBeTrue();
+      expect(component.procesandoAccion()).toBeFalse();
+      expect(component.errorCierre()).toBe(MENSAJE_400);
+      expect(component.motivoCierreObligatorio()).toBeTrue();
+      expect(fixture.nativeElement.textContent).toContain(MENSAJE_400);
+
+      component.ejecutarCierreCaja();
+      expect(cerrar).withContext('blocked without a reason').toHaveBeenCalledTimes(1);
+
+      component.observacionesCierreInput = 'Faltan S/ 20 por vuelto mal dado';
+      component.ejecutarCierreCaja();
+
+      expect(cerrar).toHaveBeenCalledTimes(2);
+      expect(cerrar.calls.mostRecent().args[0]).toEqual(jasmine.objectContaining({
+        montoCierreEfectivo: 100,
+        observaciones: 'Faltan S/ 20 por vuelto mal dado'
+      }));
+      expect(component.mostrarModalCierre()).toBeFalse();
+      expect(notify.showSuccess).toHaveBeenCalledWith(jasmine.stringMatching(/120\.00.*-20\.00/));
+    });
+
+    it('S6: cannot close without entering the counted cash', () => {
+      const cerrar = spyOn(financeService, 'cerrarCaja');
+      component.abrirModalCierre();
+
+      component.ejecutarCierreCaja();
+
+      expect(cerrar).not.toHaveBeenCalled();
+      expect(component.mostrarModalCierre()).toBeTrue();
+    });
+
+    const liq = {
+      id: 12, repartidorId: 5, repartidorNombre: 'Carlos', fondoInicial: 50, totalCobradoEfectivo: 0,
+      totalRendido: 0, diferencia: 0, estado: 'ABIERTA', creadoEn: '2026-11-09T10:00:00'
+    } as const;
+
+    it('S7: settlement close pre-loads fondo + cash pending from /pendiente', () => {
+      const pendiente = spyOn(financeService, 'obtenerEfectivoPendienteLiquidacion').and.returnValue(
+        of({ repartidorId: 5, liquidacionId: 12, desde: '', total: 35.5, cantidad: 2, pagos: [] }));
+
+      component.abrirModalCierreLiquidacion({ ...liq });
+      fixture.detectChanges();
+
+      expect(pendiente).toHaveBeenCalledWith(5);
+      expect(component.totalRendidoLiqInput).toBe(85.5);
+      expect(component.pendienteLiq()?.total).toBe(35.5);
+      expect(component.cargandoPendienteLiq()).toBeFalse();
+      expect(fixture.nativeElement.textContent).toContain('85.50');
+    });
+
+    it('S7: if /pendiente fails the amount is not pre-filled and the error is shown', () => {
+      spyOn(financeService, 'obtenerEfectivoPendienteLiquidacion').and.returnValue(
+        throwError(() => ({ status: 503, error: { error: 'finance caído' } })));
+
+      component.abrirModalCierreLiquidacion({ ...liq });
+      fixture.detectChanges();
+
+      expect(component.totalRendidoLiqInput).toBeNull();
+      expect(component.errorPendienteLiq()).toBe('finance caído');
+      expect(fixture.nativeElement.textContent).toContain('finance caído');
     });
   });
 });
