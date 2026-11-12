@@ -118,7 +118,7 @@ import { ArqueoCaja, MovimientoCaja } from '../../../core/models/finance.model';
                   </div>
                 </div>
 
-                <!-- Grid de Métricas Financieras de la Caja -->
+                <!-- Blind count (D3.12): only the opening float; no expected balance or totals before closing. -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
                     <span class="text-[11px] text-slate-400 uppercase font-bold">Fondo Inicial Apertura</span>
@@ -127,26 +127,6 @@ import { ArqueoCaja, MovimientoCaja } from '../../../core/models/finance.model';
                     </p>
                   </div>
 
-                  <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-                    <span class="text-[11px] text-emerald-400 uppercase font-bold">Ingresos Extras</span>
-                    <p class="font-display text-2xl text-emerald-300 font-bold">
-                      +{{ totalIngresos() | currencyPEN }}
-                    </p>
-                  </div>
-
-                  <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 space-y-1">
-                    <span class="text-[11px] text-rose-400 uppercase font-bold">Egresos / Gastos Menores</span>
-                    <p class="font-display text-2xl text-rose-300 font-bold">
-                      -{{ totalEgresos() | currencyPEN }}
-                    </p>
-                  </div>
-
-                  <div class="p-4 rounded-2xl bg-[#14161a] border border-polleria-gold/40 space-y-1">
-                    <span class="text-[11px] text-polleria-gold uppercase font-bold">Saldo Teórico en Gaveta</span>
-                    <p class="font-display text-2xl text-polleria-gold font-bold">
-                      {{ saldoTeorico() | currencyPEN }}
-                    </p>
-                  </div>
                 </div>
 
                 <!-- Tabla de Movimientos de Caja Chica -->
@@ -219,9 +199,6 @@ export class CajeroArqueoTabComponent {
   readonly cajaAbierta = input.required<boolean>();
   readonly caja = input<ArqueoCaja | null>(null);
   readonly movimientos = input<MovimientoCaja[]>([]);
-  readonly totalIngresos = input<number>(0);
-  readonly totalEgresos = input<number>(0);
-  readonly saldoTeorico = input<number>(0);
   readonly usuarioNombre = input<string | undefined>(undefined);
   readonly procesando = input<boolean>(false);
 

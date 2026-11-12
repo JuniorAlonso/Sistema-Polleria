@@ -107,9 +107,6 @@ export type { CajeroTab, MetodoCobro };
               [cajaAbierta]="cajaAbierta()"
               [caja]="financeService.cajaActual()"
               [movimientos]="financeService.movimientos()"
-              [totalIngresos]="totalIngresosCaja()"
-              [totalEgresos]="totalEgresosCaja()"
-              [saldoTeorico]="saldoTeoricoActual()"
               [usuarioNombre]="auth.currentUser()?.nombre"
               [procesando]="procesandoAccion()"
               [(montoApertura)]="montoAperturaInput"
@@ -449,24 +446,6 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     }
 
     return list;
-  });
-
-  // Cálculos de saldo de caja
-  readonly totalIngresosCaja = computed(() => {
-    return this.financeService.movimientos()
-      .filter(m => m.tipo === 'INGRESO')
-      .reduce((sum, m) => sum + (m.monto || 0), 0);
-  });
-
-  readonly totalEgresosCaja = computed(() => {
-    return this.financeService.movimientos()
-      .filter(m => m.tipo === 'EGRESO')
-      .reduce((sum, m) => sum + (m.monto || 0), 0);
-  });
-
-  readonly saldoTeoricoActual = computed(() => {
-    const apertura = this.financeService.cajaActual()?.montoApertura || 0;
-    return apertura + this.totalIngresosCaja() - this.totalEgresosCaja();
   });
 
   // Método (no computed): efectivoRecibidoInput es un campo plano enlazado con ngModel,
