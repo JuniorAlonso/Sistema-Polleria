@@ -1,6 +1,7 @@
 package com.sistema.polleria.payments.service;
 
 import com.sistema.polleria.payments.dto.CobroEfectivoRequest;
+import com.mercadopago.resources.paymentmethod.PaymentMethod;
 import com.sistema.polleria.payments.dto.ConfirmarPagoRequest;
 import com.sistema.polleria.payments.dto.EfectivoPendienteResponse;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
@@ -570,6 +571,54 @@ public class PagoService {
         IniciarPagoRequest conTotal = new IniciarPagoRequest(request.ordenId(), orden.total(),
                 MetodoPago.TARJETA, request.tokenPasarela(), request.telefonoYape());
         return mercadoPagoGateway.crearPreferencia(conTotal, clienteId != null ? clienteId : CLIENTE_ANONIMO);
+    }
+
+    /**
+     * Consulta los medios de pago disponibles configurados en la cuenta de Mercado Pago.
+     */
+    public List<PaymentMethod> listarMediosDePagoMercadoPago() {
+        return mercadoPagoGateway.listarMediosDePago();
+    }
+
+    /**
+     * Procesa la redirección de retorno desde Mercado Pago (success_url).
+     * Confirma la orden si el estado fue aprobado por Mercado Pago.
+     */
+    @Transactional
+    public PagoResponse procesarRetornoMercadoPago(String paymentId, String status, String externalReference) {
+        log.info("Procesando retorno GET de Mercado Pago: paymentId={}, status={}, externalReference={}",
+                paymentId, status, externalReference);
+
+        if (externalReference == null || externalReference.isBlank()) {
+            throw new IllegalArgumentException("external_reference es obligatorio en el retorno");
+        }
+
+        Long pagoId;
+        try {
+            pagoId = Long.parseLong(externalReference.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("external_reference inválido: " + externalReference);
+        }
+
+        Pago pago = pagoRepository.findById(pagoId)
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + pagoId));
+
+        if (pago.getEstado() == EstadoPago.APROBADO) {
+            return PagoResponse.from(pago);
+        }
+
+        if ("approved".equalsIgnoreCase(status)) {
+            String refExterna = (paymentId != null && !paymentId.isBlank()) ? "MP-" + paymentId : "MP-RETORNO-" + pagoId;
+            ConfirmarPagoRequest req = new ConfirmarPagoRequest(
+                    refExterna,
+                    "Pago aprobado por Mercado Pago (Retorno GET: " + refExterna + ")"
+            );
+            return confirmar(pagoId, req, "");
+        } else if ("rejected".equalsIgnoreCase(status)) {
+            actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO, "Pago rechazado en pasarela Mercado Pago");
+        }
+
+        return PagoResponse.from(pago);
     }
 
     /** Only an order still waiting for its online payment can be charged (S2/T3, HTTP 409). */

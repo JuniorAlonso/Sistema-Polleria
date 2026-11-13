@@ -18,8 +18,8 @@ export const environment = {
     finance: 'https://gsm-asking-graphs-bobby.trycloudflare.com/finanzas',
     incidents: 'https://gsm-asking-graphs-bobby.trycloudflare.com/incidentes'
   },
-  mercadoPagoPublicKey: 'APP_USR-1c0df301-ca64-4e8f-824b-ada8da860e0b',
+  mercadoPagoPublicKey: 'APP_USR-1e2c7aa8-8e71-477a-b639-fcfa499a7897',
   mercadoPago: {
-    publicKey: 'APP_USR-1c0df301-ca64-4e8f-824b-ada8da860e0b'
+    publicKey: 'APP_USR-1e2c7aa8-8e71-477a-b639-fcfa499a7897'
   }
 };

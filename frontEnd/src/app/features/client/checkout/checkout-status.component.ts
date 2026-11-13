@@ -258,22 +258,40 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
     // Detectar estado basado en la ruta y en los query params de Mercado Pago
     this.route.queryParams.subscribe(params => {
       const mpStatus = params['collection_status'] || params['status'];
-      const extRef = params['external_reference'];
+      let extRef = params['external_reference'];
       const pId = params['payment_id'] || params['collection_id'];
 
       if (pId) {
         this.paymentId.set(String(pId));
       }
 
-      if (extRef && !isNaN(Number(extRef))) {
+      this.resolverDatosPedido();
+
+      if (!extRef && this.pagoId) {
+        extRef = String(this.pagoId);
+      } else if (extRef && !isNaN(Number(extRef))) {
         this.pagoId = Number(extRef);
+      }
+
+      // Si Mercado Pago redirige con aprobación en el retorno GET, confirmamos con el backend
+      if (extRef && (mpStatus === 'approved' || url.includes('/success'))) {
+        const queryParams = { ...params, external_reference: extRef };
+        this.paymentService.confirmarRetornoMercadoPago(queryParams as Record<string, string>).subscribe({
+          next: (tx) => {
+            if (tx && tx.estado === 'APROBADO') {
+              this.currentStatus.set('SUCCESS');
+              this.cartService.clearCart();
+              this.iniciarCountdownRedireccion();
+            }
+          },
+          error: (err) => console.warn('Aviso: confirmación por retorno GET:', err)
+        });
       }
 
       // The URL / Mercado Pago params are only a hint: the backend decides the final state.
       const pistaFallo = url.includes('/failure') || mpStatus === 'rejected';
       this.currentStatus.set(pistaFallo ? 'FAILURE' : 'PENDING');
 
-      this.resolverDatosPedido();
       this.verificarEstado(pistaFallo);
     });
   }
@@ -308,7 +326,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
       map(ord => {
         if (!ord) return null;
         if (ord.estado === 'CANCELADO' || ord.estado === 'PEDIDO_FANTASMA') return 'FAILURE';
-        if (ord.estado === 'PENDIENTE_PAGO' || ord.estado === 'PENDIENTE_CONFIRMACION' || ord.estado === 'RECIBIDO') {
+        if (ord.estado === 'PENDIENTE_PAGO' || ord.estado === 'PENDIENTE_CONFIRMACION') {
           return 'PENDING';
         }
         return 'SUCCESS';
@@ -349,6 +367,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
           const parsed = JSON.parse(raw);
           if (parsed.code) this.trackingCode.set(parsed.code);
           if (parsed.total) this.orderTotal.set(parsed.total);
+          if (parsed.id && !this.pagoId) this.pagoId = Number(parsed.id);
         }
       } catch (e) {
         console.warn('Error leyendo orden de localStorage:', e);

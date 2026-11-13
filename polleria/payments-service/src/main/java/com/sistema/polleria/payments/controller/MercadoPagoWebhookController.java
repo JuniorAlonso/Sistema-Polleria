@@ -51,8 +51,52 @@ public class MercadoPagoWebhookController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
+        // 1. Manejo nativo de webhooks de Checkout Pro Orders API (type=order o action=order.*)
+        if (body != null && body.get("data") instanceof Map<?, ?> dataMap) {
+            Object extRefObj = dataMap.get("external_reference");
+            Object statusObj = dataMap.get("status");
+            Object statusDetailObj = dataMap.get("status_detail");
+
+            if (extRefObj != null && !extRefObj.toString().isBlank()) {
+                try {
+                    Long pagoId = Long.parseLong(extRefObj.toString().trim());
+                    var optPago = pagoRepository.findById(pagoId);
+                    if (optPago.isPresent()) {
+                        Pago pago = optPago.get();
+                        String st = statusObj != null ? statusObj.toString().toLowerCase() : "";
+                        String stDetail = statusDetailObj != null ? statusDetailObj.toString() : "";
+
+                        String subPaymentId = (paymentId != null && paymentId.matches("\\d+")) ? paymentId : null;
+                        String subMethod = "mercadopago";
+                        if (dataMap.get("transactions") instanceof Map<?, ?> transMap
+                                && transMap.get("payments") instanceof java.util.List<?> pList && !pList.isEmpty()
+                                && pList.get(0) instanceof Map<?, ?> pFirst) {
+                            if (pFirst.get("reference") instanceof Map<?, ?> refMap && refMap.get("id") != null) {
+                                subPaymentId = String.valueOf(refMap.get("id"));
+                            }
+                            if (pFirst.get("payment_method") instanceof Map<?, ?> pmMap && pmMap.get("id") != null) {
+                                subMethod = String.valueOf(pmMap.get("id"));
+                            }
+                        }
+
+                        String mappedStatus = ("processed".equals(st) || "accredited".equals(st) || "approved".equals(st))
+                                ? "approved" : st;
+                        log.info("Procesando webhook de Order API para pagoId={}, mappedStatus={}, paymentId={}",
+                                pagoId, mappedStatus, subPaymentId);
+                        aplicarEstadoDePasarela(pago, mappedStatus, subPaymentId != null ? subPaymentId : String.valueOf(dataMap.get("id")),
+                                stDetail, subMethod);
+                        return ResponseEntity.ok().build();
+                    } else {
+                        log.warn("No se encontró entidad Pago con ID={} en webhook de Order", extRefObj);
+                    }
+                } catch (Exception ex) {
+                    log.error("Error al procesar data de Order en webhook: {}", ex.getMessage(), ex);
+                }
+            }
+        }
+
         try {
-            if (paymentId != null) {
+            if (paymentId != null && paymentId.matches("\\d+")) {
                 log.info("Consultando estado de pago en Mercado Pago para paymentId={}", paymentId);
                 PaymentClient client = new PaymentClient();
                 Payment payment = client.get(Long.parseLong(paymentId));
