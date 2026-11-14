@@ -12,6 +12,7 @@ import com.sistema.polleria.payments.dto.YapeOtpPagoRequest;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.MetodoPago;
 import com.sistema.polleria.payments.entity.Pago;
+import com.sistema.polleria.payments.gateway.ConsultaPagoMercadoPago;
 import com.sistema.polleria.payments.gateway.GatewayResult;
 import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
 import com.sistema.polleria.payments.gateway.PaymentGateway;
@@ -45,6 +46,7 @@ public class PagoService {
     private final WhatsappNotificationClient whatsappNotificationClient;
     private final OrdenesClient ordenesClient;
     private final AlmacenComprobantes almacenComprobantes;
+    private final ConsultaPagoMercadoPago consultaPagoMercadoPago;
 
     private static final Set<String> ESTADOS_ORDEN_TERMINALES = Set.of("CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA");
 
@@ -607,17 +609,30 @@ public class PagoService {
             return PagoResponse.from(pago);
         }
 
-        if ("approved".equalsIgnoreCase(status)) {
-            String refExterna = (paymentId != null && !paymentId.isBlank()) ? "MP-" + paymentId : "MP-RETORNO-" + pagoId;
-            ConfirmarPagoRequest req = new ConfirmarPagoRequest(
-                    refExterna,
-                    "Pago aprobado por Mercado Pago (Retorno GET: " + refExterna + ")"
-            );
-            return confirmar(pagoId, req, "");
-        } else if ("rejected".equalsIgnoreCase(status)) {
-            actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO, "Pago rechazado en pasarela Mercado Pago");
+        // The URL is public and can be typed by anyone: its status is ignored. Only the state that
+        // Mercado Pago reports for this payment id, for this pago and its amount, changes anything.
+        if (paymentId == null || !paymentId.matches("\\d+")) {
+            log.warn("Retorno de Mercado Pago sin payment_id verificable para pago #{}", pagoId);
+            return PagoResponse.from(pago);
+        }
+        var verificado = consultaPagoMercadoPago.consultar(Long.parseLong(paymentId)).orElse(null);
+        if (verificado == null
+                || !String.valueOf(pagoId).equals(verificado.referenciaExterna())
+                || verificado.monto() == null || pago.getMonto() == null
+                || verificado.monto().compareTo(pago.getMonto()) != 0) {
+            log.warn("Retorno de Mercado Pago no verificado para pago #{} (payment_id={}, estado URL={})",
+                    pagoId, paymentId, status);
+            return PagoResponse.from(pago);
         }
 
+        if (verificado.aprobado()) {
+            String refExterna = "MP-" + paymentId;
+            return confirmar(pagoId, new ConfirmarPagoRequest(refExterna,
+                    "Pago aprobado por Mercado Pago (retorno verificado: " + refExterna + ")"), "");
+        }
+        if (verificado.rechazado()) {
+            actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO, "Pago rechazado en pasarela Mercado Pago");
+        }
         return PagoResponse.from(pago);
     }
 
