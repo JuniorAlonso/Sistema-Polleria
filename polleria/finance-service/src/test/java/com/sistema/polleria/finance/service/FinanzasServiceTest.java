@@ -46,8 +46,14 @@ class FinanzasServiceTest {
         return MovimientoCaja.builder().tipo(tipo).categoria(categoria).monto(new BigDecimal(monto)).motivo("x").build();
     }
 
-    private static ComprobantePago comprobante(String total) {
-        return ComprobantePago.builder().total(new BigDecimal(total)).build();
+    private static ComprobantePago comprobante(long ordenId, String total) {
+        return ComprobantePago.builder().ordenId(ordenId).total(new BigDecimal(total)).build();
+    }
+
+    private static MovimientoCaja ventaEfectivo(long ordenId, String monto) {
+        MovimientoCaja m = mov(TipoMovimiento.INGRESO, CategoriaMovimiento.VENTA, monto);
+        m.setOrdenId(ordenId);
+        return m;
     }
 
     private void dia(List<MovimientoCaja> movimientos, List<ComprobantePago> comprobantes, List<ArqueoCaja> arqueos) {
@@ -57,27 +63,29 @@ class FinanzasServiceTest {
     }
 
     @Test
-    @DisplayName("R3.10: ventas y órdenes salen de comprobantes; efectivo de INGRESO sin fondos; gastos sin fondos")
+    @DisplayName("R3.10: ventas = efectivo + POS + digital; órdenes y ticket de comprobantes; sin fondos")
     void balanceCuadraConMovimientosYComprobantes() {
         dia(List.of(
-                        mov(TipoMovimiento.INGRESO, CategoriaMovimiento.VENTA, "40.00"),
+                        ventaEfectivo(1L, "40.00"),
                         mov(TipoMovimiento.INGRESO, CategoriaMovimiento.RENDICION_REPARTIDOR, "60.00"),
                         mov(TipoMovimiento.INGRESO, CategoriaMovimiento.FONDO_REPARTIDOR, "20.00"),
                         mov(TipoMovimiento.INGRESO, CategoriaMovimiento.MANUAL, "5.00"),
                         mov(TipoMovimiento.EGRESO, CategoriaMovimiento.FONDO_REPARTIDOR, "20.00"),
                         mov(TipoMovimiento.EGRESO, CategoriaMovimiento.MANUAL, "15.00")),
-                List.of(comprobante("40.00"), comprobante("50.00"), comprobante("30.00")),
+                // order 1 paid cash at the POS; 2 and 3 by card/Yape (no cash income)
+                List.of(comprobante(1L, "40.00"), comprobante(2L, "50.00"), comprobante(3L, "30.00")),
                 List.of(ArqueoCaja.builder().montoCierrePos(new BigDecimal("8.00")).build()));
 
         BalanceDiarioResponse r = finanzasService.obtenerBalanceDiario(HOY);
 
         assertThat(r.getIngresos().getEfectivoSalon()).isEqualByComparingTo("100.00");
         assertThat(r.getIngresos().getPosFisicoSalon()).isEqualByComparingTo("8.00");
-        assertThat(r.getIngresos().getPasarelaDigital()).isEqualByComparingTo("12.00");
-        assertThat(r.getIngresos().getTotalIngresos()).isEqualByComparingTo("120.00");
+        // non-cash receipts 80, of which 8 went through the card terminal
+        assertThat(r.getIngresos().getPasarelaDigital()).isEqualByComparingTo("72.00");
+        assertThat(r.getIngresos().getTotalIngresos()).isEqualByComparingTo("180.00");
         assertThat(r.getEgresos().getGastosCajaChica()).isEqualByComparingTo("15.00");
         assertThat(r.getEgresos().getTotalEgresos()).isEqualByComparingTo("15.00");
-        assertThat(r.getBalanceNeto()).isEqualByComparingTo("105.00");
+        assertThat(r.getBalanceNeto()).isEqualByComparingTo("165.00");
         assertThat(r.getOrdenesAtendidas()).isEqualTo(3);
         assertThat(r.getTicketPromedio()).isEqualByComparingTo("40.00");
     }
@@ -100,12 +108,28 @@ class FinanzasServiceTest {
         dia(List.of(
                         mov(TipoMovimiento.INGRESO, null, "25.00"),
                         mov(TipoMovimiento.EGRESO, null, "7.00")),
-                List.of(comprobante("25.00")),
+                List.of(comprobante(9L, "25.00")),
                 List.of());
 
         BalanceDiarioResponse r = finanzasService.obtenerBalanceDiario(HOY);
 
         assertThat(r.getIngresos().getEfectivoSalon()).isEqualByComparingTo("25.00");
         assertThat(r.getEgresos().getGastosCajaChica()).isEqualByComparingTo("7.00");
+    }
+
+    @Test
+    @DisplayName("El efectivo que rinden los repartidores cuenta como venta aunque no tenga comprobante")
+    void deliverySinComprobanteNoDejaElBalanceNegativo() {
+        dia(List.of(
+                        mov(TipoMovimiento.INGRESO, CategoriaMovimiento.RENDICION_REPARTIDOR, "310.00"),
+                        mov(TipoMovimiento.EGRESO, CategoriaMovimiento.MANUAL, "30.00")),
+                List.of(comprobante(5L, "1.00"), comprobante(6L, "1.00")),
+                List.of());
+
+        BalanceDiarioResponse r = finanzasService.obtenerBalanceDiario(HOY);
+
+        assertThat(r.getIngresos().getTotalIngresos()).isEqualByComparingTo("312.00");
+        assertThat(r.getBalanceNeto()).isEqualByComparingTo("282.00");
+        assertThat(r.getTicketPromedio()).as("ticket from receipts only").isEqualByComparingTo("1.00");
     }
 }

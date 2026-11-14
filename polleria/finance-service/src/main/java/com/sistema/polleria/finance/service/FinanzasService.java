@@ -23,16 +23,18 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * Daily balance from the stored records only (plan 03, R3.10):
  * <ul>
- *   <li>sales and served orders come from the receipts issued that day;</li>
+ *   <li>sales = cash + card terminal + digital, so courier cash (which has no receipt) is counted;</li>
  *   <li>cash sales are the INGRESO movements that are sales (POS cash and courier hand-ins), without
  *       the courier change float;</li>
- *   <li>expenses are the EGRESO movements without the float handed to couriers;</li>
- *   <li>card payments at the POS terminal come from the cash counts, the rest of the receipts is
- *       digital.</li>
+ *   <li>card terminal comes from the cash counts; digital is the receipts not paid in cash at the POS
+ *       minus that card terminal amount, so card sales are not counted twice;</li>
+ *   <li>served orders and the average ticket come from the receipts issued that day;</li>
+ *   <li>expenses are the EGRESO movements without the float handed to couriers.</li>
  * </ul>
  * Movements stored before the category existed keep the previous rule: INGRESO is a sale, EGRESO an
  * expense.
@@ -66,15 +68,19 @@ public class FinanzasService {
         BigDecimal gastos = sumar(movimientos, m -> m.getTipo() == TipoMovimiento.EGRESO
                 && m.getCategoria() != CategoriaMovimiento.FONDO_REPARTIDOR);
 
-        BigDecimal totalVentas = comprobantes.stream().map(ComprobantePago::getTotal)
-                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Set<Long> ordenesEnEfectivo = movimientos.stream()
+                .filter(m -> m.getTipo() == TipoMovimiento.INGRESO && m.getCategoria() == CategoriaMovimiento.VENTA)
+                .map(MovimientoCaja::getOrdenId).filter(Objects::nonNull).collect(Collectors.toSet());
+        BigDecimal totalComprobantes = sumarComprobantes(comprobantes, c -> true);
+        BigDecimal comprobantesNoEfectivo = sumarComprobantes(comprobantes, c -> !ordenesEnEfectivo.contains(c.getOrdenId()));
         BigDecimal posFisico = arqueos.stream().map(ArqueoCaja::getMontoCierrePos)
                 .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal digital = totalVentas.subtract(efectivo).subtract(posFisico).max(BigDecimal.ZERO);
+        BigDecimal digital = comprobantesNoEfectivo.subtract(posFisico).max(BigDecimal.ZERO);
+        BigDecimal totalVentas = efectivo.add(posFisico).add(digital);
 
         int ordenes = comprobantes.size();
         BigDecimal ticketPromedio = ordenes > 0
-                ? totalVentas.divide(BigDecimal.valueOf(ordenes), 2, RoundingMode.HALF_UP)
+                ? totalComprobantes.divide(BigDecimal.valueOf(ordenes), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
         BigDecimal reembolsos = BigDecimal.ZERO;
@@ -97,6 +103,11 @@ public class FinanzasService {
                 .ordenesAtendidas(ordenes)
                 .ticketPromedio(ticketPromedio)
                 .build();
+    }
+
+    private static BigDecimal sumarComprobantes(List<ComprobantePago> comprobantes, Predicate<ComprobantePago> filtro) {
+        return comprobantes.stream().filter(filtro).map(ComprobantePago::getTotal)
+                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private static BigDecimal sumar(List<MovimientoCaja> movimientos, Predicate<MovimientoCaja> filtro) {

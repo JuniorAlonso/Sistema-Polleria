@@ -134,7 +134,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | `CajaService.cerrar` | Observación obligatoria si `diferencia != 0`, registra `cerrado_por`. | Corregir |
 | `LiquidacionService` | Bloqueo pesimista al cerrar y 409 sin caja abierta. | Corregir |
 | `PagoController` / `PagoService` | Delegar D3.7 en `AutorizacionPago`, retirar `MOZO` de `iniciar` (sin consumidores) y una guarda al inicio de `iniciar` que valida el monto contra la orden con el `OrdenesClient` existente. Sin otros cambios: el archivo es compartido. | Corregir |
-| `FinanzasService` | Ventas en efectivo = `INGRESO` menos fondos; excluir fondos de gastos; contar y sumar con `comprobantes_pago`; quitar `arqueos*35`. | Corregir |
+| `FinanzasService` | Ventas en efectivo = `INGRESO` menos fondos; excluir fondos de gastos; contar órdenes y ticket con `comprobantes_pago`; ventas = efectivo + POS + digital (el efectivo del repartidor no tiene comprobante); quitar `arqueos*35`. | Corregir |
 
 ### Frontend
 
