@@ -24,13 +24,13 @@ public class IncidenteService {
     private final IncidenteRepository incidenteRepository;
 
     @Transactional
-    public IncidenteResponse registrar(CrearIncidenteRequest req) {
+    public IncidenteResponse registrar(CrearIncidenteRequest req, String reportadoPor) {
         Incidente incidente = Incidente.builder()
                 .titulo(req.getTitulo())
                 .severidad(req.getSeveridad())
                 .tipo(req.getTipo())
                 .descripcion(req.getDescripcion())
-                .responsable(req.getResponsable())
+                .reportadoPor(reportadoPor)
                 .estado(EstadoIncidente.ABIERTO)
                 .ocurridoEn(LocalDateTime.now())
                 .build();
@@ -61,17 +61,20 @@ public class IncidenteService {
         return IncidenteResponse.from(buscarOFallar(id));
     }
 
+    // D4.11: responsable desde el JWT; re-resolver devuelve 409
     @Transactional
-    public IncidenteResponse resolver(Long id, ResolverIncidenteRequest req) {
+    public IncidenteResponse resolver(Long id, ResolverIncidenteRequest req, String responsableEmail) {
         Incidente incidente = buscarOFallar(id);
+
+        if (incidente.getEstado() == EstadoIncidente.RESUELTO) {
+            throw new IllegalStateException("El incidente #" + id + " ya fue resuelto con anterioridad");
+        }
 
         incidente.setEstado(req.getEstado() != null ? req.getEstado() : EstadoIncidente.RESUELTO);
         incidente.setCausaRaiz(req.getCausaRaiz());
         incidente.setSolucionAplicada(req.getSolucionAplicada());
         incidente.setResueltoEn(LocalDateTime.now());
-        if (req.getResponsable() != null) {
-            incidente.setResponsable(req.getResponsable());
-        }
+        incidente.setResponsable(responsableEmail != null ? responsableEmail : req.getResponsable());
 
         incidente = incidenteRepository.save(incidente);
         log.info("Incidente #{} resuelto y documentado: {}", incidente.getId(), incidente.getTitulo());

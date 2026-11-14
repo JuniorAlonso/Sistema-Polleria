@@ -22,4 +22,9 @@ public interface ReporteIncidenciaRepository extends JpaRepository<ReporteIncide
     java.util.Optional<ReporteIncidencia> findFirstByOrdenIdOrderByCreadoEnDesc(Long ordenId);
 
     List<ReporteIncidencia> findAllByOrderByCreadoEnDesc();
+
+    boolean existsByOrdenId(Long ordenId);
+
+    // Devoluciones en ventanilla pendientes de entrega (canal=VENTANILLA y devueltoEn=null)
+    List<ReporteIncidencia> findByCanalDevolucionAndDevueltoEnIsNullOrderByCreadoEnDesc(String canalDevolucion);
 }

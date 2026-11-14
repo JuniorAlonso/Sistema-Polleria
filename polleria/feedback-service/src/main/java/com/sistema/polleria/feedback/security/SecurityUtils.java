@@ -33,4 +33,16 @@ public final class SecurityUtils {
         }
         return false;
     }
+
+    public static boolean esAdminOCajero(Principal principal) {
+        if (principal instanceof UsernamePasswordAuthenticationToken auth) {
+            return auth.getAuthorities().stream()
+                    .anyMatch(a -> {
+                        String role = a.getAuthority();
+                        return role.equals("ADMIN") || role.equals("ROLE_ADMIN")
+                                || role.equals("CAJERO") || role.equals("ROLE_CAJERO");
+                    });
+        }
+        return false;
+    }
 }

@@ -201,7 +201,9 @@ public class MercadoPagoGateway implements PaymentGateway {
         if (pago == null) return false;
         String ref = pago.getReferenciaExterna();
         String detalle = pago.getDetalle();
-        return (ref != null && (ref.startsWith("MP-") || ref.startsWith("ORD") || ref.matches("^\\d+$") || ref.contains("-")))
+        // D4.6: ref.contains("-") gave false positives (UUIDs, tickets). Only Mercado Pago patterns:
+        // MP-<payment id>, a bare payment id, or an Orders API id (ORD...).
+        return (ref != null && (ref.matches("^MP-\\d+$") || ref.matches("^\\d+$") || ref.startsWith("ORD")))
                 || (detalle != null && detalle.toLowerCase().contains("mercado pago"));
     }
 

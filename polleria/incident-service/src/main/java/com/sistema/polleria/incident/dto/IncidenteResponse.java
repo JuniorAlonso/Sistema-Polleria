@@ -27,6 +27,7 @@ public class IncidenteResponse {
     private LocalDateTime ocurridoEn;
     private LocalDateTime resueltoEn;
     private String responsable;
+    private String reportadoPor;
 
     public static IncidenteResponse from(Incidente i) {
         if (i == null) return null;
@@ -42,6 +43,7 @@ public class IncidenteResponse {
                 .ocurridoEn(i.getOcurridoEn())
                 .resueltoEn(i.getResueltoEn())
                 .responsable(i.getResponsable())
+                .reportadoPor(i.getReportadoPor())
                 .build();
     }
 }

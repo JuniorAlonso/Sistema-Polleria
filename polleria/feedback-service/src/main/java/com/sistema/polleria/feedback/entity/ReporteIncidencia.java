@@ -54,6 +54,12 @@ public class ReporteIncidencia {
     @Column(name = "monto_reembolso", precision = 10, scale = 2)
     private BigDecimal montoReembolso;
 
+    @Column(name = "canal_devolucion", length = 20)
+    private String canalDevolucion;
+
+    @Column(name = "devuelto_en")
+    private LocalDateTime devueltoEn;
+
     @Version
     private Long version;
 

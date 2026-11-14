@@ -149,7 +149,7 @@ class PagoServiceTest {
 
         assertThatThrownBy(() -> pagoService.reembolsar(2L, new BigDecimal("45.00"), "Error"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Solo se pueden reembolsar pagos que hayan sido APROBADOS");
+                .hasMessageContaining("Solo se pueden reembolsar pagos APROBADOS");
 
         verify(pagoRepository, never()).save(any());
     }

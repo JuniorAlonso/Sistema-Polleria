@@ -27,11 +27,18 @@ public class ReporteIncidenciaService {
     private final FileStorageService fileStorageService;
     private final PaymentsClient paymentsClient;
     private final OrdersClient ordersClient;
+    private final FinanceClient financeClient;
 
     @Transactional
     public ReporteResponse crear(CrearReporteRequest request, MultipartFile foto, Long clienteId) {
-        // Validar orden contra orders-service
+        // Fail-closed: si orders-service no responde, lanza 503
         ordersClient.obtenerYValidarOrden(request.getOrdenId(), clienteId, false);
+
+        // Un solo reclamo activo por orden
+        if (reporteRepository.existsByOrdenId(request.getOrdenId())) {
+            throw new IllegalStateException(
+                    "Ya existe un reclamo registrado para la orden #" + request.getOrdenId());
+        }
 
         String fotoUrl = request.getFotoEvidenciaUrl();
         if (foto != null && !foto.isEmpty()) {
@@ -49,8 +56,7 @@ public class ReporteIncidenciaService {
                 .build();
 
         reporte = reporteRepository.save(reporte);
-        log.info("Reporte de incidencia #{} creado para orden #{} por cliente #{}",
-                reporte.getId(), reporte.getOrdenId(), clienteId);
+        log.info("Reporte #{} creado para orden #{} por cliente #{}", reporte.getId(), reporte.getOrdenId(), clienteId);
         return ReporteResponse.from(reporte);
     }
 
@@ -86,8 +92,9 @@ public class ReporteIncidenciaService {
         return ReporteResponse.from(buscarOFallar(id));
     }
 
-    public java.util.Optional<ReporteResponse> obtenerPorOrden(Long ordenId) {
+    public java.util.Optional<ReporteResponse> obtenerPorOrden(Long ordenId, Long solicitanteId, boolean esAdmin) {
         return reporteRepository.findFirstByOrdenIdOrderByCreadoEnDesc(ordenId)
+                .filter(r -> esAdmin || r.getClienteId().equals(solicitanteId))
                 .map(ReporteResponse::from);
     }
 
@@ -104,7 +111,7 @@ public class ReporteIncidenciaService {
     public ReporteResponse resolver(Long id, ResolverReporteRequest request, String bearerToken) {
         ReporteIncidencia reporte = buscarOFallar(id);
 
-        if (reporte.getEstado() == EstadoReclamo.RESUELTO) {
+        if (reporte.getEstado() == EstadoReclamo.RESUELTO || reporte.getEstado() == EstadoReclamo.RECHAZADO) {
             throw new IllegalStateException("El reporte #" + id + " ya fue resuelto con anterioridad");
         }
 
@@ -117,20 +124,61 @@ public class ReporteIncidenciaService {
             reporte.setResueltoEn(LocalDateTime.now());
         }
 
-        if (Boolean.TRUE.equals(request.getReembolsoProcedente())) {
-            log.info("Ejecutando reembolso automático para orden #{}, reporte #{}, monto S/ {}",
-                    reporte.getOrdenId(), reporte.getId(), request.getMontoReembolso());
-            paymentsClient.emitirReembolsoPorOrden(
+        if (Boolean.TRUE.equals(request.getReembolsoProcedente()) && request.getMontoReembolso() != null) {
+            String canal = paymentsClient.emitirReembolsoPorOrden(
                     reporte.getOrdenId(),
                     reporte.getId(),
                     request.getMontoReembolso(),
                     request.getRespuestaAdmin(),
                     bearerToken
             );
+            reporte.setCanalDevolucion(canal);
+            log.info("Reembolso para reporte #{}: canal={}", reporte.getId(), canal);
+            // Si es ventanilla, devueltoEn se establece cuando el cajero entrega el efectivo
         }
 
         reporte = reporteRepository.save(reporte);
         log.info("Reporte #{} resuelto con estado {}", reporte.getId(), reporte.getEstado());
+        return ReporteResponse.from(reporte);
+    }
+
+    /** Lista devoluciones en ventanilla pendientes de entrega (para cajero). */
+    public List<ReporteResponse> listarDevolucionesPendientes() {
+        return reporteRepository.findByCanalDevolucionAndDevueltoEnIsNullOrderByCreadoEnDesc("VENTANILLA")
+                .stream().map(ReporteResponse::from).toList();
+    }
+
+    /**
+     * Cajero marca una devolución en ventanilla como entregada.
+     * Registra el egreso en caja y sella devueltoEn.
+     */
+    @Transactional
+    public ReporteResponse marcarEntregado(Long id, String bearerToken) {
+        ReporteIncidencia reporte = buscarOFallar(id);
+
+        if (!"VENTANILLA".equals(reporte.getCanalDevolucion())) {
+            throw new IllegalStateException(
+                    "El reporte #" + id + " no corresponde a una devolución en ventanilla");
+        }
+        if (reporte.getDevueltoEn() != null) {
+            throw new IllegalStateException(
+                    "El reporte #" + id + " ya fue marcado como entregado el " + reporte.getDevueltoEn());
+        }
+        if (reporte.getMontoReembolso() == null) {
+            throw new IllegalStateException("El reporte #" + id + " no tiene monto de reembolso definido");
+        }
+
+        // Registrar egreso en caja (409 si caja cerrada)
+        financeClient.registrarEgresoDevolución(
+                reporte.getId(),
+                reporte.getOrdenId(),
+                reporte.getMontoReembolso(),
+                bearerToken
+        );
+
+        reporte.setDevueltoEn(LocalDateTime.now());
+        reporte = reporteRepository.save(reporte);
+        log.info("Reporte #{}: devolución en ventanilla entregada al cliente, monto S/ {}", id, reporte.getMontoReembolso());
         return ReporteResponse.from(reporte);
     }
 

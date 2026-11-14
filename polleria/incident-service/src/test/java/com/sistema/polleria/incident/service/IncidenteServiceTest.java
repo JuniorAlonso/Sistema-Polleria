@@ -49,12 +49,13 @@ class IncidenteServiceTest {
                 .responsable("Soporte Técnico")
                 .build();
 
-        IncidenteResponse res = incidenteService.registrar(req);
+        IncidenteResponse res = incidenteService.registrar(req, "admin@polleria.pe");
 
         assertThat(res.getId()).isEqualTo(10L);
         assertThat(res.getEstado()).isEqualTo(EstadoIncidente.ABIERTO);
         assertThat(res.getSeveridad()).isEqualTo(Severidad.ALTA);
         assertThat(res.getTitulo()).isEqualTo("Caída de conexión de terminal POS");
+        assertThat(res.getReportadoPor()).isEqualTo("admin@polleria.pe");
         verify(incidenteRepository).save(any(Incidente.class));
     }
 
@@ -80,7 +81,8 @@ class IncidenteServiceTest {
                 .responsable("Mantenimiento Externo")
                 .build();
 
-        IncidenteResponse res = incidenteService.resolver(5L, req);
+        // Without the authenticated email, the responsable from the request is kept.
+        IncidenteResponse res = incidenteService.resolver(5L, req, null);
 
         assertThat(res.getId()).isEqualTo(5L);
         assertThat(res.getEstado()).isEqualTo(EstadoIncidente.RESUELTO);
