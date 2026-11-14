@@ -79,7 +79,8 @@ public class SecurityConfig {
                 // Pagos del checkout web de invitados (T3): el servicio valida la orden en orders-service.
                 .requestMatchers("/pagos/webhook/**").permitAll()
                 .requestMatchers("/pagos/yape-otp").permitAll()
-                .requestMatchers(org.springframework.http.HttpMethod.POST, "/pagos/mercadopago/preferencia").permitAll()
+                .requestMatchers(HttpMethod.POST, "/pagos/mercadopago/preferencia").permitAll()
+                .requestMatchers(HttpMethod.GET, "/pagos/medios-pago", "/pagos/mercadopago/medios-pago", "/pagos/mercadopago/retorno").permitAll()
                 .anyRequest().authenticated()
             )
             .headers(headers -> headers

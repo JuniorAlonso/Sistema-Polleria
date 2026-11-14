@@ -66,4 +66,19 @@ export interface MercadoPagoPreferenceResponse {
   sandboxInitPoint: string;
   pagoId: number;
   ordenId: number;
+  checkoutUrl?: string;
+}
+
+/** Medios de pago devueltos por `GET /pagos/mercadopago/medios-pago` */
+export interface MercadoPagoPaymentMethod {
+  id: string;
+  name: string;
+  paymentTypeId: string;
+  status: string;
+  secureThumbnail: string;
+  thumbnail: string;
+  deferredCapture?: string;
+  minAllowedAmount?: number;
+  maxAllowedAmount?: number;
+  accreditationTime?: number;
 }

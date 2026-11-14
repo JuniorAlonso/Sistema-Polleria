@@ -18,9 +18,9 @@ export const environment = {
     finance: 'http://localhost:8087',
     incidents: 'http://localhost:8088'
   },
-  mercadoPagoPublicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9',
+  mercadoPagoPublicKey: 'APP_USR-1e2c7aa8-8e71-477a-b639-fcfa499a7897',
   mercadoPago: {
-    publicKey: 'APP_USR-c425e605-dfe3-4ce3-bf50-aa60558e02b9'
+    publicKey: 'APP_USR-1e2c7aa8-8e71-477a-b639-fcfa499a7897'
     // Sin accessToken: el cobro real se crea en el backend. El navegador nunca lo maneja.
   }
 };
