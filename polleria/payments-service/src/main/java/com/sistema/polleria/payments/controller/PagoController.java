@@ -21,18 +21,26 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import com.sistema.polleria.payments.dto.PreferenceResponse;
+import com.mercadopago.resources.paymentmethod.PaymentMethod;
 import java.security.Principal;
 import java.util.List;
 
 @RestController
 @RequestMapping("/pagos")
-@RequiredArgsConstructor
 public class PagoController {
 
     private final PagoService pagoService;
     private final FirmadorComprobantes firmadorComprobantes;
     private final AutorizacionPago autorizacionPago;
     private final ValidadorMontoPago validadorMontoPago;
+
+    public PagoController(PagoService pagoService, FirmadorComprobantes firmadorComprobantes,
+                          AutorizacionPago autorizacionPago, ValidadorMontoPago validadorMontoPago) {
+        this.pagoService = pagoService;
+        this.firmadorComprobantes = firmadorComprobantes;
+        this.autorizacionPago = autorizacionPago;
+        this.validadorMontoPago = validadorMontoPago;
+    }
 
     /**
      * Iniciar pago — CLIENTE (checkout web), ADMIN y CAJERO (cobro en caja). MOZO no inicia pagos:
@@ -53,9 +61,12 @@ public class PagoController {
     }
 
     /**
-     * Crear Preferencia de Mercado Pago (Checkout Pro) — público como {@code /pagos/yape-otp}: el
-     * checkout web deja pagar con tarjeta a invitados (T3/S1). El servicio valida la orden en
-     * orders-service (PENDIENTE_PAGO y monto = total); un invitado queda como cliente anónimo.
+     * Crear Preferencia de Mercado Pago (Checkout Pro) — público como
+     * {@code /pagos/yape-otp}: el
+     * checkout web deja pagar con tarjeta a invitados (T3/S1). El servicio valida
+     * la orden en
+     * orders-service (PENDIENTE_PAGO y monto = total); un invitado queda como
+     * cliente anónimo.
      */
     @PostMapping("/mercadopago/preferencia")
     @ResponseStatus(HttpStatus.CREATED)
@@ -68,7 +79,38 @@ public class PagoController {
     }
 
     /**
-     * Pago directo en Checkout Web con Yape integrado en Mercado Pago (OTP 6 dígitos).
+     * Listar medios de pago disponibles en Mercado Pago.
+     * Público para que el checkout web pueda consultar las opciones de pago
+     * activas.
+     */
+    @GetMapping({ "/mercadopago/medios-pago", "/medios-pago" })
+    @ResponseStatus(HttpStatus.OK)
+    public List<PaymentMethod> listarMediosDePago() {
+        return pagoService.listarMediosDePagoMercadoPago();
+    }
+
+    /**
+     * Procesa la redirección GET de Mercado Pago tras completar el pago en la URL
+     * de retorno (success_url).
+     * Confirma el pago y actualiza el estado de la orden en el sistema.
+     */
+    @GetMapping("/mercadopago/retorno")
+    @ResponseStatus(HttpStatus.OK)
+    public PagoResponse procesarRetornoMercadoPago(
+            @RequestParam(value = "payment_id", required = false) String paymentId,
+            @RequestParam(value = "collection_id", required = false) String collectionId,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "collection_status", required = false) String collectionStatus,
+            @RequestParam(value = "external_reference", required = false) String externalReference) {
+
+        String pId = (paymentId != null && !paymentId.isBlank()) ? paymentId : collectionId;
+        String st = (status != null && !status.isBlank()) ? status : collectionStatus;
+        return pagoService.procesarRetornoMercadoPago(pId, st, externalReference);
+    }
+
+    /**
+     * Pago directo en Checkout Web con Yape integrado en Mercado Pago (OTP 6
+     * dígitos).
      * Si es aprobado, pasa la orden DIRECTO a preparación en cocina.
      */
     @PostMapping("/yape-otp")
@@ -102,16 +144,16 @@ public class PagoController {
     }
 
     /**
-     * Cash a courier collected and has not handed in yet (S6). ADMIN, CAJERO and the internal key see any
-     * courier; a REPARTIDOR only his own id (403 otherwise). {@code desde} defaults to the beginning of time.
+     * Cash a courier collected and has not handed in yet (S6). ADMIN, CAJERO and
+     * the internal key see any
+     * courier; a REPARTIDOR only his own id (403 otherwise). {@code desde} defaults
+     * to the beginning of time.
      */
     @GetMapping("/efectivo/repartidor/{repartidorId}")
     @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','REPARTIDOR','INTERNAL')")
     public EfectivoPendienteResponse efectivoPendiente(
             @PathVariable Long repartidorId,
-            @RequestParam(value = "desde", required = false)
-            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
-            java.time.LocalDateTime desde,
+            @RequestParam(value = "desde", required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) java.time.LocalDateTime desde,
             Principal principal,
             Authentication authentication) {
         boolean soloPropio = tieneAutoridad(authentication, "REPARTIDOR")
@@ -124,7 +166,10 @@ public class PagoController {
         return pagoService.efectivoPendiente(repartidorId, desde);
     }
 
-    /** Marks cash payments as handed in by a settlement (S6). Idempotent; 409 if claimed by another settlement. */
+    /**
+     * Marks cash payments as handed in by a settlement (S6). Idempotent; 409 if
+     * claimed by another settlement.
+     */
     @PostMapping("/efectivo/liquidar")
     @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','INTERNAL')")
     public java.util.Map<String, Object> liquidarEfectivo(@Valid @RequestBody LiquidarEfectivoRequest request) {
@@ -150,8 +195,10 @@ public class PagoController {
     }
 
     /**
-     * Subida web de la captura del pago (S3). El CLIENTE dueño de la orden o el personal
-     * (ADMIN, CAJERO) envían la imagen como multipart ({@code file}); el pago queda en
+     * Subida web de la captura del pago (S3). El CLIENTE dueño de la orden o el
+     * personal
+     * (ADMIN, CAJERO) envían la imagen como multipart ({@code file}); el pago queda
+     * en
      * {@code PENDIENTE_VERIFICACION}.
      */
     @PostMapping(value = "/orden/{ordenId}/comprobante", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -167,9 +214,12 @@ public class PagoController {
     }
 
     /**
-     * Verificación del comprobante de Yape (S3). La ejecutan ADMIN y CAJERO. Aprobar avanza la
-     * orden con el mismo mecanismo del pago aprobado de Mercado Pago y exige captura adjunta y
-     * estar dentro de la ventana de 15 minutos (400 si no); rechazar exige {@code motivoRechazo}
+     * Verificación del comprobante de Yape (S3). La ejecutan ADMIN y CAJERO.
+     * Aprobar avanza la
+     * orden con el mismo mecanismo del pago aprobado de Mercado Pago y exige
+     * captura adjunta y
+     * estar dentro de la ventana de 15 minutos (400 si no); rechazar exige
+     * {@code motivoRechazo}
      * y deja la orden impaga.
      *
      * <p>
@@ -186,7 +236,8 @@ public class PagoController {
         String adminEmail = principal != null ? principal.getName() : null;
         return pagoService.verificar(id, request, adminEmail, authorization != null ? authorization : "");
     }
-    // The verify response carries the proof only for staff; it is already limited to ADMIN/CAJERO.
+    // The verify response carries the proof only for staff; it is already limited
+    // to ADMIN/CAJERO.
 
     /** Detalle de un pago */
     @GetMapping("/{id}")
@@ -216,7 +267,8 @@ public class PagoController {
     }
 
     /**
-     * Pagos — ADMIN / CAJERO. Con {@code ?estado=PENDIENTE_VERIFICACION} es la bandeja del cajero;
+     * Pagos — ADMIN / CAJERO. Con {@code ?estado=PENDIENTE_VERIFICACION} es la
+     * bandeja del cajero;
      * incluye la URL firmada de la captura para renderizarla.
      */
     @GetMapping
@@ -302,7 +354,10 @@ public class PagoController {
         return puedeVerComprobante(authentication) ? pago : pago.sinComprobante();
     }
 
-    /** ADMIN and CAJERO (who verify the capture) are the only roles that see the proof. */
+    /**
+     * ADMIN and CAJERO (who verify the capture) are the only roles that see the proof.
+     */
+
     private boolean puedeVerComprobante(Authentication authentication) {
         if (authentication == null || authentication.getAuthorities() == null) {
             return false;

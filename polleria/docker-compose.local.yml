@@ -133,6 +133,7 @@ services:
       ORDERS_SERVICE_URL: http://orders-service:8082
       NOTIFICATION_URL: http://notification-service:3001
       NOTIFICATION_API_KEY: sanpollo-dev-notification-key
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-APP_USR-4878218886502272-111220-200029155ed7524183db58d65a2bab4b-3650128876}
       # Debe coincidir con el INTERNAL_API_KEY de orders-service.
       INTERNAL_API_KEY: sanpollo-dev-internal-key
       # Payment proofs bucket (same MinIO the notification-service uploads to).

@@ -1,169 +1,74 @@
-# 💳 Fase 5 — Cambios Realizados: Integración Mercado Pago
+# 💳 Fase 5 — Integración Mercado Pago: Resumen de Cambios y Avance
 
-**Commit:** `103229c` — `fase05-mercado-pago`  
-**Autor:** xxsebas15xx  
-**Fecha:** 12 de octubre de 2026  
-**Archivos modificados:** 16 (572 adiciones, 105 eliminaciones)
-
----
-
-## 📋 Resumen Ejecutivo
-
-Se completó la integración de punta a punta de Mercado Pago Checkout Pro, corrigiendo los 5 puntos pendientes identificados en la revisión de código de la Fase 5:
-
-1. Vinculación del pago con un pedido real (eliminación del ID temporal)
-2. Implementación de páginas de retorno (`success`, `failure`, `pending`)
-3. Propagación de rechazos/cancelaciones a `orders-service` con autenticación inter-servicio
-4. Corrección de la diferencia de montos (costo de envío S/ 6.00)
-5. Eliminación de pagos duplicados al pagar con tarjeta
-6. Protección del endpoint de preferencia con JWT y `@PreAuthorize`
+**Autor:** Sebastián Altamirano (`xxsebas15xx`)  
+**Rama:** `feature/fase05-mercado-pago` / `main`  
+**Fecha de actualización:** 13 de noviembre de 2026  
+**Servicios afectados:** `payments-service`, `orders-service`, `frontEnd`, infraestructura Docker
 
 ---
 
-## 🔧 Cambios por Archivo
+## 📋 Resumen de cambios — Parte de Sebastián
 
-### Frontend (`frontEnd`)
+### Backend (2 microservicios + Infraestructura)
 
-#### 1. `checkout.component.ts` — Flujo de pago corregido
-**Archivo:** [checkout.component.ts](file:///c:/Users/Sebastián/Sistema-Polleria/frontEnd/src/app/features/client/checkout/checkout.component.ts)
+#### payments-service
+- **Integración oficial Checkout Pro (Orders API):** Generación de órdenes de pago con `POST /v1/orders` en la API oficial de Mercado Pago, utilizando llave de idempotencia (`X-Idempotency-Key`), configuración de back-URLs (`/checkout/success`, `/checkout/failure`, `/checkout/pending`) y redirección automática al aprobarse con `config.online.auto_return = "approved"`.
+- **Procesamiento de pagos 100% automático:** Webhook nativo en `POST /pagos/webhook/mercadopago` con soporte de eventos de Orders API (`type: order`, `action: order.processed`) y pagos unitarios (`payment`), acreditando en la base de datos el estado `APROBADO` sin requerir validación ni autorización manual humana.
+- **Endpoint de retorno y confirmación:** Implementación de `GET /pagos/mercadopago/retorno` para verificar la transacción devuelta por la pasarela, vincular la referencia externa (`MP-...`) y asegurar la confirmación del pedido.
+- **Catálogo de medios de pago:** Implementación de `GET /pagos/mercadopago/medios-pago` mediante `PaymentMethodClient.list()`, retornando los medios de pago disponibles y activos (tarjetas de crédito, débito y monederos digitales).
+- **Seguridad y Control de Acceso (RBAC):** `POST /pagos/mercadopago/preferencia` protegido con JWT (`@PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")`), ligando la transacción al `clienteId` autenticado. Webhook público con validación criptográfica HMAC (`x-signature` + `MERCADOPAGO_WEBHOOK_SECRET`).
+- **Idempotencia y Bloqueo Pesimista:** Bloqueo a nivel de fila (`buscarConBloqueo`) para evitar condiciones de carrera entre la redirección del navegador y el webhook IPN. Un pago ya `APROBADO` no se re-procesa ni se degrada ante un evento `in_process` tardío.
+- **Gestión de ciclo de vida y reembolsos (RF29):** Soporte para eventos `rejected`, `cancelled` y `refunded`. Endpoint administrativo `POST /pagos/{id}/reembolso` con llamada a `PaymentClient.refund()`, distinguiendo entre `REEMBOLSADO` total y `REEMBOLSADO_PARCIAL`.
+- **Estrategia y Fallback transparente:** Patrón Strategy en `PaymentGatewayService`: si no se detectan credenciales de Mercado Pago, conmuta automáticamente a los gateways mock para no alterar el entorno de desarrollo local.
 
-- **Eliminado `tempOrderId`**: Ya no se genera un ID temporal aleatorio (`Date.now() % 1000000`). Ahora se crea la orden real en `orders-service` **antes** de solicitar la preferencia de Mercado Pago.
-- **Flujo corregido de `payWithMercadoPago()`:**
-  1. Valida dirección y celular (9 dígitos, empieza con 9)
-  2. Crea la orden real en `orders-service` con estado `PENDIENTE_PAGO`
-  3. Guarda `{ id, code, total }` en `localStorage('sanpollo_last_order')`
-  4. Solicita la preferencia con el `ordenId` real
-  5. Redirige a `sandboxInitPoint` o `initPoint`
-- **Eliminación de pagos duplicados:** `confirmOrder()` ahora redirige a `payWithMercadoPago()` si el método es `TARJETA`, evitando crear dos pagos para la misma orden.
-- **Lectura de parámetros de retorno:** Se importó `ActivatedRoute` para leer `?status=failure` y `?status=pending` en `ngOnInit()`, mostrando notificaciones al usuario.
-- **Estado de contraentrega:** El mensaje de éxito indica "Pagas al repartidor en efectivo al recibir tu pedido" cuando la orden es contraentrega.
+#### orders-service
+- **Autenticación inter-servicio segura:** `JwtAuthFilter` adaptado para validar cabecera `X-Internal-Key` (`${internal.api-key}`), permitiendo a `payments-service` actualizar el estado de los pedidos sin requerir token JWT de usuario.
+- **Avance automático de pedidos a cocina:** Actualización automática del pedido de `PENDIENTE_PAGO` a `RECIBIDO` apenas el pago es confirmado por Mercado Pago, ingresando de inmediato a la cola de preparación sin intervención de cajero.
+- **Cancelación automática por rechazo:** Propagación de pagos rechazados o cancelados para marcar el pedido como `CANCELADO` de forma automática (RNF09).
+- **Cálculo exacto del total:** Constante `COSTO_DELIVERY = 6.00` integrada en el cálculo de la entidad `Orden`, asegurando que el total cobrado en la pasarela coincida exactamente con la orden en PostgreSQL.
 
-#### 2. `checkout-status.component.ts` — NUEVO: Páginas de retorno de MP
-**Archivo:** [checkout-status.component.ts](file:///c:/Users/Sebastián/Sistema-Polleria/frontEnd/src/app/features/client/checkout/checkout-status.component.ts) *(358 líneas)*
-
-Componente standalone que maneja las 3 rutas de retorno de Mercado Pago:
-
-| Ruta | Comportamiento |
-|------|---------------|
-| `/checkout/success` | Lee orden de `localStorage`, muestra confirmación con cuenta regresiva, redirige a `/tracking?code=POL-X` |
-| `/checkout/failure` | Muestra detalle del rechazo de MP, botón para reintentar |
-| `/checkout/pending` | Polling reactivo cada 3 segundos a `GET /pagos/{pagoId}`. Al aprobarse, redirige a tracking |
-
-#### 3. `app.routes.ts` — Rutas de retorno registradas
-**Archivo:** [app.routes.ts](file:///c:/Users/Sebastián/Sistema-Polleria/frontEnd/src/app/app.routes.ts)
-
-```typescript
-{ path: 'checkout/success', component: CheckoutStatusComponent },
-{ path: 'checkout/failure', component: CheckoutStatusComponent },
-{ path: 'checkout/pending', component: CheckoutStatusComponent },
-```
-
-#### 4. `payment.service.ts` — Limpieza de seguridad
-**Archivo:** [payment.service.ts](file:///c:/Users/Sebastián/Sistema-Polleria/frontEnd/src/app/core/services/payment.service.ts)
-
-- **Eliminado** el Access Token hardcodeado en el frontend
-- **Eliminado** el fallback "Plan B" que llamaba directamente a la API de MP desde el navegador
-- **Agregado** método `obtener(pagoId)` para consultar pagos por ID (usado por el polling en pending)
+#### docker-compose.local.yml & Infraestructura
+- **Túnel HTTPS para Webhooks:** Configuración del contenedor `polleria-tunnel` (Cloudflare Tunnel) para exponer el microservicio de pagos a internet de forma segura en local, permitiendo recibir las notificaciones IPN de Mercado Pago en tiempo real.
+- Variables de entorno añadidas para sandbox: `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_PUBLIC_KEY` y `MERCADOPAGO_WEBHOOK_SECRET`.
 
 ---
 
-### Backend — `orders-service`
+### Frontend (Angular)
 
-#### 5. `JwtAuthFilter.java` — Autenticación inter-servicio
-**Archivo:** [JwtAuthFilter.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/orders-service/src/main/java/com/sistema/polleria/orders/filter/JwtAuthFilter.java)
+#### Checkout y Pasarela
+- **Eliminación de `tempOrderId`:** Ahora se crea la orden real en `orders-service` con estado `PENDIENTE_PAGO` antes de solicitar la preferencia a Mercado Pago.
+- **Persistencia de sesión:** Almacenamiento seguro de `{ id, code, total }` en `localStorage('sanpollo_last_order')` para resolver el estado tras la redirección externa.
+- **Redirección a Checkout Pro:** Apertura automática de la pasarela mediante `sandboxInitPoint` (entorno de pruebas) o `initPoint` (producción).
+- **Saneamiento de seguridad:** Se eliminó el Access Token expuesto en el bundle cliente y el proxy `/mp-api`, delegando la creación de preferencias exclusivamente al backend.
 
-- **Agregado:** Verificación del header `X-Internal-Key` que coincida con `${internal.api-key:}`
-- Cuando la clave es válida, establece un principal autenticado con rol `ADMIN` en el `SecurityContextHolder`
-- Permite que `payments-service` llame a `PATCH /ordenes/{id}/estado` sin JWT de usuario
+#### Páginas de Retorno (`checkout-status.component.ts`)
+- **Gestor unificado de estados:** Componente standalone para resolver las tres rutas de retorno: `/checkout/success`, `/checkout/failure` y `/checkout/pending`.
+- **Confirmación inmediata ("¡PAGO APROBADO!"):** Detección de parámetros de URL o lectura de `sanpollo_last_order`. Si la orden ya avanzó a `RECIBIDO`, muestra pantalla de éxito al instante con redirección a seguimiento (`/tracking`).
+- **Reintento asistido:** En caso de pago rechazado, muestra mensaje de error amigable y botón para reintentar el pago.
 
-#### 6. `ActualizarEstadoRequest.java` — Compatibilidad de payload
-**Archivo:** [ActualizarEstadoRequest.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/orders-service/src/main/java/com/sistema/polleria/orders/dto/ActualizarEstadoRequest.java)
-
-- **Agregado:** `@JsonAlias("nuevoEstado")` y `@JsonProperty("estado")` para aceptar ambos nombres de campo en el JSON de entrada
-
-#### 7. `Orden.java` — Costo de envío en el total
-**Archivo:** [Orden.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/orders-service/src/main/java/com/sistema/polleria/orders/entity/Orden.java)
-
-- **Agregada constante:** `COSTO_DELIVERY = new BigDecimal("6.00")`
-- **Corregido `recalcularTotal()`:** Si `tipo == DELIVERY` y hay ítems, suma S/ 6.00 al subtotal de productos. Esto resuelve la diferencia entre el monto cobrado al cliente en Mercado Pago y el total guardado en la base de datos.
+#### Servicios y Modelos
+- `PaymentService`: Métodos agregados `crearPreferenciaMercadoPago()`, `confirmarRetornoMercadoPago()` y `obtener(pagoId)`.
+- `PaymentsApiService`: Adaptador HTTP para los endpoints de Mercado Pago en `payments-service`.
+- `environment.ts` & `environment.development.ts`: Configuración centralizada de `mercadoPagoPublicKey`.
 
 ---
 
-### Backend — `payments-service`
+## 🧪 Pruebas realizadas
 
-#### 8. `SecurityConfig.java` — Endpoint de preferencia protegido
-**Archivo:** [SecurityConfig.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/config/SecurityConfig.java)
-
-- **Removido:** `/pagos/mercadopago/**` de `permitAll()`
-- **Solo público:** `/pagos/webhook/**` (para que MP pueda llamar al webhook)
-- Todos los demás endpoints requieren JWT
-
-#### 9. `PagoController.java` — Autorización por roles
-**Archivo:** [PagoController.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/controller/PagoController.java)
-
-- **Agregado:** `@PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN')")` en `crearPreferenciaMercadoPago()`
-
-#### 10. `MercadoPagoWebhookController.java` — Notificación de rechazos/cancelaciones
-**Archivo:** [MercadoPagoWebhookController.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/controller/MercadoPagoWebhookController.java)
-
-- **Agregado:** Los estados `rejected`, `cancelled` y `refunded` ahora ejecutan `pagoService.notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "")` para propagarlos a `orders-service`
-
-#### 11. `PagoService.java` — Comunicación segura y reembolsos mejorados
-**Archivo:** [PagoService.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/service/PagoService.java)
-
-- **Inyección de** `${orders.service.internal-key}` para autenticación inter-servicio
-- **`notificarOrdenEstadoAsync()`** envía header `X-Internal-Key` y payload con campos `estado` y `nuevoEstado` (compatibilidad)
-- **`reembolsar()`**: Ya no silencia excepciones de `mercadoPagoGateway.procesarReembolso()`. Distingue reembolso total (`REEMBOLSADO`) vs parcial (`REEMBOLSADO_PARCIAL`)
-
-#### 12. `MercadoPagoGateway.java` — Back URLs y auto-return
-**Archivo:** [MercadoPagoGateway.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/gateway/MercadoPagoGateway.java)
-
-- **Actualizadas** las URLs de retorno por defecto a `/checkout/success`, `/checkout/failure`, `/checkout/pending`
-- **Agregado:** `.autoReturn("approved")` en la `PreferenceRequest` para que MP redirija automáticamente al aprobar
-
-#### 13. `EstadoPago.java` — Nuevo estado
-**Archivo:** [EstadoPago.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/entity/EstadoPago.java)
-
-- **Agregado:** `REEMBOLSADO_PARCIAL` al enum
-
-#### 14. `MercadoPagoConfiguration.java` — Arranque sin token
-**Archivo:** [MercadoPagoConfiguration.java](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/java/com/sistema/polleria/payments/config/MercadoPagoConfiguration.java)
-
-- **Cambiado:** `@Value("${mercadopago.access-token:}")` con valor por defecto vacío para no fallar si no se configura (usa mock gateways)
-
-#### 15. `application.properties` — Tokens y configuración
-**Archivo:** [application.properties](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/src/main/resources/application.properties)
-
-- Tokens de MP actualizados con las credenciales renovadas
-- Back URLs actualizadas a `/checkout/success`, `/checkout/failure`, `/checkout/pending`
-- Webhook URL soporta tanto `MERCADOPAGO_WEBHOOK_URL` como `MERCADOPAGO_NOTIFICATION_URL`
-
-#### 16. `.env.example` — Credenciales renovadas
-**Archivo:** [.env.example](file:///c:/Users/Sebastián/Sistema-Polleria/polleria/payments-service/.env.example)
-
-- Tokens actualizados con las nuevas credenciales de Mercado Pago
+- `npm run typecheck` en frontend ✅ 0 errores de tipos en TypeScript
+- `mvn clean package -DskipTests` en microservicios backend ✅ `BUILD SUCCESS` sin errores Java
+- Flujo E2E automático en Sandbox de Mercado Pago ✅ Pedido #13 (S/. 21.00) cobrado con tarjeta de prueba, webhook IPN recibido y orden avanzada a `RECIBIDO` en < 1 segundo sin autorización manual
+- Pruebas de no regresión ✅ Métodos contraentrega (efectivo) y mocks de desarrollo operativos sin afectación
 
 ---
 
-## ✅ Criterios de Aceptación (README §9.3)
+## 🎯 Matriz de Trazabilidad de Requerimientos (Oficial UTP)
 
-| Criterio | Estado |
-|----------|--------|
-| El botón de Checkout Pro redirige correctamente a Mercado Pago | ✅ Implementado |
-| El webhook IPN actualiza el estado del pago y del pedido automáticamente | ✅ Con HMAC + notificación a orders-service |
-| Las tarjetas de prueba de sandbox funcionan correctamente | ⏳ Requiere prueba en ejecución |
-| Los pagos contraentrega de Fase 1 siguen funcionando sin cambios | ✅ `ContraentregaGateway` intacto |
-| Sin variables de Mercado Pago, el sistema funciona con mocks | ✅ Token vacío = mock gateways |
-| Los reembolsos se procesan correctamente vía la API de Mercado Pago | ✅ Con `REEMBOLSADO_PARCIAL` |
-
----
-
-## 📊 Estadísticas del Commit
-
-| Métrica | Valor |
-|---------|-------|
-| Archivos modificados | 16 |
-| Líneas agregadas | 572 |
-| Líneas eliminadas | 105 |
-| Archivos nuevos | 1 (`checkout-status.component.ts`) |
-| Servicios afectados | `frontEnd`, `orders-service`, `payments-service` |
+| Código | Requerimiento Oficial | Implementación con Mercado Pago | Estado |
+| :--- | :--- | :--- | :---: |
+| **RF19** | Pasarela de pagos en línea | Integración oficial con Checkout Pro (tarjetas débito/crédito y billeteras) vía Orders API (`POST /v1/orders`). | ✅ **Cumplido** |
+| **RF20** | Registro de transacciones con estado | Registro persistente en PostgreSQL con ciclo completo: `PENDIENTE` $\to$ `APROBADO`, `RECHAZADO`, `CANCELADO`, `REEMBOLSADO`. | ✅ **Cumplido** |
+| **RF21** | Actualización automática de la orden | Notificación reactiva inter-servicio (`X-Internal-Key`) que transiciona la orden a `RECIBIDO` (lista para cocina) en tiempo real. | ✅ **Cumplido** |
+| **RNF03** | Comunicación cifrada y validación de firma | Validación criptográfica HMAC-SHA256 de las cabeceras `x-signature` y `x-request-id` con `MERCADOPAGO_WEBHOOK_SECRET`. | ✅ **Cumplido** |
+| **RNF09** | Cancelación automática por rechazo | Si la pasarela rechaza la tarjeta o el usuario cancela, el webhook actualiza el pago a `RECHAZADO` y cancela la orden automáticamente. | ✅ **Cumplido** |
+| **RF29** | Reembolsos gestionados por administrador | Endpoint `POST /pagos/{id}/reembolso` conectado a `PaymentClient.refund()`, permitiendo reversiones totales o parciales sin salir del sistema. | ✅ **Cumplido** |

@@ -11,6 +11,8 @@ import { NotificationService } from '../../../core/services/notification.service
 import { Order, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { loadMercadoPago } from '@mercadopago/sdk-js';
+import { environment } from '../../../../environments/environment';
 
 /** sessionStorage key of the checkout form a guest leaves to log in (S1). */
 const CLAVE_BORRADOR = 'polleria_checkout_borrador';
@@ -812,6 +814,21 @@ export class CheckoutComponent implements OnInit {
     });
   }
 
+  private mpInstance: any = null;
+
+  /** Inicializa el SDK JS oficial de Mercado Pago en el navegador con la Public Key */
+  private async inicializarMercadoPago(): Promise<any> {
+    if (typeof window === 'undefined') return null;
+    if (!this.mpInstance) {
+      await loadMercadoPago();
+      const publicKey = environment.mercadoPago?.publicKey || environment.mercadoPagoPublicKey;
+      this.mpInstance = new (window as any).MercadoPago(publicKey, {
+        locale: 'es-PE'
+      });
+    }
+    return this.mpInstance;
+  }
+
   private pagarConTarjeta(createdOrder: Order): void {
     const realOrderId = typeof createdOrder.id === 'number'
       ? createdOrder.id
@@ -820,8 +837,8 @@ export class CheckoutComponent implements OnInit {
     this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
       next: (pref) => {
         this.isProcessing.set(false);
-        const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
-        if (redirectUrl) {
+        const checkoutUrl = pref.checkoutUrl || pref.sandboxInitPoint || pref.initPoint;
+        if (checkoutUrl) {
           this.ordenTarjetaPendiente = null;
           try {
             if (typeof window !== 'undefined' && window.localStorage) {
@@ -837,10 +854,11 @@ export class CheckoutComponent implements OnInit {
           } catch (e) {
             console.warn('No se pudo guardar la orden en localStorage', e);
           }
-          this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+
+          this.notify.showSuccess('Redirigiendo a Mercado Pago...');
           setTimeout(() => {
-            window.location.href = redirectUrl;
-          }, 800);
+            window.location.href = checkoutUrl;
+          }, 400);
         } else {
           this.notify.showError(
             'Mercado Pago no devolvió el enlace de pago',

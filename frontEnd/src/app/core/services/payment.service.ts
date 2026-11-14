@@ -2,7 +2,7 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
-import { PaymentTransaction, PagoOrdenAdmin } from '../models/payment.model';
+import { PaymentTransaction, PagoOrdenAdmin, MercadoPagoPaymentMethod, MercadoPagoPreferenceResponse } from '../models/payment.model';
 import { PaymentsApiService } from '../api/payments-api.service';
 import { BackendCobroEfectivoRequest, BackendPagoResponse } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
@@ -184,13 +184,7 @@ export class PaymentService {
    * 2. Si la pasarela no responde, el error sube al llamador: no se simula un cobro.
    * El access token de Mercado Pago nunca viaja al navegador.
    */
-  crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<{
-    preferenceId: string;
-    initPoint: string;
-    sandboxInitPoint: string;
-    pagoId: number;
-    ordenId: number;
-  }> {
+  crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<MercadoPagoPreferenceResponse> {
     const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
     const montoFinal = Math.round(monto * 100) / 100;
 
@@ -199,6 +193,22 @@ export class PaymentService {
       monto: montoFinal,
       metodoPago: 'TARJETA'
     });
+  }
+
+  /**
+   * Consulta los medios de pago disponibles configurados en Mercado Pago desde el backend (:8083).
+   */
+  obtenerMediosPagoMercadoPago(): Observable<MercadoPagoPaymentMethod[]> {
+    return this.api.listarMediosDePagoMercadoPago();
+  }
+
+  /**
+   * Confirma la orden tras el redireccionamiento GET desde Mercado Pago en la URL de retorno.
+   */
+  confirmarRetornoMercadoPago(params: Record<string, string>): Observable<PaymentTransaction> {
+    return this.api.confirmarRetornoMercadoPago(params).pipe(
+      map(dto => PaymentAdapter.toPaymentTransaction(dto))
+    );
   }
 
   /**

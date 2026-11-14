@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { BackendPagoResponse } from '../models/api-contracts.model';
-import { MercadoPagoPreferenceResponse, PagoOrdenAdmin } from '../models/payment.model';
+import { MercadoPagoPaymentMethod, MercadoPagoPreferenceResponse, PagoOrdenAdmin } from '../models/payment.model';
 import { environment } from '../../../environments/environment';
 
 /** Capa HTTP pura de payments-service (:8083). Sin estado, sin mapeo a modelos de UI. */
@@ -53,6 +53,14 @@ export class PaymentsApiService {
 
   crearPreferenciaMercadoPago(body: unknown): Observable<MercadoPagoPreferenceResponse> {
     return this.http.post<MercadoPagoPreferenceResponse>(`${this.API_URL}/pagos/mercadopago/preferencia`, body);
+  }
+
+  listarMediosDePagoMercadoPago(): Observable<MercadoPagoPaymentMethod[]> {
+    return this.http.get<MercadoPagoPaymentMethod[]>(`${this.API_URL}/pagos/mercadopago/medios-pago`);
+  }
+
+  confirmarRetornoMercadoPago(params: Record<string, string>): Observable<BackendPagoResponse> {
+    return this.http.get<BackendPagoResponse>(`${this.API_URL}/pagos/mercadopago/retorno`, { params });
   }
 
   pagarConYapeOtp(body: unknown): Observable<BackendPagoResponse> {
