@@ -60,10 +60,15 @@ public class PaymentsClient {
         // Intentar leer canalDevolucion si payments-service lo devuelve
         Object canal = response.get("canalDevolucion");
         if (canal instanceof String s && !s.isBlank()) return s.toUpperCase();
-        // Inferir desde referenciaPago (D4.6 logic mirror)
-        Object ref = response.get("referenciaPago");
-        if (ref instanceof String r) {
-            if (r.matches("^MP-\\d+$") || r.matches("^\\d+$")) return "MERCADOPAGO";
+        // Same rule as MercadoPagoGateway.esPagoMercadoPago: a refund that went through Mercado Pago
+        // must never be paid again in cash at the counter.
+        Object ref = response.get("referenciaExterna") != null ? response.get("referenciaExterna") : response.get("referenciaPago");
+        if (ref instanceof String r && (r.matches("^MP-\\d+$") || r.matches("^\\d+$") || r.startsWith("ORD"))) {
+            return "MERCADOPAGO";
+        }
+        Object detalle = response.get("detalle");
+        if (detalle instanceof String d && d.toLowerCase().contains("mercado pago")) {
+            return "MERCADOPAGO";
         }
         return "VENTANILLA";
     }

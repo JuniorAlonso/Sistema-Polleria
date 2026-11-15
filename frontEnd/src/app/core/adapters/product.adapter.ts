@@ -101,7 +101,8 @@ export class ProductAdapter {
     let imagen = dto.imagenUrl?.trim();
     if (!imagen) {
       imagen = this.DEFAULT_IMAGES[categoria] || this.DEFAULT_IMAGES['DEFAULT'];
-    } else if (imagen.startsWith('/')) {
+    } else if (imagen.startsWith('/productos/')) {
+      // Only images uploaded to orders-service live on the API host; '/assets/...' stays a frontend path.
       const base = (environment.ordersApiUrl || 'http://localhost:8082').replace(/\/$/, '');
       imagen = `${base}${imagen}`;
     }
