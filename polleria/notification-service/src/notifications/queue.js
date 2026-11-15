@@ -25,7 +25,8 @@ class ColaEnvios {
         azar = Math.random,
         dormir = dormirReal,
         ahora = () => Date.now(),
-        gobernador = null
+        gobernador = null,
+        pausaExterna = null
     }) {
         this.intervaloMs = intervaloMs;
         this.jitterPct = jitterPct;
@@ -34,6 +35,7 @@ class ColaEnvios {
         this.dormir = dormir;
         this.ahora = ahora;
         this.gobernador = gobernador;
+        this.pausaExterna = pausaExterna;
         this.trabajos = [];
         this.procesando = false;
         this.ultimoEnvio = 0;
@@ -53,6 +55,11 @@ class ColaEnvios {
 
     add(trabajo) {
         this.trabajos.push(trabajo);
+        this._ejecutar();
+    }
+
+    reencolarAlFrente(trabajo) {
+        this.trabajos.unshift(trabajo);
         this._ejecutar();
     }
 
@@ -117,10 +124,16 @@ class ColaEnvios {
         }
     }
 
-    // Pausa global (gobernador): presupuesto agotado, fuera de ventana o breaker abierto.
+    // Pausa global: primero gobernador anti-baneo, luego estado de conexión u otra pausa externa.
     _motivoDePausa() {
-        if (!this.gobernador || typeof this.gobernador.motivoDePausa !== 'function') return null;
-        return this.gobernador.motivoDePausa();
+        if (this.gobernador && typeof this.gobernador.motivoDePausa === 'function') {
+            const pausaGobernador = this.gobernador.motivoDePausa();
+            if (pausaGobernador) return pausaGobernador;
+        }
+        if (typeof this.pausaExterna === 'function') {
+            return this.pausaExterna();
+        }
+        return null;
     }
 
     // Una sola reanudación programada a la vez; al despertar se reintenta si aún hay trabajo.

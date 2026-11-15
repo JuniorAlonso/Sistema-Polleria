@@ -2,8 +2,11 @@
 process.env.TZ = process.env.TZ || 'America/Lima';
 
 const path = require('path');
-require('dotenv').config({ quiet: true });
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
+if (process.env.DOTENV_DISABLE !== 'true') {
+    const dotenv = require('dotenv');
+    dotenv.config({ quiet: true });
+    dotenv.config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
+}
 const fs = require('fs');
 const { normalizarTelefono } = require('./notifications/phone');
 
@@ -80,27 +83,29 @@ const config = {
     paymentsServiceUrl: process.env.PAYMENTS_SERVICE_URL || 'http://localhost:8083',
     internalKeyCompartida: process.env.INTERNAL_API_KEY || process.env.NOTIFICATION_API_KEY || null,
 
-    // Almacenamiento de comprobantes en MinIO (T6b, S7). Defaults para local: MinIO
-    // levantado con docker-compose.local.yml (API 9000, consola 9001) y credenciales
-    // de desarrollo. En Docker el endpoint es `minio` (nombre del servicio del compose).
+    // Puppeteer sandbox: desactivado solo cuando PUPPETEER_NO_SANDBOX=true en entornos restringidos.
+    puppeteerNoSandbox: process.env.PUPPETEER_NO_SANDBOX === 'true',
+
+    // Almacenamiento de comprobantes en MinIO (T6b, S7). Sin defaults de acceso ni endpoint en código.
     minio: {
-        endpoint: process.env.MINIO_ENDPOINT || 'localhost',
+        endpoint: process.env.MINIO_ENDPOINT || null,
         port: numeroEnv('MINIO_PORT', 9000),
         useSSL: process.env.MINIO_USE_SSL === 'true',
-        accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-        secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+        accessKey: process.env.MINIO_ACCESS_KEY || null,
+        secretKey: process.env.MINIO_SECRET_KEY || null,
         bucket: process.env.MINIO_BUCKET || 'polleria-comprobantes'
     },
 
-    // Mismo secreto que auth-service: protege GET /historial (solo ADMIN)
-    jwtSecret: process.env.JWT_SECRET || 'sanpollo-dev-secret-key-2026-super-segura-256bits-minimo',
+    // Mismo secreto que auth-service: obligatorio via JWT_SECRET para proteger endpoints ADMIN
+    jwtSecret: process.env.JWT_SECRET || null,
 
-    // Clave compartida con orders/payments. Si está vacía, /pago y /estado quedan abiertos.
+    // Clave compartida con orders/payments (fail-closed si no se define).
     internalApiKey: process.env.NOTIFICATION_API_KEY || null,
 
-    // Orígenes del frontend que pueden consultar /historial y /status
+    // Orígenes del frontend que pueden consultar /historial, /ajustes y /status
     corsOrigins: (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:4200')
         .split(',').map(o => o.trim()).filter(Boolean),
+    corsAllowLoopback: process.env.CORS_ALLOW_LOOPBACK === 'true',
 
     telefonoContacto: process.env.POLLERIA_TELEFONO || '(056) 123-456'
 };

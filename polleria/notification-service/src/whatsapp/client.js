@@ -3,6 +3,20 @@ const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const config = require('../config');
+const { WhatsappDesconectadoError } = require('../notifications/errores');
+
+const puppeteerArgs = [
+    ...(config.puppeteerNoSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-extensions',
+    '--disable-accelerated-2d-canvas',
+    '--disable-session-crashed-bubble',
+    '--disable-features=Translate,OptimizationHints,MediaRouter',
+    '--mute-audio'
+];
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: config.sessionPath }),
@@ -11,21 +25,11 @@ const client = new Client({
     puppeteer: {
         headless: true,
         executablePath: config.chromePath,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-extensions',
-            '--disable-accelerated-2d-canvas',
-            '--disable-session-crashed-bubble',
-            '--disable-features=Translate,OptimizationHints,MediaRouter',
-            '--mute-audio'
-        ]
+        args: puppeteerArgs
     }
 });
+
+const listenersConectado = new Set();
 
 let estado = 'INICIANDO';
 let ultimoQr = null;
@@ -203,6 +207,11 @@ client.on('ready', async () => {
     ultimoError = null;
     console.log('✅ ¡El servicio de WhatsApp de la Pollería está LISTO!');
     await inyectarParcheMediaBlob();
+    for (const listener of listenersConectado) {
+        try {
+            listener();
+        } catch (_) {}
+    }
 });
 
 client.on('loading_screen', (porcentaje, mensaje) => {
@@ -357,7 +366,7 @@ const whatsapp = {
 
             timer = setTimeout(() => {
                 client.off('ready', onReady);
-                reject(new Error(`Tiempo de espera agotado (${timeoutMs / 1000}s) esperando conexión de WhatsApp. Estado actual: ${estado}`));
+                reject(new WhatsappDesconectadoError(`Tiempo de espera agotado (${timeoutMs / 1000}s) esperando conexión de WhatsApp. Estado actual: ${estado}`));
             }, timeoutMs);
 
             client.once('ready', onReady);
@@ -423,6 +432,13 @@ const whatsapp = {
 
     estado: () => estado,
 
+    alConectar(cb) {
+        if (typeof cb === 'function') {
+            listenersConectado.add(cb);
+        }
+        return () => listenersConectado.delete(cb);
+    },
+
     // Último QR generado (para la página /qr); null si ya está conectado
     ultimoQr: () => ultimoQr,
 
@@ -430,4 +446,4 @@ const whatsapp = {
     ultimoError: () => ultimoError
 };
 
-module.exports = { client, whatsapp, reiniciarSesion, arrancar };
+module.exports = { client, whatsapp, reiniciarSesion, arrancar, WhatsappDesconectadoError };

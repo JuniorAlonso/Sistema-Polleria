@@ -110,8 +110,20 @@ function fusionar(parciales, base) {
 }
 
 class AjustesAntiBaneo {
-    constructor(defaults = VALORES_POR_DEFECTO) {
+    constructor(defaults = VALORES_POR_DEFECTO, { store = null } = {}) {
         this._valores = fusionar(defaults, VALORES_POR_DEFECTO);
+        this._store = store;
+    }
+
+    async inicializar() {
+        if (!this._store || typeof this._store.getSettings !== 'function') {
+            return this.obtener();
+        }
+        const guardados = await this._store.getSettings();
+        if (guardados && typeof guardados === 'object') {
+            this._valores = fusionar(guardados, this._valores);
+        }
+        return this.obtener();
     }
 
     obtener() {
@@ -126,10 +138,19 @@ class AjustesAntiBaneo {
         this._valores = fusionar(cambios, this._valores);
         return this.obtener();
     }
+
+    async actualizarYGuardar(cambios = {}) {
+        const siguientes = fusionar(cambios, this._valores);
+        if (this._store && typeof this._store.saveSettings === 'function') {
+            await this._store.saveSettings(siguientes);
+        }
+        this._valores = siguientes;
+        return this.obtener();
+    }
 }
 
-function crearAjustes(defaults) {
-    return new AjustesAntiBaneo(defaults);
+function crearAjustes(defaults, opciones) {
+    return new AjustesAntiBaneo(defaults, opciones);
 }
 
 module.exports = {

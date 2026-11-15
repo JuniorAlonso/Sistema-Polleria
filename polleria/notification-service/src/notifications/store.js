@@ -11,11 +11,39 @@ class MemoryStore {
     constructor() {
         this.logs = [];
         this.secuencia = 0;
+        this.settings = null;
     }
 
     async init() {}
 
-    async create({ ordenId, destinatario, tipo, mensaje }) {
+    async getSettings() {
+        return this.settings ? { ...this.settings } : null;
+    }
+
+    async saveSettings(valores) {
+        this.settings = { ...valores };
+        return { ...this.settings };
+    }
+
+    async findById(id) {
+        const log = this.logs.find(l => l.id === id);
+        return log ? { ...log } : null;
+    }
+
+    async findByEventoId(eventoId) {
+        if (!eventoId) return null;
+        const log = this.logs.find(l => l.eventoId === eventoId);
+        return log ? { ...log } : null;
+    }
+
+    async crearOExistente({ ordenId, destinatario, tipo, mensaje, eventoId = null }) {
+        const claveEvento = typeof eventoId === 'string' && eventoId.trim() ? eventoId.trim() : null;
+        if (claveEvento) {
+            const existente = await this.findByEventoId(claveEvento);
+            if (existente) {
+                return { log: existente, creado: false };
+            }
+        }
         this.secuencia += 1;
         const log = {
             id: `notif_${String(this.secuencia).padStart(5, '0')}`,
@@ -23,6 +51,7 @@ class MemoryStore {
             destinatario,
             tipo,
             mensaje,
+            eventoId: claveEvento,
             estado: 'EN_COLA',
             intentos: 0,
             errorDetalle: null,
@@ -30,7 +59,12 @@ class MemoryStore {
             creadoEn: new Date()
         };
         this.logs.push(log);
-        return { ...log };
+        return { log: { ...log }, creado: true };
+    }
+
+    async create(datos) {
+        const { log } = await this.crearOExistente(datos);
+        return log;
     }
 
     async update(id, cambios) {
@@ -69,6 +103,7 @@ class PostgresStore {
                 destinatario  VARCHAR(40)  NOT NULL,
                 tipo          VARCHAR(40)  NOT NULL,
                 mensaje       TEXT         NOT NULL,
+                evento_id     VARCHAR(120),
                 estado        VARCHAR(20)  NOT NULL DEFAULT 'EN_COLA',
                 intentos      INTEGER      NOT NULL DEFAULT 0,
                 error_detalle TEXT,
@@ -80,16 +115,86 @@ class PostgresStore {
             ALTER TABLE notification_log ALTER COLUMN orden_id DROP NOT NULL;
             -- Ensanchar destinatario para soportar JIDs @lid cuando WhatsApp oculta el número
             ALTER TABLE notification_log ALTER COLUMN destinatario TYPE VARCHAR(40);
+            -- Idempotencia opcional por id de evento (CON-19)
+            ALTER TABLE notification_log ADD COLUMN IF NOT EXISTS evento_id VARCHAR(120);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_log_evento_id
+                ON notification_log (evento_id) WHERE evento_id IS NOT NULL;
+            -- Configuración persistente del panel admin
+            CREATE TABLE IF NOT EXISTS notification_settings (
+                id         INTEGER PRIMARY KEY CHECK (id = 1),
+                settings   JSONB       NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
         `);
     }
 
-    async create({ ordenId, destinatario, tipo, mensaje }) {
+    async getSettings() {
         const { rows } = await this.pool.query(
-            `INSERT INTO notification_log (orden_id, destinatario, tipo, mensaje)
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [ordenId, destinatario, tipo, mensaje]
+            `SELECT settings FROM notification_settings WHERE id = 1`
         );
-        return mapearFila(rows[0]);
+        return rows[0] ? rows[0].settings : null;
+    }
+
+    async saveSettings(valores) {
+        const { rows } = await this.pool.query(
+            `INSERT INTO notification_settings (id, settings, updated_at)
+             VALUES (1, $1::jsonb, now())
+             ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = now()
+             RETURNING settings`,
+            [JSON.stringify(valores)]
+        );
+        return rows[0].settings;
+    }
+
+    async findById(id) {
+        const { rows } = await this.pool.query(
+            `SELECT * FROM notification_log WHERE id = $1`,
+            [id]
+        );
+        return rows[0] ? mapearFila(rows[0]) : null;
+    }
+
+    async findByEventoId(eventoId) {
+        if (!eventoId) return null;
+        const { rows } = await this.pool.query(
+            `SELECT * FROM notification_log WHERE evento_id = $1`,
+            [eventoId]
+        );
+        return rows[0] ? mapearFila(rows[0]) : null;
+    }
+
+    async crearOExistente({ ordenId, destinatario, tipo, mensaje, eventoId = null }) {
+        const claveEvento = typeof eventoId === 'string' && eventoId.trim() ? eventoId.trim() : null;
+        if (!claveEvento) {
+            const { rows } = await this.pool.query(
+                `INSERT INTO notification_log (orden_id, destinatario, tipo, mensaje)
+                 VALUES ($1, $2, $3, $4) RETURNING *`,
+                [ordenId, destinatario, tipo, mensaje]
+            );
+            return { log: mapearFila(rows[0]), creado: true };
+        }
+
+        const { rows } = await this.pool.query(
+            `WITH ins AS (
+                 INSERT INTO notification_log (orden_id, destinatario, tipo, mensaje, evento_id)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (evento_id) WHERE evento_id IS NOT NULL DO NOTHING
+                 RETURNING *
+             )
+             SELECT *, TRUE AS _creado FROM ins
+             UNION ALL
+             SELECT *, FALSE AS _creado FROM notification_log
+             WHERE evento_id = $5 AND NOT EXISTS (SELECT 1 FROM ins)
+             LIMIT 1`,
+            [ordenId, destinatario, tipo, mensaje, claveEvento]
+        );
+        const fila = rows[0];
+        return { log: mapearFila(fila), creado: Boolean(fila._creado) };
+    }
+
+    async create(datos) {
+        const { log } = await this.crearOExistente(datos);
+        return log;
     }
 
     async update(id, cambios) {
@@ -155,6 +260,7 @@ function mapearFila(fila) {
         destinatario: fila.destinatario,
         tipo: fila.tipo,
         mensaje: fila.mensaje,
+        eventoId: fila.evento_id || null,
         estado: fila.estado,
         intentos: fila.intentos,
         errorDetalle: fila.error_detalle,

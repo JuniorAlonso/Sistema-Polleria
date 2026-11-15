@@ -31,9 +31,9 @@ async function main() {
         console.warn('⚠️ DATABASE_URL no definido: el estado de conversación se guardará solo en memoria');
     }
 
-    // Ajustes anti-baneo en memoria (S8): arrancan con los defaults de entorno y el
-    // panel (T5) los editará en caliente. Se pierden al reiniciar el proceso.
-    const ajustes = crearAjustes(config.antiBaneo);
+    // Ajustes anti-baneo: arrancan con los defaults de entorno y cargan/persisten en notification_settings si hay DB.
+    const ajustes = crearAjustes(config.antiBaneo, { store });
+    await ajustes.inicializar();
 
     // Catálogo real de orders-service (T3a): el bot lee GET /productos con cache corto
     // y, si el servicio no responde, avisa y ofrece el asesor en vez de inventar carta.
@@ -77,6 +77,10 @@ async function main() {
         gobernador,
         maxIntentos: config.maxIntentos
     });
+
+    if (typeof whatsapp.alConectar === 'function') {
+        whatsapp.alConectar(() => service.reanudarPorConexion());
+    }
 
     const recuperados = await service.recuperarPendientes();
     if (recuperados > 0) {

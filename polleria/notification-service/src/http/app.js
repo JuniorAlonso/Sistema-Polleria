@@ -1,7 +1,7 @@
 const express = require('express');
 const QRCode = require('qrcode');
 const config = require('../config');
-const { requiereRol, requiereClaveInterna } = require('./auth');
+const { requiereRol, requiereClaveInterna, comparacionConstante } = require('./auth');
 const { ESTADOS_DELIVERY, mensajePago, mensajeEstado, mensajeComprobanteRechazado, mensajeCodigo } = require('../notifications/messages');
 const { ESTADOS_LOG } = require('../notifications/store');
 const { claveDeUsuario, ESTADO_PEDIDO_CONFIRMADO } = require('../chatbot/chatbot');
@@ -60,10 +60,15 @@ const ORIGEN_LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
  * navegador bloqueaba la petición del QR en esos casos. Un origen externo sigue sin
  * habilitarse.
  */
-function origenPermitido(origen) {
+function obtenerEventoId(req) {
+    const candidato = req.body?.eventoId ?? req.headers['x-idempotency-key'];
+    return typeof candidato === 'string' && candidato.trim() ? candidato.trim() : null;
+}
+
+function origenPermitido(origen, allowLoopback = config.corsAllowLoopback) {
     if (!origen) return false;
     if (config.corsOrigins.includes(origen)) return true;
-    return ORIGEN_LOOPBACK.test(origen);
+    return allowLoopback === true && ORIGEN_LOOPBACK.test(origen);
 }
 
 function escaparHtml(texto) {
@@ -84,14 +89,23 @@ img{border:8px solid #fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1
  * @param ultimoQr  función que devuelve el último QR de WhatsApp (o null)
  * @param errorWhatsapp función que devuelve el motivo del último fallo de arranque (o null)
  */
-function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () => null, errorWhatsapp = () => null, reiniciarWhatsapp = async () => {} }) {
+function crearApp({
+    service,
+    store,
+    conversacion,
+    estadoWhatsapp,
+    ultimoQr = () => null,
+    errorWhatsapp = () => null,
+    reiniciarWhatsapp = async () => {},
+    allowLoopbackCors = config.corsAllowLoopback
+}) {
     const app = express();
     app.use(express.json());
 
     // CORS para el panel de administración (Angular)
     app.use((req, res, next) => {
         const origen = req.headers.origin;
-        if (origenPermitido(origen)) {
+        if (origenPermitido(origen, allowLoopbackCors)) {
             res.setHeader('Access-Control-Allow-Origin', origen);
             res.setHeader('Vary', 'Origin');
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
@@ -128,7 +142,8 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 ordenId: Number(ordenId),
                 telefono,
                 tipo: 'PAGO_CONFIRMADO',
-                mensaje: mensajePago({ ordenId, numeroPedido, nombreCliente, montoTotal, tiempoEstimado })
+                mensaje: mensajePago({ ordenId, numeroPedido, nombreCliente, montoTotal, tiempoEstimado }),
+                eventoId: obtenerEventoId(req)
             });
             responderEncolado(res, log);
         } catch (error) {
@@ -167,7 +182,8 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 ordenId: Number(ordenId),
                 telefono,
                 tipo: `ESTADO_${estadoNuevo}`,
-                mensaje: mensajeEstado(req.body)
+                mensaje: mensajeEstado(req.body),
+                eventoId: obtenerEventoId(req)
             });
             responderEncolado(res, log);
         } catch (error) {
@@ -208,7 +224,8 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 ordenId: Number(ordenId),
                 telefono,
                 tipo: 'COMPROBANTE_RECHAZADO',
-                mensaje: mensajeComprobanteRechazado({ ordenId, numeroPedido, nombreCliente, motivo })
+                mensaje: mensajeComprobanteRechazado({ ordenId, numeroPedido, nombreCliente, motivo }),
+                eventoId: obtenerEventoId(req)
             });
             responderEncolado(res, log);
         } catch (error) {
@@ -231,7 +248,8 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
                 tipo: 'CODIGO_SEGUIMIENTO',
                 mensaje: mensajeCodigo({ codigo }),
                 // En el historial no se guarda el código real
-                mensajeRegistro: mensajeCodigo({ codigo: '****' })
+                mensajeRegistro: mensajeCodigo({ codigo: '****' }),
+                eventoId: obtenerEventoId(req)
             });
             responderEncolado(res, log);
         } catch (error) {
@@ -239,12 +257,10 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
         }
     });
 
-    // T5 (S4/S8/S11) — Configuración administrable desde el panel. Solo ADMIN: es la
-    // pantalla del administrador la que edita el anti-baneo y los números de contacto.
-    // El store vive en memoria (S8): lo que se cambie aquí se pierde al reiniciar.
+    // Configuración administrable desde el panel (solo ADMIN), persistida cuando hay PostgreSQL.
     const ajustesDelServicio = () => {
         if (!service || !service.ajustes || typeof service.ajustes.obtener !== 'function') {
-            throw new Error('El servicio de notificaciones no expone ajustes en memoria');
+            throw new Error('El servicio de notificaciones no expone ajustes');
         }
         return service.ajustes;
     };
@@ -262,14 +278,17 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
         }
     });
 
-    router.patch('/ajustes', requiereRol('ADMIN'), (req, res, next) => {
+    router.patch('/ajustes', requiereRol('ADMIN'), async (req, res, next) => {
         try {
             const cambios = req.body;
             if (cambios === null || typeof cambios !== 'object' || Array.isArray(cambios)) {
                 return res.status(400).json({ error: 'El cuerpo debe ser un objeto con los ajustes a cambiar' });
             }
-            // `actualizar()` valida y lanza RangeError sin aplicar nada: el store queda intacto.
-            const ajustes = ajustesDelServicio().actualizar(cambios);
+            const storeAjustes = ajustesDelServicio();
+            // Valida antes de persistir/aplicar; si falla (RangeError), el store queda intacto.
+            const ajustes = typeof storeAjustes.actualizarYGuardar === 'function'
+                ? await storeAjustes.actualizarYGuardar(cambios)
+                : storeAjustes.actualizar(cambios);
             if (Object.prototype.hasOwnProperty.call(cambios, 'operativoTodoElDia') && service?.cola?.despertar) {
                 service.cola.despertar();
             }
@@ -348,17 +367,19 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
         // hostnames y rutas internas). El detalle viaja por /qr, que exige ADMIN.
         const estado = estadoWhatsapp();
         const antiBaneo = typeof service.estadoAntiBaneo === 'function' ? service.estadoAntiBaneo() : null;
+        const conexion = typeof service.estadoConexion === 'function' ? service.estadoConexion() : null;
+        const colaPausada = Boolean((antiBaneo && antiBaneo.pausada) || (conexion && conexion.pausada));
+        const colaMotivo = (antiBaneo && antiBaneo.pausada ? antiBaneo.motivo : null)
+            || (conexion && conexion.pausada ? conexion.motivo : null);
         res.json({
             status: 'ok',
             whatsapp: ESTADO_WHATSAPP[estado] || estado,
             colaPendiente: service.pendientes,
-            // Extra informativo, sin romper el contrato anterior: qué está haciendo la cola
-            // ahora y, si el anti-baneo está activo, si está pausada y por qué.
             cola: {
                 enProceso: service.colaEnProceso,
                 ultimoEnvioEn: service.ultimoEnvioEn,
-                pausada: antiBaneo ? antiBaneo.pausada : false,
-                motivo: antiBaneo ? antiBaneo.motivo : null
+                pausada: colaPausada,
+                motivo: colaMotivo
             },
             antiBaneo
         });
@@ -366,9 +387,7 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
 
     app.use('/api/notificaciones', router);
 
-    // Página para escanear el QR desde el navegador.
-    // Quien vea este QR puede vincular el WhatsApp de la pollería: solo se muestra desde la misma
-    // máquina o con ?clave=<NOTIFICATION_API_KEY>. El QR se genera aquí, sin servicios externos.
+    // Página para escanear el QR desde el navegador (solo loopback o header X-Internal-Key).
     app.get('/qr', async (req, res, next) => {
         try {
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -376,10 +395,10 @@ function crearApp({ service, store, conversacion, estadoWhatsapp, ultimoQr = () 
             res.setHeader('Expires', '0');
 
             const desdeLocal = IPS_LOCALES.includes(req.socket.remoteAddress);
-            const conClave = config.internalApiKey && req.query.clave === config.internalApiKey;
+            const conClave = comparacionConstante(req.headers['x-internal-key'], config.internalApiKey);
             if (!desdeLocal && !conClave) {
                 return res.status(403).send(paginaQr('Acceso restringido',
-                    '<p>Abre esta página desde el servidor o agrega ?clave=&lt;NOTIFICATION_API_KEY&gt;.</p>'));
+                    '<p>Abre esta página desde el servidor o envía la cabecera X-Internal-Key.</p>'));
             }
 
             if (estadoWhatsapp() === 'CONECTADO') {

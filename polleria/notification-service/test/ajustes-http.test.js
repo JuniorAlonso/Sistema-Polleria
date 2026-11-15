@@ -29,7 +29,7 @@ function token(role) {
     return jwt.sign({ role, userId: 1 }, process.env.JWT_SECRET, { subject: 'a@a.com', algorithm: 'HS256' });
 }
 
-function ajustesDePrueba(encima = {}) {
+function ajustesDePrueba(encima = {}, opciones = {}) {
     return crearAjustes({
         intervaloMs: 0,
         jitterPct: 20,
@@ -46,12 +46,12 @@ function ajustesDePrueba(encima = {}) {
         numeroRespaldo: null,
         numeroYape: '51934421442',
         ...encima
-    });
+    }, opciones);
 }
 
 function montarApp(encima = {}) {
-    const ajustes = ajustesDePrueba(encima);
     const store = new MemoryStore();
+    const ajustes = ajustesDePrueba(encima, { store });
     const ahora = () => horaLocal(12);
     const gobernador = crearGobernador({ ajustes, ahora });
     const service = new NotificacionService({
@@ -68,7 +68,7 @@ function montarApp(encima = {}) {
         dormir: async () => {}
     });
     const app = crearApp({ service, store, estadoWhatsapp: () => 'CONECTADO' });
-    return { app, service, ajustes, gobernador };
+    return { app, service, store, ajustes, gobernador };
 }
 
 /** Levanta la app en un puerto libre, corre el cuerpo y siempre cierra el servidor. */
@@ -222,15 +222,21 @@ test('los números de asesor y respaldo se guardan normalizados y el respaldo va
     });
 });
 
-test('el PATCH no persiste: el cambio vive solo en memoria y un store nuevo arranca con los defaults', async () => {
-    await conApp({}, async ({ base, ajustes }) => {
-        const res = await patchAjustes(base, { presupuestoHora: 3, numeroAsesor: '999888777' });
+test('el PATCH persiste los ajustes en el store y se recuperan al reiniciar', async () => {
+    await conApp({}, async ({ base, store, ajustes }) => {
+        const res = await patchAjustes(base, {
+            presupuestoHora: 3,
+            numeroAsesor: '999888777',
+            operativoTodoElDia: true
+        });
         assert.strictEqual(res.status, 200);
         assert.strictEqual(ajustes.obtener().presupuestoHora, 3);
 
-        // "Reiniciar el proceso" devuelve los defaults: no hay archivo ni tabla de ajustes.
-        const reiniciado = ajustesDePrueba();
-        assert.strictEqual(reiniciado.obtener().presupuestoHora, 40);
-        assert.strictEqual(reiniciado.obtener().numeroAsesor, null);
+        // Simula reiniciar el servicio cargando la configuración desde el mismo store.
+        const reiniciado = ajustesDePrueba({}, { store });
+        await reiniciado.inicializar();
+        assert.strictEqual(reiniciado.obtener().presupuestoHora, 3);
+        assert.strictEqual(reiniciado.obtener().numeroAsesor, '51999888777');
+        assert.strictEqual(reiniciado.obtener().operativoTodoElDia, true);
     });
 });
