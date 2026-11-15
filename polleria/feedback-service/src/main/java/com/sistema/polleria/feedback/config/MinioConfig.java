@@ -14,7 +14,7 @@ public class MinioConfig {
 
     static final String REGION = "us-east-1";
 
-    @Value("${minio.endpoint:localhost}")
+    @Value("${minio.endpoint:}")
     private String endpoint;
 
     @Value("${minio.port:9000}")
@@ -23,10 +23,10 @@ public class MinioConfig {
     @Value("${minio.use-ssl:false}")
     private boolean useSsl;
 
-    @Value("${minio.access-key:minioadmin}")
+    @Value("${minio.access-key:}")
     private String accessKey;
 
-    @Value("${minio.secret-key:minioadmin}")
+    @Value("${minio.secret-key:}")
     private String secretKey;
 
     @Value("${minio.bucket.feedback:polleria-feedback}")
@@ -34,6 +34,12 @@ public class MinioConfig {
 
     @Bean
     public MinioClient minioClient() {
+        if (endpoint == null || endpoint.isBlank()
+                || accessKey == null || accessKey.isBlank()
+                || secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException(
+                    "Faltan credenciales o endpoint de MinIO (minio.endpoint, minio.access-key, minio.secret-key)");
+        }
         return MinioClient.builder()
                 .endpoint(endpoint, port, useSsl)
                 .credentials(accessKey, secretKey)

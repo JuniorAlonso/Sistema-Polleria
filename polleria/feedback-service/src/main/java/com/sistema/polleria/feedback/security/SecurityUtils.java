@@ -12,6 +12,15 @@ public final class SecurityUtils {
     }
 
     public static Long obtenerUsuarioIdAutenticado(Principal principal) {
+        Long id = obtenerUsuarioIdSiExiste(principal);
+        if (id != null) {
+            return id;
+        }
+        throw new AuthenticationCredentialsNotFoundException(
+                "Credenciales de autenticación no encontradas o token JWT carece de userId");
+    }
+
+    public static Long obtenerUsuarioIdSiExiste(Principal principal) {
         if (principal instanceof UsernamePasswordAuthenticationToken auth && auth.getCredentials() != null) {
             Object creds = auth.getCredentials();
             if (creds instanceof Number n) {
@@ -22,8 +31,7 @@ public final class SecurityUtils {
             } catch (NumberFormatException ignored) {
             }
         }
-        throw new AuthenticationCredentialsNotFoundException(
-                "Credenciales de autenticación no encontradas o token JWT carece de userId");
+        return null;
     }
 
     public static boolean esAdmin(Principal principal) {

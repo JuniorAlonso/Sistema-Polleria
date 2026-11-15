@@ -39,4 +39,20 @@ public class ReseniaResponse {
                 .creadoEn(r.getCreadoEn())
                 .build();
     }
+
+    public static ReseniaResponse fromPublico(Resenia r) {
+        if (r == null) return null;
+        return ReseniaResponse.builder()
+                .id(r.getId())
+                .ordenId(r.getOrdenId())
+                .clienteId(null)
+                .productoId(r.getProductoId())
+                .calificacion(r.getCalificacion())
+                .comentario(r.getComentario())
+                .respuestaAdmin(r.getRespuestaAdmin())
+                .respondidoEn(r.getRespondidoEn())
+                .visible(r.getVisible())
+                .creadoEn(r.getCreadoEn())
+                .build();
+    }
 }

@@ -60,6 +60,14 @@ public class ReporteIncidencia {
     @Column(name = "devuelto_en")
     private LocalDateTime devueltoEn;
 
+    @Builder.Default
+    @Column(name = "reembolso_en_proceso")
+    private Boolean reembolsoEnProceso = false;
+
+    @Builder.Default
+    @Column(name = "entrega_en_proceso")
+    private Boolean entregaEnProceso = false;
+
     @Version
     private Long version;
 

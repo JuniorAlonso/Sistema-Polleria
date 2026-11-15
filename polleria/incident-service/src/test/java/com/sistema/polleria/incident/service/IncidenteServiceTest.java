@@ -14,6 +14,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -97,13 +99,15 @@ class IncidenteServiceTest {
     @DisplayName("Debe filtrar incidentes por severidad y estado")
     void listar_filtraCorrectamente() {
         Incidente i1 = Incidente.builder().id(1L).severidad(Severidad.CRITICA).estado(EstadoIncidente.ABIERTO).build();
-        when(incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(Severidad.CRITICA, EstadoIncidente.ABIERTO))
+        when(incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(
+                eq(Severidad.CRITICA), eq(EstadoIncidente.ABIERTO), any(Pageable.class)))
                 .thenReturn(List.of(i1));
 
         List<IncidenteResponse> res = incidenteService.listar(Severidad.CRITICA, EstadoIncidente.ABIERTO);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0).getId()).isEqualTo(1L);
-        verify(incidenteRepository).findBySeveridadAndEstadoOrderByOcurridoEnDesc(Severidad.CRITICA, EstadoIncidente.ABIERTO);
+        verify(incidenteRepository).findBySeveridadAndEstadoOrderByOcurridoEnDesc(
+                Severidad.CRITICA, EstadoIncidente.ABIERTO, PageRequest.of(0, 500));
     }
 }

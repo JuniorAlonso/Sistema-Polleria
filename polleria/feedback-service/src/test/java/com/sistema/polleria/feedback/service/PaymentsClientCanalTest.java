@@ -43,7 +43,12 @@ class PaymentsClientCanalTest {
     void referenciaExternaDeMercadoPagoEsMercadoPago() throws IOException {
         assertThat(canalPara("{\"referenciaExterna\":\"MP-123456\"}")).isEqualTo("MERCADOPAGO");
         server.stop(0);
-        assertThat(canalPara("{\"referenciaExterna\":\"123456\"}")).isEqualTo("MERCADOPAGO");
+        assertThat(canalPara("{\"mpPaymentId\":\"123456\"}")).isEqualTo("MERCADOPAGO");
+    }
+
+    @Test
+    void referenciaNumericaSinMpPaymentIdEsVentanilla() throws IOException {
+        assertThat(canalPara("{\"referenciaExterna\":\"123456\"}")).isEqualTo("VENTANILLA");
     }
 
     @Test

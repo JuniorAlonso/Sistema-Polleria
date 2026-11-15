@@ -1,13 +1,17 @@
 package com.sistema.polleria.feedback.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Map;
 
 @Slf4j
@@ -17,9 +21,23 @@ public class FinanceClient {
     private final RestClient restClient;
     private final String financeServiceUrl;
 
+    @Autowired
     public FinanceClient(@Value("${finance.service.url:http://localhost:8087}") String financeServiceUrl) {
+        this(crearRestClientPorDefecto(), financeServiceUrl);
+    }
+
+    FinanceClient(RestClient restClient, String financeServiceUrl) {
+        this.restClient = restClient;
         this.financeServiceUrl = financeServiceUrl;
-        this.restClient = RestClient.create();
+    }
+
+    private static RestClient crearRestClientPorDefecto() {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        return RestClient.builder().requestFactory(requestFactory).build();
     }
 
     /**

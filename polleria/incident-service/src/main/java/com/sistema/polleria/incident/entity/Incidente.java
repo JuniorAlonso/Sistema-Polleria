@@ -61,4 +61,7 @@ public class Incidente {
     // D4.11: quien reportó el incidente (email desde JWT, nullable para registros anteriores)
     @Column(name = "reportado_por", length = 100)
     private String reportadoPor;
+
+    @Version
+    private Long version;
 }

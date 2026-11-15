@@ -8,6 +8,7 @@ import com.sistema.polleria.feedback.repository.ReseniaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,29 +55,41 @@ public class ReseniaService {
         return ReseniaResponse.from(resenia);
     }
 
+    private static final int LIMITE_LISTADO_ADMIN = 500;
+
     public List<ReseniaResponse> listarPorCliente(Long clienteId) {
         return reseniaRepository.findByClienteIdOrderByCreadoEnDesc(clienteId)
                 .stream().map(ReseniaResponse::from).toList();
     }
 
     public List<ReseniaResponse> listarPorOrden(Long ordenId) {
-        return reseniaRepository.findByOrdenId(ordenId)
-                .stream().map(ReseniaResponse::from).toList();
+        return listarPorOrden(ordenId, null, false);
+    }
+
+    public List<ReseniaResponse> listarPorOrden(Long ordenId, Long usuarioId, boolean esAdmin) {
+        return reseniaRepository.findByOrdenId(ordenId).stream()
+                .filter(r -> esAdmin
+                        || (usuarioId != null && usuarioId.equals(r.getClienteId()))
+                        || Boolean.TRUE.equals(r.getVisible()))
+                .map(r -> (esAdmin || (usuarioId != null && usuarioId.equals(r.getClienteId())))
+                        ? ReseniaResponse.from(r)
+                        : ReseniaResponse.fromPublico(r))
+                .toList();
     }
 
     public List<ReseniaResponse> listarTodas() {
-        return reseniaRepository.findByVisibleTrueOrderByCreadoEnDesc()
-                .stream().map(ReseniaResponse::from).toList();
+        return reseniaRepository.findByVisibleTrueOrderByCreadoEnDesc(PageRequest.of(0, LIMITE_LISTADO_ADMIN))
+                .stream().map(ReseniaResponse::fromPublico).toList();
     }
 
     public List<ReseniaResponse> listarTodasAdmin() {
-        return reseniaRepository.findAllByOrderByCreadoEnDesc()
+        return reseniaRepository.findAllByOrderByCreadoEnDesc(PageRequest.of(0, LIMITE_LISTADO_ADMIN))
                 .stream().map(ReseniaResponse::from).toList();
     }
 
     public ProductoReseniasResponse obtenerResumenProducto(Long productoId) {
         List<Resenia> resenias = reseniaRepository.findByProductoIdAndVisibleTrueOrderByCreadoEnDesc(productoId);
-        List<ReseniaResponse> responses = resenias.stream().map(ReseniaResponse::from).toList();
+        List<ReseniaResponse> responses = resenias.stream().map(ReseniaResponse::fromPublico).toList();
 
         double promedio = resenias.stream()
                 .mapToInt(Resenia::getCalificacion)

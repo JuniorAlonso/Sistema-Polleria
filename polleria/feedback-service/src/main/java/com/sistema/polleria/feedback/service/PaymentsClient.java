@@ -1,11 +1,15 @@
 package com.sistema.polleria.feedback.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Map;
 
 @Slf4j
@@ -15,9 +19,23 @@ public class PaymentsClient {
     private final RestClient restClient;
     private final String paymentsServiceUrl;
 
+    @Autowired
     public PaymentsClient(@Value("${payments.service.url:http://localhost:8083}") String paymentsServiceUrl) {
+        this(crearRestClientPorDefecto(), paymentsServiceUrl);
+    }
+
+    PaymentsClient(RestClient restClient, String paymentsServiceUrl) {
+        this.restClient = restClient;
         this.paymentsServiceUrl = paymentsServiceUrl;
-        this.restClient = RestClient.create();
+    }
+
+    private static RestClient crearRestClientPorDefecto() {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        return RestClient.builder().requestFactory(requestFactory).build();
     }
 
     /**
@@ -55,15 +73,21 @@ public class PaymentsClient {
         }
     }
 
-    private static String detectarCanal(Map<String, Object> response) {
+    static String detectarCanal(Map<String, Object> response) {
         if (response == null) return "VENTANILLA";
-        // Intentar leer canalDevolucion si payments-service lo devuelve
         Object canal = response.get("canalDevolucion");
         if (canal instanceof String s && !s.isBlank()) return s.toUpperCase();
-        // Same rule as MercadoPagoGateway.esPagoMercadoPago: a refund that went through Mercado Pago
-        // must never be paid again in cash at the counter.
+        Object metodo = response.get("metodoPago");
+        if (metodo instanceof String m && "CONTRAENTREGA".equalsIgnoreCase(m.trim())) {
+            return "VENTANILLA";
+        }
+        // DIN-11: usar el ID verificado de Mercado Pago; nunca tratar una referencia numérica libre de cajero como MP.
+        Object mpPaymentId = response.get("mpPaymentId");
+        if (mpPaymentId != null && mpPaymentId.toString().trim().matches("^\\d+$")) {
+            return "MERCADOPAGO";
+        }
         Object ref = response.get("referenciaExterna") != null ? response.get("referenciaExterna") : response.get("referenciaPago");
-        if (ref instanceof String r && (r.matches("^MP-\\d+$") || r.matches("^\\d+$") || r.startsWith("ORD"))) {
+        if (ref instanceof String r && (r.matches("^MP-\\d+$") || r.startsWith("ORD"))) {
             return "MERCADOPAGO";
         }
         Object detalle = response.get("detalle");
