@@ -2,6 +2,7 @@ package com.sistema.polleria.orders.service;
 
 import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.dto.CrearOrdenRequest;
+import com.sistema.polleria.orders.dto.MesaResponse;
 import com.sistema.polleria.orders.dto.OrdenItemRequest;
 import com.sistema.polleria.orders.dto.OrdenResponse;
 import com.sistema.polleria.orders.entity.*;
@@ -9,8 +10,11 @@ import com.sistema.polleria.orders.exception.ConflictoDeEstadoException;
 import com.sistema.polleria.orders.repository.OrdenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,6 +32,9 @@ public class OrdenService {
     private final SalonEventPublisher salonEventPublisher;
     private final NumeroPedidoService numeroPedidoService;
     private final SancionDispatcherService sancionDispatcherService;
+
+    @Autowired(required = false)
+    private PagosConsultaClient pagosConsultaClient;
 
     private static final List<OrdenEstado> ESTADOS_INICIALES_PERMITIDOS = List.of(
             OrdenEstado.RECIBIDO,
@@ -137,11 +144,15 @@ public class OrdenService {
         ordenRepository.save(orden);
         log.info("Orden #{} creada — tipo: {}, total: S/.{}, N.° {} del cliente",
                 orden.getId(), orden.getTipo(), orden.getTotal(), orden.getNumeroCliente());
-        salonEventPublisher.notificarNuevaComanda(orden);
-        if (orden.getMesa() != null) {
-            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
-        }
-        return OrdenResponse.from(orden);
+        OrdenResponse respuesta = OrdenResponse.from(orden);
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        ejecutarTrasCommit(() -> {
+            salonEventPublisher.notificarNuevaComanda(orden);
+            if (mesaActualizada != null) {
+                salonEventPublisher.notificarMesaActualizada(mesaActualizada);
+            }
+        });
+        return respuesta;
     }
 
     /**
@@ -166,6 +177,11 @@ public class OrdenService {
                     + " y no admite productos nuevos.");
         }
 
+        if (pagosConsultaClient != null && pagosConsultaClient.tienePagoAprobado(id)) {
+            throw new ConflictoDeEstadoException(
+                    "No se pueden agregar platos a la comanda #" + id + " porque ya tiene un pago aprobado.");
+        }
+
         bloquearProductos(itemsReq.stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> nuevos = itemsReq.stream()
                 .map(itemReq -> construirItem(orden, itemReq))
@@ -187,11 +203,15 @@ public class OrdenService {
         ordenRepository.save(orden);
         log.info("Comanda #{} ampliada con {} ítem(s) por usuario {} — nuevo total: S/.{}",
                 id, nuevos.size(), usuarioId, orden.getTotal());
-        salonEventPublisher.notificarNuevaComanda(orden);
-        if (orden.getMesa() != null) {
-            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
-        }
-        return OrdenResponse.from(orden);
+        OrdenResponse respuesta = OrdenResponse.from(orden);
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        ejecutarTrasCommit(() -> {
+            salonEventPublisher.notificarNuevaComanda(orden);
+            if (mesaActualizada != null) {
+                salonEventPublisher.notificarMesaActualizada(mesaActualizada);
+            }
+        });
+        return respuesta;
     }
 
     /**
@@ -358,7 +378,7 @@ public class OrdenService {
     @Transactional
     public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId,
                                           boolean llamadaInterna) {
-        Orden orden = buscarOFallar(id);
+        Orden orden = buscarOFallarConBloqueo(id);
         validarMesaPorCobrarEnSalon(orden, request.getEstado());
         validarTransicionEstado(orden.getEstado(), request.getEstado(), orden.getTipo());
         if (!llamadaInterna) {
@@ -410,20 +430,27 @@ public class OrdenService {
 
         ordenRepository.save(orden);
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
-        notificationService.notificarCambioEstado(orden, request.getEstado());
 
-        if (request.getEstado() == OrdenEstado.PEDIDO_FANTASMA && sancionDispatcherService != null) {
-            sancionDispatcherService.registrarSancionPorPedidoFantasma(orden, orden.getMotivoFantasma());
-        }
+        OrdenResponse respuesta = OrdenResponse.from(orden);
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        OrdenEstado estadoNuevo = request.getEstado();
+        boolean esFantasma = estadoNuevo == OrdenEstado.PEDIDO_FANTASMA;
+        boolean esListo = estadoNuevo.esListo();
+        String motivoFantasma = orden.getMotivoFantasma();
+        ejecutarTrasCommit(() -> {
+            notificationService.notificarCambioEstado(orden, estadoNuevo);
+            if (esFantasma && sancionDispatcherService != null) {
+                sancionDispatcherService.registrarSancionPorPedidoFantasma(orden, motivoFantasma);
+            }
+            if (esListo) {
+                salonEventPublisher.notificarPedidoListo(orden);
+            }
+            if (mesaActualizada != null) {
+                salonEventPublisher.notificarMesaActualizada(mesaActualizada);
+            }
+        });
 
-        if (request.getEstado().esListo()) {
-            salonEventPublisher.notificarPedidoListo(orden);
-        }
-        if (orden.getMesa() != null) {
-            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
-        }
-
-        return OrdenResponse.from(orden);
+        return respuesta;
     }
 
     /**
@@ -489,7 +516,7 @@ public class OrdenService {
      */
     @Transactional
     public OrdenResponse cancelarComoCliente(Long id, Long usuarioId) {
-        Orden orden = buscarOFallar(id);
+        Orden orden = buscarOFallarConBloqueo(id);
         if (orden.getEstado() != OrdenEstado.CANCELADO) {
             validarTransicionEstado(orden.getEstado(), OrdenEstado.CANCELADO, orden.getTipo());
             if (!ESTADOS_CANCELABLES_POR_CLIENTE.contains(orden.getEstado())) {
@@ -578,10 +605,14 @@ public class OrdenService {
 
         ordenRepository.save(orden);
         log.info("Comanda #{} marcada como servida en mesa (usuario: {})", id, usuarioId);
-        if (orden.getMesa() != null) {
-            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
-        }
-        return OrdenResponse.from(orden);
+        OrdenResponse respuesta = OrdenResponse.from(orden);
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        ejecutarTrasCommit(() -> {
+            if (mesaActualizada != null) {
+                salonEventPublisher.notificarMesaActualizada(mesaActualizada);
+            }
+        });
+        return respuesta;
     }
 
     /**
@@ -875,8 +906,22 @@ public class OrdenService {
      * Se usa en mutaciones idempotentes/acumulativas para que dos peticiones simultáneas no se
      * pisen (servir dos veces, agregar ítems en paralelo).
      */
+    private static void ejecutarTrasCommit(Runnable accion) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    accion.run();
+                }
+            });
+        } else {
+            accion.run();
+        }
+    }
+
     private Orden buscarOFallarConBloqueo(Long id) {
         return ordenRepository.buscarConBloqueo(id)
+                .or(() -> ordenRepository.findById(id))
                 .orElseThrow(() -> new NoSuchElementException("Orden no encontrada: " + id));
     }
 }

@@ -14,6 +14,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Map;
@@ -109,7 +111,7 @@ public class MesaService {
         mesaRepository.save(mesa);
         log.info("Mesa {} creada en zona {} - posición ({}, {})", numero, mesa.getZona(), mesa.getPosicionX(), mesa.getPosicionY());
         MesaResponse response = MesaResponse.from(mesa);
-        salonEventPublisher.notificarMesaActualizada(response);
+        notificarMesaTrasCommit(response);
         return response;
     }
 
@@ -150,7 +152,7 @@ public class MesaService {
         mesaRepository.save(mesa);
         log.info("Mesa #{} modificada por admin", mesa.getNumero());
         MesaResponse response = mapearMesaConOrdenActiva(mesa);
-        salonEventPublisher.notificarMesaActualizada(response);
+        notificarMesaTrasCommit(response);
         return response;
     }
 
@@ -230,7 +232,7 @@ public class MesaService {
         log.info("Mesa {} transición de estado: {} → {} (forzado: {})", mesa.getNumero(), actual, nuevoEstado, esForzado);
 
         MesaResponse response = mapearMesaConOrdenActiva(mesa);
-        salonEventPublisher.notificarMesaActualizada(response);
+        notificarMesaTrasCommit(response);
         return response;
     }
 
@@ -263,7 +265,7 @@ public class MesaService {
         mesaRepository.save(mesa);
         log.info("Mesa {} posición actualizada → ({}, {})", mesa.getNumero(), mesa.getPosicionX(), mesa.getPosicionY());
         MesaResponse response = mapearMesaConOrdenActiva(mesa);
-        salonEventPublisher.notificarMesaActualizada(response);
+        notificarMesaTrasCommit(response);
         return response;
     }
 
@@ -282,7 +284,20 @@ public class MesaService {
         log.info("Mesa #{} dada de baja (soft delete)", mesa.getNumero());
 
         MesaResponse response = mapearMesaConOrdenActiva(mesa);
-        salonEventPublisher.notificarMesaActualizada(response);
+        notificarMesaTrasCommit(response);
+    }
+
+    private void notificarMesaTrasCommit(MesaResponse response) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    salonEventPublisher.notificarMesaActualizada(response);
+                }
+            });
+        } else {
+            salonEventPublisher.notificarMesaActualizada(response);
+        }
     }
 
     public Mesa buscarOFallar(Long id) {

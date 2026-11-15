@@ -16,6 +16,7 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +48,7 @@ class ComprobantePagoExpiracionTest {
     @Autowired private ProductoRepository productoRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private TransactionTemplate transactionTemplate;
 
     private final List<Long> creadas = new ArrayList<>();
 
@@ -117,8 +119,9 @@ class ComprobantePagoExpiracionTest {
 
     private boolean expiraria(Long id) {
         LocalDateTime ahora = LocalDateTime.now();
-        return ordenRepository.findExpiradosPago(ahora.minusMinutes(15), ahora).stream()
-                .anyMatch(o -> o.getId().equals(id));
+        return Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                ordenRepository.findExpiradosPago(ahora.minusMinutes(15), ahora).stream()
+                        .anyMatch(o -> o.getId().equals(id))));
     }
 
     private ResponseEntity<String> marcarComprobante(Long id, boolean recibido, String clave) {

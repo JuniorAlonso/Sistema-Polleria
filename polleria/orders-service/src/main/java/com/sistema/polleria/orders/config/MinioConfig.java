@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class MinioConfig {
 
-    @Value("${minio.endpoint:localhost}")
+    @Value("${minio.endpoint}")
     private String endpoint;
 
     @Value("${minio.port:9000}")
@@ -21,10 +21,10 @@ public class MinioConfig {
     @Value("${minio.use-ssl:false}")
     private boolean useSsl;
 
-    @Value("${minio.access-key:minioadmin}")
+    @Value("${minio.access-key}")
     private String accessKey;
 
-    @Value("${minio.secret-key:minioadmin}")
+    @Value("${minio.secret-key}")
     private String secretKey;
 
     @Value("${minio.bucket.catalogo:polleria-catalogo}")
@@ -32,8 +32,13 @@ public class MinioConfig {
 
     @Bean
     public MinioClient minioClient() {
+        if (endpoint == null || endpoint.isBlank()
+                || accessKey == null || accessKey.isBlank()
+                || secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException("MinIO requiere minio.endpoint, minio.access-key y minio.secret-key configurados.");
+        }
         return MinioClient.builder()
-                .endpoint(endpoint, port, useSsl)
+                .endpoint(endpoint.trim(), port, useSsl)
                 .credentials(accessKey, secretKey)
                 .region("us-east-1")
                 .build();

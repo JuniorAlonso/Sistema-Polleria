@@ -25,7 +25,7 @@ public class CodigoSeguimiento {
     @Column(nullable = false, length = 9)
     private String telefono;
 
-    @Column(nullable = false, length = 4)
+    @Column(nullable = false, length = 6)
     private String codigo;
 
     @Column(nullable = false)
