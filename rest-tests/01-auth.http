@@ -1,0 +1,668 @@
+###############################################################################
+# 01 - AUTH-SERVICE (registro, login, 2FA, refresh, logout, validate,
+#      personal, repartidores, IPs bloqueadas, endpoint interno y sanciones)
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# 2FA: ADMIN, MOZO, COCINA, REPARTIDOR y CAJERO reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+#
+# Bloqueo de IP: el umbral es security.max-failed-attempts=5 (15 min) y el
+# IpBlacklistFilter rechaza TODAS las peticiones de la IP bloqueada (incluido el
+# DELETE de desbloqueo). Como auth.trust-forwarded-header=false, todo el trafico
+# del host llega con la misma IP del gateway de docker: un bloqueo real dejaria
+# fuera a todos los clientes sin forma de desbloquear por API. Por eso aqui solo
+# se cubren GET/DELETE de /auth/admin/ips-bloqueadas y nunca hay mas de dos
+# fallos seguidos: despues de cada fallo se hace un login correcto que reinicia
+# el contador de la IP.
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@PASSWORD = Password123!
+
+@OTP_ADMIN = 000000
+@OTP_CAJERO = 000000
+@OTP_STAFF = 000000
+
+# IP de documentacion (TEST-NET-3), nunca usada por un cliente real
+@IP_PRUEBA = 203.0.113.77
+
+# =============================================================================
+# 0. SESIONES DE APOYO (ADMIN, CAJERO, CLIENTE sembrados)
+# =============================================================================
+
+### 0.1 Login ADMIN - paso 1 (pide 2FA)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+# @assert $.token notExists
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.2 Login ADMIN - paso 2 (verify-2fa)
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.token exists
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 0.3 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.4 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+### 0.5 Login CLIENTE sembrado (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == false
+# @assert $.role == CLIENTE
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+# =============================================================================
+# 1. REGISTRO PUBLICO (POST /auth/register)
+# =============================================================================
+
+### 1.1 Registro de cliente nuevo; el campo "role" enviado se ignora (sin escalada)
+# Esperado: HTTP 201
+# @assert $.role == CLIENTE
+# @assert $.requiresTwoFactor == false
+# @assert $.token exists
+# @assert $.refreshToken exists
+# @assert $.message == Registro exitoso
+# @name regCliente
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Cliente E2E Auth",
+  "email": "e2e.auth.{{$timestamp}}{{$randomInt 100 999}}@yopmail.com",
+  "phone": "9{{$randomInt 10000000 99999999}}",
+  "password": "{{PASSWORD}}",
+  "role": "ADMIN"
+}
+
+### 1.2 Registro duplicado por correo
+# Esperado: HTTP 400
+# @assert $.error contains correo ya est
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Duplicado",
+  "email": "{{regCliente.response.body.$.email}}",
+  "password": "{{PASSWORD}}"
+}
+
+### 1.3 Registro duplicado por celular con otro correo
+# Esperado: HTTP 400
+# @assert $.error contains celular ya est
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Duplicado celular",
+  "email": "dup.{{regCliente.response.body.$.email}}",
+  "phone": "{{regCliente.response.body.$.phone}}",
+  "password": "{{PASSWORD}}"
+}
+
+### 1.4 Contrasena debil (solo letras)
+# Esperado: HTTP 400
+# @assert $.errors.password exists
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{ "name": "Debil", "email": "debil.{{$timestamp}}@yopmail.com", "password": "abcdefgh" }
+
+### 1.5 Contrasena demasiado corta
+# Esperado: HTTP 400
+# @assert $.errors.password exists
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{ "name": "Corta", "email": "corta.{{$timestamp}}@yopmail.com", "password": "a1" }
+
+### 1.6 Correo con formato invalido y nombre vacio
+# Esperado: HTTP 400
+# @assert $.errors.email exists
+# @assert $.errors.name exists
+POST {{AUTH_URL}}/auth/register
+Content-Type: application/json
+
+{ "name": "", "email": "no-es-un-correo", "password": "{{PASSWORD}}" }
+
+# =============================================================================
+# 2. LOGIN (POST /auth/login) - maximo 2 fallos seguidos
+# =============================================================================
+
+### 2.1 Login del cliente nuevo por correo
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == false
+# @assert $.role == CLIENTE
+# @assert $.token exists
+# @assert $.refreshToken exists
+# @name loginNuevo
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.email}}", "password": "{{PASSWORD}}" }
+
+### 2.2 Login del cliente nuevo por celular
+# Esperado: HTTP 200
+# @assert $.email == {{regCliente.response.body.$.email}}
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.phone}}", "password": "{{PASSWORD}}" }
+
+### 2.3 Contrasena incorrecta (fallo 1)
+# Esperado: HTTP 401
+# @assert $.error == Credenciales inválidas
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.email}}", "password": "Incorrecta999" }
+
+### 2.4 Usuario inexistente (fallo 2, mismo mensaje generico)
+# Esperado: HTTP 401
+# @assert $.error == Credenciales inválidas
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "no.existe.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 2.5 Login correcto reinicia el contador de fallos de la IP
+# Esperado: HTTP 200
+# @assert $.refreshToken exists
+# @name loginNuevo2
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.email}}", "password": "{{PASSWORD}}" }
+
+### 2.6 Login con identificador vacio
+# Esperado: HTTP 400
+# @assert $.errors.identifier exists
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "", "password": "{{PASSWORD}}" }
+
+# =============================================================================
+# 3. VALIDATE (GET /auth/validate)
+# =============================================================================
+
+### 3.1 Validate con token del cliente nuevo
+# Esperado: HTTP 200
+# @assert $.valid == true
+# @assert $.role == CLIENTE
+# @assert $.email == {{regCliente.response.body.$.email}}
+GET {{AUTH_URL}}/auth/validate
+Authorization: Bearer {{loginNuevo.response.body.$.token}}
+
+### 3.2 Validate con token del ADMIN
+# Esperado: HTTP 200
+# @assert $.role == ADMIN
+GET {{AUTH_URL}}/auth/validate
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 3.3 Validate con token manipulado
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/validate
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.firma-invalida
+
+### 3.4 Validate anonimo
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/validate
+
+# =============================================================================
+# 4. REFRESH CON ROTACION (POST /auth/refresh)
+# =============================================================================
+
+### 4.1 Rotar el refresh token del registro
+# Esperado: HTTP 200
+# @assert $.token exists
+# @assert $.refreshToken != {{regCliente.response.body.$.refreshToken}}
+# @assert $.message == Token renovado exitosamente
+# @name refresh1
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{regCliente.response.body.$.refreshToken}}" }
+
+### 4.2 Reintento concurrente dentro del periodo de gracia (10 s) devuelve el mismo reemplazo
+# Esperado: HTTP 200
+# @assert $.refreshToken == {{refresh1.response.body.$.refreshToken}}
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{regCliente.response.body.$.refreshToken}}" }
+
+### 4.3 Reuso del refresh rotado fuera del periodo de gracia: rechazado y revoca la cadena
+# Esperado: HTTP 401
+# @sleep 11000
+# @assert $.error contains ya fue utilizado
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{regCliente.response.body.$.refreshToken}}" }
+
+### 4.4 El refresh emitido en la rotacion quedo revocado por la deteccion de reuso
+# Esperado: HTTP 401
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{refresh1.response.body.$.refreshToken}}" }
+
+### 4.5 Refresh inexistente
+# Esperado: HTTP 401
+# @assert $.error contains no encontrado
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "token-inexistente-{{$guid}}" }
+
+### 4.6 Refresh vacio
+# Esperado: HTTP 400
+# @assert $.errors.refreshToken exists
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "" }
+
+# =============================================================================
+# 5. LOGOUT (POST /auth/logout)
+# =============================================================================
+
+### 5.1 Logout revoca el refresh de la sesion 2.5
+# Esperado: HTTP 200
+# @assert $.message exists
+POST {{AUTH_URL}}/auth/logout
+Content-Type: application/json
+
+{ "refreshToken": "{{loginNuevo2.response.body.$.refreshToken}}" }
+
+### 5.2 Refresh con el token revocado por logout es rechazado
+# Esperado: HTTP 401
+POST {{AUTH_URL}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{loginNuevo2.response.body.$.refreshToken}}" }
+
+### 5.3 Logout con token desconocido es idempotente
+# Esperado: HTTP 200
+POST {{AUTH_URL}}/auth/logout
+Content-Type: application/json
+
+{ "refreshToken": "token-inexistente-{{$guid}}" }
+
+### 5.4 Logout sin refresh token
+# Esperado: HTTP 400
+# @assert $.errors.refreshToken exists
+POST {{AUTH_URL}}/auth/logout
+Content-Type: application/json
+
+{}
+
+# =============================================================================
+# 6. ALTA DE PERSONAL (POST /auth/admin/usuarios) - solo ADMIN
+# =============================================================================
+
+### 6.1 ADMIN crea un usuario COCINA (sin tokens: debe pasar por 2FA)
+# Esperado: HTTP 201
+# @assert $.role == COCINA
+# @assert $.requiresTwoFactor == true
+# @assert $.token notExists
+# @assert $.refreshToken notExists
+# @name staff
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "name": "Cocina E2E Auth",
+  "email": "e2e.cocina.{{$timestamp}}{{$randomInt 100 999}}@yopmail.com",
+  "password": "{{PASSWORD}}",
+  "role": "COCINA"
+}
+
+### 6.2 ADMIN: correo duplicado
+# Esperado: HTTP 400
+# @assert $.error contains correo ya est
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Dup", "email": "{{staff.response.body.$.email}}", "password": "{{PASSWORD}}", "role": "MOZO" }
+
+### 6.3 ADMIN: sin rol
+# Esperado: HTTP 400
+# @assert $.errors.role exists
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Sin rol", "email": "sinrol.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 6.4 ADMIN: rol inexistente en el cuerpo
+# Esperado: HTTP 400
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Rol raro", "email": "rolraro.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}", "role": "SUPERADMIN" }
+
+### 6.5 CLIENTE no puede crear personal
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Hack", "email": "hack.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}", "role": "ADMIN" }
+
+### 6.6 CAJERO no puede crear personal
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/admin/usuarios
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Hack", "email": "hack2.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}", "role": "ADMIN" }
+
+### 6.7 Anonimo no puede crear personal
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/admin/usuarios
+Content-Type: application/json
+
+{ "name": "Hack", "email": "hack3.{{$timestamp}}@yopmail.com", "password": "{{PASSWORD}}", "role": "ADMIN" }
+
+# =============================================================================
+# 7. 2FA DEL PERSONAL NUEVO (POST /auth/verify-2fa) - maximo 1 fallo seguido
+# =============================================================================
+
+### 7.1 Login del COCINA nuevo pide 2FA
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+# @assert $.role == COCINA
+# @assert $.token notExists
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{staff.response.body.$.email}}", "password": "{{PASSWORD}}" }
+
+### 7.2 Codigo 2FA incorrecto (fallo 1; los codigos validos van de 100000 a 999999)
+# Esperado: HTTP 400
+# @assert $.error contains inválido
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "{{staff.response.body.$.email}}", "code": "000000" }
+
+### 7.3 Codigo 2FA correcto (reinicia el contador de la IP)
+# Esperado: HTTP 200
+# @otp OTP_STAFF {{staff.response.body.$.email}}
+# @assert $.role == COCINA
+# @assert $.token exists
+# @assert $.refreshToken exists
+# @name loginStaff
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "{{staff.response.body.$.email}}", "code": "{{OTP_STAFF}}" }
+
+### 7.4 Reusar el mismo codigo ya consumido (fallo 1)
+# Esperado: HTTP 400
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "{{staff.response.body.$.email}}", "code": "{{OTP_STAFF}}" }
+
+### 7.5 Login correcto del cliente sembrado reinicia el contador de la IP
+# Esperado: HTTP 200
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 7.6 verify-2fa con correo inexistente (no suma fallo de IP)
+# Esperado: HTTP 400
+# @assert $.error == Usuario no encontrado
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "no.existe.{{$timestamp}}@yopmail.com", "code": "123456" }
+
+### 7.7 verify-2fa sin codigo
+# Esperado: HTTP 400
+# @assert $.errors.code exists
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "{{staff.response.body.$.email}}", "code": "" }
+
+# =============================================================================
+# 8. ROSTER DE REPARTIDORES (GET /auth/admin/repartidores) - ADMIN y CAJERO
+# =============================================================================
+
+### 8.1 ADMIN lista repartidores (sin contrasena ni rol)
+# Esperado: HTTP 200
+# @assert $[0].id exists
+# @assert $[0].email exists
+# @assert $[0].password notExists
+# @assert $[0].role notExists
+# @name repartidores
+GET {{AUTH_URL}}/auth/admin/repartidores
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 8.2 CAJERO lista repartidores
+# Esperado: HTTP 200
+# @assert $[0].id exists
+GET {{AUTH_URL}}/auth/admin/repartidores
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 8.3 COCINA no puede listar repartidores
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/repartidores
+Authorization: Bearer {{loginStaff.response.body.$.token}}
+
+### 8.4 CLIENTE no puede listar repartidores
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/repartidores
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 8.5 Anonimo no puede listar repartidores
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/repartidores
+
+# =============================================================================
+# 9. ENDPOINT INTERNO (GET /auth/internal/usuarios/{id}/email) - X-Internal-Key
+# =============================================================================
+
+### 9.1 Sin clave interna
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/internal/usuarios/{{repartidores.response.body.$[0].id}}/email
+
+### 9.2 Con clave interna incorrecta
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/internal/usuarios/{{repartidores.response.body.$[0].id}}/email
+X-Internal-Key: clave-incorrecta
+
+### 9.3 Un JWT de ADMIN no reemplaza a la clave interna
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/internal/usuarios/{{repartidores.response.body.$[0].id}}/email
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 9.4 Con clave interna valida devuelve el correo del usuario
+# Esperado: HTTP 200
+# @assert $.email == {{repartidores.response.body.$[0].email}}
+GET {{AUTH_URL}}/auth/internal/usuarios/{{repartidores.response.body.$[0].id}}/email
+X-Internal-Key: {{$dotenv INTERNAL_API_KEY}}
+
+### 9.5 Usuario inexistente
+# Esperado: HTTP 404
+GET {{AUTH_URL}}/auth/internal/usuarios/999999999/email
+X-Internal-Key: {{$dotenv INTERNAL_API_KEY}}
+
+# =============================================================================
+# 10. SANCIONES (GET /auth/sanciones/verificar, POST /auth/sanciones)
+# =============================================================================
+
+### 10.1 Verificar correo sin sancion
+# Esperado: HTTP 200
+# @assert $.sancionado == false
+# @assert $.bloqueadoEfectivo == false
+# @assert $.bloqueadoTotal == false
+GET {{AUTH_URL}}/auth/sanciones/verificar?email={{regCliente.response.body.$.email}}
+
+### 10.2 Verificar IP de prueba sin sancion
+# Esperado: HTTP 200
+# @assert $.sancionado == false
+GET {{AUTH_URL}}/auth/sanciones/verificar?ip={{IP_PRUEBA}}
+
+### 10.3 Registrar sancion anonimo
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/sanciones
+Content-Type: application/json
+
+{ "email": "{{regCliente.response.body.$.email}}", "motivo": "Intento anonimo" }
+
+### 10.4 Registrar sancion como CLIENTE
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/sanciones
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "email": "{{regCliente.response.body.$.email}}", "motivo": "Intento de cliente" }
+
+### 10.5 Registrar sancion como CAJERO
+# Esperado: HTTP 403
+POST {{AUTH_URL}}/auth/sanciones
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "email": "{{regCliente.response.body.$.email}}", "motivo": "Intento de cajero" }
+
+### 10.6 Registrar sancion sin motivo
+# Esperado: HTTP 400
+# @assert $.errors.motivo exists
+POST {{AUTH_URL}}/auth/sanciones
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "email": "{{regCliente.response.body.$.email}}", "motivo": "" }
+
+### 10.7 ADMIN sanciona el correo del cliente nuevo (solo bloqueo de efectivo)
+# Esperado: HTTP 201
+# @assert $.id exists
+# @assert $.bloqueadoEfectivo == true
+# @assert $.bloqueadoTotal == false
+# @assert $.creadoPor == admin.polleria@yopmail.com
+POST {{AUTH_URL}}/auth/sanciones
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "email": "{{regCliente.response.body.$.email}}", "motivo": "Prueba E2E: pedido no recogido" }
+
+### 10.8 Verificar correo sancionado
+# Esperado: HTTP 200
+# @assert $.sancionado == true
+# @assert $.bloqueadoEfectivo == true
+# @assert $.bloqueadoTotal == false
+GET {{AUTH_URL}}/auth/sanciones/verificar?email={{regCliente.response.body.$.email}}
+
+### 10.9 El cliente con bloqueo solo de efectivo puede seguir iniciando sesion
+# Esperado: HTTP 200
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.email}}", "password": "{{PASSWORD}}" }
+
+### 10.10 Sistema interno (X-Internal-Key) sanciona el celular con bloqueo total
+# Esperado: HTTP 201
+# @assert $.bloqueadoTotal == true
+# @assert $.creadoPor == SISTEMA_PEDIDO_FANTASMA
+POST {{AUTH_URL}}/auth/sanciones
+X-Internal-Key: {{$dotenv INTERNAL_API_KEY}}
+Content-Type: application/json
+
+{ "telefono": "{{regCliente.response.body.$.phone}}", "motivo": "Prueba E2E: pedido fantasma", "bloqueadoTotal": true }
+
+### 10.11 Verificar el celular con prefijo +51 (se normaliza)
+# Esperado: HTTP 200
+# @assert $.sancionado == true
+# @assert $.bloqueadoTotal == true
+GET {{AUTH_URL}}/auth/sanciones/verificar?telefono=%2B51{{regCliente.response.body.$.phone}}
+X-Internal-Key: {{$dotenv INTERNAL_API_KEY}}
+
+### 10.12 La cuenta con bloqueo total queda desactivada y no puede iniciar sesion
+# Esperado: HTTP 401
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "{{regCliente.response.body.$.email}}", "password": "{{PASSWORD}}" }
+
+### 10.13 Login correcto del cliente sembrado reinicia el contador de la IP
+# Esperado: HTTP 200
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+# =============================================================================
+# 11. IPS BLOQUEADAS (GET/DELETE /auth/admin/ips-bloqueadas) - solo ADMIN
+#     (sin bloqueo real: ver nota de la cabecera)
+# =============================================================================
+
+### 11.1 ADMIN lista IPs con intentos fallidos
+# Esperado: HTTP 200
+GET {{AUTH_URL}}/auth/admin/ips-bloqueadas
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 11.2 CAJERO no puede listar IPs
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/ips-bloqueadas
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 11.3 CLIENTE no puede listar IPs
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/ips-bloqueadas
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 11.4 Anonimo no puede listar IPs
+# Esperado: HTTP 403
+GET {{AUTH_URL}}/auth/admin/ips-bloqueadas
+
+### 11.5 ADMIN desbloquea una IP (idempotente aunque no tenga registro)
+# Esperado: HTTP 200
+# @assert $.message contains {{IP_PRUEBA}}
+DELETE {{AUTH_URL}}/auth/admin/ips-bloqueadas/{{IP_PRUEBA}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 11.6 CLIENTE no puede desbloquear IPs
+# Esperado: HTTP 403
+DELETE {{AUTH_URL}}/auth/admin/ips-bloqueadas/{{IP_PRUEBA}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 11.7 Anonimo no puede desbloquear IPs
+# Esperado: HTTP 403
+DELETE {{AUTH_URL}}/auth/admin/ips-bloqueadas/{{IP_PRUEBA}}

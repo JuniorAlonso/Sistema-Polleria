@@ -1,0 +1,981 @@
+###############################################################################
+# 05 - FINANZAS (finance-service): caja, comprobantes, balance diario y
+#      liquidaciones de repartidor, de punta a punta.
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# Estado compartido:
+# - Solo puede haber UNA caja ABIERTA en todo el sistema (indice parcial
+#   uq_arqueos_caja_abierta; no es por usuario). Este archivo empieza cerrando
+#   como ADMIN cualquier caja que haya quedado abierta (paso 2.2: 200 si habia
+#   una, 404 si no), abre la suya como CAJERO y la cierra al final (paso 8).
+#   Al terminar no queda ninguna caja abierta.
+# - El repartidor es el sembrado (repartidor.polleria@yopmail.com). Su id se
+#   obtiene del pedido que el mismo toma (POST /ordenes/{id}/reclamo).
+#   Si quedo una liquidacion abierta suya de una corrida previa, la apertura 6.1
+#   responde 409 y el archivo usa esa liquidacion (el id sale de /pendiente).
+#   Las dos liquidaciones que se usan quedan cerradas al final.
+# - Los pedidos y pagos se crean aqui (orders-service y payments-service).
+#
+# 2FA: ADMIN, COCINA, REPARTIDOR y CAJERO reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PAYMENTS_URL = http://localhost:8083
+@FINANCE_URL = http://localhost:8087
+@PASSWORD = Password123!
+@INTERNAL_KEY = {{$dotenv INTERNAL_API_KEY}}
+
+@OTP_ADMIN = 000000
+@OTP_COCINA = 000000
+@OTP_REPARTIDOR = 000000
+@OTP_CAJERO = 000000
+
+@TK_ADMIN = {{loginAdmin.response.body.$.token}}
+@TK_CAJERO = {{loginCajero.response.body.$.token}}
+@TK_COCINA = {{loginCocina.response.body.$.token}}
+@TK_REPARTIDOR = {{loginRepartidor.response.body.$.token}}
+@TK_CLIENTE = {{loginCliente.response.body.$.token}}
+
+@REPARTIDOR_ID = {{reclamoDelivery.response.body.$.repartidorId}}
+@ORDEN_DELIVERY = {{ordenDelivery.response.body.$.id}}
+@ORDEN_RECOJO = {{ordenRecojo.response.body.$.id}}
+@CAJA_ID = {{aperturaCaja.response.body.$.id}}
+@LIQ_A = {{pendienteA.response.body.$.liquidacionId}}
+@LIQ_B = {{aperturaLiqB.response.body.$.id}}
+@ORDEN_INEXISTENTE = 999999999
+
+###############################################################################
+# 1. SESIONES
+###############################################################################
+
+### 1.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.2 Login ADMIN - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.3 Login ADMIN - paso 2
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 1.4 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.5 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+### 1.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+### 1.8 Login REPARTIDOR - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "repartidor.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.9 Login REPARTIDOR - paso 2
+# Esperado: HTTP 200
+# @otp OTP_REPARTIDOR repartidor.polleria@yopmail.com
+# @assert $.role == REPARTIDOR
+# @name loginRepartidor
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "repartidor.polleria@yopmail.com", "code": "{{OTP_REPARTIDOR}}" }
+
+### 1.10 El repartidor sembrado figura en el roster de motorizados (ADMIN)
+# Esperado: HTTP 200
+# @assert $ contains repartidor.polleria@yopmail.com
+GET {{AUTH_URL}}/auth/admin/repartidores
+Authorization: Bearer {{TK_ADMIN}}
+
+###############################################################################
+# 2. CAJA SIN APERTURA (estado inicial normalizado) Y RBAC
+###############################################################################
+
+### 2.1 Caja actual (CAJERO): 200 si otra corrida o servicio dejo una abierta, 404 si no
+# Esperado: HTTP 200|404
+GET {{FINANCE_URL}}/finanzas/caja/actual
+Authorization: Bearer {{TK_CAJERO}}
+
+### 2.2 Normalizacion: ADMIN cierra la caja abierta que hubiera (200) o no hay ninguna (404)
+# Esperado: HTTP 200|404
+POST {{FINANCE_URL}}/finanzas/caja/cierre
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0, "observaciones": "Cierre previo de la suite 05-finanzas" }
+
+### 2.3 Sin caja abierta, caja actual responde 404
+# Esperado: HTTP 404
+GET {{FINANCE_URL}}/finanzas/caja/actual
+Authorization: Bearer {{TK_ADMIN}}
+
+### 2.4 Sin caja abierta, los movimientos son una lista vacia
+# Esperado: HTTP 200
+# @assert $ == []
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+
+### 2.5 Sin caja abierta no se registran movimientos (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "INGRESO", "monto": 10, "motivo": "Sin caja" }
+
+### 2.6 Sin caja abierta no hay nada que cerrar (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/caja/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0 }
+
+### 2.7 Sin caja abierta no se cobra efectivo a un repartidor (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{ORDEN_INEXISTENTE}}, "monto": 5 }
+
+### 2.8 Anonimo no consulta la caja (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/caja/actual
+
+### 2.9 REPARTIDOR no consulta la caja (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/caja/actual
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 2.10 COCINA no abre caja (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/caja/apertura
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "montoApertura": 100 }
+
+### 2.11 CLIENTE no lista movimientos (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CLIENTE}}
+
+### 2.12 CAJERO no ve el historial de cajas (solo ADMIN)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/caja/historial
+Authorization: Bearer {{TK_CAJERO}}
+
+### 2.13 Apertura con monto negativo es rechazada (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/apertura
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoApertura": -5 }
+
+###############################################################################
+# 3. APERTURA Y MOVIMIENTOS DE CAJA
+###############################################################################
+
+### 3.1 CAJERO abre la caja con S/ 100
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTA
+# @assert $.montoApertura == 100
+# @assert $.usuarioNombre == Cajero Suite 05
+# @name aperturaCaja
+POST {{FINANCE_URL}}/finanzas/caja/apertura
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoApertura": 100, "usuarioNombre": "Cajero Suite 05", "observaciones": "Apertura suite 05" }
+
+### 3.2 Segunda apertura con una caja abierta (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/caja/apertura
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "montoApertura": 50 }
+
+### 3.3 Caja actual es la recien abierta
+# Esperado: HTTP 200
+# @assert $.id == {{CAJA_ID}}
+# @assert $.estado == ABIERTA
+GET {{FINANCE_URL}}/finanzas/caja/actual
+Authorization: Bearer {{TK_ADMIN}}
+
+### 3.4 Ingreso manual de S/ 50 (categoria MANUAL por defecto)
+# Esperado: HTTP 201
+# @assert $.tipo == INGRESO
+# @assert $.categoria == MANUAL
+# @assert $.arqueoId == {{CAJA_ID}}
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "INGRESO", "monto": 50, "motivo": "Sencillo adicional suite 05" }
+
+### 3.5 Egreso manual de S/ 20 (caja chica)
+# Esperado: HTTP 201
+# @assert $.tipo == EGRESO
+# @assert $.monto == 20
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "tipo": "EGRESO", "monto": 20, "motivo": "Compra de bolsas suite 05", "categoria": "MANUAL" }
+
+### 3.6 Movimiento con monto 0 es rechazado (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "INGRESO", "monto": 0, "motivo": "Monto cero" }
+
+### 3.7 Movimiento sin motivo es rechazado (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "EGRESO", "monto": 5 }
+
+### 3.8 Categoria VENTA no se registra a mano (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "INGRESO", "monto": 5, "motivo": "Venta a mano", "categoria": "VENTA" }
+
+### 3.9 Devolucion sin reclamo es rechazada (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "tipo": "EGRESO", "monto": 5, "motivo": "Devolucion sin reclamo", "categoria": "DEVOLUCION" }
+
+### 3.10 COCINA no registra movimientos (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "tipo": "INGRESO", "monto": 5, "motivo": "No autorizado" }
+
+### 3.11 Movimientos de la caja abierta (incluye los dos registrados)
+# Esperado: HTTP 200
+# @assert $ contains Sencillo adicional suite 05
+# @assert $ contains Compra de bolsas suite 05
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+
+###############################################################################
+# 4. PEDIDOS Y COBROS EN EFECTIVO (orders-service + payments-service)
+###############################################################################
+
+### 4.1 Catalogo: producto disponible para los pedidos
+# Esperado: HTTP 200
+# @assert $[0].id exists
+# @name catalogo
+GET {{ORDERS_URL}}/productos
+
+### 4.2 CAJERO registra un delivery contraentrega (pedido telefonico)
+# Esperado: HTTP 201
+# @assert $.estado == RECIBIDO
+# @assert $.requiereCobroEfectivo == true
+# @name ordenDelivery
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "estadoInicial": "RECIBIDO",
+  "requiereCobroEfectivo": true,
+  "direccionEntrega": "Av. Suite Finanzas 505",
+  "nombreCliente": "Cliente Suite 05",
+  "telefonoCliente": "987650505",
+  "items": [ { "productoId": {{catalogo.response.body.$[0].id}}, "cantidad": 1 } ]
+}
+
+### 4.3 COCINA pasa el delivery a PREPARANDO
+# Esperado: HTTP 200
+# @assert $.estado == PREPARANDO
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY}}/estado
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "estado": "PREPARANDO" }
+
+### 4.4 COCINA marca el delivery LISTO_PARA_ENTREGAR
+# Esperado: HTTP 200
+# @assert $.estado == LISTO_PARA_ENTREGAR
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY}}/estado
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "estado": "LISTO_PARA_ENTREGAR" }
+
+### 4.5 El repartidor sembrado toma el delivery (su id queda en repartidorId)
+# Esperado: HTTP 200
+# @assert $.repartidorId exists
+# @name reclamoDelivery
+POST {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY}}/reclamo
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 4.6 El repartidor sale a ruta (EN_CAMINO)
+# Esperado: HTTP 200
+# @assert $.estado == EN_CAMINO
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY}}/estado
+Authorization: Bearer {{TK_REPARTIDOR}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### 4.7 El repartidor llega a la puerta (EN_PUERTA)
+# Esperado: HTTP 200
+# @assert $.estado == EN_PUERTA
+POST {{ORDERS_URL}}/ordenes/{{ORDEN_DELIVERY}}/en-puerta
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 4.8 El repartidor cobra el total en efectivo (queda como efectivo pendiente de rendir)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+# @assert $.metodoPago == CONTRAENTREGA
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TK_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_DELIVERY}}, "monto": {{ordenDelivery.response.body.$.total}}, "montoRecibido": {{ordenDelivery.response.body.$.total}} }
+
+### 4.9 CAJERO registra un pedido para recojo en tienda pagado en efectivo
+# Esperado: HTTP 201
+# @assert $.estado == RECIBIDO
+# @name ordenRecojo
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "estadoInicial": "RECIBIDO",
+  "requiereCobroEfectivo": true,
+  "nombreCliente": "Cliente Recojo Suite 05",
+  "telefonoCliente": "987650506",
+  "items": [ { "productoId": {{catalogo.response.body.$[0].id}}, "cantidad": 1 } ]
+}
+
+### 4.10 COCINA pasa el recojo a PREPARANDO
+# Esperado: HTTP 200
+# @assert $.estado == PREPARANDO
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_RECOJO}}/estado
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "estado": "PREPARANDO" }
+
+### 4.11 COCINA marca el recojo LISTO
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{ORDEN_RECOJO}}/estado
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### 4.12 CAJERO cobra el recojo en efectivo contra el ticket POL-<id>
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+# @assert $.metodoPago == CONTRAENTREGA
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "monto": {{ordenRecojo.response.body.$.total}}, "codigoTicket": "POL-{{ORDEN_RECOJO}}" }
+
+###############################################################################
+# 5. COMPROBANTES
+###############################################################################
+
+### 5.1 Factura con RUC invalido es rechazada (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "FACTURA", "clienteNumDoc": "123", "clienteNombre": "Empresa Suite 05", "pagadoDigitalmente": false }
+
+### 5.2 Comprobante sin nombre de cliente es rechazado (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "BOLETA", "pagadoDigitalmente": false }
+
+### 5.3 Comprobante de una orden inexistente (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_INEXISTENTE}}, "tipo": "BOLETA", "clienteNombre": "Nadie", "pagadoDigitalmente": false }
+
+### 5.4 REPARTIDOR no emite comprobantes (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "BOLETA", "clienteNombre": "Cliente", "pagadoDigitalmente": false }
+
+### 5.5 Clave interna incorrecta no autentica (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/comprobantes
+X-Internal-Key: clave-incorrecta-suite-05
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "BOLETA", "clienteNombre": "Cliente", "pagadoDigitalmente": false }
+
+### 5.6 CAJERO emite la boleta del recojo y registra el ingreso en caja
+# Esperado: HTTP 201
+# @assert $.tipo == BOLETA
+# @assert $.ordenId == {{ORDEN_RECOJO}}
+# @assert $.total == {{ordenRecojo.response.body.$.total}}
+# @assert $.serieCorrelativo contains B001-
+# @assert $.emitidoPor exists
+# @assert $.anulado == false
+# @name boletaRecojo
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "BOLETA", "clienteTipoDoc": "DNI", "clienteNumDoc": "12345678", "clienteNombre": "Cliente Recojo Suite 05", "pagadoDigitalmente": false, "ingresoCaja": true }
+
+### 5.7 Reemitir es idempotente: devuelve el mismo comprobante y no duplica el ingreso
+# Esperado: HTTP 201
+# @assert $.id == {{boletaRecojo.response.body.$.id}}
+# @assert $.serieCorrelativo == {{boletaRecojo.response.body.$.serieCorrelativo}}
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_RECOJO}}, "tipo": "BOLETA", "clienteNombre": "Cliente Recojo Suite 05", "pagadoDigitalmente": false, "ingresoCaja": true }
+
+### 5.8 La venta del recojo entro a la caja abierta (categoria VENTA)
+# Esperado: HTTP 200
+# @assert $ contains Orden #{{ORDEN_RECOJO}}"
+# @assert $ contains "categoria":"VENTA"
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_CAJERO}}
+
+### 5.9 Un servicio interno (X-Internal-Key) emite la boleta del delivery; sin usuario emisor
+# Esperado: HTTP 201
+# @assert $.ordenId == {{ORDEN_DELIVERY}}
+# @assert $.emitidoPor notExists
+# @assert $.estadoPagoTexto contains COBRAR EN EFECTIVO
+POST {{FINANCE_URL}}/finanzas/comprobantes
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_DELIVERY}}, "tipo": "BOLETA", "clienteNombre": "Cliente Suite 05", "pagadoDigitalmente": false }
+
+### 5.10 CAJERO consulta el comprobante por orden
+# Esperado: HTTP 200
+# @assert $.id == {{boletaRecojo.response.body.$.id}}
+# @assert $.anulado == false
+GET {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_RECOJO}}
+Authorization: Bearer {{TK_CAJERO}}
+
+### 5.11 Comprobante de una orden sin comprobante (404)
+# Esperado: HTTP 404
+GET {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_INEXISTENTE}}
+Authorization: Bearer {{TK_ADMIN}}
+
+### 5.12 CLIENTE no consulta comprobantes por orden (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_RECOJO}}
+Authorization: Bearer {{TK_CLIENTE}}
+
+### 5.13 ADMIN lista los comprobantes (incluye los dos emitidos)
+# Esperado: HTTP 200
+# @assert $ contains "ordenId":{{ORDEN_RECOJO}},
+# @assert $ contains "ordenId":{{ORDEN_DELIVERY}},
+GET {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_ADMIN}}
+
+### 5.14 La clave interna no lista comprobantes (INTERNAL solo emite y anula)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/comprobantes
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### 5.15 Anonimo no lista comprobantes (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/comprobantes
+
+### 5.16 CAJERO anula el comprobante del delivery con motivo
+# Esperado: HTTP 200
+# @assert $.anulado == true
+# @assert $.motivoAnulacion == Prueba de anulacion suite 05
+# @assert $.anuladoEn exists
+POST {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_DELIVERY}}/anular
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "motivo": "Prueba de anulacion suite 05" }
+
+### 5.17 Anular otra vez es idempotente (conserva el motivo original)
+# Esperado: HTTP 200
+# @assert $.anulado == true
+# @assert $.motivoAnulacion == Prueba de anulacion suite 05
+POST {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_DELIVERY}}/anular?motivo=Otro
+Authorization: Bearer {{TK_ADMIN}}
+
+### 5.18 No se reemite un comprobante anulado (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/comprobantes
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_DELIVERY}}, "tipo": "BOLETA", "clienteNombre": "Cliente Suite 05", "pagadoDigitalmente": false }
+
+### 5.19 Anular el comprobante de una orden sin comprobante (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_INEXISTENTE}}/anular
+Authorization: Bearer {{TK_CAJERO}}
+
+### 5.20 COCINA no anula comprobantes (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_RECOJO}}/anular
+Authorization: Bearer {{TK_COCINA}}
+
+### 5.21 Un servicio interno anula el comprobante del recojo (motivo por defecto)
+# Esperado: HTTP 200
+# @assert $.anulado == true
+# @assert $.motivoAnulacion == Pedido cancelado
+POST {{FINANCE_URL}}/finanzas/comprobantes/orden/{{ORDEN_RECOJO}}/anular
+X-Internal-Key: {{INTERNAL_KEY}}
+
+###############################################################################
+# 6. LIQUIDACIONES DE REPARTIDOR
+###############################################################################
+
+### 6.1 Apertura de la liquidacion A con fondo de vueltos S/ 20 (409 si quedo una abierta de antes)
+# Esperado: HTTP 201|409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "repartidorNombre": "Repartidor Suite 05", "fondoInicial": 20 }
+
+### 6.2 Segunda apertura para el mismo repartidor (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "repartidorNombre": "Repartidor Suite 05", "fondoInicial": 5 }
+
+### 6.3 Apertura sin nombre del repartidor (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "fondoInicial": 5 }
+
+### 6.4 REPARTIDOR no abre liquidaciones (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{TK_REPARTIDOR}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "repartidorNombre": "Yo mismo", "fondoInicial": 5 }
+
+### 6.5 Efectivo pendiente (CAJERO): liquidacion abierta y el cobro del delivery
+# Esperado: HTTP 200
+# @assert $.repartidorId == {{REPARTIDOR_ID}}
+# @assert $.liquidacionId exists
+# @assert $.cantidad >= 1
+# @assert $.pagos contains "ordenId":{{ORDEN_DELIVERY}},
+# @name pendienteA
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}/pendiente
+Authorization: Bearer {{TK_CAJERO}}
+
+### 6.6 Recarga de S/ 10 al fondo de vueltos (egreso de caja)
+# Esperado: HTTP 200
+# @assert $.id == {{LIQ_A}}
+# @assert $.fondoInicial >= 10
+# @assert $.observaciones contains Recarga suite 05
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_A}}/recargar-fondo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "monto": 10, "motivo": "Recarga suite 05" }
+
+### 6.7 Recarga con monto 0 (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_A}}/recargar-fondo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "monto": 0 }
+
+### 6.8 Recarga a una liquidacion inexistente (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{ORDEN_INEXISTENTE}}/recargar-fondo
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "monto": 5 }
+
+### 6.9 El egreso del fondo quedo en la caja (categoria FONDO_REPARTIDOR)
+# Esperado: HTTP 200
+# @assert $ contains "categoria":"FONDO_REPARTIDOR"
+# @assert $ contains Recarga suite 05
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{TK_ADMIN}}
+
+### 6.10 Cobro parcial de S/ 1 al repartidor
+# Esperado: HTTP 200
+# @assert $.repartidorId == {{REPARTIDOR_ID}}
+# @assert $.monto == 1
+# @assert $.liquidacionId == {{LIQ_A}}
+# @assert $.arqueoCajaId == {{CAJA_ID}}
+# @assert $.saldoRestante >= 1
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "repartidorNombre": "Repartidor Suite 05", "monto": 1, "observaciones": "Cobro parcial suite 05" }
+
+### 6.11 Cobro mayor al saldo pendiente (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "monto": 999999 }
+
+### 6.12 Cobro con monto 0 (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "monto": 0 }
+
+### 6.13 COCINA no cobra efectivo (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "monto": 1 }
+
+### 6.14 Liquidaciones abiertas (CAJERO) incluye la liquidacion A
+# Esperado: HTTP 200
+# @assert $ contains "id":{{LIQ_A}},"repartidorId":{{REPARTIDOR_ID}},
+GET {{FINANCE_URL}}/finanzas/liquidaciones/abiertas
+Authorization: Bearer {{TK_CAJERO}}
+
+### 6.15 REPARTIDOR no lista liquidaciones abiertas (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/abiertas
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.16 Repartidores con saldo pendiente (ADMIN) incluye al repartidor
+# Esperado: HTTP 200
+# @assert $ contains "repartidorId":{{REPARTIDOR_ID}},
+# @assert $ contains "liquidacionId":{{LIQ_A}}
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidores/pendientes
+Authorization: Bearer {{TK_ADMIN}}
+
+### 6.17 CLIENTE no lista repartidores con pendiente (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidores/pendientes
+Authorization: Bearer {{TK_CLIENTE}}
+
+### 6.18 El REPARTIDOR consulta su propio efectivo pendiente (ya descontado el cobro parcial)
+# Esperado: HTTP 200
+# @assert $.liquidacionId == {{LIQ_A}}
+# @assert $.totalRendido >= 1
+# @assert $.total >= 1
+# @name pendienteA2
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}/pendiente
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.19 El REPARTIDOR no consulta el efectivo de otro usuario (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{ORDEN_INEXISTENTE}}/pendiente
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.20 El REPARTIDOR no consulta las liquidaciones de otro usuario (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{ORDEN_INEXISTENTE}}
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.21 El REPARTIDOR no consulta los cobros de otro usuario (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{ORDEN_INEXISTENTE}}/cobros
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.22 COCINA no consulta liquidaciones de repartidor (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}
+Authorization: Bearer {{TK_COCINA}}
+
+### 6.23 Cobro del saldo restante: la liquidacion A se cierra sola (saldo 0)
+# Esperado: HTTP 200
+# @assert $.liquidacionId == {{LIQ_A}}
+# @assert $.saldoRestante == 0
+POST {{FINANCE_URL}}/finanzas/liquidaciones/cobro-efectivo
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "monto": {{pendienteA2.response.body.$.total}}, "observaciones": "Cobro total suite 05" }
+
+### 6.24 Cerrar la liquidacion A ya cerrada (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_A}}/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "totalRendido": 0 }
+
+### 6.25 Recargar fondo a la liquidacion A cerrada (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_A}}/recargar-fondo
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "monto": 5 }
+
+### 6.26 El REPARTIDOR ve su historial de liquidaciones (incluye la A)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{LIQ_A}},"repartidorId":{{REPARTIDOR_ID}},
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.27 El REPARTIDOR ve sus cobros (parcial y total de la liquidacion A)
+# Esperado: HTTP 200
+# @assert $ contains Cobro parcial suite 05
+# @assert $ contains Cobro total suite 05
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}/cobros
+Authorization: Bearer {{TK_REPARTIDOR}}
+
+### 6.28 Tras el cobro total el repartidor ya no tiene liquidacion abierta
+# Esperado: HTTP 200
+# @assert $.liquidacionId notExists
+GET {{FINANCE_URL}}/finanzas/liquidaciones/repartidor/{{REPARTIDOR_ID}}/pendiente
+Authorization: Bearer {{TK_ADMIN}}
+
+### 6.29 Apertura de la liquidacion B con fondo de S/ 15
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTA
+# @assert $.fondoInicial == 15
+# @assert $.arqueoCajaId == {{CAJA_ID}}
+# @name aperturaLiqB
+POST {{FINANCE_URL}}/finanzas/liquidaciones/apertura
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "repartidorId": {{REPARTIDOR_ID}}, "repartidorNombre": "Repartidor Suite 05", "fondoInicial": 15, "observaciones": "Liquidacion B suite 05" }
+
+### 6.30 Cierre sin total rendido (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_B}}/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "observaciones": "Sin total" }
+
+### 6.31 Cierre de una liquidacion inexistente (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{ORDEN_INEXISTENTE}}/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "totalRendido": 10 }
+
+### 6.32 REPARTIDOR no cierra liquidaciones (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_B}}/cierre
+Authorization: Bearer {{TK_REPARTIDOR}}
+Content-Type: application/json
+
+{ "totalRendido": 15 }
+
+### 6.33 Cierre de la liquidacion B rindiendo S/ 10 de un fondo de S/ 15: DISCREPANCIA
+# Esperado: HTTP 200
+# @assert $.id == {{LIQ_B}}
+# @assert $.estado == DISCREPANCIA
+# @assert $.totalRendido == 10
+# @assert $.diferencia <= -5
+# @assert $.cerradoEn exists
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_B}}/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "totalRendido": 10, "observaciones": "Faltante suite 05" }
+
+### 6.34 Cerrar otra vez la liquidacion B (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/liquidaciones/{{LIQ_B}}/cierre
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "totalRendido": 15 }
+
+###############################################################################
+# 7. BALANCE DIARIO
+###############################################################################
+
+### 7.1 ADMIN consulta el balance de hoy
+# Esperado: HTTP 200
+# @assert $.fecha exists
+# @assert $.ingresos.totalIngresos exists
+# @assert $.egresos.totalEgresos exists
+# @assert $.balanceNeto exists
+GET {{FINANCE_URL}}/finanzas/balance/diario
+Authorization: Bearer {{TK_ADMIN}}
+
+### 7.2 Balance de una fecha sin operaciones
+# Esperado: HTTP 200
+# @assert $.fecha == 2000-01-01
+# @assert $.ordenesAtendidas == 0
+GET {{FINANCE_URL}}/finanzas/balance/diario?fecha=2000-01-01
+Authorization: Bearer {{TK_ADMIN}}
+
+### 7.3 CAJERO no ve el balance (solo ADMIN)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/balance/diario
+Authorization: Bearer {{TK_CAJERO}}
+
+### 7.4 Anonimo no ve el balance (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/balance/diario
+
+###############################################################################
+# 8. CIERRE DE CAJA (arqueo ciego) E HISTORIAL
+###############################################################################
+
+### 8.1 Cierre sin monto POS es rechazado (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0 }
+
+### 8.2 Cierre con diferencia y sin observaciones (arqueo ciego) es rechazado (400)
+# Esperado: HTTP 400
+POST {{FINANCE_URL}}/finanzas/caja/cierre
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0 }
+
+### 8.3 COCINA no cierra la caja (403)
+# Esperado: HTTP 403
+POST {{FINANCE_URL}}/finanzas/caja/cierre
+Authorization: Bearer {{TK_COCINA}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0, "observaciones": "No autorizado" }
+
+### 8.4 CAJERO cierra su caja con faltante justificado
+# Esperado: HTTP 200
+# @assert $.id == {{CAJA_ID}}
+# @assert $.estado == CERRADA
+# @assert $.totalEsperado >= 100
+# @assert $.diferencia <= -100
+# @assert $.observaciones == Faltante justificado suite 05
+POST {{FINANCE_URL}}/finanzas/caja/cierre?arqueoId={{CAJA_ID}}
+Authorization: Bearer {{TK_CAJERO}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0, "ventasDigitales": 0, "observaciones": "Faltante justificado suite 05" }
+
+### 8.5 Cerrar otra vez la misma caja (409)
+# Esperado: HTTP 409
+POST {{FINANCE_URL}}/finanzas/caja/cierre?arqueoId={{CAJA_ID}}
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0, "observaciones": "Repetido" }
+
+### 8.6 Cerrar un arqueo inexistente (404)
+# Esperado: HTTP 404
+POST {{FINANCE_URL}}/finanzas/caja/cierre?arqueoId={{ORDEN_INEXISTENTE}}
+Authorization: Bearer {{TK_ADMIN}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 0, "montoCierrePos": 0 }
+
+### 8.7 Ya no queda caja abierta
+# Esperado: HTTP 404
+GET {{FINANCE_URL}}/finanzas/caja/actual
+Authorization: Bearer {{TK_CAJERO}}
+
+### 8.8 ADMIN ve la caja cerrada en el historial
+# Esperado: HTTP 200
+# @assert $ contains "id":{{CAJA_ID}},"usuarioId":
+# @assert $ contains Faltante justificado suite 05
+GET {{FINANCE_URL}}/finanzas/caja/historial
+Authorization: Bearer {{TK_ADMIN}}
