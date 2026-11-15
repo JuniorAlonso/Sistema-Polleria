@@ -14,5 +14,7 @@ public enum CategoriaMovimiento {
     /** Sales cash handed in by a courier. */
     RENDICION_REPARTIDOR,
     /** Movement typed by the cashier or admin. */
-    MANUAL
+    MANUAL,
+    /** Cash handed back to a customer for an accepted claim (EGRESO, at most once per claim). */
+    DEVOLUCION
 }

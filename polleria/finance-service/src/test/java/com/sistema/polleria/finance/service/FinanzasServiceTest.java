@@ -132,4 +132,20 @@ class FinanzasServiceTest {
         assertThat(r.getBalanceNeto()).isEqualByComparingTo("282.00");
         assertThat(r.getTicketPromedio()).as("ticket from receipts only").isEqualByComparingTo("1.00");
     }
+
+    @Test
+    @DisplayName("Las devoluciones en ventanilla son reembolsos, no gastos de caja chica")
+    void devolucionesCuentanComoReembolsos() {
+        dia(List.of(
+                        mov(TipoMovimiento.EGRESO, CategoriaMovimiento.DEVOLUCION, "30.00"),
+                        mov(TipoMovimiento.EGRESO, CategoriaMovimiento.MANUAL, "10.00")),
+                List.of(),
+                List.of());
+
+        BalanceDiarioResponse r = finanzasService.obtenerBalanceDiario(HOY);
+
+        assertThat(r.getEgresos().getReembolsosEmitidos()).isEqualByComparingTo("30.00");
+        assertThat(r.getEgresos().getGastosCajaChica()).isEqualByComparingTo("10.00");
+        assertThat(r.getEgresos().getTotalEgresos()).isEqualByComparingTo("40.00");
+    }
 }

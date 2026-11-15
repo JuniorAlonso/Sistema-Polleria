@@ -1,5 +1,6 @@
 package com.sistema.polleria.finance.dto;
 
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -26,4 +27,10 @@ public class MovimientoCajaRequest {
 
     @NotBlank(message = "El motivo o justificación es obligatorio")
     private String motivo;
+
+    /** Optional: MANUAL (default) or DEVOLUCION. Other categories are set by the system only. */
+    private CategoriaMovimiento categoria;
+
+    /** Required with DEVOLUCION: the claim whose cash is handed back. */
+    private Long reclamoId;
 }

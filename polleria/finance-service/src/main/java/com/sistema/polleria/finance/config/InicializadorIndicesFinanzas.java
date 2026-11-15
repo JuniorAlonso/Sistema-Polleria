@@ -1,5 +1,9 @@
 package com.sistema.polleria.finance.config;
 
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
+import java.util.Arrays;
+import java.util.stream.Collectors;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -45,7 +49,20 @@ public class InicializadorIndicesFinanzas implements ApplicationRunner {
             new Indice("uq_movimientos_ingreso_orden",
                     "CREATE UNIQUE INDEX IF NOT EXISTS uq_movimientos_ingreso_orden ON movimientos_caja (orden_id)"
                             + " WHERE orden_id IS NOT NULL AND tipo = 'INGRESO'",
-                    "órdenes con más de un INGRESO de venta"));
+                    "órdenes con más de un INGRESO de venta"),
+            new Indice("uq_movimientos_devolucion_reclamo",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_movimientos_devolucion_reclamo ON movimientos_caja (reclamo_id)"
+                            + " WHERE categoria = 'DEVOLUCION'",
+                    "reclamos con más de una devolución en caja"),
+            // Hibernate creates the enum check only with the column; a value added later (DEVOLUCION)
+            // would be rejected by an existing database until the check is realigned to the enum.
+            new Indice("movimientos_caja_categoria_check",
+                    "ALTER TABLE movimientos_caja DROP CONSTRAINT IF EXISTS movimientos_caja_categoria_check,"
+                            + " ADD CONSTRAINT movimientos_caja_categoria_check CHECK (categoria IS NULL OR categoria IN ("
+                            + Arrays.stream(CategoriaMovimiento.values())
+                                    .map(c -> "'" + c.name() + "'").collect(Collectors.joining(", "))
+                            + "))",
+                    "movimientos con una categoría desconocida"));
 
     private final JdbcTemplate jdbcTemplate;
 

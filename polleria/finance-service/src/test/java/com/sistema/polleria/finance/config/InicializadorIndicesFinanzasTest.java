@@ -22,7 +22,7 @@ class InicializadorIndicesFinanzasTest {
         new InicializadorIndicesFinanzas(jdbc).run(null);
 
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-        verify(jdbc, times(3)).execute(sql.capture());
+        verify(jdbc, times(5)).execute(sql.capture());
         List<String> sentencias = sql.getAllValues();
         assertThat(sentencias).anySatisfy(s -> assertThat(s)
                 .contains("uq_comprobantes_orden_id").contains("comprobantes_pago (orden_id)"));
@@ -31,6 +31,23 @@ class InicializadorIndicesFinanzasTest {
         assertThat(sentencias).anySatisfy(s -> assertThat(s)
                 .contains("uq_movimientos_ingreso_orden")
                 .contains("WHERE orden_id IS NOT NULL AND tipo = 'INGRESO'"));
+        assertThat(sentencias).anySatisfy(s -> assertThat(s)
+                .contains("uq_movimientos_devolucion_reclamo").contains("movimientos_caja (reclamo_id)")
+                .contains("WHERE categoria = 'DEVOLUCION'"));
+    }
+
+    @Test
+    void realineaElCheckDeCategoriaParaAceptarLosValoresNuevos() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+
+        new InicializadorIndicesFinanzas(jdbc).run(null);
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, atLeastOnce()).execute(sql.capture());
+        assertThat(sql.getAllValues()).anySatisfy(s -> assertThat(s)
+                .contains("DROP CONSTRAINT IF EXISTS movimientos_caja_categoria_check")
+                .contains("ADD CONSTRAINT movimientos_caja_categoria_check")
+                .contains("'DEVOLUCION'").contains("'VENTA'").contains("categoria IS NULL"));
     }
 
     @Test
@@ -41,6 +58,6 @@ class InicializadorIndicesFinanzasTest {
 
         assertThatCode(() -> new InicializadorIndicesFinanzas(jdbc).run(null)).doesNotThrowAnyException();
 
-        verify(jdbc, times(3)).execute(anyString());
+        verify(jdbc, times(5)).execute(anyString());
     }
 }

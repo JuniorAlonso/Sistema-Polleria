@@ -46,6 +46,10 @@ public class MovimientoCaja {
     @Column(length = 30)
     private CategoriaMovimiento categoria;
 
+    /** Claim refunded by a DEVOLUCION egress; unique for that category. */
+    @Column(name = "reclamo_id")
+    private Long reclamoId;
+
     @Builder.Default
     @Column(nullable = false)
     private LocalDateTime fecha = LocalDateTime.now();

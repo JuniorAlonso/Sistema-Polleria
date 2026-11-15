@@ -18,4 +18,7 @@ public interface MovimientoCajaRepository extends JpaRepository<MovimientoCaja, 
     List<MovimientoCaja> findByArqueoIdAndTipo(Long arqueoId, TipoMovimiento tipo);
 
     boolean existsByOrdenIdAndTipo(Long ordenId, TipoMovimiento tipo);
+
+    java.util.Optional<MovimientoCaja> findFirstByReclamoIdAndCategoria(Long reclamoId,
+            com.sistema.polleria.finance.entity.CategoriaMovimiento categoria);
 }

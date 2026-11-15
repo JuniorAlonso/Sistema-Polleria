@@ -77,23 +77,55 @@ public class CajaService {
 
     @Transactional
     public MovimientoCaja registrarMovimiento(MovimientoCajaRequest req, Long usuarioId) {
+        CategoriaMovimiento categoria = req.getCategoria() != null ? req.getCategoria() : CategoriaMovimiento.MANUAL;
+        if (categoria != CategoriaMovimiento.MANUAL && categoria != CategoriaMovimiento.DEVOLUCION) {
+            throw new IllegalArgumentException("Categoría no permitida para un movimiento registrado a mano: " + categoria);
+        }
+        if (categoria == CategoriaMovimiento.DEVOLUCION
+                && (req.getReclamoId() == null || req.getTipo() != TipoMovimiento.EGRESO)) {
+            throw new IllegalArgumentException("Una devolución es un EGRESO y debe indicar su reclamo");
+        }
+
         ArqueoCaja actual = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new IllegalStateException("No hay una caja abierta para registrar movimientos"));
 
         MovimientoCaja movimiento = MovimientoCaja.builder()
                 .arqueoId(actual.getId())
                 .tipo(req.getTipo())
-                .categoria(CategoriaMovimiento.MANUAL)
+                .categoria(categoria)
+                .reclamoId(categoria == CategoriaMovimiento.DEVOLUCION ? req.getReclamoId() : null)
                 .monto(req.getMonto())
                 .motivo(req.getMotivo())
                 .registradoPor(usuarioId)
                 .fecha(LocalDateTime.now())
                 .build();
 
-        movimiento = movimientoRepository.save(movimiento);
-        log.info("Movimiento de caja registrado: #{} - {} S/ {} ({})",
-                movimiento.getId(), movimiento.getTipo(), movimiento.getMonto(), movimiento.getMotivo());
+        movimiento = categoria == CategoriaMovimiento.DEVOLUCION
+                ? registrarDevolucion(movimiento)
+                : movimientoRepository.save(movimiento);
+        log.info("Movimiento de caja registrado: #{} - {} {} S/ {} ({})",
+                movimiento.getId(), movimiento.getTipo(), categoria, movimiento.getMonto(), movimiento.getMotivo());
         return movimiento;
+    }
+
+    /**
+     * A claim's cash leaves the drawer once. A retry (the caller failed after the egress, a double
+     * click) gets the stored egress back; a simultaneous one loses against
+     * uq_movimientos_devolucion_reclamo and gets a 409.
+     */
+    private MovimientoCaja registrarDevolucion(MovimientoCaja movimiento) {
+        var existente = movimientoRepository.findFirstByReclamoIdAndCategoria(
+                movimiento.getReclamoId(), CategoriaMovimiento.DEVOLUCION);
+        if (existente.isPresent()) {
+            log.info("Devolución del reclamo #{} ya registrada; no se duplica", movimiento.getReclamoId());
+            return existente.get();
+        }
+        try {
+            return movimientoRepository.saveAndFlush(movimiento);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException("La devolución del reclamo #" + movimiento.getReclamoId()
+                    + " se registró en otra solicitud. Reintenta.", e);
+        }
     }
 
     @Transactional

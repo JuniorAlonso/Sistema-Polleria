@@ -261,4 +261,77 @@ class CajaServiceTest {
         assertThat(res.getEstado()).isEqualTo(EstadoCaja.CERRADA);
         assertThat(res.getDiferencia()).isEqualByComparingTo("0.00");
     }
+
+    private void cajaAbiertaDiez() {
+        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+                .thenReturn(Optional.of(ArqueoCaja.builder().id(10L).estado(EstadoCaja.ABIERTA).build()));
+    }
+
+    private MovimientoCajaRequest devolucion(Long reclamoId, TipoMovimiento tipo) {
+        MovimientoCajaRequest req = new MovimientoCajaRequest();
+        req.setTipo(tipo);
+        req.setMonto(new BigDecimal("30.00"));
+        req.setMotivo("DEVOLUCION-RECLAMO #42");
+        req.setCategoria(CategoriaMovimiento.DEVOLUCION);
+        req.setReclamoId(reclamoId);
+        return req;
+    }
+
+    @Test
+    @DisplayName("Una devolución se registra como EGRESO DEVOLUCION ligado a su reclamo")
+    void registrarDevolucionGuardaCategoriaYReclamo() {
+        cajaAbiertaDiez();
+        when(movimientoRepository.findFirstByReclamoIdAndCategoria(42L, CategoriaMovimiento.DEVOLUCION)).thenReturn(Optional.empty());
+        when(movimientoRepository.saveAndFlush(any(MovimientoCaja.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        MovimientoCaja m = cajaService.registrarMovimiento(devolucion(42L, TipoMovimiento.EGRESO), 5L);
+
+        assertThat(m.getCategoria()).isEqualTo(CategoriaMovimiento.DEVOLUCION);
+        assertThat(m.getReclamoId()).isEqualTo(42L);
+        assertThat(m.getTipo()).isEqualTo(TipoMovimiento.EGRESO);
+        assertThat(m.getArqueoId()).isEqualTo(10L);
+    }
+
+    @Test
+    @DisplayName("Reintentar la misma devolución devuelve el egreso existente y no lo duplica")
+    void devolucionRepetidaEsIdempotente() {
+        cajaAbiertaDiez();
+        MovimientoCaja existente = MovimientoCaja.builder().id(7L).reclamoId(42L)
+                .categoria(CategoriaMovimiento.DEVOLUCION).tipo(TipoMovimiento.EGRESO).monto(new BigDecimal("30.00")).build();
+        when(movimientoRepository.findFirstByReclamoIdAndCategoria(42L, CategoriaMovimiento.DEVOLUCION)).thenReturn(Optional.of(existente));
+
+        MovimientoCaja m = cajaService.registrarMovimiento(devolucion(42L, TipoMovimiento.EGRESO), 5L);
+
+        assertThat(m.getId()).isEqualTo(7L);
+        verify(movimientoRepository, never()).saveAndFlush(any());
+        verify(movimientoRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Dos devoluciones simultáneas del mismo reclamo: la que pierde contra el índice responde 409")
+    void devolucionSimultaneaRespondeConflicto() {
+        cajaAbiertaDiez();
+        when(movimientoRepository.findFirstByReclamoIdAndCategoria(42L, CategoriaMovimiento.DEVOLUCION)).thenReturn(Optional.empty());
+        when(movimientoRepository.saveAndFlush(any(MovimientoCaja.class)))
+                .thenThrow(new DataIntegrityViolationException("uq_movimientos_devolucion_reclamo"));
+
+        assertThatThrownBy(() -> cajaService.registrarMovimiento(devolucion(42L, TipoMovimiento.EGRESO), 5L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("reclamo #42");
+    }
+
+    @Test
+    @DisplayName("Una devolución exige reclamo y debe ser EGRESO; las categorías internas no se aceptan desde afuera")
+    void validaLaCategoriaDelMovimiento() {
+        assertThatThrownBy(() -> cajaService.registrarMovimiento(devolucion(null, TipoMovimiento.EGRESO), 5L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> cajaService.registrarMovimiento(devolucion(42L, TipoMovimiento.INGRESO), 5L))
+                .isInstanceOf(IllegalArgumentException.class);
+        MovimientoCajaRequest venta = devolucion(42L, TipoMovimiento.INGRESO);
+        venta.setCategoria(CategoriaMovimiento.VENTA);
+        assertThatThrownBy(() -> cajaService.registrarMovimiento(venta, 5L))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(movimientoRepository, never()).saveAndFlush(any());
+        verify(movimientoRepository, never()).save(any());
+    }
 }

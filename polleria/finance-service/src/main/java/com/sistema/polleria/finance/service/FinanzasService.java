@@ -34,7 +34,8 @@ import java.util.stream.Collectors;
  *   <li>card terminal comes from the cash counts; digital is the receipts not paid in cash at the POS
  *       minus that card terminal amount, so card sales are not counted twice;</li>
  *   <li>served orders and the average ticket come from the receipts issued that day;</li>
- *   <li>expenses are the EGRESO movements without the float handed to couriers.</li>
+ *   <li>expenses are the EGRESO movements without the float handed to couriers nor claim refunds,
+ *       which are reported apart as refunds.</li>
  * </ul>
  * Movements stored before the category existed keep the previous rule: INGRESO is a sale, EGRESO an
  * expense.
@@ -66,7 +67,10 @@ public class FinanzasService {
         BigDecimal efectivo = sumar(movimientos, m -> m.getTipo() == TipoMovimiento.INGRESO
                 && (m.getCategoria() == null || !NO_SON_VENTA.contains(m.getCategoria())));
         BigDecimal gastos = sumar(movimientos, m -> m.getTipo() == TipoMovimiento.EGRESO
-                && m.getCategoria() != CategoriaMovimiento.FONDO_REPARTIDOR);
+                && m.getCategoria() != CategoriaMovimiento.FONDO_REPARTIDOR
+                && m.getCategoria() != CategoriaMovimiento.DEVOLUCION);
+        BigDecimal reembolsos = sumar(movimientos, m -> m.getTipo() == TipoMovimiento.EGRESO
+                && m.getCategoria() == CategoriaMovimiento.DEVOLUCION);
 
         Set<Long> ordenesEnEfectivo = movimientos.stream()
                 .filter(m -> m.getTipo() == TipoMovimiento.INGRESO && m.getCategoria() == CategoriaMovimiento.VENTA)
@@ -83,7 +87,6 @@ public class FinanzasService {
                 ? totalComprobantes.divide(BigDecimal.valueOf(ordenes), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        BigDecimal reembolsos = BigDecimal.ZERO;
         BigDecimal totalEgresos = gastos.add(reembolsos);
 
         return BalanceDiarioResponse.builder()
