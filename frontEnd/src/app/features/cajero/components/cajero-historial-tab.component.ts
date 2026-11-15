@@ -53,10 +53,10 @@ import { claseMetodoCobro, formatearMetodoCobro } from '../models/cobro-metodo.h
                           #{{ cobro.codigoOrden }}
                         </td>
                         <td class="py-2.5 px-3 text-slate-200">
-                          {{ cobro.clienteNombre }}
+                          {{ cobro.clienteNombre || '—' }}
                         </td>
                         <td class="py-2.5 px-3 text-[11px] text-slate-400">
-                          {{ cobro.tipoOrden }}
+                          {{ cobro.tipoOrden || '—' }}
                         </td>
                         <td class="py-2.5 px-3">
                           <span class="px-2 py-0.5 rounded-full text-[10px] font-bold"

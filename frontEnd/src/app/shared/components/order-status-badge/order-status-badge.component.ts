@@ -84,6 +84,12 @@ export class OrderStatusBadgeComponent {
           bg: 'bg-rose-100 text-rose-900 border-rose-400',
           dot: 'bg-rose-600'
         };
+      case 'DESCONOCIDO':
+        return {
+          label: 'Estado desconocido',
+          bg: 'bg-slate-100 text-slate-600 border-slate-300',
+          dot: 'bg-slate-400'
+        };
       default:
         return {
           label: s,

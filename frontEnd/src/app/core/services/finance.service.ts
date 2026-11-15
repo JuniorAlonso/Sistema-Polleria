@@ -15,6 +15,8 @@ import {
   RepartidorPendienteCobro
 } from '../models/api-contracts.model';
 import { NotificationService } from './notification.service';
+import { mensajeError } from '../utils/api-error';
+import { parsePositiveIntId } from '../utils/id';
 
 @Injectable({
   providedIn: 'root'
@@ -29,6 +31,7 @@ export class FinanceService {
   readonly historial = signal<ArqueoCaja[]>([]);
   readonly movimientos = signal<MovimientoCaja[]>([]);
   readonly isLoading = signal<boolean>(false);
+  readonly cargaError = signal<string | null>(null);
 
   constructor() {
     this.obtenerCajaActual();
@@ -45,10 +48,15 @@ export class FinanceService {
           caja.ventasEfectivo = caja.montoCierreEfectivo || 0;
           caja.discrepancia = caja.diferencia || 0;
         }
+        this.cargaError.set(null);
         this.cajaActual.set(caja);
       }),
-      catchError(() => {
+      catchError((err: unknown) => {
+        const status = (err as { status?: number } | null)?.status;
         this.cajaActual.set(null);
+        if (status !== 404) {
+          this.cargaError.set(mensajeError(err, 'No se pudo consultar el estado actual de la caja.'));
+        }
         return of(null);
       })
     ).subscribe();
@@ -71,7 +79,6 @@ export class FinanceService {
           caja.discrepancia = caja.diferencia || 0;
         }
         this.cajaActual.set(caja);
-        this.notify.showSuccess(`Caja #${caja.id} abierta con fondo de S/ ${caja.montoApertura.toFixed(2)}`);
       })
     );
   }
@@ -82,8 +89,7 @@ export class FinanceService {
       motivo: req.motivo || req.concepto || 'Movimiento de caja'
     };
     return this.api.registrarMovimiento(payload).pipe(
-      tap(mov => {
-        this.notify.showSuccess(`Movimiento de ${mov.tipo} registrado por S/ ${mov.monto.toFixed(2)}`);
+      tap(() => {
         this.obtenerCajaActual();
         this.cargarMovimientos();
       })
@@ -97,11 +103,14 @@ export class FinanceService {
           ...item,
           concepto: item.concepto || item.motivo,
           fechaHora: item.fechaHora || item.fecha,
-          usuario: item.usuario || `Usuario #${item.registradoPor}`
+          usuario: item.usuario || ''
         }));
         this.movimientos.set(mapped);
       }),
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar los movimientos de caja.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
@@ -131,7 +140,6 @@ export class FinanceService {
           cerrada.discrepancia = cerrada.diferencia || 0;
         }
         this.cajaActual.set(null);
-        this.notify.showSuccess(`Caja cerrada con diferencia de S/ ${cerrada.diferencia?.toFixed(2) || '0.00'}`);
         this.cargarHistorial();
         this.cargarBalanceDiario();
       })
@@ -148,14 +156,20 @@ export class FinanceService {
         }
         this.balanceDiario.set(b);
       }),
-      catchError(() => of(null))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudo cargar el balance diario.'));
+        return of(null);
+      })
     ).subscribe();
   }
 
   cargarHistorial(): void {
     this.api.listarHistorial().pipe(
       tap(h => this.historial.set(h)),
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudo cargar el historial de caja.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
@@ -177,8 +191,12 @@ export class FinanceService {
     datosFiscales: { tipo: 'BOLETA' | 'FACTURA'; tipoDoc?: string; numDoc?: string; nombre: string; direccion?: string },
     ingresoCaja: boolean
   ): Observable<BackendComprobanteResponse> {
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      throw new Error(`Id de orden inválido para comprobante: ${ordenId}`);
+    }
     const req: EmitirComprobanteRequest = {
-      ordenId: Number(String(ordenId).replace(/\D/g, '')),
+      ordenId: cleanId,
       tipo: datosFiscales.tipo,
       clienteNombre: datosFiscales.nombre,
       pagadoDigitalmente: true,
@@ -215,13 +233,19 @@ export class FinanceService {
 
   listarLiquidacionesPorRepartidor(repartidorId: number | string): Observable<BackendLiquidacionResponse[]> {
     return this.api.listarLiquidacionesPorRepartidor(repartidorId).pipe(
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar las liquidaciones del repartidor.'));
+        return of([]);
+      })
     );
   }
 
   listarLiquidacionesAbiertas(): Observable<BackendLiquidacionResponse[]> {
     return this.api.listarLiquidacionesAbiertas().pipe(
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar las liquidaciones abiertas.'));
+        return of([]);
+      })
     );
   }
 
@@ -237,13 +261,19 @@ export class FinanceService {
 
   listarCobrosRepartidor(repartidorId: number | string): Observable<BackendCobroRepartidorResponse[]> {
     return this.api.listarCobrosRepartidor(repartidorId).pipe(
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar los cobros del repartidor.'));
+        return of([]);
+      })
     );
   }
 
   listarRepartidoresConPendiente(): Observable<RepartidorPendienteCobro[]> {
     return this.api.listarRepartidoresConPendiente().pipe(
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudo consultar el efectivo pendiente de repartidores.'));
+        return of([]);
+      })
     );
   }
 }

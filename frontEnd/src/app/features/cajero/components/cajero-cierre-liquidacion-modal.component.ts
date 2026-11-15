@@ -69,7 +69,7 @@ import { BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from 
 
             <div class="flex justify-end gap-2 pt-3 border-t border-white/10">
               <button type="button" (click)="cancelar.emit()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase transition cursor-pointer">Cancelar</button>
-              <button type="button" (click)="confirmar.emit()" [disabled]="!puedeConfirmar()" class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase transition cursor-pointer">Cerrar y Cuadrar</button>
+              <button type="button" (click)="confirmar.emit()" [disabled]="!puedeConfirmar()" class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase transition cursor-pointer">{{ procesando() ? 'Cerrando...' : 'Cerrar y Cuadrar' }}</button>
             </div>
           </div>
         </div>
@@ -81,6 +81,7 @@ export class CajeroCierreLiquidacionModalComponent {
   readonly pendiente = input<BackendEfectivoPendienteLiquidacion | null>(null);
   readonly cargandoPendiente = input<boolean>(false);
   readonly errorPendiente = input<string | null>(null);
+  readonly procesando = input<boolean>(false);
 
   readonly totalRendido = model<number | null>(null);
 
@@ -99,9 +100,12 @@ export class CajeroCierreLiquidacionModalComponent {
 
   protected readonly puedeConfirmar = computed(() => {
     const rendido = this.totalRendido();
-    return !this.cargandoPendiente()
+    return !this.procesando()
+      && !this.cargandoPendiente()
       && !this.errorPendiente()
       && this.pendiente() !== null
-      && rendido !== null && rendido !== undefined && `${rendido}` !== '' && rendido >= 0;
+      && typeof rendido === 'number'
+      && Number.isFinite(rendido)
+      && rendido >= 0;
   });
 }

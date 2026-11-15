@@ -12,6 +12,7 @@ import { NotificationService } from '../../../core/services/notification.service
 import { MesaSalon } from '../../../core/models/table.model';
 import { AdminShellStore } from '../state/admin-shell.store';
 import { AdminOrderModalsComponent } from '../pages/shared/admin-order-modals.component';
+import { fechaHoyLima } from '../../../core/utils/fecha-lima';
 
 export type DashboardTab =
   | 'ORDENES'
@@ -325,7 +326,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     // Datos compartidos por varias pestañas (sidebar, modal de orden manual, despacho).
     this.ordersService.loadActiveOrders();
-    this.paymentService.cargarPagos().subscribe();
+    this.paymentService.cargarPagos({ fecha: fechaHoyLima(), limit: 200 }).subscribe();
     this.productsService.loadProducts();
     this.salonService.cargarMesas();
 
@@ -335,7 +336,7 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
         // Pestaña oculta: no se consulta el backend hasta que el usuario vuelva.
         if (typeof document !== 'undefined' && document.hidden) return;
         this.ordersService.loadActiveOrders();
-        this.paymentService.cargarPagos().subscribe();
+        this.paymentService.cargarPagos({ fecha: fechaHoyLima(), limit: 200 }).subscribe();
       });
     }
   }

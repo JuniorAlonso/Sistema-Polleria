@@ -8,6 +8,7 @@ import { Order } from '../../../core/models/order.model';
 import { PaymentMethod } from '../../../core/models/order.model';
 import { PaymentTransaction } from '../../../core/models/payment.model';
 import { BackendComprobanteResponse } from '../../../core/models/api-contracts.model';
+import { PaymentAdapter } from '../../../core/adapters/payment.adapter';
 import { mensajeError } from '../../../core/utils/api-error';
 import { DatosFiscales } from '../models/datos-fiscales';
 import { MetodoCobro } from '../models/cajero.models';
@@ -105,8 +106,9 @@ export class CobroSalonFacade {
     const pagoId$ = existente
       ? of(Number(existente.id))
       : this.pagos.iniciarPago(orden.id, orden.total, metodo as unknown as PaymentMethod).pipe(map(tx => Number(tx.id)));
+    const backendMetodo = PaymentAdapter.toBackendMetodoPago(metodo as unknown as PaymentMethod);
     return pagoId$.pipe(
-      switchMap(pagoId => this.pagos.confirmarPago(pagoId, referencia)),
+      switchMap(pagoId => this.pagos.confirmarPago(pagoId, referencia, backendMetodo)),
       switchMap(confirmado => confirmado?.estado === 'APROBADO'
         ? of(undefined)
         : throwError(() => ({

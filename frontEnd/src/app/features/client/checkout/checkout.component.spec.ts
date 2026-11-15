@@ -8,8 +8,10 @@ import { OrdersService } from '../../../core/services/orders.service';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
+import { ProductsService } from '../../../core/services/products.service';
 import { Order } from '../../../core/models/order.model';
 import { PaymentTransaction } from '../../../core/models/payment.model';
+import { Product } from '../../../core/models/product.model';
 
 describe('CheckoutComponent', () => {
   let component: CheckoutComponent;
@@ -19,6 +21,7 @@ describe('CheckoutComponent', () => {
   let payments: jasmine.SpyObj<PaymentService>;
   let auth: { currentUser: () => unknown; verificarSancion: jasmine.Spy };
   let notify: jasmine.SpyObj<NotificationService>;
+  let products: jasmine.SpyObj<ProductsService>;
   let navigate: jasmine.Spy;
 
   const creada = { id: '55', codigoSeguimiento: 'POL-55', total: 20 } as Order;
@@ -32,6 +35,8 @@ describe('CheckoutComponent', () => {
     orders.createOrder.and.returnValue(of(creada));
     payments = jasmine.createSpyObj<PaymentService>('PaymentService', ['pagarConYapeOtp', 'iniciarPago', 'crearPreferenciaMercadoPago']);
     notify = jasmine.createSpyObj<NotificationService>('NotificationService', ['showError', 'showSuccess', 'showInfo']);
+    products = jasmine.createSpyObj<ProductsService>('ProductsService', ['refrescarProductos']);
+    products.refrescarProductos.and.returnValue(of([]));
     auth = {
       currentUser: () => ({ nombre: 'Ana', celular: '912345678', correo: 'a@b.com' }),
       verificarSancion: jasmine.createSpy('verificarSancion').and.returnValue(
@@ -45,6 +50,7 @@ describe('CheckoutComponent', () => {
         { provide: PaymentService, useValue: payments },
         { provide: AuthService, useValue: auth },
         { provide: NotificationService, useValue: notify },
+        { provide: ProductsService, useValue: products },
         provideRouter([])
       ]
     }).compileComponents();
@@ -349,6 +355,74 @@ describe('CheckoutComponent', () => {
       const texto = (fixture.nativeElement as HTMLElement).textContent ?? '';
       expect(texto).toContain('8.47');
       expect(texto).toContain('1.53');
+    });
+  });
+
+  describe('FE-06: invalidate pending orders when cart or delivery changes', () => {
+    it('creates a new order on retry when cart items change after a Yape OTP rejection', () => {
+      component.metodoPago.set('YAPE_OTP');
+      component.otpYape = '111111';
+      payments.pagarConYapeOtp.and.returnValue(of(tx('RECHAZADO')));
+
+      component.confirmOrder();
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+
+      cart.items.set([
+        ...cart.items(),
+        {
+          product: { id: 'p2', nombre: 'Inca Kola', descripcion: '', precio: 8, categoria: 'BEBIDAS', imagenUrl: '', agotado: false } as never,
+          cantidad: 1,
+          subtotal: 8
+        }
+      ]);
+      orders.createOrder.and.returnValue(of({ id: '56', codigoSeguimiento: 'POL-56', total: 28 } as Order));
+      component.otpYape = '222222';
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(2);
+    });
+
+    it('creates a new order when delivery type changes before retrying card preference', () => {
+      component.metodoPago.set('TARJETA');
+      payments.crearPreferenciaMercadoPago.and.returnValue(of({
+        preferenceId: 'x', initPoint: '', sandboxInitPoint: '', pagoId: 1, ordenId: 55
+      }));
+
+      component.confirmOrder();
+      expect(orders.createOrder).toHaveBeenCalledTimes(1);
+
+      component.tipoPedido.set('DELIVERY');
+      component.direccion = 'Av. San Martín 123';
+      orders.createOrder.and.returnValue(of({ id: '57', codigoSeguimiento: 'POL-57', total: 26 } as Order));
+      component.confirmOrder();
+
+      expect(orders.createOrder).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('FE-07: sync cart with fresh catalog prices and stock on init', () => {
+    it('calls refrescarProductos and notifies when prices changed or items sold out', () => {
+      const catalogoActualizado: Product[] = [{
+        id: 'p1',
+        nombre: 'Pollo',
+        descripcion: '',
+        precio: 24,
+        categoria: 'POLLOS_A_LA_BRASA',
+        imagenUrl: '',
+        agotado: false,
+        stock: 5
+      }];
+      products.refrescarProductos.and.returnValue(of(catalogoActualizado));
+      notify.showInfo.calls.reset();
+
+      component.ngOnInit();
+
+      expect(products.refrescarProductos).toHaveBeenCalled();
+      expect(cart.items()[0].product.precio).toBe(24);
+      expect(notify.showInfo).toHaveBeenCalledWith(
+        'Tu carrito se actualizó con la carta vigente',
+        jasmine.stringContaining('Pollo: S/ 20.00 -> S/ 24.00')
+      );
     });
   });
 });

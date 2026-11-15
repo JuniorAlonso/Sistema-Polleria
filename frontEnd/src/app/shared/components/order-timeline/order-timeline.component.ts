@@ -120,7 +120,8 @@ export class OrderTimelineComponent {
     'ENTREGADO': 4,
     'COMPLETADO': 4,
     'CANCELADO': -1,
-    'PEDIDO_FANTASMA': -1
+    'PEDIDO_FANTASMA': -1,
+    'DESCONOCIDO': -1
   };
 
   readonly currentStepIndex = computed(() => {

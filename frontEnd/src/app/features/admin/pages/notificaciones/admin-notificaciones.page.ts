@@ -8,6 +8,7 @@ import { PaymentService, PagoOrdenAdmin } from '../../../../core/services/paymen
 import { Order } from '../../../../core/models/order.model';
 import { EstadoNotificacion } from '../../../../core/models/notification-log.model';
 import { AdminShellStore } from '../../state/admin-shell.store';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { AjustesWhatsappForm, FiltroNotificaciones } from '../../models/admin-forms';
 import { WhatsappSessionPanelComponent } from '../../components/notificaciones/whatsapp-session-panel.component';
 import { WhatsappProofsPanelComponent } from '../../components/notificaciones/whatsapp-proofs-panel.component';
@@ -276,7 +277,7 @@ export class AdminNotificacionesPage implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.reiniciandoWhatsapp.set(false);
-        this.notify.showError('Error al reiniciar WhatsApp', err?.error?.error || err?.message || 'No se pudo reiniciar la sesión.');
+        this.notify.showError('Error al reiniciar WhatsApp', mensajeError(err, 'No se pudo reiniciar la sesión.'));
       }
     });
   }

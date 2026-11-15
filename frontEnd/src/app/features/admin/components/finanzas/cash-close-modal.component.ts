@@ -73,9 +73,9 @@ export interface CierreCajaDraft {
               <button (click)="closed.emit()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
               <button
                 (click)="confirmar()"
-                [disabled]="!montoValido()"
+                [disabled]="!montoValido() || procesando()"
                 class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >Cerrar y Cuadrar Caja</button>
+              >{{ procesando() ? 'Cerrando...' : 'Cerrar y Cuadrar Caja' }}</button>
             </div>
           </div>
         </div>
@@ -86,6 +86,7 @@ export class CashCloseModalComponent implements OnInit {
   readonly initial = input.required<CierreCajaDraft>();
   /** Backend message of the last failed close (for example, a difference without a reason). */
   readonly errorMessage = input<string | null>(null);
+  readonly procesando = input<boolean>(false);
 
   readonly closed = output<void>();
   readonly confirmed = output<CierreCajaForm>();

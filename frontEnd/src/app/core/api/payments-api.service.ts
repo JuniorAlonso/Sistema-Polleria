@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { BackendPagoResponse } from '../models/api-contracts.model';
+import { BackendMetodoPago, BackendPagoResponse } from '../models/api-contracts.model';
 import { MercadoPagoPaymentMethod, MercadoPagoPreferenceResponse, PagoOrdenAdmin } from '../models/payment.model';
 import { environment } from '../../../environments/environment';
 
@@ -11,8 +11,14 @@ export class PaymentsApiService {
   private readonly http = inject(HttpClient);
   private readonly API_URL = environment.paymentsApiUrl || 'http://localhost:8083';
 
-  listar(): Observable<BackendPagoResponse[]> {
-    return this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`);
+  listar(filtro?: { estado?: string; fecha?: string; limit?: number }): Observable<BackendPagoResponse[]> {
+    const params: Record<string, string | number> = {};
+    if (filtro?.estado) params['estado'] = filtro.estado;
+    if (filtro?.fecha) params['fecha'] = filtro.fecha;
+    if (filtro?.limit && filtro.limit > 0) params['limit'] = filtro.limit;
+    return Object.keys(params).length > 0
+      ? this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`, { params })
+      : this.http.get<BackendPagoResponse[]>(`${this.API_URL}/pagos`);
   }
 
   /** Cashier inbox: payments filtered by state (ADMIN, CAJERO). */
@@ -43,7 +49,10 @@ export class PaymentsApiService {
     return this.http.get<BackendPagoResponse>(`${this.API_URL}/pagos/${pagoId}`);
   }
 
-  confirmar(pagoId: number | string, body: { referenciaExterna: string; detalle: string }): Observable<BackendPagoResponse> {
+  confirmar(
+    pagoId: number | string,
+    body: { referenciaExterna: string; detalle: string; metodoPago?: BackendMetodoPago }
+  ): Observable<BackendPagoResponse> {
     return this.http.patch<BackendPagoResponse>(`${this.API_URL}/pagos/${pagoId}/confirmar`, body);
   }
 

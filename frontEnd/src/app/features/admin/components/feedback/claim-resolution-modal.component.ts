@@ -112,6 +112,11 @@ import { getMotivoLabel } from '../../shared/admin-format.util';
               </div>
 
               <!-- Formulario Reactivo de Resolución -->
+              @if (esReclamoTerminal()) {
+                <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+                  Este reclamo ya se encuentra en estado <strong>{{ reclamo.estado }}</strong> y no puede volver a resolverse.
+                </div>
+              }
               <form [formGroup]="resolucionForm" class="space-y-4 pt-1">
                 
                 <!-- Select Estado Final -->
@@ -172,11 +177,17 @@ import { getMotivoLabel } from '../../shared/admin-format.util';
                         formControlName="montoReembolso"
                         step="0.50"
                         min="0.10"
-                        placeholder="15.00"
+                        [attr.max]="maxMontoReembolsable() ?? null"
+                        placeholder="0.00"
                         class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rose-400"
                       />
+                      @if (maxMontoReembolsable(); as maxReembolso) {
+                        <p class="text-[10px] text-slate-400 font-mono">
+                          Máximo reembolsable: {{ maxReembolso | currencyPEN }}
+                        </p>
+                      }
                       <p class="text-[10px] text-amber-300">
-                        Se enviará la solicitud de reembolso con Idempotency-Key a payments-service (:8083).
+                        Se enviará la solicitud de reembolso con Idempotency-Key a payments-service.
                       </p>
                     </div>
                   }
@@ -236,17 +247,34 @@ export class ClaimResolutionModalComponent implements OnInit {
     estadoFinal: new FormControl<EstadoReclamo | null>('RESUELTO', [Validators.required]),
     respuestaAdmin: new FormControl<string | null>('', [Validators.required, Validators.minLength(5)]),
     emitirReembolso: new FormControl<boolean | null>(false),
-    montoReembolso: new FormControl<number | null>(15.00)
+    montoReembolso: new FormControl<number | null>(null)
   });
 
   ngOnInit(): void {
     const rec = this.reclamo();
     this.resolucionForm.reset({
-      estadoFinal: 'RESUELTO',
-      respuestaAdmin: rec.respuestaAdmin || 'Se verificó la orden y se procede con la atención y solución correspondiente.',
+      estadoFinal: rec.estado === 'RECHAZADO' ? 'RECHAZADO' : 'RESUELTO',
+      respuestaAdmin: rec.respuestaAdmin || '',
       emitirReembolso: rec.reembolsoProcedente ?? false,
-      montoReembolso: rec.montoReclamado || 15.00
+      montoReembolso: rec.montoReclamado ?? null
     });
+  }
+
+  protected esReclamoTerminal(): boolean {
+    const estado = this.reclamo().estado;
+    return estado === 'RESUELTO' || estado === 'RECHAZADO';
+  }
+
+  protected maxMontoReembolsable(): number | null {
+    const rec = this.reclamo();
+    const orden = this.ordenes().find(o => Number(o.id) === Number(rec.ordenId));
+    if (orden && Number.isFinite(orden.total) && orden.total > 0) {
+      return orden.total;
+    }
+    if (rec.montoReclamado && Number.isFinite(rec.montoReclamado) && rec.montoReclamado > 0) {
+      return rec.montoReclamado;
+    }
+    return null;
   }
 
   protected getClienteDeOrden(ordenId: number): Order['cliente'] | null {
@@ -256,10 +284,19 @@ export class ClaimResolutionModalComponent implements OnInit {
   }
 
   protected isFormResolucionValido(): boolean {
+    if (this.esReclamoTerminal()) return false;
     if (this.resolucionForm.invalid) return false;
     const vals = this.resolucionForm.value;
     if (!vals.respuestaAdmin || vals.respuestaAdmin.trim().length < 5) return false;
-    if (vals.emitirReembolso && (!vals.montoReembolso || vals.montoReembolso <= 0)) return false;
+    if (vals.emitirReembolso) {
+      if (vals.estadoFinal !== 'RESUELTO') return false;
+      const monto = vals.montoReembolso === null || vals.montoReembolso === undefined
+        ? NaN
+        : Number(vals.montoReembolso);
+      if (!Number.isFinite(monto) || monto <= 0) return false;
+      const max = this.maxMontoReembolsable();
+      if (max !== null && max > 0 && monto > max) return false;
+    }
     return true;
   }
 

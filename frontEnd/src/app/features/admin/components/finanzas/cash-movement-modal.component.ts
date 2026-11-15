@@ -53,7 +53,11 @@ import { MovimientoForm } from '../../models/admin-forms';
 
             <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
               <button (click)="closed.emit()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
-              <button (click)="confirmed.emit(draft)" class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer">Registrar</button>
+              <button
+                (click)="confirmar()"
+                [disabled]="!formularioValido() || procesando()"
+                class="px-5 py-2 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 text-xs font-bold uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >{{ procesando() ? 'Registrando...' : 'Registrar' }}</button>
             </div>
           </div>
         </div>
@@ -61,6 +65,7 @@ import { MovimientoForm } from '../../models/admin-forms';
 })
 export class CashMovementModalComponent implements OnInit {
   readonly initial = input.required<MovimientoForm>();
+  readonly procesando = input<boolean>(false);
 
   readonly closed = output<void>();
   readonly confirmed = output<MovimientoForm>();
@@ -69,5 +74,15 @@ export class CashMovementModalComponent implements OnInit {
 
   ngOnInit(): void {
     this.draft = { ...this.initial() };
+  }
+
+  protected formularioValido(): boolean {
+    const monto = Number(this.draft?.monto);
+    return Number.isFinite(monto) && monto > 0 && !!this.draft?.concepto?.trim();
+  }
+
+  protected confirmar(): void {
+    if (!this.formularioValido() || this.procesando()) return;
+    this.confirmed.emit({ ...this.draft, monto: Number(this.draft.monto), concepto: this.draft.concepto.trim() });
   }
 }

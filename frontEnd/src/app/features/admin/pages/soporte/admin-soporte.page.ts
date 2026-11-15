@@ -5,6 +5,7 @@ import { AuthService } from '../../../../core/services/auth.service';
 import { SecurityAuditService } from '../../../../core/services/security-audit.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Incidente } from '../../../../core/models/incident.model';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { IncidentsHeaderComponent } from '../../components/soporte/incidents-header.component';
 import { IncidentsLogComponent } from '../../components/soporte/incidents-log.component';
 import { BlockedIpsListComponent } from '../../components/soporte/blocked-ips-list.component';
@@ -121,7 +122,7 @@ export class AdminSoportePage implements OnInit {
         this.securityAuditService.cargarIpsBloqueadas();
       },
       error: err => this.notify.showError(
-        err?.error?.error || err?.error?.message || `No se pudo desbloquear la IP ${ip}`
+        mensajeError(err, `No se pudo desbloquear la IP ${ip}`)
       )
     });
   }

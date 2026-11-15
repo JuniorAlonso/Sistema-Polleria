@@ -23,7 +23,8 @@ export type OrderStatus =
   | 'COMPLETADO'
   | 'CANCELADO'
   | 'PEDIDO_FANTASMA'
-  | 'PAGADO';
+  | 'PAGADO'
+  | 'DESCONOCIDO';
 
 export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA' | 'YAPE_OTP';
 

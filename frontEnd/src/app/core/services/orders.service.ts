@@ -6,6 +6,8 @@ import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
 import { OrdersApiService } from '../api/orders-api.service';
 import { OrderAdapter } from '../adapters/order.adapter';
+import { mensajeError } from '../utils/api-error';
+import { parsePositiveIntId } from '../utils/id';
 
 /** Initial states a checkout may request; the backend rejects any other (S2). */
 const ESTADOS_INICIALES_CHECKOUT: OrderStatus[] = ['PENDIENTE_CONFIRMACION', 'PENDIENTE_PAGO'];
@@ -214,9 +216,9 @@ export class OrdersService {
         this.isLoading.set(false);
         // No se inventa un pedido local: si el backend falla, el cliente debe saberlo y reintentar
         const erroresCampo = err?.error?.errors ? Object.values(err.error.errors).join('. ') : null;
-        const errMsg = erroresCampo || err?.error?.error || err?.error?.message
-          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : 'No se pudo registrar el pedido');
-        return throwError(() => new Error(typeof errMsg === 'string' ? errMsg : 'No se pudo registrar el pedido'));
+        const msg = erroresCampo
+          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : mensajeError(err, 'No se pudo registrar el pedido'));
+        return throwError(() => new Error(typeof msg === 'string' ? msg : 'No se pudo registrar el pedido'));
       })
     );
   }
@@ -307,10 +309,10 @@ export class OrdersService {
         }
       }),
       catchError(err => {
-        const msg = err?.error?.error || err?.error?.message
-          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : null)
-          || 'No se pudieron agregar los platos a la comanda';
-        return throwError(() => new Error(typeof msg === 'string' ? msg : 'No se pudieron agregar los platos a la comanda'));
+        const msg = err?.status === 0
+          ? 'No se pudo conectar con el servicio de pedidos (:8082)'
+          : mensajeError(err, 'No se pudieron agregar los platos a la comanda');
+        return throwError(() => new Error(msg));
       })
     );
   }
@@ -335,11 +337,10 @@ export class OrdersService {
         }
       }),
       catchError(err => {
-        const msg = err?.error?.error || err?.error?.message
-          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : null)
-          || 'No se pudo marcar la comanda como servida';
-        return throwError(() => new Error(
-          typeof msg === 'string' ? msg : 'No se pudo marcar la comanda como servida'));
+        const msg = err?.status === 0
+          ? 'No se pudo conectar con el servicio de pedidos (:8082)'
+          : mensajeError(err, 'No se pudo marcar la comanda como servida');
+        return throwError(() => new Error(msg));
       })
     );
   }
@@ -378,25 +379,6 @@ export class OrdersService {
           })
         );
       })
-    ).subscribe();
-  }
-
-  /**
-   * RF19: Cargar órdenes para cocina
-   */
-  loadKitchenOrders(): void {
-    this.api.listarCocina().pipe(
-      map(dtos => OrderAdapter.toOrderList(dtos)),
-      tap(list => {
-        if (list.length > 0) {
-          this.orders.update(prev => {
-            const existingIds = new Set(list.map(l => l.id));
-            const others = prev.filter(p => !existingIds.has(p.id));
-            return [...list, ...others];
-          });
-        }
-      }),
-      catchError(() => of([]))
     ).subscribe();
   }
 
@@ -541,7 +523,10 @@ export class OrdersService {
    * Cajero confirma llamada telefónica para pedido ContraPago.
    */
   confirmarLlamada(orderId: string | number): Observable<Order> {
-    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
     return this.api.confirmarLlamada(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
@@ -554,7 +539,10 @@ export class OrdersService {
    * Registra intento fallido de llamada para ContraPago.
    */
   registrarIntentoLlamada(orderId: string | number, observaciones?: string): Observable<Order> {
-    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
     return this.api.registrarIntentoLlamada(cleanId, observaciones).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
@@ -567,7 +555,10 @@ export class OrdersService {
    * Repartidor notifica que está en la puerta del domicilio del cliente.
    */
   marcarEnPuerta(orderId: string | number): Observable<Order> {
-    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
     return this.api.marcarEnPuerta(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
@@ -580,7 +571,10 @@ export class OrdersService {
    * Declara pedido como fantasma (por timeout de 30m en puerta o 1h de recojo).
    */
   declararPedidoFantasma(orderId: string | number, motivo?: string): Observable<Order> {
-    const cleanId = typeof orderId === 'number' ? orderId : this.extractNumericId(orderId);
+    const cleanId = this.extractNumericId(String(orderId));
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${orderId}`));
+    }
     return this.api.declararPedidoFantasma(cleanId, motivo).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
@@ -591,7 +585,7 @@ export class OrdersService {
 
   private extractNumericId(id: string): number {
     if (!id) return 0;
-    const clean = id.replace('POL-', '').replace('ord-', '');
-    return parseInt(clean, 10) || 0;
+    const raw = String(id).trim().replace(/^POL-/i, '');
+    return parsePositiveIntId(raw) ?? 0;
   }
 }

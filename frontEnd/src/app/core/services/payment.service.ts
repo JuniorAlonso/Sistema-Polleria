@@ -4,8 +4,10 @@ import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
 import { PaymentMethod } from '../models/order.model';
 import { PaymentTransaction, PagoOrdenAdmin, MercadoPagoPaymentMethod, MercadoPagoPreferenceResponse } from '../models/payment.model';
 import { PaymentsApiService } from '../api/payments-api.service';
-import { BackendCobroEfectivoRequest, BackendPagoResponse } from '../models/api-contracts.model';
+import { BackendCobroEfectivoRequest, BackendMetodoPago } from '../models/api-contracts.model';
 import { PaymentAdapter } from '../adapters/payment.adapter';
+import { parsePositiveIntId } from '../utils/id';
+import { mensajeError } from '../utils/api-error';
 
 export type { EstadoPagoAdmin, PagoOrdenAdmin } from '../models/payment.model';
 
@@ -18,6 +20,7 @@ export class PaymentService {
   readonly lastTransaction = signal<PaymentTransaction | null>(null);
   readonly isLoading = signal<boolean>(false);
   readonly pagos = signal<PaymentTransaction[]>([]);
+  readonly pagosError = signal<string | null>(null);
 
   readonly pagosPorOrdenMap = computed(() => {
     const map = new Map<string, PaymentTransaction>();
@@ -28,13 +31,18 @@ export class PaymentService {
   });
 
   /**
-   * Carga todos los pagos registrados desde payments-service (:8083)
+   * Carga pagos registrados desde payments-service (:8083).
+   * Registra pagosError cuando falla el servicio en lugar de confundirlo con una lista vacía.
    */
-  cargarPagos(): Observable<PaymentTransaction[]> {
-    return this.api.listar().pipe(
+  cargarPagos(filtro?: { estado?: string; fecha?: string; limit?: number }): Observable<PaymentTransaction[]> {
+    this.pagosError.set(null);
+    return this.api.listar(filtro).pipe(
       map(dtos => (dtos || []).map(dto => PaymentAdapter.toPaymentTransaction(dto))),
       tap(lista => this.pagos.set(lista)),
-      catchError(() => of([]))
+      catchError((error: unknown) => {
+        this.pagosError.set(mensajeError(error, 'No se pudo cargar la lista de pagos.'));
+        return of([]);
+      })
     );
   }
 
@@ -47,8 +55,12 @@ export class PaymentService {
     metodo: PaymentMethod,
     telefonoYape?: string
   ): Observable<PaymentTransaction> {
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     this.isLoading.set(true);
-    const backendReq = PaymentAdapter.toBackendIniciarRequest(ordenId, monto, metodo, telefonoYape);
+    const backendReq = PaymentAdapter.toBackendIniciarRequest(cleanId, monto, metodo, telefonoYape);
 
     return this.api.iniciar(backendReq).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
@@ -66,28 +78,44 @@ export class PaymentService {
   }
 
   /**
-   * RF22: Obtener Pago por ID de Orden
+   * RF22: Obtener Pago por ID de Orden.
+   * Solo 404 significa "sin pago previo"; timeouts y 5xx se propagan para evitar pagos duplicados.
    */
   obtenerPorOrden(ordenId: number | string): Observable<PaymentTransaction | null> {
-    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     return this.api.obtenerPorOrden(cleanId).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
-      catchError(() => of(null))
+      catchError((error: HttpErrorResponse) => {
+        if (error?.status === 404) {
+          return of(null);
+        }
+        return throwError(() => error);
+      })
     );
   }
 
   /**
-   * RF23: Confirmar Pago Manualmente
-   */
-  /**
    * Errors reach the caller: a 409 (for example an amount that no longer matches the order) carries
    * the reason the cashier must see.
    */
-  confirmarPago(pagoId: number, referencia: string): Observable<PaymentTransaction | null> {
-    return this.api.confirmar(pagoId, {
+  confirmarPago(
+    pagoId: number,
+    referencia: string,
+    metodoPago?: BackendMetodoPago
+  ): Observable<PaymentTransaction | null> {
+    const cleanId = parsePositiveIntId(pagoId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de pago inválido: ${pagoId}`));
+    }
+    const body: { referenciaExterna: string; detalle: string; metodoPago?: BackendMetodoPago } = {
       referenciaExterna: referencia,
-      detalle: 'Pago confirmado'
-    }).pipe(
+      detalle: 'Pago confirmado',
+      ...(metodoPago ? { metodoPago } : {})
+    };
+    return this.api.confirmar(cleanId, body).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto))
     );
   }
@@ -96,10 +124,21 @@ export class PaymentService {
    * RF22: Obtener Pago por ID de Pago
    */
   obtener(pagoId: number | string): Observable<PaymentTransaction | null> {
-    const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
+    const raw = typeof pagoId === 'string' && pagoId.trim().startsWith('pay-')
+      ? pagoId.trim().slice(4)
+      : pagoId;
+    const cleanId = parsePositiveIntId(raw);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de pago inválido: ${pagoId}`));
+    }
     return this.api.obtener(cleanId).pipe(
       map(dto => PaymentAdapter.toPaymentTransaction(dto)),
-      catchError(() => of(null))
+      catchError((error: HttpErrorResponse) => {
+        if (error?.status === 404) {
+          return of(null);
+        }
+        return throwError(() => error);
+      })
     );
   }
 
@@ -111,7 +150,10 @@ export class PaymentService {
    * 404 de una orden sin pago) se propaga tal cual.
    */
   obtenerPagoParaVerificacion(ordenId: number | string): Observable<PagoOrdenAdmin> {
-    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     return this.api.obtenerPagoAdminPorOrden(cleanId);
   }
 
@@ -123,20 +165,23 @@ export class PaymentService {
     return this.api.listarPorEstado('PENDIENTE_VERIFICACION').pipe(
       map(list => list as PagoOrdenAdmin[]),
       catchError((error: HttpErrorResponse) =>
-        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+        throwError(() => new Error(mensajeError(error, 'No se pudo cargar la bandeja de verificación.'))))
     );
   }
 
   /** Uploads the payment proof image of an order; the returned state comes from the backend. */
   subirComprobante(ordenId: number | string, file: File): Observable<PagoOrdenAdmin> {
-    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('POL-', '').replace('ord-', ''), 10);
-    if (!Number.isFinite(cleanId) || cleanId <= 0) {
+    const raw = typeof ordenId === 'string' && ordenId.trim().startsWith('POL-')
+      ? ordenId.trim().slice(4)
+      : ordenId;
+    const cleanId = parsePositiveIntId(raw);
+    if (!cleanId) {
       return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
     }
     return this.api.subirComprobante(cleanId, file).pipe(
       map(dto => dto as PagoOrdenAdmin),
       catchError((error: HttpErrorResponse) =>
-        throwError(() => new Error(this.mensajeErrorVerificacion(error))))
+        throwError(() => new Error(mensajeError(error, 'No se pudo verificar el comprobante de Yape.'))))
     );
   }
 
@@ -157,25 +202,20 @@ export class PaymentService {
       return throwError(() => new Error('El motivo de rechazo es obligatorio'));
     }
 
-    const cleanId = typeof pagoId === 'number' ? pagoId : parseInt(String(pagoId).replace('pay-', ''), 10) || 1;
+    const raw = typeof pagoId === 'string' && pagoId.trim().startsWith('pay-')
+      ? pagoId.trim().slice(4)
+      : pagoId;
+    const cleanId = parsePositiveIntId(raw);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de pago inválido: ${pagoId}`));
+    }
     const body = aprobado ? { aprobado: true } : { aprobado: false, motivoRechazo: motivo };
 
     return this.api.verificar(cleanId, body).pipe(
       catchError((error: HttpErrorResponse) =>
-        throwError(() => new Error(this.mensajeErrorVerificacion(error)))
+        throwError(() => new Error(mensajeError(error, 'No se pudo verificar el comprobante de Yape.')))
       )
     );
-  }
-
-  /** Mensaje del backend tal cual; solo hay un texto propio cuando no vino ninguno. */
-  private mensajeErrorVerificacion(error: HttpErrorResponse): string {
-    const cuerpo = error?.error;
-    const mensaje = typeof cuerpo === 'string'
-      ? cuerpo
-      : cuerpo?.error || cuerpo?.mensaje || cuerpo?.message;
-    return typeof mensaje === 'string' && mensaje.trim()
-      ? mensaje
-      : 'No se pudo verificar el comprobante de Yape.';
   }
 
   /**
@@ -185,7 +225,10 @@ export class PaymentService {
    * El access token de Mercado Pago nunca viaja al navegador.
    */
   crearPreferenciaMercadoPago(ordenId: number | string, monto: number): Observable<MercadoPagoPreferenceResponse> {
-    const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanOrderId = parsePositiveIntId(ordenId);
+    if (!cleanOrderId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     const montoFinal = Math.round(monto * 100) / 100;
 
     return this.api.crearPreferenciaMercadoPago({
@@ -221,7 +264,10 @@ export class PaymentService {
     otp: string,
     email?: string
   ): Observable<PaymentTransaction> {
-    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     const body = {
       ordenId: cleanId,
       monto: Math.round(monto * 100) / 100,
@@ -246,7 +292,10 @@ export class PaymentService {
     vueltoEntregado?: number,
     codigoTicket?: string
   ): Observable<PaymentTransaction> {
-    const cleanId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanId = parsePositiveIntId(ordenId);
+    if (!cleanId) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
     const body: BackendCobroEfectivoRequest = {
       ordenId: cleanId,
       monto: Math.round(monto * 100) / 100,

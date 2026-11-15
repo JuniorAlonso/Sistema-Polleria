@@ -6,6 +6,7 @@ import { NotificationService } from '../../../../core/services/notification.serv
 import { Product } from '../../../../core/models/product.model';
 import { ProductsTableComponent } from '../../components/inventario/products-table.component';
 import { ProductCreateModalComponent, ProductCreateValues } from '../../components/inventario/product-create-modal.component';
+import { mensajeError } from '../../../../core/utils/api-error';
 
 /**
  * Contenedor (smart) de la pestaña INVENTARIO & CARTA. El inventario es el stock de cada plato:
@@ -70,9 +71,7 @@ export class AdminInventarioPage implements OnInit {
         stock === null ? `"${p.nombre}" ya no lleva control de stock` : `Stock de "${p.nombre}": ${stock}`
       ),
       error: (err: HttpErrorResponse) => {
-        const validacion = err.error?.errors ? Object.values(err.error.errors).join('. ') : null;
-        this.notify.showError('No se pudo actualizar el stock',
-          validacion || err.error?.error || 'Intenta nuevamente.');
+        this.notify.showError('No se pudo actualizar el stock', mensajeError(err, 'Intenta nuevamente.'));
       }
     });
   }

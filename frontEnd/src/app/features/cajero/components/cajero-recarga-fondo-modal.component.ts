@@ -107,10 +107,10 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
           <button
             type="button"
             (click)="confirmar.emit()"
-            [disabled]="montoInvalido()"
+            [disabled]="montoInvalido() || procesando()"
             class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs uppercase transition cursor-pointer shadow-lg"
           >
-            Confirmar Recarga
+            {{ procesando() ? 'Recargando...' : 'Confirmar Recarga' }}
           </button>
         </div>
       </div>
@@ -121,13 +121,14 @@ export class CajeroRecargaFondoModalComponent {
   readonly liquidacion = input.required<BackendLiquidacionResponse | null>();
   readonly monto = model<number>(20);
   readonly motivo = model<string>('');
+  readonly procesando = input<boolean>(false);
 
   readonly cancelar = output<void>();
   readonly confirmar = output<void>();
 
   readonly montoInvalido = computed(() => {
     const m = this.monto();
-    return m === null || m === undefined || m <= 0;
+    return m === null || m === undefined || !Number.isFinite(m) || m <= 0;
   });
 
   readonly nuevoFondoTotal = computed(() => {

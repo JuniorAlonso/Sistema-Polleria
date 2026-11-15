@@ -7,6 +7,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order, OrderStatus } from '../../core/models/order.model';
 import { KitchenTab, KdsFilter, codigoNumerico } from './kitchen.types';
+import { mensajeError } from '../../core/utils/api-error';
 import { KitchenSidebarComponent } from './components/kitchen-sidebar.component';
 import { KitchenHeaderComponent } from './components/kitchen-header.component';
 import { KitchenFilterBarComponent } from './components/kitchen-filter-bar.component';
@@ -204,7 +205,7 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
       },
       error: err => {
         this.notify.showError(
-          err?.error?.error || err?.error?.message || `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`
+          mensajeError(err, `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`)
         );
       }
     });

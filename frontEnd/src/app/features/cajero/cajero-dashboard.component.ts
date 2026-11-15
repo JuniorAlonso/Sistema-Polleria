@@ -35,6 +35,7 @@ import { CajeroCobroRepartidorModalComponent } from './components/cajero-cobro-r
 import { CobroSalonFacade, ErrorCobro } from './services/cobro-salon.facade';
 import { DatosFiscales, consumidorFinal, motivoDatosFiscalesInvalidos } from './models/datos-fiscales';
 import { mensajeError } from '../../core/utils/api-error';
+import { esMismoDiaLima, fechaHoyLima } from '../../core/utils/fecha-lima';
 import { FeedbackService } from '../../core/services/feedback.service';
 import { SecurityAuditService } from '../../core/services/security-audit.service';
 import { IncidentCreateModalComponent } from '../admin/components/soporte/incident-create-modal.component';
@@ -264,6 +265,7 @@ export type { CajeroTab, MetodoCobro };
           [fondoSugerido]="fondoSugeridoNuevoRepartidor()"
           [(fondoInicial)]="fondoInicialLiqInput"
           [(observaciones)]="observacionesLiqInput"
+          [procesando]="procesandoAccion()"
           (onRepartidorChange)="onRepartidorLiqChange($event)"
           (cancelar)="mostrarModalNuevaLiquidacion.set(false)"
           (aperturar)="ejecutarAperturaLiquidacion()"
@@ -276,6 +278,7 @@ export type { CajeroTab, MetodoCobro };
           [liquidacion]="liquidacionRecargaSeleccionada()"
           [(monto)]="montoRecargaInput"
           [(motivo)]="motivoRecargaInput"
+          [procesando]="procesandoAccion()"
           (cancelar)="mostrarModalRecargaFondo.set(false)"
           (confirmar)="ejecutarRecargaFondo()"
         />
@@ -288,6 +291,7 @@ export type { CajeroTab, MetodoCobro };
           [pendiente]="pendienteLiq()"
           [cargandoPendiente]="cargandoPendienteLiq()"
           [errorPendiente]="errorPendienteLiq()"
+          [procesando]="procesandoAccion()"
           [(totalRendido)]="totalRendidoLiqInput"
           (cancelar)="mostrarModalCierreLiquidacion.set(false)"
           (confirmar)="confirmarCierreLiquidacion()"
@@ -425,10 +429,12 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       .reduce((acc, o) => acc + (o.vueltoEstimado || 0), 0);
   });
 
-  // Registro combinado de cobros aprobados desde el microservicio de pagos
+  // Registro combinado de cobros aprobados de hoy (America/Lima) desde el microservicio de pagos (FE-03)
   readonly cobrosDelDia = computed(() => {
     const ordersMap = new Map(this.ordersService.orders().map(o => [String(o.id), o]));
-    const pagosAprobados = this.paymentService.pagos().filter(p => p.estado === 'APROBADO');
+    const pagosAprobados = this.paymentService.pagos().filter(
+      p => p.estado === 'APROBADO' && esMismoDiaLima(p.fechaTransaccion)
+    );
     return pagosAprobados.map(p => {
       const o = ordersMap.get(String(p.orderId));
       return {
@@ -436,13 +442,13 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
         fechaHora: p.fechaTransaccion,
         ordenId: p.orderId,
         codigoOrden: o?.codigoSeguimiento ? String(o.codigoSeguimiento).replace(/^POL-?/, '') : String(p.orderId),
-        clienteNombre: o?.cliente?.nombre || 'Cliente San Pollo',
-        tipoOrden: o?.tipo || 'DELIVERY',
+        clienteNombre: o?.cliente?.nombre || '',
+        tipoOrden: o?.tipo || '',
         metodo: p.metodo,
         monto: p.monto,
         referencia: p.numeroOperacion || 'Cobro aprobado',
         items: o?.items || [],
-        cajero: this.auth.currentUser()?.nombre || 'Cajero de Turno'
+        cajero: this.auth.currentUser()?.nombre || ''
       };
     });
   });
@@ -526,7 +532,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   refrescarTodo(): void {
     this.cargando.set(true);
     this.ordersService.loadActiveOrders();
-    this.paymentService.cargarPagos().subscribe();
+    this.paymentService.cargarPagos({ fecha: fechaHoyLima(), limit: 200 }).subscribe();
     this.financeService.obtenerCajaActual();
     this.financeService.cargarMovimientos();
     this.cargarLiquidaciones();
@@ -626,29 +632,40 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   reimprimirTicket(cobro: any): void {
-    this.ticketEmitido.set(cobro);
+    this.financeService.obtenerComprobantePorOrden(cobro.ordenId).subscribe({
+      next: (comprobante) => this.ticketEmitido.set({ ...cobro, comprobante }),
+      error: () => this.ticketEmitido.set({ ...cobro, comprobante: null })
+    });
   }
 
   // --- Operaciones de Caja ---
   ejecutarAperturaCaja(): void {
-    if (this.montoAperturaInput < 0) {
-      this.notify.showError('El monto de apertura no puede ser negativo');
+    const monto = Number(this.montoAperturaInput);
+    if (
+      this.montoAperturaInput === null ||
+      this.montoAperturaInput === undefined ||
+      !Number.isFinite(monto) ||
+      monto < 0
+    ) {
+      this.notify.showError('Ingresa un monto de apertura válido mayor o igual a 0');
       return;
     }
+    if (this.procesandoAccion()) return;
 
     this.procesandoAccion.set(true);
     this.financeService.abrirCaja({
-      montoApertura: this.montoAperturaInput,
+      montoApertura: monto,
       usuarioNombre: this.auth.currentUser()?.nombre || 'Cajero San Pollo',
       observaciones: this.observacionesAperturaInput || undefined
     }).subscribe({
-      next: () => {
+      next: (caja) => {
         this.procesandoAccion.set(false);
+        this.notify.showSuccess(`Caja #${caja.id} abierta con fondo de S/ ${caja.montoApertura.toFixed(2)}`);
         this.refrescarTodo();
       },
       error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError(err?.error?.error || 'No se pudo abrir la caja');
+        this.notify.showError(mensajeError(err, 'No se pudo abrir la caja'));
       }
     });
   }
@@ -661,24 +678,27 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   guardarMovimientoCaja(): void {
-    if (this.montoMovimientoInput <= 0 || !this.motivoMovimientoInput.trim()) {
+    const monto = Number(this.montoMovimientoInput);
+    if (!Number.isFinite(monto) || monto <= 0 || !this.motivoMovimientoInput.trim()) {
       this.notify.showError('Ingresa un monto válido y un motivo para el movimiento');
       return;
     }
+    if (this.procesandoAccion()) return;
 
     this.procesandoAccion.set(true);
     this.financeService.registrarMovimiento({
       tipo: this.tipoMovimientoInput,
-      monto: this.montoMovimientoInput,
+      monto,
       motivo: this.motivoMovimientoInput.trim()
     }).subscribe({
-      next: () => {
+      next: (mov) => {
         this.procesandoAccion.set(false);
         this.mostrarModalMovimiento.set(false);
+        this.notify.showSuccess(`Movimiento de ${mov.tipo} registrado por S/ ${mov.monto.toFixed(2)}`);
       },
-      error: () => {
+      error: (err) => {
         this.procesandoAccion.set(false);
-        this.notify.showError('Error al registrar el movimiento en caja');
+        this.notify.showError(mensajeError(err, 'Error al registrar el movimiento en caja'));
       }
     });
   }
@@ -695,14 +715,15 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   ejecutarCierreCaja(): void {
     const efectivo = this.efectivoCierreInput;
-    if (efectivo === null || efectivo === undefined || `${efectivo}` === '') {
+    if (efectivo === null || efectivo === undefined || `${efectivo}` === '' || !Number.isFinite(Number(efectivo))) {
       this.notify.showError('Ingresa el efectivo contado en gaveta');
       return;
     }
-    if (efectivo < 0) {
+    if (Number(efectivo) < 0) {
       this.notify.showError('El efectivo contado no puede ser negativo');
       return;
     }
+    if (this.procesandoAccion()) return;
     const observaciones = this.observacionesCierreInput?.trim();
     if (this.motivoCierreObligatorio() && !observaciones) {
       this.notify.showError('Indica el motivo de la diferencia en las observaciones');
@@ -875,19 +896,21 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       const vuelto = Math.max(0, Math.round((efectivo - orden.total) * 100) / 100);
       this.paymentService.registrarCobroEfectivo(orden.id, orden.total, efectivo, vuelto, codigoTicket).subscribe({
         next: () => {
-          if (this.cajaAbierta()) {
-            this.financeService.registrarMovimiento({
-              tipo: 'INGRESO',
-              monto: orden.total,
-              motivo: `Cobro recojo #${codigo} (${orden.cliente.nombre})`
-            }).subscribe({
-              // The cash is already collected: the cashier must record the income by hand.
-              error: (err) => this.notify.showError(
-                'No se registró el ingreso en caja',
-                `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${mensajeError(err, err?.message || '')}`.trim()
-              )
-            });
-          }
+          this.financeService.registrarVentaEnCaja(
+            orden.id,
+            {
+              tipo: 'BOLETA',
+              nombre: orden.cliente.nombre || 'Cliente General',
+              direccion: orden.cliente.direccion
+            },
+            true
+          ).subscribe({
+            // El cobro en efectivo ya quedó aprobado: si falla el registro contable/comprobante, avisa al cajero.
+            error: (err) => this.notify.showError(
+              'No se registró el ingreso en caja',
+              `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${mensajeError(err, err?.message || '')}`.trim()
+            )
+          });
           this.procesandoAccion.set(false);
           this.notify.showSuccess(`Pedido #${codigo} cobrado y entregado`, `Vuelto: S/ ${vuelto.toFixed(2)}`);
           this.refrescarTodo();
@@ -959,21 +982,25 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   ejecutarRecargaFondo(): void {
     const liq = this.liquidacionRecargaSeleccionada();
-    if (!liq) return;
-    if (!this.montoRecargaInput || this.montoRecargaInput <= 0) {
+    if (!liq || this.procesandoAccion()) return;
+    const monto = Number(this.montoRecargaInput);
+    if (!Number.isFinite(monto) || monto <= 0) {
       this.notify.showError('El monto a recargar debe ser mayor a 0');
       return;
     }
 
-    this.financeService.recargarFondoLiquidacion(liq.id, this.montoRecargaInput, this.motivoRecargaInput).subscribe({
+    this.procesandoAccion.set(true);
+    this.financeService.recargarFondoLiquidacion(liq.id, monto, this.motivoRecargaInput).subscribe({
       next: (actualizada) => {
+        this.procesandoAccion.set(false);
         this.mostrarModalRecargaFondo.set(false);
         this.liquidacionRecargaSeleccionada.set(null);
         this.notify.showSuccess(`Fondo recargado a S/ ${actualizada.fondoInicial.toFixed(2)} para ${actualizada.repartidorNombre}`);
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al recargar fondo', err?.error?.message || err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('Error al recargar fondo', mensajeError(err, err?.message || 'No se pudo recargar el fondo.'));
       }
     });
   }
@@ -985,29 +1012,39 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   ejecutarAperturaLiquidacion(): void {
+    if (this.procesandoAccion()) return;
     const repartidor = this.repartidoresService.repartidores().find(r => r.id === this.repartidorIdLiqInput);
     if (!repartidor) {
       this.notify.showError('Selecciona un repartidor');
       return;
     }
-    if (this.fondoInicialLiqInput < 0) {
-      this.notify.showError('El fondo inicial no puede ser negativo');
+    const fondo = Number(this.fondoInicialLiqInput);
+    if (
+      this.fondoInicialLiqInput === null ||
+      this.fondoInicialLiqInput === undefined ||
+      !Number.isFinite(fondo) ||
+      fondo < 0
+    ) {
+      this.notify.showError('Ingresa un fondo inicial válido mayor o igual a 0');
       return;
     }
 
+    this.procesandoAccion.set(true);
     this.financeService.abrirLiquidacion({
       repartidorId: repartidor.id,
       repartidorNombre: repartidor.nombre,
-      fondoInicial: this.fondoInicialLiqInput,
+      fondoInicial: fondo,
       observaciones: this.observacionesLiqInput || undefined
     }).subscribe({
       next: (liq) => {
+        this.procesandoAccion.set(false);
         this.mostrarModalNuevaLiquidacion.set(false);
         this.notify.showSuccess(`Liquidación #${liq.id} aperturada para ${liq.repartidorNombre}`);
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al aperturar liquidación', err?.error?.message || err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('Error al aperturar liquidación', mensajeError(err, err?.message || 'No se pudo aperturar la liquidación.'));
       }
     });
   }
@@ -1035,35 +1072,49 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   }
 
   confirmarCierreLiquidacion(): void {
+    if (this.procesandoAccion()) return;
     const liq = this.liquidacionSeleccionada();
     const totalRendido = this.totalRendidoLiqInput;
-    if (!liq || totalRendido === null || totalRendido === undefined || !this.pendienteLiq()) return;
+    if (
+      !liq ||
+      totalRendido === null ||
+      totalRendido === undefined ||
+      !Number.isFinite(Number(totalRendido)) ||
+      Number(totalRendido) < 0 ||
+      !this.pendienteLiq()
+    ) {
+      return;
+    }
 
+    this.procesandoAccion.set(true);
     this.financeService.cerrarLiquidacion(liq.id, {
-      totalRendido,
+      totalRendido: Number(totalRendido),
       totalCobradoEfectivo: liq.totalCobradoEfectivo,
       observaciones: 'Cuadre en caja de turno'
     }).subscribe({
       next: (cerrada) => {
+        this.procesandoAccion.set(false);
         this.mostrarModalCierreLiquidacion.set(false);
         this.liquidacionSeleccionada.set(null);
         this.notify.showSuccess(`Liquidación #${cerrada.id} cerrada. Diferencia: S/ ${cerrada.diferencia.toFixed(2)} (${cerrada.estado})`);
         this.refrescarTodo();
       },
       error: (err) => {
-        this.notify.showError('Error al cerrar liquidación', err?.error?.message || err?.message);
+        this.procesandoAccion.set(false);
+        this.notify.showError('Error al cerrar liquidación', mensajeError(err, err?.message || 'No se pudo cerrar la liquidación.'));
       }
     });
   }
 
   // --- Devoluciones en Ventanilla ---
   entregarDevolucion(id: number): void {
+    if (this.procesandoAccion()) return;
     this.procesandoAccion.set(true);
     this.feedbackService.marcarDevuelto(id).subscribe({
       next: () => this.procesandoAccion.set(false),
       error: err => {
         this.procesandoAccion.set(false);
-        this.notify.showError('No se pudo registrar la entrega', err?.error?.message || 'Intenta de nuevo.');
+        this.notify.showError('No se pudo registrar la entrega', mensajeError(err, 'Intenta de nuevo.'));
       }
     });
   }

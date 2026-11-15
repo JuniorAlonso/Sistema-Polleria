@@ -6,6 +6,7 @@ import { RestaurantTable, TableStatus, OrdenActivaMesa, SalonZona } from '../mod
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 import { AuthService } from './auth.service';
+import { mensajeError } from '../utils/api-error';
 
 export interface AlertaPlatoListoEvento {
   tipo: string;
@@ -166,8 +167,7 @@ export class SalonService implements OnDestroy {
       );
       this.cargarMesas();
     } else {
-      const msg = err?.error?.error || 'No se pudo completar la operación en la mesa';
-      this.notify.showError('Error en Operación', msg);
+      this.notify.showError('Error en Operación', mensajeError(err, 'No se pudo completar la operación en la mesa'));
     }
     return throwError(() => err);
   }

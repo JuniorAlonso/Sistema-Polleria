@@ -5,6 +5,7 @@ import { Repartidor } from '../../../core/services/repartidores.service';
 import { FinanceService } from '../../../core/services/finance.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { BackendEfectivoPendienteLiquidacion } from '../../../core/models/api-contracts.model';
+import { mensajeError } from '../../../core/utils/api-error';
 
 @Component({
   selector: 'app-cajero-cobro-repartidor-modal',
@@ -216,8 +217,7 @@ export class CajeroCobroRepartidorModalComponent {
       error: (err) => {
         this.saldoInfo.set(null);
         this.cargandoSaldo.set(false);
-        const msg = err?.error?.message || 'No se pudo consultar el saldo pendiente del repartidor';
-        this.errorMensaje.set(msg);
+        this.errorMensaje.set(mensajeError(err, 'No se pudo consultar el saldo pendiente del repartidor'));
       }
     });
   }
@@ -232,7 +232,7 @@ export class CajeroCobroRepartidorModalComponent {
   ejecutarCobro(): void {
     const repId = this.repartidorId();
     const m = this.monto();
-    if (!repId || !m || m <= 0) return;
+    if (!repId || typeof m !== 'number' || !Number.isFinite(m) || m <= 0 || this.procesando()) return;
 
     const rep = this.repartidores().find(r => r.id === repId);
     this.procesando.set(true);
@@ -250,8 +250,7 @@ export class CajeroCobroRepartidorModalComponent {
       },
       error: (err) => {
         this.procesando.set(false);
-        const msg = err?.error?.message || 'Error al registrar el cobro de efectivo. Verifica la caja chica activa.';
-        this.errorMensaje.set(msg);
+        this.errorMensaje.set(mensajeError(err, 'Error al registrar el cobro de efectivo. Verifica la caja chica activa.'));
       }
     });
   }

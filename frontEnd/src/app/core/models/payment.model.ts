@@ -6,7 +6,14 @@
  */
 import { PaymentMethod } from './order.model';
 
-export type PaymentStatus = 'PENDIENTE' | 'PENDIENTE_VERIFICACION' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
+export type PaymentStatus =
+  | 'PENDIENTE'
+  | 'PENDIENTE_VERIFICACION'
+  | 'APROBADO'
+  | 'RECHAZADO'
+  | 'CANCELADO'
+  | 'REEMBOLSADO'
+  | 'REEMBOLSADO_PARCIAL';
 
 export interface PaymentTransaction {
   id: string;
@@ -40,7 +47,9 @@ export type EstadoPagoAdmin =
   | 'PENDIENTE_VERIFICACION'
   | 'APROBADO'
   | 'RECHAZADO'
-  | 'CANCELADO';
+  | 'CANCELADO'
+  | 'REEMBOLSADO'
+  | 'REEMBOLSADO_PARCIAL';
 
 /**
  * T6e - pago de una orden con la evidencia de Yape que el `ADMIN` necesita para decidir.

@@ -55,6 +55,38 @@
       "destination": "https://payments-service-264198079598.us-central1.run.app/pagos/:path*"
     },
     {
+      "source": "/api/feedback",
+      "destination": "https://feedback-service-264198079598.us-central1.run.app/feedback"
+    },
+    {
+      "source": "/api/feedback/:path*",
+      "destination": "https://feedback-service-264198079598.us-central1.run.app/feedback/:path*"
+    },
+    {
+      "source": "/api/finanzas",
+      "destination": "https://finance-service-264198079598.us-central1.run.app/finanzas"
+    },
+    {
+      "source": "/api/finanzas/:path*",
+      "destination": "https://finance-service-264198079598.us-central1.run.app/finanzas/:path*"
+    },
+    {
+      "source": "/api/incidentes",
+      "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes"
+    },
+    {
+      "source": "/api/incidentes/:path*",
+      "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes/:path*"
+    },
+    {
+      "source": "/api/notificaciones",
+      "destination": "https://notification-service-264198079598.us-central1.run.app/api/notificaciones"
+    },
+    {
+      "source": "/api/notificaciones/:path*",
+      "destination": "https://notification-service-264198079598.us-central1.run.app/api/notificaciones/:path*"
+    },
+    {
       "source": "/auth",
       "destination": "https://auth-service-264198079598.us-central1.run.app/auth"
     },
@@ -101,6 +133,38 @@
     {
       "source": "/pagos/:path*",
       "destination": "https://payments-service-264198079598.us-central1.run.app/pagos/:path*"
+    },
+    {
+      "source": "/feedback",
+      "destination": "https://feedback-service-264198079598.us-central1.run.app/feedback"
+    },
+    {
+      "source": "/feedback/:path*",
+      "destination": "https://feedback-service-264198079598.us-central1.run.app/feedback/:path*"
+    },
+    {
+      "source": "/finanzas",
+      "destination": "https://finance-service-264198079598.us-central1.run.app/finanzas"
+    },
+    {
+      "source": "/finanzas/:path*",
+      "destination": "https://finance-service-264198079598.us-central1.run.app/finanzas/:path*"
+    },
+    {
+      "source": "/incidentes",
+      "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes"
+    },
+    {
+      "source": "/incidentes/:path*",
+      "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes/:path*"
+    },
+    {
+      "source": "/notificaciones",
+      "destination": "https://notification-service-264198079598.us-central1.run.app/api/notificaciones"
+    },
+    {
+      "source": "/notificaciones/:path*",
+      "destination": "https://notification-service-264198079598.us-central1.run.app/api/notificaciones/:path*"
     },
     {
       "source": "/(.*)",

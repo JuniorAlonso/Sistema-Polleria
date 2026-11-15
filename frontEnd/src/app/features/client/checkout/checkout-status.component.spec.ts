@@ -24,8 +24,16 @@ describe('CheckoutStatusComponent', () => {
   }
 
   beforeEach(async () => {
+    localStorage.removeItem('sanpollo_last_order');
+    localStorage.removeItem('sanpollo_current_order');
     queryParams = new BehaviorSubject<Record<string, string>>({});
-    payments = jasmine.createSpyObj<PaymentService>('PaymentService', ['obtener']);
+    payments = jasmine.createSpyObj<PaymentService>('PaymentService', [
+      'obtener',
+      'obtenerPorOrden',
+      'confirmarRetornoMercadoPago'
+    ]);
+    payments.confirmarRetornoMercadoPago.and.returnValue(of(tx('PENDIENTE')));
+    payments.obtenerPorOrden.and.returnValue(of(null));
     cart = jasmine.createSpyObj<CartService>('CartService', ['clearCart']);
     await TestBed.configureTestingModule({
       imports: [CheckoutStatusComponent],
@@ -90,6 +98,41 @@ describe('CheckoutStatusComponent', () => {
     expect(c.pollingAgotado()).toBeTrue();
     expect(c.currentStatus()).toBe('PENDING');
     expect(cart.clearCart).not.toHaveBeenCalled();
+    discardPeriodicTasks();
+  }));
+
+  it('uses obtenerPorOrden with ordenId stored separately without treating order id as pagoId (FE-04)', fakeAsync(() => {
+    localStorage.setItem('sanpollo_last_order', JSON.stringify({ ordenId: 77, code: 'POL-77', total: 42 }));
+    payments.obtenerPorOrden.and.returnValue(of({
+      id: '199', orderId: '77', metodo: 'TARJETA', monto: 42, estado: 'APROBADO', fechaTransaccion: ''
+    }));
+    const c = crear({});
+    expect(payments.obtener).not.toHaveBeenCalled();
+    expect(payments.obtenerPorOrden).toHaveBeenCalledWith(77);
+    expect(c.currentStatus()).toBe('SUCCESS');
+    expect(localStorage.getItem('sanpollo_last_order')).toBeNull();
+    discardPeriodicTasks();
+  }));
+
+  it('treats REEMBOLSADO as FAILURE instead of PENDING (FE-08)', fakeAsync(() => {
+    payments.obtener.and.returnValue(of(tx('REEMBOLSADO')));
+    const c = crear({ external_reference: '9' });
+    expect(c.currentStatus()).toBe('FAILURE');
+    discardPeriodicTasks();
+  }));
+
+  it('stops polling once confirmarRetornoMercadoPago approves payment (FE-17)', fakeAsync(() => {
+    let llamadas = 0;
+    payments.confirmarRetornoMercadoPago.and.returnValue(of(tx('APROBADO')));
+    payments.obtener.and.callFake(() => {
+      llamadas++;
+      return of(tx('PENDIENTE'));
+    });
+    const c = crear({ external_reference: '9', collection_status: 'approved' });
+    const llamadasIniciales = llamadas;
+    tick(9000);
+    expect(c.currentStatus()).toBe('SUCCESS');
+    expect(llamadas).toBe(llamadasIniciales);
     discardPeriodicTasks();
   }));
 });

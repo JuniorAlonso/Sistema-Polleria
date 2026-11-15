@@ -142,4 +142,17 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
     expect(orden.servidoEn).toBe('2026-01-01T00:05:00Z');
     expect(orden.servidoPor).toBe(7);
   });
+
+  it('mapea un estado backend desconocido a DESCONOCIDO sin fabricar timestamps (FE-15)', () => {
+    const orden = OrderAdapter.toOrder({
+      ...dto,
+      estado: 'ESTADO_FUTURO_RARO',
+      creadoEn: undefined,
+      actualizadoEn: undefined
+    } as never);
+
+    expect(orden.estado).toBe('DESCONOCIDO');
+    expect(orden.createdAt).toBe('');
+    expect(orden.updatedAt).toBe('');
+  });
 });

@@ -62,6 +62,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     const { resultado } = cobrar('EFECTIVO');
 
     expect(pagos.iniciarPago).toHaveBeenCalledWith('101', 45, 'EFECTIVO' as unknown as PaymentMethod);
+    expect(pagos.confirmarPago).toHaveBeenCalledWith(9, 'ref', 'CONTRAENTREGA');
     expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), true);
     expect(ordenes.completarOrdenSalon).toHaveBeenCalledWith('101', 'LISTO');
     expect(resultado?.comprobante).toBe(comprobante);
@@ -73,8 +74,13 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
 
     cobrar('TARJETA');
 
+    expect(pagos.confirmarPago).toHaveBeenCalledWith(9, 'ref', 'TARJETA');
     expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), false);
     expect(finanzasApi.obtenerCajaActual).not.toHaveBeenCalled();
+
+    pagos.confirmarPago.calls.reset();
+    cobrar('YAPE_PLIN');
+    expect(pagos.confirmarPago).toHaveBeenCalledWith(9, 'ref', 'YAPE_PLIN');
   });
 
   it('con el pago ya APROBADO no vuelve a cobrar: solo completa comprobante y cierre (reintento)', () => {

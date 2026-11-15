@@ -1,12 +1,14 @@
 import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { Router } from '@angular/router';
+import { finalize } from 'rxjs';
 import { OrdersService } from '../../core/services/orders.service';
 import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { SalonService, ZonaSalonConfig } from '../../core/services/salon.service';
 import { leerUserIdDelToken } from '../../core/utils/jwt.util';
+import { mensajeError } from '../../core/utils/api-error';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
 import { Order, OrderStatus } from '../../core/models/order.model';
@@ -148,6 +150,7 @@ export type { MozoTab, MesaSalon, AlertaPlatoListo } from './mozo.types';
                 [estadoComandaLabel]="comandaMesa()?.estado ? etiquetaEstadoComanda(comandaMesa()!.estado) : ''"
                 [items]="comandaItems"
                 [total]="calcularTotalComanda()"
+                [procesando]="enviandoComanda()"
                 (eliminar)="eliminarItemComanda($event)"
                 (notasChange)="actualizarNotasItem($event.index, $event.notas)"
                 (enviar)="enviarComandaACocina()"
@@ -235,6 +238,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   // Estado de Carga y Espera para Operaciones de Salón
   readonly isProcesandoMesa = signal<boolean>(false);
   readonly mensajeProcesandoMesa = signal<string>('Sincronizando con el servidor...');
+  readonly enviandoComanda = signal<boolean>(false);
 
   private timerInterval: any = null;
   readonly tiempoActual = signal<number>(Date.now());
@@ -604,6 +608,8 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
    * (`POST /ordenes/{id}/items`); si no, se abre la comanda de salón.
    */
   enviarComandaACocina(): void {
+    if (this.enviandoComanda()) return;
+
     const mesaId = Number(this.selectedMesaForOrder);
     const mesa = this.mesas().find(m => m.id === mesaId);
     if (!mesa) {
@@ -626,16 +632,19 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       this.activeTab.set('MESAS');
     };
 
+    this.enviandoComanda.set(true);
+
     if (mesa.ordenId) {
-      this.ordersService.agregarItemsAOrden(mesa.ordenId, itemsReq).subscribe({
+      this.ordersService.agregarItemsAOrden(mesa.ordenId, itemsReq).pipe(
+        finalize(() => this.enviandoComanda.set(false))
+      ).subscribe({
         next: () => {
           const platos = itemsReq.reduce((acc, i) => acc + i.cantidad, 0);
           this.notify.showSuccess(`${platos} platos agregados a la comanda de ${mesa.nombre}`);
           alTerminar();
         },
         error: (err) => {
-          const mensaje = err?.message || 'El servidor rechazó los platos nuevos';
-          this.notify.showError('No se pudieron agregar los platos', mensaje);
+          this.notify.showError('No se pudieron agregar los platos', mensajeError(err, 'El servidor rechazó los platos nuevos'));
         }
       });
       return;
@@ -653,15 +662,15 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
         mesaNumero: numeroMesa
       },
       items: itemsReq
-    }).subscribe({
+    }).pipe(
+      finalize(() => this.enviandoComanda.set(false))
+    ).subscribe({
       next: (created) => {
         this.notify.showSuccess(`Comanda creada en cocina para ${mesa.nombre} (Orden #${created.codigoSeguimiento})`);
         alTerminar();
       },
       error: (err) => {
-        const mensaje = err?.message || err?.error?.error || err?.error?.message
-          || 'Compruebe conexión con orders-service';
-        this.notify.showError('Error al enviar comanda', mensaje);
+        this.notify.showError('Error al enviar comanda', mensajeError(err, 'Compruebe conexión con orders-service'));
       }
     });
   }
@@ -693,7 +702,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.notify.showError('No se pudo marcar la comanda como servida',
-          err?.message || 'Compruebe conexión con orders-service');
+          mensajeError(err, 'Compruebe conexión con orders-service'));
       }
     });
   }
@@ -725,7 +734,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.notify.showError('No se pudo marcar la comanda como servida',
-          err?.message || 'Compruebe conexión con orders-service');
+          mensajeError(err, 'Compruebe conexión con orders-service'));
       }
     });
   }
@@ -799,9 +808,7 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
           this.notify.showSuccess(`Mesa ${m.nombre}: cuenta enviada a Caja para cobro.`);
         },
         error: (err) => {
-          const motivo = err?.error?.error || err?.error?.mensaje || err?.error?.message
-            || err?.message || 'El backend rechazó el cambio de estado de la mesa';
-          this.notify.showError('No se pudo enviar la cuenta a caja', motivo);
+          this.notify.showError('No se pudo enviar la cuenta a caja', mensajeError(err, 'El backend rechazó el cambio de estado de la mesa'));
         }
       });
       return;

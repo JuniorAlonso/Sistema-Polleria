@@ -5,6 +5,7 @@ import { FeedbackService } from '../../../../core/services/feedback.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { ReporteIncidencia, EstadoReclamo } from '../../../../core/models/feedback.model';
 import { ResolverReclamoValues } from '../../models/admin-forms';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { FeedbackSummaryComponent } from '../../components/feedback/feedback-summary.component';
 import { ClaimsListComponent } from '../../components/feedback/claims-list.component';
 import { ReviewsListComponent } from '../../components/feedback/reviews-list.component';
@@ -158,6 +159,10 @@ export class AdminFeedbackPage implements OnInit {
   confirmarResolverReclamo(valores: ResolverReclamoValues): void {
     const rec = this.reclamoSeleccionado();
     if (!rec || this.isResolviendoReclamo()) return;
+    if (rec.estado === 'RESUELTO' || rec.estado === 'RECHAZADO') {
+      this.notify.showWarning('Reclamo ya atendido', `El reclamo #${rec.id} ya figura como ${rec.estado}.`);
+      return;
+    }
 
     const { estadoFinal, respuestaAdmin, emitirReembolso, montoReembolso } = valores;
     this.isResolviendoReclamo.set(true);
@@ -177,7 +182,7 @@ export class AdminFeedbackPage implements OnInit {
       },
       error: (err) => {
         this.isResolviendoReclamo.set(false);
-        this.notify.showError('No se pudo resolver el reclamo', err?.error?.message || 'Error en pasarela de pagos.');
+        this.notify.showError('No se pudo resolver el reclamo', mensajeError(err, 'Error en pasarela de pagos.'));
       }
     });
   }

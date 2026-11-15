@@ -3,6 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, Subscription, catchError, interval, of, tap, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { FiltroHistorial, NotificationLog, WhatsappQr, WhatsappStatus } from '../models/notification-log.model';
+import { mensajeError } from '../utils/api-error';
 
 /**
  * T5b (S4/S8/S11) — Anti-baneo y contactos configurables desde el panel.
@@ -197,7 +198,7 @@ export class WhatsappNotificationsService {
   private mensajeErrorAjustes(err: any, porDefecto: string): string {
     if (err?.status === 0) return 'No se pudo conectar con notification-service (:3001). ¿Está encendido?';
     if (err?.status === 403) return 'Solo un administrador puede administrar estos ajustes.';
-    return err?.error?.error || err?.error?.mensaje || porDefecto;
+    return mensajeError(err, porDefecto);
   }
 
   cargarHistorial(filtro: FiltroHistorial = {}): void {

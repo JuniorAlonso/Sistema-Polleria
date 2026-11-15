@@ -50,5 +50,17 @@ describe('CajeroRecargaFondoModalComponent', () => {
     const btnConfirmar = fixture.nativeElement.querySelector('button[disabled]');
     expect(btnConfirmar).toBeTruthy();
   });
+
+  it('deshabilita el botón y muestra texto de espera cuando procesando es true (FE-01)', () => {
+    fixture.componentRef.setInput('liquidacion', mockLiq);
+    fixture.componentRef.setInput('procesando', true);
+    component.monto.set(30);
+    fixture.detectChanges();
+
+    const buttons = fixture.nativeElement.querySelectorAll('button');
+    const btnConfirmar = buttons[buttons.length - 1] as HTMLButtonElement;
+    expect(btnConfirmar.disabled).toBeTrue();
+    expect(btnConfirmar.textContent).toContain('Recargando...');
+  });
 });
 

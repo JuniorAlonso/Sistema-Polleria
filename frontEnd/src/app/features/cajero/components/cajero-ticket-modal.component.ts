@@ -51,7 +51,7 @@ export type TicketComprobanteVista = TicketVista & { comprobante?: BackendCompro
               </div>
               <div class="flex justify-between">
                 <span>Cajero:</span>
-                <span>{{ ticket().cajero }}</span>
+                <span>{{ ticket().cajero || '—' }}</span>
               </div>
               <div class="flex justify-between">
                 <span>Cliente:</span>
@@ -169,12 +169,12 @@ export class CajeroTicketModalComponent {
 
   protected get clienteNombre(): string {
     const t = this.ticket() as any;
-    return this.comprobante?.clienteNombre || t?.cliente || t?.clienteNombre || 'Cliente General';
+    return this.comprobante?.clienteNombre || t?.cliente || t?.clienteNombre || '—';
   }
 
   protected get tipoOrden(): string {
     const t = this.ticket() as any;
-    return t?.tipo || t?.tipoOrden || 'SALON';
+    return t?.tipo || t?.tipoOrden || '—';
   }
 
   protected get totalMonto(): number {

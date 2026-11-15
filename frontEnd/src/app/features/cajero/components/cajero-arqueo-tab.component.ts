@@ -61,7 +61,7 @@ import { ArqueoCaja, MovimientoCaja } from '../../../core/models/finance.model';
                   <button
                     type="button"
                     (click)="aperturar.emit()"
-                    [disabled]="montoApertura() < 0 || procesando()"
+                    [disabled]="montoApertura() === null || montoApertura() === undefined || !montoEsValido() || procesando()"
                     class="w-full py-4 bg-emerald-500 hover:bg-emerald-400 active:scale-98 text-slate-950 font-display text-xl font-bold tracking-wider uppercase rounded-xl transition duration-150 cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
                   >
                     @if (procesando()) {
@@ -208,4 +208,9 @@ export class CajeroArqueoTabComponent {
   readonly aperturar = output<void>();
   readonly nuevoMovimiento = output<void>();
   readonly cerrarCaja = output<void>();
+
+  protected montoEsValido(): boolean {
+    const monto = this.montoApertura();
+    return typeof monto === 'number' && Number.isFinite(monto) && monto >= 0;
+  }
 }

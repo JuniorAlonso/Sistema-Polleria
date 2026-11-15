@@ -5,6 +5,7 @@ import { Observable, Subject, tap, catchError, of, map } from 'rxjs';
 import { Resenia, CrearReseniaRequest, ReporteIncidencia, CrearReporteRequest, ResolverReporteRequest, MotivoReclamo, EstadoReclamo } from '../models/feedback.model';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
+import { mensajeError } from '../utils/api-error';
 
 @Injectable({
   providedIn: 'root'
@@ -20,6 +21,7 @@ export class FeedbackService {
   readonly resenias = signal<Resenia[]>([]);
   readonly reportes = signal<ReporteIncidencia[]>([]);
   readonly isLoading = signal<boolean>(false);
+  readonly cargaError = signal<string | null>(null);
   readonly wsConnected = signal<boolean>(false);
   readonly nuevoReclamo$ = new Subject<ReporteIncidencia>();
   readonly devolucionesPendientes = signal<ReporteIncidencia[]>([]);
@@ -193,7 +195,7 @@ export class FeedbackService {
               map[r.ordenId] = {
                 calificacion: r.calificacion ?? r.estrellas ?? 5,
                 comentario: r.comentario,
-                fecha: r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : 'Registrado'
+                fecha: r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : ''
               };
             }
           });
@@ -205,7 +207,10 @@ export class FeedbackService {
           }
         }
       }),
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar tus reseñas.'));
+        return of([]);
+      })
     ).subscribe();
 
     this.http.get<ReporteIncidencia[]>(`${this.API_URL}/feedback/reportes/mis-reportes`).pipe(
@@ -218,7 +223,7 @@ export class FeedbackService {
                 id: r.id,
                 motivo: r.motivo,
                 descripcion: r.descripcion,
-                fecha: r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : 'Registrado',
+                fecha: r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : '',
                 estado: r.estado
               };
             }
@@ -231,21 +236,28 @@ export class FeedbackService {
           }
         }
       }),
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar tus reportes.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
   cargarResenias(): void {
     this.http.get<Resenia[]>(`${this.API_URL}/feedback/resenias`).pipe(
       tap(data => {
+        this.cargaError.set(null);
         const mapped = data.map(r => ({
           ...r,
           estrellas: r.estrellas ?? r.calificacion,
-          fecha: r.fecha ?? (r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : 'Hoy')
+          fecha: r.fecha ?? (r.creadoEn ? new Date(r.creadoEn).toLocaleDateString() : '')
         }));
         this.resenias.set(mapped);
       }),
-      catchError(() => of([]))
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar las reseñas.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
@@ -255,7 +267,7 @@ export class FeedbackService {
         const mapped = {
           ...res,
           estrellas: res.estrellas ?? res.calificacion,
-          fecha: res.fecha ?? 'Ahora'
+          fecha: res.fecha ?? (res.creadoEn ? new Date(res.creadoEn).toLocaleDateString() : '')
         };
         this.resenias.update(prev => [mapped, ...prev]);
         this.guardarReseniaLocal(req.ordenId, req.calificacion, req.comentario);
@@ -270,8 +282,14 @@ export class FeedbackService {
     if (motivo) params = params.set('motivo', motivo);
 
     this.http.get<ReporteIncidencia[]>(`${this.API_URL}/feedback/admin/reportes`, { params }).pipe(
-      tap(data => this.reportes.set(data)),
-      catchError(() => of([]))
+      tap(data => {
+        this.cargaError.set(null);
+        this.reportes.set(data);
+      }),
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar los reclamos.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
@@ -304,14 +322,22 @@ export class FeedbackService {
   }
 
   resolverReporte(id: number, req: ResolverReporteRequest): Observable<ReporteIncidencia> {
+    const respuesta = (req.respuestaAdmin ?? req.resolucion ?? '').trim();
     const payload = {
       estado: req.estado || 'RESUELTO',
-      respuestaAdmin: req.respuestaAdmin || req.resolucion || 'Reclamo atendido',
+      respuestaAdmin: respuesta,
       reembolsoProcedente: req.reembolsoProcedente ?? req.ejecutarReembolso ?? false,
       montoReembolso: req.montoReembolso
     };
+    const idempotencyKey = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `reclamo-${id}-${Date.now()}`;
 
-    return this.http.patch<ReporteIncidencia>(`${this.API_URL}/feedback/admin/reportes/${id}/resolver`, payload).pipe(
+    return this.http.patch<ReporteIncidencia>(
+      `${this.API_URL}/feedback/admin/reportes/${id}/resolver`,
+      payload,
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    ).pipe(
       tap(resuelto => {
         this.reportes.update(prev => prev.map(r => r.id === id ? resuelto : r));
         this.notify.showSuccess(`Incidencia #${id} ${resuelto.estado.toLowerCase()}`);
@@ -381,8 +407,14 @@ export class FeedbackService {
 
   cargarDevolucionesPendientes(): void {
     this.http.get<ReporteIncidencia[]>(`${this.API_URL}/feedback/devoluciones/pendientes`).pipe(
-      tap(data => this.devolucionesPendientes.set(data || [])),
-      catchError(() => of([]))
+      tap(data => {
+        this.cargaError.set(null);
+        this.devolucionesPendientes.set(data || []);
+      }),
+      catchError((err: unknown) => {
+        this.cargaError.set(mensajeError(err, 'No se pudieron cargar las devoluciones pendientes.'));
+        return of([]);
+      })
     ).subscribe();
   }
 
@@ -396,7 +428,14 @@ export class FeedbackService {
   }
 
   reembolsarPagoDirecto(ordenId: number, monto: number, motivo: string): Observable<any> {
-    return this.http.post(`${this.PAYMENTS_URL}/pagos/orden/${ordenId}/reembolso`, { monto, motivo }).pipe(
+    const idempotencyKey = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `reembolso-${ordenId}-${Date.now()}`;
+    return this.http.post(
+      `${this.PAYMENTS_URL}/pagos/orden/${ordenId}/reembolso`,
+      { monto, motivo },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    ).pipe(
       tap(() => {
         this.notify.showSuccess(`Reembolso de S/ ${monto.toFixed(2)} procesado correctamente en pasarela`);
       })

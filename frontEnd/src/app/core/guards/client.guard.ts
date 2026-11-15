@@ -2,6 +2,7 @@ import { inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { CanActivateFn, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { ROLE_HOME } from './role.guard';
 
 export const clientGuard: CanActivateFn = () => {
   const platformId = inject(PLATFORM_ID);
@@ -21,28 +22,9 @@ export const clientGuard: CanActivateFn = () => {
   }
 
   // Si es usuario de personal, redirigir directamente a su dashboard
-  if (user.rol === 'CHEF') {
-    router.navigate(['/cocina']);
-    return false;
-  }
-
-  if (user.rol === 'MOZO') {
-    router.navigate(['/mozo']);
-    return false;
-  }
-
-  if (user.rol === 'REPARTIDOR') {
-    router.navigate(['/delivery']);
-    return false;
-  }
-
-  if (user.rol === 'CAJERO') {
-    router.navigate(['/cajero']);
-    return false;
-  }
-
-  if (user.rol === 'ADMIN') {
-    router.navigate(['/admin']);
+  const destino = ROLE_HOME[user.rol];
+  if (destino) {
+    router.navigate([destino]);
     return false;
   }
 

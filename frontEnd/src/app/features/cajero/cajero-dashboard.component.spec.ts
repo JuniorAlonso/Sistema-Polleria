@@ -13,6 +13,7 @@ import { of, throwError } from 'rxjs';
 import { CobroSalonFacade } from './services/cobro-salon.facade';
 import { consumidorFinal } from './models/datos-fiscales';
 import { ArqueoCaja } from '../../core/models/finance.model';
+import { BackendComprobanteResponse } from '../../core/models/api-contracts.model';
 
 describe('CajeroDashboardComponent', () => {
   let component: CajeroDashboardComponent;
@@ -199,22 +200,28 @@ describe('CajeroDashboardComponent', () => {
       expect(update).toHaveBeenCalledWith('12', 'COMPLETADO', undefined, 'POL-12');
     });
 
-    it('envía el ticket al backend al cobrar un recojo ContraPago', () => {
+    it('envía el ticket al backend al cobrar un recojo ContraPago y registra la venta en caja (DIN-10)', () => {
       const cobro = spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
+      const ventaCaja = spyOn(financeService, 'registrarVentaEnCaja').and.returnValue(of({} as BackendComprobanteResponse));
 
       component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: '12', efectivoRecibido: 50 });
 
       expect(cobro).toHaveBeenCalledWith('12', 30, 50, 20, 'POL-12');
+      expect(ventaCaja).toHaveBeenCalledWith(
+        '12',
+        jasmine.objectContaining({ tipo: 'BOLETA', nombre: 'Juan Perez' }),
+        true
+      );
     });
 
     it('S13: avisa al cajero si el ingreso en caja falla después de cobrar', () => {
       spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
       financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
-      spyOn(financeService, 'registrarMovimiento').and.returnValue(throwError(() => new Error('caja caída')));
+      spyOn(financeService, 'registrarVentaEnCaja').and.returnValue(throwError(() => new Error('caja caída')));
 
       component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: 'POL-12', efectivoRecibido: 30 });
 
-      expect(financeService.registrarMovimiento).toHaveBeenCalled();
+      expect(financeService.registrarVentaEnCaja).toHaveBeenCalled();
       expect(notify.showError).toHaveBeenCalledWith(
         'No se registró el ingreso en caja',
         jasmine.stringMatching(/manualmente/));
@@ -497,6 +504,40 @@ describe('CajeroDashboardComponent', () => {
       expect(component.totalRendidoLiqInput).toBeNull();
       expect(component.errorPendienteLiq()).toBe('finance caído');
       expect(fixture.nativeElement.textContent).toContain('finance caído');
+    });
+
+    it('FE-01/CON-12/FE-03: bloquea doble envío, filtra cobrosDelDia en hora de Lima sin inventar campos y consulta comprobante real al reimprimir', () => {
+      component.procesandoAccion.set(true);
+      const devSpy = spyOn(component['feedbackService'], 'marcarDevuelto');
+      component.entregarDevolucion(9);
+      expect(devSpy).not.toHaveBeenCalled();
+      component.procesandoAccion.set(false);
+
+      const hoyLima = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+      const paymentService = TestBed.inject(PaymentService);
+      paymentService.pagos.set([
+        { id: '1', orderId: '888', metodo: 'YAPE', monto: 42, estado: 'APROBADO', fechaTransaccion: `${hoyLima}T15:00:00-05:00` },
+        { id: '2', orderId: '889', metodo: 'TARJETA', monto: 19, estado: 'APROBADO', fechaTransaccion: '2020-01-01T15:00:00-05:00' }
+      ]);
+
+      const cobros = component.cobrosDelDia();
+      expect(cobros.length).toBe(1);
+      expect(cobros[0].ordenId).toBe('888');
+      expect(cobros[0].clienteNombre).toBe('');
+      expect(cobros[0].tipoOrden).toBe('');
+
+      const compSpy = spyOn(financeService, 'obtenerComprobantePorOrden').and.returnValue(of({
+        id: 50, ordenId: 888, tipo: 'BOLETA', serieCorrelativo: 'B001-00000050',
+        clienteNombre: 'Lucía', subtotal: 35.59, igv: 6.41, total: 42, estadoPagoTexto: 'PAGADO', emitidoEn: `${hoyLima}T15:01:00`
+      }));
+      component.reimprimirTicket(cobros[0]);
+      expect(compSpy).toHaveBeenCalledWith('888');
+      expect(component.ticketEmitido()?.comprobante?.serieCorrelativo).toBe('B001-00000050');
     });
   });
 });

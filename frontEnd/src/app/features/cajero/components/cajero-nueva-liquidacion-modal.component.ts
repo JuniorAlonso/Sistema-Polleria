@@ -90,15 +90,15 @@ import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
               </div>
             </div>
 
-            @if (repartidorId() === null || fondoInicial() < 0) {
+            @if (repartidorId() === null || !fondoValido()) {
               <p data-testid="nueva-liq-bloqueo" class="text-[11px] font-bold text-amber-300">
-                {{ repartidorId() === null ? 'Selecciona un repartidor de la lista para continuar.' : 'El fondo inicial no puede ser negativo.' }}
+                {{ repartidorId() === null ? 'Selecciona un repartidor de la lista para continuar.' : 'Ingresa un fondo inicial numérico mayor o igual a 0.' }}
               </p>
             }
 
             <div class="flex justify-end gap-2 pt-3 border-t border-white/10">
               <button type="button" (click)="cancelar.emit()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase transition cursor-pointer">Cancelar</button>
-              <button type="button" (click)="aperturar.emit()" [disabled]="repartidorId() === null || fondoInicial() < 0" class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase transition cursor-pointer">Aperturar</button>
+              <button type="button" (click)="aperturar.emit()" [disabled]="repartidorId() === null || !fondoValido() || procesando()" class="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase transition cursor-pointer">{{ procesando() ? 'Aperturando...' : 'Aperturar' }}</button>
             </div>
           </div>
         </div>
@@ -110,8 +110,14 @@ export class CajeroNuevaLiquidacionModalComponent {
   readonly fondoInicial = model<number>(0);
   readonly fondoSugerido = input<number>(0);
   readonly observaciones = model<string>('');
+  readonly procesando = input<boolean>(false);
 
   readonly cancelar = output<void>();
   readonly aperturar = output<void>();
   readonly onRepartidorChange = output<number | null>();
+
+  protected fondoValido(): boolean {
+    const f = this.fondoInicial();
+    return f !== null && f !== undefined && Number.isFinite(f) && f >= 0;
+  }
 }
