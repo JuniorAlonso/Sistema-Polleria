@@ -4,3 +4,11 @@
 **/.vscode
 **/*.iml
 **/node_modules
+**/target
+**/.env
+**/.env.*
+!**/.env*.example
+**/application-local.properties
+**/.wwebjs_*
+**/whatsapp-session
+**/uploads

@@ -1,16 +1,18 @@
 <#
 .SYNOPSIS
-    Script de configuración y despliegue serverless para Sistema Pollería en Google Cloud Run.
+    Script de configuracion y despliegue serverless para Sistema Polleria en Google Cloud Run.
 .DESCRIPTION
-    Configura y despliega los 3 microservicios (auth-service, orders-service, payments-service)
-    optimizados para Scale-to-Zero (costo $0 mientras no haya tráfico).
-    Usa Google Secret Manager para proteger contraseñas y claves JWT.
+    Despliega todos los microservicios (auth, orders, payments, feedback, finance, incident y
+    notification) usando referencias a Google Secret Manager (--set-secrets), sin exponer
+    contrasenas ni tokens en texto plano en consola ni en --set-env-vars.
 .PARAMETER ProjectId
     ID del proyecto en Google Cloud Platform.
 .PARAMETER Region
-    Región de despliegue en GCP (default: us-central1).
+    Region de despliegue en GCP (default: us-central1).
+.PARAMETER ArtifactRepo
+    Repositorio en Artifact Registry.
 .PARAMETER DryRun
-    Si está activo ($true), solo valida la configuración sin realizar cambios reales.
+    Si esta activo ($true), imprime los comandos saneados sin desplegar.
 #>
 [CmdletBinding()]
 param (
@@ -39,7 +41,7 @@ Write-Host "DryRun:   $DryRun"
 
 if ($DryRun) {
     Write-Host "`n[MODO SIMULACION - SOLO CONFIGURACION ACTIVA]" -ForegroundColor Yellow
-    Write-Host "Para desplegar en vivo cuando tengas tu cuenta lista, ejecuta:" -ForegroundColor Gray
+    Write-Host "Para desplegar en vivo, ejecuta:" -ForegroundColor Gray
     Write-Host ".\deploy-gcp-cloudrun.ps1 -ProjectId '$ProjectId' -Region '$Region' -DryRun:`$false`n" -ForegroundColor Gray
 }
 
@@ -56,47 +58,40 @@ foreach ($api in $apisToEnable) {
     Write-Host "  - $api"
 }
 
-# 2. Configuración de Artifact Registry
+# 2. Configuracion de Artifact Registry
 $repoPath = "$Region-docker.pkg.dev/$ProjectId/$ArtifactRepo"
 Write-Host "`n[Paso 2/5] Repositorio de Contenedores:" -ForegroundColor Cyan
 Write-Host "  URI Base: $repoPath"
-Write-Host "  Comando creacion:"
 Write-Host "  gcloud artifacts repositories create $ArtifactRepo --repository-format=docker --location=$Region --description='Sistema Polleria Images'" -ForegroundColor DarkGray
 
-# 3. Secretos recomendados en Google Secret Manager (Cero fugas de credenciales)
+# 3. Secretos en Google Secret Manager (referenciados con --set-secrets, nunca en claro)
 $secrets = @(
     "polleria-db-url",
+    "polleria-database-url",
     "polleria-db-username",
     "polleria-db-password",
     "polleria-jwt-secret",
     "polleria-mail-password",
-    "polleria-mercadopago-token"
+    "polleria-mercadopago-token",
+    "polleria-mercadopago-webhook-secret",
+    "polleria-internal-api-key",
+    "polleria-notification-api-key",
+    "polleria-minio-access-key",
+    "polleria-minio-secret-key"
 )
 
-Write-Host "`n[Paso 3/5] Secretos en Secret Manager (Proteccion de credenciales):" -ForegroundColor Cyan
+Write-Host "`n[Paso 3/5] Secretos requeridos en Secret Manager:" -ForegroundColor Cyan
 foreach ($s in $secrets) {
     Write-Host "  - $s"
 }
 
-# 4. Parámetros de Serverless / Abaratamiento de Costos (Scale-to-Zero)
-$commonRunFlags = @(
-    "--region $Region",
-    "--platform managed",
-    "--allow-unauthenticated",
-    "--min-instances 0",        # ESCALA A CERO CUANDO NO HAY PETICIONES (COSTO $0)
-    "--max-instances 2",        # Protege tu presupuesto contra sobrecargas
-    "--memory 512Mi",           # Huella de memoria ligera para Alpine JRE
-    "--cpu 1",                  # 1 vCPU con CPU Throttling habilitado por defecto
-    "--timeout 120"
-) -join " "
-
 Write-Host "`n[Paso 4/5] Politica de Costos Serverless (Cloud Run):" -ForegroundColor Cyan
-Write-Host "  - Min Instances: 0 (Scale-to-Zero habilitado)" -ForegroundColor Green
-Write-Host "  - Max Instances: 2 (Proteccion de gasto)" -ForegroundColor Green
-Write-Host "  - Memoria: 512 MiB por contenedor" -ForegroundColor Green
-Write-Host "  - Facturacion: Unicamente por tiempo de CPU consumido durante peticiones activas" -ForegroundColor Green
+Write-Host "  - Min Instances: 0 (Scale-to-Zero)" -ForegroundColor Green
+Write-Host "  - Max Instances: 2" -ForegroundColor Green
+Write-Host "  - Memoria: 1Gi por contenedor (-XX:MaxRAMPercentage=75.0)" -ForegroundColor Green
+Write-Host "  - notification-service restringido con --no-allow-unauthenticated" -ForegroundColor Green
 
-# 5. Cargar variables de entorno desde .env si existe
+# 5. Cargar unicamente configuracion no sensible desde .env si existe
 $envFile = Join-Path $PSScriptRoot ".env"
 $envMap = @{}
 if (Test-Path $envFile) {
@@ -105,43 +100,204 @@ if (Test-Path $envFile) {
     }
 }
 
-$dbUrl = $envMap["DB_URL"]
-$dbUser = $envMap["DB_USERNAME"]
-$dbPass = $envMap["DB_PASSWORD"]
-$jwtSec = $envMap["JWT_SECRET"]
-$cors = $envMap["CORS_ALLOWED_ORIGINS"]
-$mailUser = $envMap["MAIL_USERNAME"]
-$mailPass = $envMap["MAIL_PASSWORD"]
-
-# 6. Comandos de despliegue por microservicio
-Write-Host "`n[Paso 5/5] Comandos de despliegue generados:" -ForegroundColor Cyan
-
-$services = @("auth-service", "orders-service", "payments-service")
-foreach ($svc in $services) {
-    $imgUri = "$repoPath/${svc}:latest"
-    $envVars = @(
-        "SPRING_PROFILES_ACTIVE=prod",
-        "DB_URL=$dbUrl",
-        "DB_USERNAME=$dbUser",
-        "DB_PASSWORD=$dbPass",
-        "JWT_SECRET=$jwtSec",
-        "CORS_ALLOWED_ORIGINS=$cors"
-    )
-    if ($svc -eq "auth-service") {
-        $envVars += "MAIL_USERNAME=$mailUser"
-        $envVars += "MAIL_PASSWORD=$mailPass"
+function Get-ConfigOrPlaceholder([string]$key, [string]$fallback) {
+    if ($envMap.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($envMap[$key])) {
+        return $envMap[$key]
     }
-    $envVarStr = $envVars -join ","
+    return $fallback
+}
+
+$cors = Get-ConfigOrPlaceholder "CORS_ALLOWED_ORIGINS" "https://tu-frontend.vercel.app"
+$mailUser = Get-ConfigOrPlaceholder "MAIL_USERNAME" "notificaciones@tu-dominio.com"
+$authUrl = Get-ConfigOrPlaceholder "AUTH_SERVICE_URL" "https://auth-service-xxxx-uc.a.run.app"
+$ordersUrl = Get-ConfigOrPlaceholder "ORDERS_SERVICE_URL" "https://orders-service-xxxx-uc.a.run.app"
+$paymentsUrl = Get-ConfigOrPlaceholder "PAYMENTS_SERVICE_URL" "https://payments-service-xxxx-uc.a.run.app"
+$financeUrl = Get-ConfigOrPlaceholder "FINANCE_SERVICE_URL" "https://finance-service-xxxx-uc.a.run.app"
+$incidentUrl = Get-ConfigOrPlaceholder "INCIDENT_SERVICE_URL" "https://incident-service-xxxx-uc.a.run.app"
+$notifUrl = Get-ConfigOrPlaceholder "NOTIFICATION_URL" "https://notification-service-xxxx-uc.a.run.app"
+$minioEndpoint = Get-ConfigOrPlaceholder "MINIO_ENDPOINT" "minio.tu-dominio.com"
+$minioPort = Get-ConfigOrPlaceholder "MINIO_PORT" "9000"
+$minioUseSsl = Get-ConfigOrPlaceholder "MINIO_USE_SSL" "true"
+$mpSandbox = Get-ConfigOrPlaceholder "MERCADOPAGO_SANDBOX" "false"
+
+$serviceSpecs = @(
+    @{
+        Name = "auth-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "MAIL_USERNAME=$mailUser"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "MAIL_PASSWORD=polleria-mail-password:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest"
+        )
+    },
+    @{
+        Name = "orders-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "AUTH_SERVICE_URL=$authUrl",
+            "INCIDENT_SERVICE_URL=$incidentUrl",
+            "NOTIFICATION_URL=$notifUrl",
+            "MINIO_ENDPOINT=$minioEndpoint",
+            "MINIO_PORT=$minioPort",
+            "MINIO_USE_SSL=$minioUseSsl"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest",
+            "NOTIFICATION_API_KEY=polleria-notification-api-key:latest",
+            "MINIO_ACCESS_KEY=polleria-minio-access-key:latest",
+            "MINIO_SECRET_KEY=polleria-minio-secret-key:latest"
+        )
+    },
+    @{
+        Name = "payments-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "ORDERS_SERVICE_URL=$ordersUrl",
+            "FINANCE_SERVICE_URL=$financeUrl",
+            "NOTIFICATION_URL=$notifUrl",
+            "MERCADOPAGO_SANDBOX=$mpSandbox",
+            "MINIO_ENDPOINT=$minioEndpoint",
+            "MINIO_PORT=$minioPort",
+            "MINIO_USE_SSL=$minioUseSsl"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest",
+            "NOTIFICATION_API_KEY=polleria-notification-api-key:latest",
+            "MERCADOPAGO_ACCESS_TOKEN=polleria-mercadopago-token:latest",
+            "MERCADOPAGO_WEBHOOK_SECRET=polleria-mercadopago-webhook-secret:latest",
+            "MINIO_ACCESS_KEY=polleria-minio-access-key:latest",
+            "MINIO_SECRET_KEY=polleria-minio-secret-key:latest"
+        )
+    },
+    @{
+        Name = "feedback-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "ORDERS_SERVICE_URL=$ordersUrl",
+            "PAYMENTS_SERVICE_URL=$paymentsUrl",
+            "FINANCE_SERVICE_URL=$financeUrl",
+            "MINIO_ENDPOINT=$minioEndpoint",
+            "MINIO_PORT=$minioPort",
+            "MINIO_USE_SSL=$minioUseSsl"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest",
+            "MINIO_ACCESS_KEY=polleria-minio-access-key:latest",
+            "MINIO_SECRET_KEY=polleria-minio-secret-key:latest"
+        )
+    },
+    @{
+        Name = "finance-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "ORDERS_SERVICE_URL=$ordersUrl",
+            "PAYMENTS_SERVICE_URL=$paymentsUrl"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest"
+        )
+    },
+    @{
+        Name = "incident-service"
+        Public = $true
+        Env = @(
+            "SPRING_PROFILES_ACTIVE=prod",
+            "CORS_ALLOWED_ORIGINS=$cors"
+        )
+        Secrets = @(
+            "DB_URL=polleria-db-url:latest",
+            "DB_USERNAME=polleria-db-username:latest",
+            "DB_PASSWORD=polleria-db-password:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest"
+        )
+    },
+    @{
+        Name = "notification-service"
+        Public = $false
+        Env = @(
+            "NODE_ENV=production",
+            "TZ=America/Lima",
+            "CORS_ALLOWED_ORIGINS=$cors",
+            "ORDERS_SERVICE_URL=$ordersUrl",
+            "PAYMENTS_SERVICE_URL=$paymentsUrl",
+            "MINIO_ENDPOINT=$minioEndpoint",
+            "MINIO_PORT=$minioPort",
+            "MINIO_USE_SSL=$minioUseSsl"
+        )
+        Secrets = @(
+            "DATABASE_URL=polleria-database-url:latest",
+            "JWT_SECRET=polleria-jwt-secret:latest",
+            "INTERNAL_API_KEY=polleria-internal-api-key:latest",
+            "NOTIFICATION_API_KEY=polleria-notification-api-key:latest",
+            "MINIO_ACCESS_KEY=polleria-minio-access-key:latest",
+            "MINIO_SECRET_KEY=polleria-minio-secret-key:latest"
+        )
+    }
+)
+
+Write-Host "`n[Paso 5/5] Comandos de despliegue generados:" -ForegroundColor Cyan
+foreach ($spec in $serviceSpecs) {
+    $svc = $spec.Name
+    $imgUri = "$repoPath/${svc}:latest"
+    $authFlag = if ($spec.Public) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
+    $envVarStr = $spec.Env -join ","
+    $secretStr = $spec.Secrets -join ","
 
     Write-Host "`n  # Despliegue de ${svc}:" -ForegroundColor Yellow
-    Write-Host "  gcloud run deploy $svc ``"
-    Write-Host "    --image $imgUri ``"
-    Write-Host "    $commonRunFlags ``"
-    Write-Host "    --set-env-vars `"$envVarStr`""
+    Write-Host "  gcloud run deploy $svc --image $imgUri --region $Region --platform managed $authFlag --min-instances 0 --max-instances 2 --memory 1Gi --cpu 1 --timeout 120 --set-env-vars `"$envVarStr`" --set-secrets `"$secretStr`""
 
     if (-not $DryRun) {
         Write-Host "`n  Ejecutando despliegue de $svc en Cloud Run..." -ForegroundColor Magenta
-        gcloud run deploy $svc --image $imgUri $commonRunFlags.Split(" ") --set-env-vars "$envVarStr" --project $ProjectId --quiet
+        $deployArgs = @(
+            "run", "deploy", $svc,
+            "--image", $imgUri,
+            "--region", $Region,
+            "--platform", "managed",
+            $authFlag,
+            "--min-instances", "0",
+            "--max-instances", "2",
+            "--memory", "1Gi",
+            "--cpu", "1",
+            "--timeout", "120",
+            "--set-env-vars", $envVarStr,
+            "--set-secrets", $secretStr,
+            "--project", $ProjectId,
+            "--quiet"
+        )
+        & gcloud @deployArgs
     }
 }
 

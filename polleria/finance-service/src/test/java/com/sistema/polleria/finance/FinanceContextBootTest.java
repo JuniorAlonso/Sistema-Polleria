@@ -4,12 +4,16 @@ import com.sistema.polleria.finance.service.CajaService;
 import com.sistema.polleria.finance.service.ComprobanteService;
 import com.sistema.polleria.finance.service.FinanzasService;
 import com.sistema.polleria.finance.service.LiquidacionService;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -17,6 +21,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @ActiveProfiles("test")
 class FinanceContextBootTest {
+
+    @BeforeAll
+    static void requierePostgres() {
+        boolean disponible = postgresDisponible();
+        if (!disponible && ("true".equalsIgnoreCase(System.getProperty("require.db"))
+                || "true".equalsIgnoreCase(System.getenv("REQUIRE_DB")))) {
+            throw new AssertionError("PostgreSQL requerido (-Drequire.db=true) no disponible en localhost:5433");
+        }
+        Assumptions.assumeTrue(disponible,
+                "PostgreSQL de pruebas no disponible en localhost:5433");
+    }
+
+    private static boolean postgresDisponible() {
+        try (Connection c = DriverManager.getConnection(
+                "jdbc:postgresql://localhost:5433/polleria_test", "postgres", "postgres123")) {
+            return c.isValid(2);
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     @Autowired
     private FinanzasService finanzasService;

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  backend:
+    name: Backend Java (Maven + PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: polleria_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres123
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d polleria_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run Maven test suite requiring PostgreSQL
+        working-directory: polleria
+        run: |
+          chmod +x mvnw
+          ./mvnw -B test -Drequire.db=true
+
+  notification-service:
+    name: Notification Service (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: polleria/notification-service/package-lock.json
+      - name: Install dependencies and run tests
+        working-directory: polleria/notification-service
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: |
+          npm ci
+          npm test
+
+  frontend:
+    name: Frontend Angular
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontEnd/package-lock.json
+      - name: Typecheck, unit tests, and production build
+        working-directory: frontEnd
+        run: |
+          npm ci
+          npm run typecheck
+          npx ng test --watch=false --browsers=ChromeHeadless
+          npm run build

@@ -269,9 +269,16 @@ class AvisoRechazoComprobanteYapeTest {
 
     private boolean postgresDisponible() {
         try (Connection c = DriverManager.getConnection(JDBC, DB_USUARIO, DB_CLAVE)) {
-            return c.isValid(2);
+            if (c.isValid(2)) {
+                return true;
+            }
         } catch (Exception e) {
-            return false;
+            // Checked below so -Drequire.db=true fails loudly.
         }
+        if ("true".equalsIgnoreCase(System.getProperty("require.db"))
+                || "true".equalsIgnoreCase(System.getenv("REQUIRE_DB"))) {
+            throw new AssertionError("PostgreSQL requerido (-Drequire.db=true) no disponible en localhost:5433");
+        }
+        return false;
     }
 }
