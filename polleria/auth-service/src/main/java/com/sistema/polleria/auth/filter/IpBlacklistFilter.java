@@ -2,12 +2,14 @@ package com.sistema.polleria.auth.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistema.polleria.auth.service.IpBlacklistService;
+import com.sistema.polleria.auth.util.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
@@ -25,6 +27,9 @@ public class IpBlacklistFilter extends OncePerRequestFilter {
     private final IpBlacklistService ipBlacklistService;
     private final ObjectMapper objectMapper;
 
+    @Value("${auth.trust-forwarded-header:false}")
+    private boolean trustForwardedHeader = false;
+
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
@@ -32,7 +37,7 @@ public class IpBlacklistFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String ip = getClientIp(request);
+        String ip = ClientIpResolver.resolve(request, trustForwardedHeader);
 
         if (ipBlacklistService.isBlocked(ip)) {
             log.warn("Acceso denegado a IP bloqueada: {}", ip);
@@ -46,13 +51,5 @@ public class IpBlacklistFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    private String getClientIp(HttpServletRequest request) {
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
-            return xForwardedFor.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }

@@ -1,6 +1,7 @@
 package com.sistema.polleria.auth.controller;
 
 import com.sistema.polleria.auth.dto.AuthResponse;
+import com.sistema.polleria.auth.dto.CreateStaffRequest;
 import com.sistema.polleria.auth.dto.LoginRequest;
 import com.sistema.polleria.auth.dto.RegisterRequest;
 import com.sistema.polleria.auth.dto.RepartidorResponse;
@@ -36,6 +37,13 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+    }
+
+    // POST /auth/admin/usuarios — Creación explícita de personal por ADMIN
+    @PostMapping("/admin/usuarios")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
+    public ResponseEntity<AuthResponse> registerStaff(@Valid @RequestBody CreateStaffRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.registerStaff(request));
     }
 
     // POST /auth/login

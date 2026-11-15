@@ -5,10 +5,14 @@ import com.sistema.polleria.auth.entity.User;
 import com.sistema.polleria.auth.repository.TwoFactorTokenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
@@ -19,10 +23,15 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class TwoFactorService {
 
+    static final int MAX_ATTEMPTS_PER_CODE = 5;
+
     private final TwoFactorTokenRepository tokenRepository;
     private final JavaMailSender mailSender;
 
-    @Value("${spring.mail.username}")
+    @Autowired(required = false)
+    private Environment environment;
+
+    @Value("${spring.mail.username:}")
     private String fromEmail;
 
     @Value("${security.two-factor.code-expiry-minutes:5}")
@@ -48,21 +57,38 @@ public class TwoFactorService {
             sendEmail(user.getEmail(), user.getName(), code);
             log.info("Código 2FA enviado exitosamente al correo: {}", user.getEmail());
         } catch (Exception e) {
-            log.warn("No se pudo conectar al servidor de correo para enviar a {}: {}. Código 2FA disponible para pruebas: [{}]",
-                    user.getEmail(), e.getMessage(), code);
+            if (environment != null && environment.acceptsProfiles(Profiles.of("dev"))) {
+                log.warn("No se pudo enviar el correo 2FA a {} ({}). Código 2FA [dev]: [{}]",
+                        user.getEmail(), e.getMessage(), code);
+            } else {
+                log.warn("No se pudo conectar al servidor de correo para enviar código 2FA a {}: {}",
+                        user.getEmail(), e.getMessage());
+            }
         }
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean verifyCode(User user, String code) {
         return tokenRepository.findTopByUserAndUsedFalseOrderByCreatedAtDesc(user)
                 .map(token -> {
                     if (token.isExpired()) {
                         log.warn("Código 2FA expirado para: {}", user.getEmail());
+                        token.setUsed(true);
+                        tokenRepository.save(token);
                         return false;
                     }
                     if (!token.getCode().equals(code)) {
-                        log.warn("Código 2FA incorrecto para: {}", user.getEmail());
+                        int nuevosIntentos = token.getAttempts() + 1;
+                        token.setAttempts(nuevosIntentos);
+                        if (nuevosIntentos >= MAX_ATTEMPTS_PER_CODE) {
+                            token.setUsed(true);
+                            log.warn("Código 2FA invalidado por superar {} intentos fallidos para: {}",
+                                    MAX_ATTEMPTS_PER_CODE, user.getEmail());
+                        } else {
+                            log.warn("Código 2FA incorrecto ({}/{}) para: {}",
+                                    nuevosIntentos, MAX_ATTEMPTS_PER_CODE, user.getEmail());
+                        }
+                        tokenRepository.save(token);
                         return false;
                     }
                     token.setUsed(true);

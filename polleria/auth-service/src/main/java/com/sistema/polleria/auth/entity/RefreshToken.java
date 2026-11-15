@@ -37,6 +37,9 @@ public class RefreshToken {
     @Column(length = 128)
     private String replacedByToken;
 
+    @Column(name = "rotated_at")
+    private Instant rotatedAt;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

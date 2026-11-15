@@ -19,6 +19,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RefreshTokenService {
 
+    private static final long GRACE_PERIOD_SECONDS = 10L;
+
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
 
@@ -39,13 +41,22 @@ public class RefreshTokenService {
 
     @Transactional
     public AuthResponse rotateRefreshToken(String requestRefreshToken) {
-        RefreshToken existingToken = refreshTokenRepository.findByToken(requestRefreshToken)
+        RefreshToken existingToken = refreshTokenRepository.findByTokenForUpdate(requestRefreshToken)
                 .orElseThrow(() -> new TokenRefreshException("Refresh token no encontrado o inválido"));
 
         User user = existingToken.getUser();
 
-        // 1. Detección de Ataque de Reuso (Token Reuse Attack Detection)
+        // 1. Detección de reuso con período de gracia corto para llamadas concurrentes entre pestañas
         if (existingToken.isRevoked()) {
+            if (dentroDePeriodoDeGracia(existingToken)) {
+                RefreshToken reemplazo = refreshTokenRepository.findByToken(existingToken.getReplacedByToken())
+                        .filter(t -> !t.isRevoked() && !t.isExpired())
+                        .orElseThrow(() -> new TokenRefreshException("El refresh token ya fue utilizado"));
+                String newAccessToken = jwtService.generateToken(user);
+                log.debug("Refresh concurrente dentro del período de gracia para usuario: {}", user.getEmail());
+                return buildAuthResponse(user, newAccessToken, reemplazo.getToken());
+            }
+
             log.error("ALERTA DE SEGURIDAD: Intento de reuso de Refresh Token para el usuario {}. Revocando toda la cadena de sesiones.", user.getEmail());
             refreshTokenRepository.revokeAllUserTokens(user);
             throw new TokenRefreshException("Alerta de seguridad: Este refresh token ya fue utilizado. Por precaución, todas tus sesiones han sido finalizadas.");
@@ -60,6 +71,7 @@ public class RefreshTokenService {
 
         // 3. Rotación: Invalida el anterior y genera el nuevo token
         existingToken.setRevoked(true);
+        existingToken.setRotatedAt(Instant.now());
         RefreshToken newToken = createRefreshToken(user);
         existingToken.setReplacedByToken(newToken.getToken());
         refreshTokenRepository.save(existingToken);
@@ -68,9 +80,19 @@ public class RefreshTokenService {
         String newAccessToken = jwtService.generateToken(user);
         log.info("Refresh Token rotado exitosamente para el usuario: {}", user.getEmail());
 
+        return buildAuthResponse(user, newAccessToken, newToken.getToken());
+    }
+
+    private boolean dentroDePeriodoDeGracia(RefreshToken existingToken) {
+        return existingToken.getReplacedByToken() != null
+                && existingToken.getRotatedAt() != null
+                && Instant.now().isBefore(existingToken.getRotatedAt().plusSeconds(GRACE_PERIOD_SECONDS));
+    }
+
+    private AuthResponse buildAuthResponse(User user, String accessToken, String refreshToken) {
         return AuthResponse.builder()
-                .token(newAccessToken)
-                .refreshToken(newToken.getToken())
+                .token(accessToken)
+                .refreshToken(refreshToken)
                 .tokenType("Bearer")
                 .expiresIn(jwtService.getExpirationMs())
                 .name(user.getName())
