@@ -28,7 +28,7 @@ public class OrdenesClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record OrdenTotal(Long id, BigDecimal total) {
+    record OrdenTotal(Long id, BigDecimal total, String estado) {
     }
 
     public static class OrdenesNoDisponibleException extends RuntimeException {
@@ -38,6 +38,21 @@ public class OrdenesClient {
     }
 
     public BigDecimal obtenerTotal(Long ordenId) {
+        OrdenTotal orden = consultarOrden(ordenId);
+        if (orden.total() == null) {
+            throw new OrdenesNoDisponibleException("orders-service no devolvió el total de la orden " + ordenId, null);
+        }
+        return orden.total();
+    }
+
+    public void validarOrdenEmitible(Long ordenId) {
+        OrdenTotal orden = consultarOrden(ordenId);
+        if ("CANCELADO".equalsIgnoreCase(orden.estado())) {
+            throw new IllegalStateException("No se puede emitir comprobante para un pedido cancelado (orden #" + ordenId + ")");
+        }
+    }
+
+    private OrdenTotal consultarOrden(Long ordenId) {
         try {
             OrdenTotal orden = restClient.get().uri("/ordenes/{id}", ordenId)
                     .headers(h -> {
@@ -50,10 +65,10 @@ public class OrdenesClient {
                         throw new NoSuchElementException("Orden no encontrada: " + ordenId);
                     })
                     .body(OrdenTotal.class);
-            if (orden == null || orden.total() == null) {
-                throw new OrdenesNoDisponibleException("orders-service no devolvió el total de la orden " + ordenId, null);
+            if (orden == null) {
+                throw new OrdenesNoDisponibleException("orders-service no devolvió datos de la orden " + ordenId, null);
             }
-            return orden.total();
+            return orden;
         } catch (NoSuchElementException | OrdenesNoDisponibleException e) {
             throw e;
         } catch (Exception e) {

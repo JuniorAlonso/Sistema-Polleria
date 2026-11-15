@@ -29,7 +29,7 @@ public class RegistradorIngresoCaja {
     private final MovimientoCajaRepository movimientoRepository;
 
     public void registrar(Long ordenId, BigDecimal monto, String motivo, Long usuarioId) {
-        ArqueoCaja caja = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+        ArqueoCaja caja = arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new IllegalStateException(
                         "No hay una caja abierta: abre la caja antes de registrar un cobro en efectivo"));
 

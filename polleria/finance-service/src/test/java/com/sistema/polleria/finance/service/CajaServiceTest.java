@@ -46,7 +46,7 @@ class CajaServiceTest {
     @Test
     @DisplayName("Debe abrir la caja correctamente cuando no hay otra caja abierta")
     void abrirCaja_exitoso() {
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.empty());
 
         when(arqueoRepository.saveAndFlush(any(ArqueoCaja.class))).thenAnswer(inv -> {
@@ -73,7 +73,7 @@ class CajaServiceTest {
     @DisplayName("Debe rechazar la apertura si ya existe una caja abierta")
     void abrirCaja_fallaSiYaExisteAbierta() {
         ArqueoCaja abierta = ArqueoCaja.builder().id(99L).estado(EstadoCaja.ABIERTA).build();
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.of(abierta));
 
         AperturaCajaRequest req = AperturaCajaRequest.builder()
@@ -90,7 +90,7 @@ class CajaServiceTest {
     @Test
     @DisplayName("R3.1: una apertura simultánea que pierde contra el índice único responde 409, no 500")
     void abrirCaja_aperturaSimultaneaRespondeConflicto() {
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.empty());
         when(arqueoRepository.saveAndFlush(any(ArqueoCaja.class)))
                 .thenThrow(new DataIntegrityViolationException("uq_arqueos_caja_abierta"));
@@ -106,7 +106,7 @@ class CajaServiceTest {
     @DisplayName("Debe registrar un movimiento de caja chica vinculado al arqueo activo")
     void registrarMovimiento_exitoso() {
         ArqueoCaja activa = ArqueoCaja.builder().id(1L).estado(EstadoCaja.ABIERTA).build();
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.of(activa));
 
         when(movimientoRepository.save(any(MovimientoCaja.class))).thenAnswer(inv -> {
@@ -140,7 +140,7 @@ class CajaServiceTest {
                 .fechaApertura(LocalDateTime.now())
                 .build();
 
-        when(arqueoRepository.findById(1L)).thenReturn(Optional.of(activa));
+        when(arqueoRepository.findByIdParaActualizar(1L)).thenReturn(Optional.of(activa));
 
         // Ingresos extras en caja chica: 50.00
         MovimientoCaja ing = MovimientoCaja.builder().monto(new BigDecimal("50.00")).tipo(TipoMovimiento.INGRESO).build();
@@ -202,7 +202,7 @@ class CajaServiceTest {
                 .estado(EstadoCaja.ABIERTA)
                 .fechaApertura(LocalDateTime.now())
                 .build();
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.of(activa));
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.of(activa));
         when(movimientoRepository.findByArqueoIdAndTipo(1L, TipoMovimiento.INGRESO))
                 .thenReturn(List.of(MovimientoCaja.builder().monto(new BigDecimal("50.00")).build()));
         when(movimientoRepository.findByArqueoIdAndTipo(1L, TipoMovimiento.EGRESO))
@@ -263,7 +263,7 @@ class CajaServiceTest {
     }
 
     private void cajaAbiertaDiez() {
-        when(arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.of(ArqueoCaja.builder().id(10L).estado(EstadoCaja.ABIERTA).build()));
     }
 

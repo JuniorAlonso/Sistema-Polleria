@@ -25,7 +25,7 @@ class RegistradorIngresoCajaTest {
     private final RegistradorIngresoCaja registrador = new RegistradorIngresoCaja(arqueos, movimientos);
 
     private void cajaAbierta(long id) {
-        when(arqueos.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueos.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.of(ArqueoCaja.builder().id(id).montoApertura(BigDecimal.TEN).build()));
     }
 
@@ -71,7 +71,7 @@ class RegistradorIngresoCajaTest {
 
     @Test
     void sinCajaAbiertaRespondeConflicto() {
-        when(arqueos.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.empty());
+        when(arqueos.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> registrador.registrar(55L, BigDecimal.TEN, "Venta", 9L))
                 .isInstanceOf(IllegalStateException.class)

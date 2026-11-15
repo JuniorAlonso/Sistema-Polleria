@@ -66,7 +66,10 @@ public class LiquidacionController {
 
     @GetMapping("/repartidor/{repartidorId}")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'CAJERO', 'REPARTIDOR')")
-    public ResponseEntity<List<LiquidacionResponse>> listarPorRepartidor(@PathVariable Long repartidorId) {
+    public ResponseEntity<List<LiquidacionResponse>> listarPorRepartidor(
+            @PathVariable Long repartidorId,
+            Authentication authentication) {
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar sus propias liquidaciones");
         return ResponseEntity.ok(liquidacionService.listarPorRepartidor(repartidorId));
     }
 
@@ -76,12 +79,7 @@ public class LiquidacionController {
     public ResponseEntity<List<CobroRepartidorResponse>> listarCobrosPorRepartidor(
             @PathVariable Long repartidorId,
             Authentication authentication) {
-        boolean staff = authentication.getAuthorities().stream()
-                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
-        if (!staff && !repartidorId.equals(UsuarioAutenticado.id(authentication))) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Un repartidor solo puede consultar sus propios cobros");
-        }
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar sus propios cobros");
         return ResponseEntity.ok(liquidacionService.listarCobrosPorRepartidor(repartidorId));
     }
 
@@ -92,13 +90,16 @@ public class LiquidacionController {
             @PathVariable Long repartidorId,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        boolean staff = authentication.getAuthorities().stream()
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar su propio efectivo");
+        return ResponseEntity.ok(liquidacionService.efectivoPendiente(repartidorId, authorization));
+    }
+
+    private static void validarAccesoRepartidor(Long repartidorId, Authentication authentication, String mensaje) {
+        boolean staff = authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
         if (!staff && !repartidorId.equals(UsuarioAutenticado.id(authentication))) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Un repartidor solo puede consultar su propio efectivo");
+            throw new org.springframework.security.access.AccessDeniedException(mensaje);
         }
-        return ResponseEntity.ok(liquidacionService.efectivoPendiente(repartidorId, authorization));
     }
 
     @GetMapping("/abiertas")

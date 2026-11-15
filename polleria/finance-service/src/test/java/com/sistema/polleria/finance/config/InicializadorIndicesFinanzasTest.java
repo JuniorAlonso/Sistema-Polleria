@@ -16,18 +16,21 @@ import static org.mockito.Mockito.*;
 class InicializadorIndicesFinanzasTest {
 
     @Test
-    void creaLosTresIndicesUnicosDeFinanzas() {
+    void creaLosIndicesUnicosDeFinanzas() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
 
         new InicializadorIndicesFinanzas(jdbc).run(null);
 
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-        verify(jdbc, times(5)).execute(sql.capture());
+        verify(jdbc, times(14)).execute(sql.capture());
         List<String> sentencias = sql.getAllValues();
         assertThat(sentencias).anySatisfy(s -> assertThat(s)
                 .contains("uq_comprobantes_orden_id").contains("comprobantes_pago (orden_id)"));
         assertThat(sentencias).anySatisfy(s -> assertThat(s)
                 .contains("uq_arqueos_caja_abierta").contains("WHERE estado = 'ABIERTA'"));
+        assertThat(sentencias).anySatisfy(s -> assertThat(s)
+                .contains("uq_liquidacion_abierta_repartidor").contains("liquidaciones_repartidores (repartidor_id)")
+                .contains("WHERE estado = 'ABIERTA'"));
         assertThat(sentencias).anySatisfy(s -> assertThat(s)
                 .contains("uq_movimientos_ingreso_orden")
                 .contains("WHERE orden_id IS NOT NULL AND tipo = 'INGRESO'"));
@@ -51,6 +54,18 @@ class InicializadorIndicesFinanzasTest {
     }
 
     @Test
+    void omiteAlterTableCuandoLosChecksYaContienenTodosLosValores() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<String>>any(), any(), any()))
+                .thenReturn(List.of("CHECK (col IS NULL OR col IN ('VENTA','FONDO_REPARTIDOR','RENDICION_REPARTIDOR','MANUAL','DEVOLUCION','INGRESO','EGRESO','ABIERTA','CERRADA','DISCREPANCIA','BOLETA','FACTURA'))"));
+
+        new InicializadorIndicesFinanzas(jdbc).run(null);
+
+        verify(jdbc, times(9)).execute(anyString());
+        verify(jdbc, never()).execute(contains("ALTER TABLE"));
+    }
+
+    @Test
     void unIndiceQueFallaPorDuplicadosNoDetieneElArranqueNiLosDemas() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         doThrow(new DataIntegrityViolationException("could not create unique index"))
@@ -58,6 +73,6 @@ class InicializadorIndicesFinanzasTest {
 
         assertThatCode(() -> new InicializadorIndicesFinanzas(jdbc).run(null)).doesNotThrowAnyException();
 
-        verify(jdbc, times(5)).execute(anyString());
+        verify(jdbc, times(14)).execute(anyString());
     }
 }

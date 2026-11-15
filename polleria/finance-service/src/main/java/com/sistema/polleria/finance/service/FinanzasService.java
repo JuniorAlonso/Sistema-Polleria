@@ -19,7 +19,9 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -45,6 +47,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FinanzasService {
 
+    private static final ZoneId ZONA_LIMA = ZoneId.of("America/Lima");
+    private static final String PREFIJO_CONTRA_ENTREGA = "COBRAR EN EFECTIVO";
     private static final Set<CategoriaMovimiento> NO_SON_VENTA =
             Set.of(CategoriaMovimiento.FONDO_REPARTIDOR, CategoriaMovimiento.MANUAL);
 
@@ -55,7 +59,7 @@ public class FinanzasService {
     @Transactional(readOnly = true)
     public BalanceDiarioResponse obtenerBalanceDiario(LocalDate fecha) {
         if (fecha == null) {
-            fecha = LocalDate.now();
+            fecha = LocalDate.now(ZONA_LIMA);
         }
         LocalDateTime inicio = fecha.atStartOfDay();
         LocalDateTime fin = fecha.atTime(LocalTime.MAX);
@@ -72,17 +76,23 @@ public class FinanzasService {
         BigDecimal reembolsos = sumar(movimientos, m -> m.getTipo() == TipoMovimiento.EGRESO
                 && m.getCategoria() == CategoriaMovimiento.DEVOLUCION);
 
+        List<ComprobantePago> comprobantesActivos = comprobantes.stream()
+                .filter(c -> !Boolean.TRUE.equals(c.getAnulado()))
+                .toList();
+
         Set<Long> ordenesEnEfectivo = movimientos.stream()
                 .filter(m -> m.getTipo() == TipoMovimiento.INGRESO && m.getCategoria() == CategoriaMovimiento.VENTA)
                 .map(MovimientoCaja::getOrdenId).filter(Objects::nonNull).collect(Collectors.toSet());
-        BigDecimal totalComprobantes = sumarComprobantes(comprobantes, c -> true);
-        BigDecimal comprobantesNoEfectivo = sumarComprobantes(comprobantes, c -> !ordenesEnEfectivo.contains(c.getOrdenId()));
+        BigDecimal totalComprobantes = sumarComprobantes(comprobantesActivos, c -> true);
+        // Contra entrega receipts carry "COBRAR EN EFECTIVO..." and are already accounted as RENDICION_REPARTIDOR.
+        BigDecimal comprobantesNoEfectivo = sumarComprobantes(comprobantesActivos,
+                c -> !ordenesEnEfectivo.contains(c.getOrdenId()) && !esContraEntregaPorCobrar(c));
         BigDecimal posFisico = arqueos.stream().map(ArqueoCaja::getMontoCierrePos)
                 .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal digital = comprobantesNoEfectivo.subtract(posFisico).max(BigDecimal.ZERO);
         BigDecimal totalVentas = efectivo.add(posFisico).add(digital);
 
-        int ordenes = comprobantes.size();
+        int ordenes = comprobantesActivos.size();
         BigDecimal ticketPromedio = ordenes > 0
                 ? totalComprobantes.divide(BigDecimal.valueOf(ordenes), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
@@ -106,6 +116,11 @@ public class FinanzasService {
                 .ordenesAtendidas(ordenes)
                 .ticketPromedio(ticketPromedio)
                 .build();
+    }
+
+    private static boolean esContraEntregaPorCobrar(ComprobantePago c) {
+        String estado = c.getEstadoPagoTexto();
+        return estado != null && estado.trim().toUpperCase(Locale.ROOT).startsWith(PREFIJO_CONTRA_ENTREGA);
     }
 
     private static BigDecimal sumarComprobantes(List<ComprobantePago> comprobantes, Predicate<ComprobantePago> filtro) {

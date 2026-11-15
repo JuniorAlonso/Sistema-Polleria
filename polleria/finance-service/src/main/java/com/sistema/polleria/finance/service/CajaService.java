@@ -14,6 +14,7 @@ import com.sistema.polleria.finance.repository.MovimientoCajaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,7 +33,7 @@ public class CajaService {
 
     @Transactional
     public ArqueoCajaResponse abrirCaja(AperturaCajaRequest req, Long usuarioId) {
-        arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+        arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .ifPresent(a -> {
                     throw new IllegalStateException("Ya existe una caja abierta (ID #" + a.getId() + "). Debe cerrarse antes de una nueva apertura.");
                 });
@@ -86,7 +87,7 @@ public class CajaService {
             throw new IllegalArgumentException("Una devolución es un EGRESO y debe indicar su reclamo");
         }
 
-        ArqueoCaja actual = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+        ArqueoCaja actual = arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new IllegalStateException("No hay una caja abierta para registrar movimientos"));
 
         MovimientoCaja movimiento = MovimientoCaja.builder()
@@ -131,8 +132,8 @@ public class CajaService {
     @Transactional
     public ArqueoCajaResponse cerrarCaja(Long arqueoId, CierreCajaRequest req, Long usuarioId) {
         ArqueoCaja arqueo = (arqueoId != null)
-                ? arqueoRepository.findById(arqueoId).orElseThrow(() -> new NoSuchElementException("Arqueo no encontrado: " + arqueoId))
-                : arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+                ? arqueoRepository.findByIdParaActualizar(arqueoId).orElseThrow(() -> new NoSuchElementException("Arqueo no encontrado: " + arqueoId))
+                : arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new NoSuchElementException("No hay ninguna caja abierta para cerrar"));
 
         if (arqueo.getEstado() == EstadoCaja.CERRADA) {
@@ -176,7 +177,7 @@ public class CajaService {
     }
 
     public List<ArqueoCajaResponse> listarHistorial() {
-        return arqueoRepository.findAllByOrderByFechaAperturaDesc()
+        return arqueoRepository.findAllByOrderByFechaAperturaDesc(PageRequest.of(0, 500))
                 .stream().map(ArqueoCajaResponse::from).toList();
     }
 }
