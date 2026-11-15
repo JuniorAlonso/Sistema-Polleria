@@ -141,6 +141,7 @@ public class MercadoPagoGateway implements PaymentGateway {
         orderPayload.put("total_amount", formattedAmount);
         orderPayload.put("description", "Pedido #" + request.ordenId() + " - El San Pollo");
         orderPayload.put("external_reference", String.valueOf(pago.getId()));
+        orderPayload.put("expiration_time", "PT13M");
         orderPayload.put("payer", Map.of("email", "cliente" + (clienteId != null ? clienteId : "anonimo") + "@polleria.pe"));
         orderPayload.put("items", List.of(itemMap));
         orderPayload.put("config", Map.of("online", onlineConfig));
@@ -155,6 +156,7 @@ public class MercadoPagoGateway implements PaymentGateway {
 
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.mercadopago.com/v1/orders"))
+                    .timeout(Duration.ofSeconds(10))
                     .header("Authorization", "Bearer " + token)
                     .header("X-Idempotency-Key", idempotencyKey)
                     .header("Content-Type", "application/json")
@@ -198,32 +200,42 @@ public class MercadoPagoGateway implements PaymentGateway {
     }
 
     public boolean esPagoMercadoPago(Pago pago) {
-        if (pago == null) return false;
+        if (pago == null || pago.getMetodoPago() == com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA) {
+            return false;
+        }
+        String mpPaymentId = pago.getMpPaymentId();
+        if (mpPaymentId != null && mpPaymentId.matches("^\\d+$")) {
+            return true;
+        }
         String ref = pago.getReferenciaExterna();
         String detalle = pago.getDetalle();
-        // D4.6: ref.contains("-") gave false positives (UUIDs, tickets). Only Mercado Pago patterns:
-        // MP-<payment id>, a bare payment id, or an Orders API id (ORD...).
-        return (ref != null && (ref.matches("^MP-\\d+$") || ref.matches("^\\d+$") || ref.startsWith("ORD")))
+        // DIN-11: nunca aceptar referencias numéricas libres escritas por cajero como ID de MP.
+        return (ref != null && (ref.matches("^MP-\\d+$") || ref.startsWith("ORD")))
                 || (detalle != null && detalle.toLowerCase().contains("mercado pago"));
     }
 
     public void procesarReembolso(Pago pago, BigDecimal monto) {
         log.info("Procesando reembolso en Mercado Pago para pagoId={}, ordenId={}", pago.getId(), pago.getOrdenId());
-        String ref = pago.getReferenciaExterna();
-        if (ref == null || ref.isBlank()) {
-            log.warn("El pago ID={} no cuenta con referencia de Mercado Pago", pago.getId());
+        if (pago.getMetodoPago() == com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA) {
             return;
         }
 
         Long mpPaymentId = null;
+        String storedMpId = pago.getMpPaymentId();
+        String ref = pago.getReferenciaExterna();
         try {
-            if (ref.startsWith("MP-")) {
+            if (storedMpId != null && storedMpId.matches("^\\d+$")) {
+                mpPaymentId = Long.parseLong(storedMpId.trim());
+            } else if (ref != null && ref.matches("^MP-\\d+$")) {
                 mpPaymentId = Long.parseLong(ref.substring(3).trim());
-            } else if (ref.matches("^\\d+$")) {
-                mpPaymentId = Long.parseLong(ref.trim());
             }
         } catch (NumberFormatException e) {
             log.warn("No se pudo extraer el ID numérico de Mercado Pago de '{}': {}", ref, e.getMessage());
+        }
+
+        if (mpPaymentId == null && (ref == null || ref.isBlank())) {
+            log.warn("El pago ID={} no cuenta con ID verificado de Mercado Pago", pago.getId());
+            return;
         }
 
         if (mpPaymentId != null) {

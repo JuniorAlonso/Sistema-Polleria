@@ -81,13 +81,6 @@
             <version>8.5.17</version>
         </dependency>
 
-        <!-- H2 — base de datos en memoria para desarrollo local (profile=local) -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -35,6 +35,12 @@ public class SecurityConfig {
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
+    @Value("${app.cors.allow-loopback:false}")
+    private boolean allowLoopback;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.core.env.Environment environment;
+
     /**
      * Clave compartida entre microservicios. En despliegue la resuelve la variable de entorno
      * {@code INTERNAL_API_KEY} (relaxed binding) y no tiene valor por defecto: sin ella, el
@@ -48,23 +54,30 @@ public class SecurityConfig {
     static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
     static final String LOOPBACK_IPV6 = "http://[::1]:[*]";
 
-    /**
-     * Orígenes CORS: los configurados más cualquier puerto de loopback. El panel corre en la misma
-     * máquina que el servicio y `ng serve` cambia de puerto cuando 4200 está ocupado (o el usuario abre
-     * la app por 127.0.0.1 / [::1]). Con la lista exacta el preflight respondía 403 sin
-     * `Access-Control-Allow-Origin`, el navegador no enviaba la petición y el login nunca llegaba al
-     * backend. Un origen externo sigue sin habilitarse.
-     */
     static List<String> origenesPermitidos(String configurados) {
+        return origenesPermitidos(configurados, true);
+    }
+
+    static List<String> origenesPermitidos(String configurados, boolean incluirLoopback) {
         List<String> origenes = new ArrayList<>(Arrays.stream(configurados.split(","))
                 .map(String::trim)
                 .map(o -> o.replaceAll("/+$", ""))
                 .filter(o -> !o.isEmpty())
                 .toList());
-        origenes.add(LOOPBACK_LOCALHOST);
-        origenes.add(LOOPBACK_IPV4);
-        origenes.add(LOOPBACK_IPV6);
+        if (incluirLoopback) {
+            origenes.add(LOOPBACK_LOCALHOST);
+            origenes.add(LOOPBACK_IPV4);
+            origenes.add(LOOPBACK_IPV6);
+        }
         return origenes;
+    }
+
+    private boolean debeIncluirLoopback() {
+        if (allowLoopback) {
+            return true;
+        }
+        return environment != null && environment.acceptsProfiles(
+                org.springframework.core.env.Profiles.of("local", "dev", "test"));
     }
 
     @Bean
@@ -88,6 +101,7 @@ public class SecurityConfig {
                 .contentTypeOptions(contentType -> {})
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(new ClaveInternaFilter(internalApiKey), JwtAuthFilter.class)
             .build();
     }
 
@@ -121,7 +135,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsSource() {
         CorsConfiguration cfg = new CorsConfiguration();
-        List<String> origins = origenesPermitidos(allowedOrigins);
+        List<String> origins = origenesPermitidos(allowedOrigins, debeIncluirLoopback());
         cfg.setAllowedOriginPatterns(origins);
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));

@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentGatewayServiceTest {
@@ -49,15 +50,31 @@ class PaymentGatewayServiceTest {
     }
 
     @Test
-    @DisplayName("Debe seleccionar TarjetaGateway mock cuando token MP está vacío")
+    @DisplayName("Debe seleccionar TarjetaGateway mock solo cuando mockGatewaysEnabled=true y token MP está vacío")
     void seleccionar_tarjetaMockFallback() {
         PaymentGatewayService service = new PaymentGatewayService(
                 contraentregaGateway, tarjetaMockGateway, yapePlinMockGateway, mercadoPagoGateway
         );
         ReflectionTestUtils.setField(service, "mpAccessToken", "");
+        ReflectionTestUtils.setField(service, "mockGatewaysEnabled", true);
 
         PaymentGateway result = service.seleccionar(MetodoPago.TARJETA);
         assertThat(result).isSameAs(tarjetaMockGateway);
+    }
+
+    @Test
+    @DisplayName("SEC-04: falla cerrado en producción para TARJETA/YAPE_PLIN si no hay token MP ni mock habilitado")
+    void seleccionar_sinTokenNiMock_fallaCerrado() {
+        PaymentGatewayService service = new PaymentGatewayService(
+                contraentregaGateway, tarjetaMockGateway, yapePlinMockGateway, mercadoPagoGateway
+        );
+        ReflectionTestUtils.setField(service, "mpAccessToken", "");
+        ReflectionTestUtils.setField(service, "mockGatewaysEnabled", false);
+
+        assertThatThrownBy(() -> service.seleccionar(MetodoPago.TARJETA))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.seleccionar(MetodoPago.YAPE_PLIN))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -73,12 +90,13 @@ class PaymentGatewayServiceTest {
     }
 
     @Test
-    @DisplayName("Debe seleccionar YapePlinGateway mock cuando token MP está vacío")
+    @DisplayName("Debe seleccionar YapePlinGateway mock solo cuando mockGatewaysEnabled=true y token MP está vacío")
     void seleccionar_yapeMockFallback() {
         PaymentGatewayService service = new PaymentGatewayService(
                 contraentregaGateway, tarjetaMockGateway, yapePlinMockGateway, mercadoPagoGateway
         );
         ReflectionTestUtils.setField(service, "mpAccessToken", null);
+        ReflectionTestUtils.setField(service, "mockGatewaysEnabled", true);
 
         PaymentGateway result = service.seleccionar(MetodoPago.YAPE_PLIN);
         assertThat(result).isSameAs(yapePlinMockGateway);

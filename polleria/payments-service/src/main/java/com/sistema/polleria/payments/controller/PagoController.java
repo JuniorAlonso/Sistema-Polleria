@@ -250,7 +250,7 @@ public class PagoController {
 
     /** Pago asociado a una orden */
     @GetMapping("/orden/{ordenId}")
-    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO')")
+    @PreAuthorize("hasAnyAuthority('CLIENTE','MOZO','ADMIN','REPARTIDOR','CAJERO','INTERNAL')")
     public PagoResponse porOrden(@PathVariable Long ordenId, Authentication authentication) {
         PagoResponse pago = pagoService.obtenerPorOrden(ordenId);
         autorizacionPago.verificarLectura(pago, authentication);
@@ -268,53 +268,56 @@ public class PagoController {
 
     /**
      * Pagos — ADMIN / CAJERO. Con {@code ?estado=PENDIENTE_VERIFICACION} es la
-     * bandeja del cajero;
-     * incluye la URL firmada de la captura para renderizarla.
+     * bandeja del cajero; admite filtrado opcional por {@code fecha} (America/Lima) y {@code limit}.
      */
     @GetMapping
     @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
     public List<PagoResponse> todos(
             @RequestParam(value = "estado", required = false) com.sistema.polleria.payments.entity.EstadoPago estado,
+            @RequestParam(value = "fecha", required = false) java.time.LocalDate fecha,
+            @RequestParam(value = "limit", required = false) Integer limit,
             Authentication authentication) {
-        return pagoService.todos(estado).stream()
+        return pagoService.todos(estado, fecha, limit).stream()
                 .map(pago -> conComprobanteSegunRol(pago, authentication))
                 .toList();
     }
 
     /**
-     * Confirmar pago manualmente o vía webhook de la pasarela.
-     * Protegido con JWT; el endpoint webhook (/pagos/webhook/**) es público
-     * y debe validar un HMAC-secret propio de la pasarela (implementación futura).
+     * Confirmar pago manualmente (ADMIN o CAJERO en caja).
      */
     @PatchMapping("/{id}/confirmar")
-    @PreAuthorize("hasAnyAuthority('ADMIN','REPARTIDOR','CAJERO')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO')")
     public PagoResponse confirmar(
             @PathVariable Long id,
             @Valid @RequestBody ConfirmarPagoRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         validadorMontoPago.validarConfirmacion(pagoService.obtener(id));
+        // Nunca confiar en un mpPaymentId inyectado desde el cliente HTTP público/cajero (DIN-11).
         return soloAdminVeElComprobante(
-                pagoService.confirmar(id, req, authorization != null ? authorization : ""),
+                pagoService.confirmar(id, req.sinMpPaymentId(), authorization != null ? authorization : ""),
                 authentication);
     }
 
-    /** Cancelar pago */
+    /** Cancelar pago — exige dueño de la orden o personal (SEC-03) */
     @PatchMapping("/{id}/cancelar")
-    @PreAuthorize("hasAnyAuthority('ADMIN','CLIENTE')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','CLIENTE')")
     public PagoResponse cancelar(@PathVariable Long id, Authentication authentication) {
+        PagoResponse actual = pagoService.obtener(id);
+        autorizacionPago.verificarLectura(actual, authentication);
         return soloAdminVeElComprobante(pagoService.cancelar(id), authentication);
     }
 
-    /** Reembolsar pago — solo ADMIN o microservicios autorizados */
+    /** Reembolsar pago — solo ADMIN */
     @PostMapping("/{id}/reembolso")
     @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
     public PagoResponse reembolsar(
             @PathVariable Long id,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody(required = false) com.sistema.polleria.payments.dto.ReembolsoRequest request) {
         java.math.BigDecimal monto = request != null ? request.monto() : null;
         String motivo = request != null ? request.motivo() : null;
-        return pagoService.reembolsar(id, monto, motivo);
+        return pagoService.reembolsar(id, monto, motivo, idempotencyKey);
     }
 
     /** Reembolsar pago por orden ID */
@@ -322,10 +325,11 @@ public class PagoController {
     @PreAuthorize("hasAnyAuthority('ADMIN','ROLE_ADMIN')")
     public PagoResponse reembolsarPorOrden(
             @PathVariable Long ordenId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody(required = false) com.sistema.polleria.payments.dto.ReembolsoRequest request) {
         java.math.BigDecimal monto = request != null ? request.monto() : null;
         String motivo = request != null ? request.motivo() : null;
-        return pagoService.reembolsarPorOrden(ordenId, monto, motivo);
+        return pagoService.reembolsarPorOrden(ordenId, monto, motivo, idempotencyKey);
     }
 
     // ─── util ────────────────────────────────────────────────────────

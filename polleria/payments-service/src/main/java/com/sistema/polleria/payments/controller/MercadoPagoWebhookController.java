@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.*;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
@@ -31,6 +33,9 @@ public class MercadoPagoWebhookController {
     @Value("${mercadopago.webhook.secret:}")
     private String webhookSecret;
 
+    @Value("${mercadopago.sandbox:true}")
+    private boolean sandbox = true;
+
     @RequestMapping(value = "/mercadopago", method = {RequestMethod.POST, RequestMethod.GET})
     public ResponseEntity<Void> handleWebhook(
             @RequestHeader(value = "x-signature", required = false) String xSignature,
@@ -41,8 +46,8 @@ public class MercadoPagoWebhookController {
             @RequestParam(value = "data.id", required = false) String dataId,
             @RequestBody(required = false) Map<String, Object> body) {
 
-        log.info("Webhook recibido de Mercado Pago: type={}, topic={}, id={}, data.id={}, body={}",
-                type, topic, paramId, dataId, body);
+        log.info("Webhook recibido de Mercado Pago: type={}, topic={}, id={}, data.id={}",
+                type, topic, paramId, dataId);
 
         String paymentId = resolvePaymentId(type, topic, paramId, dataId, body);
 
@@ -72,14 +77,24 @@ public class MercadoPagoWebhookController {
             }
             try {
                 pagoService.procesarRetornoMercadoPago(subPaymentId, null, dataMap.get("external_reference").toString().trim());
+                return ResponseEntity.ok().build();
+            } catch (IllegalArgumentException | java.util.NoSuchElementException ex) {
+                log.warn("Webhook Order con referencia no procesable ({}): {}", dataMap.get("external_reference"), ex.getMessage());
+                return ResponseEntity.ok().build();
             } catch (Exception ex) {
-                log.error("Error al verificar el webhook de Order: {}", ex.getMessage(), ex);
+                log.error("Error local al procesar webhook de Order (MP reintentará): {}", ex.getMessage(), ex);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
             }
-            return ResponseEntity.ok().build();
         }
 
         try {
             if (paymentId != null && paymentId.matches("\\d+")) {
+                String mpAccessToken = com.mercadopago.MercadoPagoConfig.getAccessToken();
+                if (sandbox && (mpAccessToken == null || mpAccessToken.isBlank())) {
+                    log.warn("Mercado Pago access token no configurado en sandbox; omitiendo consulta de paymentId={}",
+                            paymentId);
+                    return ResponseEntity.ok().build();
+                }
                 log.info("Consultando estado de pago en Mercado Pago para paymentId={}", paymentId);
                 PaymentClient client = new PaymentClient();
                 Payment payment = client.get(Long.parseLong(paymentId));
@@ -103,34 +118,55 @@ public class MercadoPagoWebhookController {
             } else {
                 log.info("No se identificó paymentId en el webhook recibido (puede ser evento de merchants u otro tipo)");
             }
+            return ResponseEntity.ok().build();
+        } catch (com.mercadopago.exceptions.MPApiException e) {
+            int status = e.getStatusCode();
+            if (status == 400 || status == 404) {
+                log.warn("Webhook Mercado Pago con recurso inválido/inexistente (paymentId={}, http={}): {}",
+                        paymentId, status, e.getMessage());
+                return ResponseEntity.ok().build();
+            }
+            log.error("Error transitorio en API de Mercado Pago (paymentId={}, http={}): {}",
+                    paymentId, status, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        } catch (IllegalArgumentException | java.util.NoSuchElementException e) {
+            log.warn("Webhook Mercado Pago no procesable (paymentId={}): {}", paymentId, e.getMessage());
+            return ResponseEntity.ok().build();
         } catch (Exception e) {
-            log.error("Error al procesar webhook de Mercado Pago: {}", e.getMessage(), e);
+            log.error("Error local al procesar webhook de Mercado Pago (MP reintentará): {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
-
-        // Responder siempre 200 OK a Mercado Pago para confirmar recepción
-        return ResponseEntity.ok().build();
     }
 
     /**
      * Applies a Mercado Pago payment status to our pago. A rejected or cancelled attempt does NOT
      * cancel the order (S7): the customer may retry with another card until the payment window
-     * ends, and the expiry scheduler cancels it if they never pay. Only a refund closes the order.
+     * ends, and the expiry scheduler cancels it if they never pay. Only a full refund closes the order.
      */
     void aplicarEstadoDePasarela(Pago pago, String status, String paymentId, String statusDetail,
                                  String paymentMethodId) {
         Long pagoId = pago.getId();
         switch (status) {
             case "approved" -> {
-                if (pago.getEstado() != EstadoPago.APROBADO) {
+                if (pago.getEstado() == EstadoPago.REEMBOLSADO || pago.getEstado() == EstadoPago.REEMBOLSADO_PARCIAL) {
+                    log.info("Ignorando webhook 'approved' para pago ID={} ya en estado {}", pagoId, pago.getEstado());
+                } else if (pago.getEstado() != EstadoPago.APROBADO) {
                     ConfirmarPagoRequest req = new ConfirmarPagoRequest(
                             "MP-" + paymentId,
-                            "Pago aprobado por Mercado Pago (Medio: " + paymentMethodId + ")"
+                            "Pago aprobado por Mercado Pago (Medio: " + paymentMethodId + ")",
+                            null,
+                            paymentId
                     );
                     pagoService.confirmar(pagoId, req, "");
                     log.info("Pago ID={} confirmado con éxito vía Webhook de Mercado Pago", pagoId);
                 } else {
                     log.info("El pago ID={} ya se encontraba aprobado previamente", pagoId);
                 }
+            }
+            case "partially_refunded" -> {
+                pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.REEMBOLSADO_PARCIAL,
+                        "Reembolso parcial informado por Mercado Pago (" + statusDetail + ")");
+                log.info("Pago ID={} marcado como REEMBOLSADO_PARCIAL por Mercado Pago", pagoId);
             }
             case "rejected" -> {
                 pagoService.actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO,
@@ -195,7 +231,11 @@ public class MercadoPagoWebhookController {
 
     private boolean esFirmaValida(String xSignature, String xRequestId, String paymentId) {
         if (webhookSecret == null || webhookSecret.isBlank()) {
-            return true; // En desarrollo o sin secret configurado se acepta
+            if (!sandbox) {
+                log.error("mercadopago.webhook.secret vacío con sandbox=false: webhook rechazado (fail-closed)");
+                return false;
+            }
+            return true; // En sandbox sin secret configurado se acepta
         }
         if (xSignature == null || xSignature.isBlank()) {
             log.warn("Webhook recibido sin cabecera x-signature");
@@ -215,7 +255,7 @@ public class MercadoPagoWebhookController {
             }
 
             if (ts == null || hashV1 == null) {
-                log.warn("Formato inválido de cabecera x-signature: {}", xSignature);
+                log.warn("Formato inválido de cabecera x-signature");
                 return false;
             }
 
@@ -231,9 +271,11 @@ public class MercadoPagoWebhookController {
                 hex.append(String.format("%02x", b));
             }
 
-            boolean valida = hex.toString().equalsIgnoreCase(hashV1);
+            boolean valida = MessageDigest.isEqual(
+                    hex.toString().getBytes(StandardCharsets.UTF_8),
+                    hashV1.trim().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
             if (!valida) {
-                log.warn("Firma HMAC de webhook no coincide. Recibido: {}, Calculado: {}", hashV1, hex);
+                log.warn("Firma HMAC de webhook no coincide");
             }
             return valida;
         } catch (Exception e) {

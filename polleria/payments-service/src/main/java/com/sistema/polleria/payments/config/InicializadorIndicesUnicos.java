@@ -1,24 +1,17 @@
 package com.sistema.polleria.payments.config;
 
-import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Un pago por orden, garantizado por la base de datos.
- *
- * {@code PagoService.iniciar()} comprueba primero si ya existe un pago para la orden, pero eso
- * es un check-then-act: dos peticiones concurrentes para la misma orden pasaban ambas la
- * comprobación y creaban dos pagos. El índice único es lo que realmente lo impide.
- *
- * No se aborta el arranque si hay datos heredados que lo violan: se registra el motivo y la
- * aplicación sigue funcionando con la comprobación de la aplicación como defensa principal.
+ * Un pago por orden y clave de idempotencia de reembolso, garantizados con JdbcTemplate por
+ * sentencia sin bloquear el arranque si hay datos heredados inconsistentes.
  */
 @Slf4j
 @Component
@@ -26,19 +19,30 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InicializadorIndicesUnicos implements ApplicationRunner {
 
-    private final EntityManager entityManager;
+    private final JdbcTemplate jdbc;
 
     @Override
-    @Transactional
     public void run(ApplicationArguments args) {
+        ejecutarSilencioso("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS mp_payment_id varchar(100)",
+                "columna pagos.mp_payment_id");
+        ejecutarSilencioso("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_reembolsado numeric(10,2) DEFAULT 0",
+                "columna pagos.monto_reembolsado");
+        ejecutarSilencioso("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS reembolso_idempotency_key varchar(120)",
+                "columna pagos.reembolso_idempotency_key");
+        ejecutarSilencioso("CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_orden_id ON pagos (orden_id)",
+                "índice único uq_pagos_orden_id");
+        ejecutarSilencioso(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_reembolso_idempotency_key "
+                        + "ON pagos (reembolso_idempotency_key) WHERE reembolso_idempotency_key IS NOT NULL",
+                "índice único uq_pagos_reembolso_idempotency_key");
+    }
+
+    private void ejecutarSilencioso(String sql, String descripcion) {
         try {
-            entityManager.createNativeQuery(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_orden_id ON pagos (orden_id)")
-                    .executeUpdate();
-            log.info("Índice único uq_pagos_orden_id verificado");
+            jdbc.execute(sql);
+            log.info("Esquema verificado: {}", descripcion);
         } catch (Exception e) {
-            log.warn("No se pudo crear el índice único uq_pagos_orden_id: {}. Revise si hay "
-                   + "órdenes con más de un pago registrado antes de reintentar.", e.getMessage());
+            log.warn("No se pudo aplicar {}: {}", descripcion, e.getMessage());
         }
     }
 }

@@ -20,7 +20,8 @@ public record PagoResponse(
     LocalDateTime actualizadoEn,
     String checkoutUrl,
     String comprobanteClave,
-    String comprobanteUrl
+    String comprobanteUrl,
+    BigDecimal montoReembolsado
 ) {
     public PagoResponse(
         Long id,
@@ -34,7 +35,26 @@ public record PagoResponse(
         LocalDateTime creadoEn,
         LocalDateTime actualizadoEn
     ) {
-        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn, null, null, null);
+        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn, null, null, null, BigDecimal.ZERO);
+    }
+
+    public PagoResponse(
+        Long id,
+        Long ordenId,
+        Long clienteId,
+        BigDecimal monto,
+        MetodoPago metodoPago,
+        EstadoPago estado,
+        String referenciaExterna,
+        String detalle,
+        LocalDateTime creadoEn,
+        LocalDateTime actualizadoEn,
+        String checkoutUrl,
+        String comprobanteClave,
+        String comprobanteUrl
+    ) {
+        this(id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle, creadoEn, actualizadoEn,
+                checkoutUrl, comprobanteClave, comprobanteUrl, BigDecimal.ZERO);
     }
 
     public static PagoResponse from(Pago p) {
@@ -51,7 +71,8 @@ public record PagoResponse(
             p.getActualizadoEn(),
             p.getCheckoutUrl(),
             p.getComprobanteClave(),
-            null
+            null,
+            p.getMontoReembolsadoSeguro()
         );
     }
 
@@ -62,7 +83,7 @@ public record PagoResponse(
     public PagoResponse conUrlComprobante(String url) {
         return new PagoResponse(
             id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle,
-            creadoEn, actualizadoEn, checkoutUrl, comprobanteClave, url
+            creadoEn, actualizadoEn, checkoutUrl, comprobanteClave, url, montoReembolsado
         );
     }
 
@@ -73,7 +94,7 @@ public record PagoResponse(
     public PagoResponse sinComprobante() {
         return new PagoResponse(
             id, ordenId, clienteId, monto, metodoPago, estado, referenciaExterna, detalle,
-            creadoEn, actualizadoEn, checkoutUrl, null, null
+            creadoEn, actualizadoEn, checkoutUrl, null, null, montoReembolsado
         );
     }
 }

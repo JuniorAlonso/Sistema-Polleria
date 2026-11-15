@@ -80,6 +80,18 @@ public class Pago {
     @Column(name = "liquidacion_id")
     private Long liquidacionId;
 
+    /** Gateway payment identifier stored strictly from verified Mercado Pago callbacks/returns. */
+    @Column(name = "mp_payment_id", length = 100)
+    private String mpPaymentId;
+
+    /** Cumulative refunded amount so partial refunds never exceed what was paid. */
+    @Column(name = "monto_reembolsado", precision = 10, scale = 2)
+    private BigDecimal montoReembolsado = BigDecimal.ZERO;
+
+    /** Last processed idempotency key for claim/admin refunds. */
+    @Column(name = "reembolso_idempotency_key", length = 120)
+    private String reembolsoIdempotencyKey;
+
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();
 
@@ -93,6 +105,10 @@ public class Pago {
      */
     @Version
     private Long version;
+
+    public BigDecimal getMontoReembolsadoSeguro() {
+        return montoReembolsado != null ? montoReembolsado : BigDecimal.ZERO;
+    }
 
     @PreUpdate
     void preUpdate() {

@@ -18,25 +18,29 @@ import com.sistema.polleria.payments.gateway.MercadoPagoGateway;
 import com.sistema.polleria.payments.gateway.PaymentGateway;
 import com.sistema.polleria.payments.gateway.PaymentGatewayService;
 import com.sistema.polleria.payments.repository.PagoRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PagoService {
 
     private final PagoRepository pagoRepository;
@@ -47,6 +51,63 @@ public class PagoService {
     private final OrdenesClient ordenesClient;
     private final AlmacenComprobantes almacenComprobantes;
     private final ConsultaPagoMercadoPago consultaPagoMercadoPago;
+    private final FinanceComprobanteClient financeComprobanteClient;
+    private final TransactionTemplate transactionTemplate;
+
+    @Value("${payments.yape-otp-mock.enabled:false}")
+    private boolean yapeOtpMockEnabled = true;
+
+    public PagoService(
+            PagoRepository pagoRepository,
+            PaymentGatewayService paymentGatewayService,
+            MercadoPagoGateway mercadoPagoGateway,
+            NotificadorOrden notificadorOrden,
+            WhatsappNotificationClient whatsappNotificationClient,
+            OrdenesClient ordenesClient,
+            AlmacenComprobantes almacenComprobantes,
+            ConsultaPagoMercadoPago consultaPagoMercadoPago) {
+        this(pagoRepository, paymentGatewayService, mercadoPagoGateway, notificadorOrden,
+                whatsappNotificationClient, ordenesClient, almacenComprobantes, consultaPagoMercadoPago, null, null);
+    }
+
+    public PagoService(
+            PagoRepository pagoRepository,
+            PaymentGatewayService paymentGatewayService,
+            MercadoPagoGateway mercadoPagoGateway,
+            NotificadorOrden notificadorOrden,
+            WhatsappNotificationClient whatsappNotificationClient,
+            OrdenesClient ordenesClient,
+            AlmacenComprobantes almacenComprobantes,
+            ConsultaPagoMercadoPago consultaPagoMercadoPago,
+            FinanceComprobanteClient financeComprobanteClient) {
+        this(pagoRepository, paymentGatewayService, mercadoPagoGateway, notificadorOrden,
+                whatsappNotificationClient, ordenesClient, almacenComprobantes, consultaPagoMercadoPago,
+                financeComprobanteClient, null);
+    }
+
+    @Autowired
+    public PagoService(
+            PagoRepository pagoRepository,
+            PaymentGatewayService paymentGatewayService,
+            MercadoPagoGateway mercadoPagoGateway,
+            NotificadorOrden notificadorOrden,
+            WhatsappNotificationClient whatsappNotificationClient,
+            OrdenesClient ordenesClient,
+            AlmacenComprobantes almacenComprobantes,
+            ConsultaPagoMercadoPago consultaPagoMercadoPago,
+            @Autowired(required = false) FinanceComprobanteClient financeComprobanteClient,
+            @Autowired(required = false) PlatformTransactionManager transactionManager) {
+        this.pagoRepository = pagoRepository;
+        this.paymentGatewayService = paymentGatewayService;
+        this.mercadoPagoGateway = mercadoPagoGateway;
+        this.notificadorOrden = notificadorOrden;
+        this.whatsappNotificationClient = whatsappNotificationClient;
+        this.ordenesClient = ordenesClient;
+        this.almacenComprobantes = almacenComprobantes;
+        this.consultaPagoMercadoPago = consultaPagoMercadoPago;
+        this.financeComprobanteClient = financeComprobanteClient;
+        this.transactionTemplate = transactionManager != null ? new TransactionTemplate(transactionManager) : null;
+    }
 
     private static final Set<String> ESTADOS_ORDEN_TERMINALES = Set.of("CANCELADO", "ENTREGADO", "PEDIDO_FANTASMA");
 
@@ -138,7 +199,7 @@ public class PagoService {
             throw new IllegalStateException("El pedido #" + request.ordenId() + " ya no está activo (estado "
                     + orden.estado() + "): no admite comprobantes de pago");
         }
-        return registrarComprobante(request, CLIENTE_ANONIMO);
+        return registrarComprobante(request, orden.clienteId() != null ? orden.clienteId() : CLIENTE_ANONIMO);
     }
 
     /**
@@ -154,11 +215,6 @@ public class PagoService {
                     request.ordenId(), existente.getEstado());
             return PagoResponse.from(existente);
         }
-
-        // S6: stop the order's expiry clock before storing the capture. If orders-service cannot be
-        // told, nothing is stored and the customer is asked to resend (fail closed): otherwise the
-        // order could expire under a customer who already paid.
-        ordenesClient.marcarComprobante(request.ordenId(), true);
 
         boolean esNuevo = existente == null;
         Pago pago = esNuevo ? new Pago() : existente;
@@ -187,6 +243,10 @@ public class PagoService {
             // violación es otra cosa (por ejemplo un CHECK desactualizado) y se informa como tal.
             throw new IllegalStateException(mensajeDeIntegridad(request.ordenId(), e));
         }
+
+        // CON-17: persistir primero el pago y luego avisar a orders-service; si orders falla,
+        // Spring revierte saveAndFlush para mantener ambos servicios consistentes.
+        ordenesClient.marcarComprobante(request.ordenId(), true);
 
         log.info("Comprobante de Yape registrado — pago id={} orden={} nuevo={}",
                 pago.getId(), pago.getOrdenId(), esNuevo);
@@ -240,8 +300,39 @@ public class PagoService {
      * <p>Toma el bloqueo pesimista del pago: dos administradores verificando a la vez no pueden
      * aplicar dos decisiones distintas.
      */
-    @Transactional
     public PagoResponse verificar(Long id, VerificarPagoRequest request, String adminEmail, String bearerToken) {
+        // CON-03: leer snapshot y consultar orders-service fuera del bloqueo FOR UPDATE cuando aprueba,
+        // ejecutando la fase bloqueada en su propia transacción para no contaminar la caché L1 de Hibernate.
+        OrdenesClient.OrdenInfo ordenPrevia = null;
+        if (Boolean.TRUE.equals(request.aprobado())) {
+            Pago snapshot = pagoRepository.findById(id)
+                    .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+            if (snapshot.getEstado() != EstadoPago.PENDIENTE_VERIFICACION) {
+                throw new IllegalStateException(
+                        "Solo se puede verificar un comprobante PENDIENTE_VERIFICACION. Estado actual: "
+                                + snapshot.getEstado());
+            }
+            if (snapshot.getComprobanteClave() == null || snapshot.getComprobanteClave().isBlank()) {
+                throw new IllegalArgumentException(
+                        "No se puede confirmar el pago: el cliente aún no adjuntó la captura del comprobante");
+            }
+            ordenPrevia = obtenerOrden(snapshot.getOrdenId());
+            if (!"PENDIENTE_PAGO".equals(ordenPrevia.estado())) {
+                throw new IllegalStateException("El pedido #" + snapshot.getOrdenId()
+                        + " ya no está pendiente de pago (estado " + ordenPrevia.estado()
+                        + "): no se puede aprobar el comprobante");
+            }
+        }
+        final OrdenesClient.OrdenInfo ordenValidada = ordenPrevia;
+        return ejecutarEnTransaccion(() -> verificarEnTx(id, request, adminEmail, bearerToken, ordenValidada));
+    }
+
+    private PagoResponse verificarEnTx(
+            Long id,
+            VerificarPagoRequest request,
+            String adminEmail,
+            String bearerToken,
+            OrdenesClient.OrdenInfo ordenPrevia) {
         Pago pago = pagoRepository.buscarConBloqueo(id)
                 .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
 
@@ -256,15 +347,14 @@ public class PagoService {
             if (motivo.isEmpty()) {
                 throw new IllegalArgumentException("El motivo de rechazo es obligatorio");
             }
-            // S6: the order gets a fresh payment window to resend the capture (fail closed).
-            ordenesClient.marcarComprobante(pago.getOrdenId(), false);
             pago.setEstado(EstadoPago.RECHAZADO);
             pago.setMotivoRechazo(motivo);
             pago.setVerificadoPor(adminEmail);
             pago.setVerificadoEn(LocalDateTime.now());
             pago.setDetalle("Comprobante de Yape rechazado por el administrador: " + motivo);
             pago = pagoRepository.save(pago);
-            // El aviso sale recién cuando la transacción confirma (ver afterCommit más abajo).
+            // S6: the order gets a fresh payment window to resend the capture (fail closed).
+            ordenesClient.marcarComprobante(pago.getOrdenId(), false);
             avisarRechazoTrasConfirmar(pago.getOrdenId(), motivo);
             log.info("Comprobante rechazado — pago id={} orden={} admin={}",
                     pago.getId(), pago.getOrdenId(), adminEmail);
@@ -275,16 +365,11 @@ public class PagoService {
             throw new IllegalArgumentException(
                     "No se puede confirmar el pago: el cliente aún no adjuntó la captura del comprobante");
         }
-        // S2: the order may have expired (or been cancelled) while the capture waited; approving it
-        // then would charge a dead order. Fail closed when orders-service cannot answer.
-        OrdenesClient.OrdenInfo orden = obtenerOrden(pago.getOrdenId());
+        OrdenesClient.OrdenInfo orden = ordenPrevia != null ? ordenPrevia : obtenerOrden(pago.getOrdenId());
         if (!"PENDIENTE_PAGO".equals(orden.estado())) {
             throw new IllegalStateException("El pedido #" + pago.getOrdenId() + " ya no está pendiente de pago "
                     + "(estado " + orden.estado() + "): no se puede aprobar el comprobante");
         }
-        // S6: no creation-time window here. A capture uploaded in time stops the order's expiry in
-        // orders-service, so the cashier may approve it whenever they review it while the order is
-        // still PENDIENTE_PAGO (checked above). Refusing it would leave a paying customer without food.
 
         pago.setEstado(EstadoPago.APROBADO);
         pago.setMotivoRechazo(null);
@@ -293,12 +378,22 @@ public class PagoService {
         pago.setDetalle("Comprobante de Yape verificado por el administrador");
         pago = pagoRepository.save(pago);
 
-        // RF21 / RF30: mismo camino que el pago aprobado de Mercado Pago (confirmar/iniciar).
-        notificarOrdenAsync(pago.getOrdenId(), bearerToken);
-        avisarAprobacionTrasConfirmar(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
+        final Pago pagoConfirmado = pago;
+        ejecutarTrasCommit(() -> {
+            notificarOrdenAsync(pagoConfirmado.getOrdenId(), bearerToken);
+            encolarAvisoAprobacion(pagoConfirmado.getOrdenId(), pagoConfirmado.getMonto(), pagoConfirmado.getMetodoPago());
+            emitirBoletaDigital(pagoConfirmado);
+        });
         log.info("Comprobante aprobado — pago id={} orden={} admin={}",
                 pago.getId(), pago.getOrdenId(), adminEmail);
         return PagoResponse.from(pago);
+    }
+
+    private <T> T ejecutarEnTransaccion(Supplier<T> accion) {
+        if (transactionTemplate == null) {
+            return accion.get();
+        }
+        return transactionTemplate.execute(status -> accion.get());
     }
 
     public PagoResponse obtener(Long id) {
@@ -338,11 +433,29 @@ public class PagoService {
         return todos(null);
     }
 
-    /** Lists pagos newest first, optionally filtered by estado (cashier inbox: PENDIENTE_VERIFICACION). */
+    /** Lists pagos newest first, optionally filtered by estado, fecha (America/Lima) and max limit. */
     public List<PagoResponse> todos(EstadoPago estado) {
-        List<Pago> pagos = estado == null
-                ? pagoRepository.findAllByOrderByCreadoEnDesc()
-                : pagoRepository.findByEstadoOrderByCreadoEnDesc(estado);
+        return todos(estado, null, null);
+    }
+
+    public List<PagoResponse> todos(EstadoPago estado, LocalDate fecha, Integer limit) {
+        List<Pago> pagos;
+        if (fecha != null) {
+            LocalDateTime desde = fecha.atStartOfDay();
+            LocalDateTime hasta = fecha.plusDays(1).atStartOfDay();
+            pagos = estado == null
+                    ? pagoRepository.findByCreadoEnGreaterThanEqualAndCreadoEnLessThanOrderByCreadoEnDesc(desde, hasta)
+                    : pagoRepository.findByEstadoAndCreadoEnGreaterThanEqualAndCreadoEnLessThanOrderByCreadoEnDesc(estado, desde, hasta);
+        } else if (limit != null && limit > 0) {
+            PageRequest pageable = PageRequest.of(0, Math.min(limit, 500));
+            pagos = estado == null
+                    ? pagoRepository.findAllByOrderByCreadoEnDesc(pageable)
+                    : pagoRepository.findByEstadoOrderByCreadoEnDesc(estado, pageable);
+        } else {
+            pagos = estado == null
+                    ? pagoRepository.findAllByOrderByCreadoEnDesc()
+                    : pagoRepository.findByEstadoOrderByCreadoEnDesc(estado);
+        }
         return pagos.stream().map(PagoResponse::from).toList();
     }
 
@@ -385,80 +498,171 @@ public class PagoService {
             return PagoResponse.from(pago);
         }
 
-        validarTransicion(pago.getEstado(), EstadoPago.APROBADO);
-        pago.setEstado(EstadoPago.APROBADO);
+        // DIN-07: confirmar solo avanza desde PENDIENTE (nunca reabre RECHAZADO/REEMBOLSADO/CANCELADO).
+        if (pago.getEstado() != EstadoPago.PENDIENTE) {
+            throw new IllegalStateException(
+                    "Solo se puede confirmar un pago PENDIENTE. Estado actual: " + pago.getEstado());
+        }
+
+        if (req.metodoPago() != null) {
+            pago.setMetodoPago(req.metodoPago());
+        }
+        if (req.mpPaymentId() != null && !req.mpPaymentId().isBlank()) {
+            pago.setMpPaymentId(req.mpPaymentId().trim());
+        }
         pago.setReferenciaExterna(req.referenciaExterna());
+
+        OrdenesClient.OrdenInfo orden = leerOrdenSilencioso(pago.getOrdenId());
+        if (orden != null && ("CANCELADO".equals(orden.estado()) || "PEDIDO_FANTASMA".equals(orden.estado()))) {
+            boolean esMp = (req.mpPaymentId() != null && !req.mpPaymentId().isBlank())
+                    || (mercadoPagoGateway != null && mercadoPagoGateway.esPagoMercadoPago(pago));
+            if (esMp && mercadoPagoGateway != null) {
+                pago.setMontoReembolsado(pago.getMonto());
+                pago.setEstado(EstadoPago.REEMBOLSADO);
+                pago.setDetalle("Reembolso automático: pago recibido con orden en estado " + orden.estado());
+                mercadoPagoGateway.procesarReembolso(pago, pago.getMonto());
+                pago = pagoRepository.save(pago);
+                log.warn("DIN-01/CON-04: Pago id={} para orden {} ({}) reembolsado automáticamente",
+                        id, pago.getOrdenId(), orden.estado());
+                return PagoResponse.from(pago);
+            }
+            throw new IllegalStateException(
+                    "No se puede confirmar el pago: la orden #" + pago.getOrdenId() + " está " + orden.estado());
+        }
+
+        pago.setEstado(EstadoPago.APROBADO);
         pago.setDetalle(req.detalle());
         pago = pagoRepository.save(pago);
-        notificarOrdenAsync(pago.getOrdenId(), bearerToken);
-        whatsappNotificationClient.notificarPagoConfirmado(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
+
+        final Pago pagoConfirmado = pago;
+        ejecutarTrasCommit(() -> {
+            notificarOrdenAsync(pagoConfirmado.getOrdenId(), bearerToken);
+            encolarAvisoAprobacion(pagoConfirmado.getOrdenId(), pagoConfirmado.getMonto(), pagoConfirmado.getMetodoPago());
+            emitirBoletaDigital(pagoConfirmado);
+        });
         log.info("Pago confirmado — id={} orden={}", pago.getId(), pago.getOrdenId());
         return PagoResponse.from(pago);
     }
 
     @Transactional
     public PagoResponse cancelar(Long id) {
-        Pago pago = buscar(id);
-        validarTransicion(pago.getEstado(), EstadoPago.CANCELADO);
+        Pago pago = pagoRepository.buscarConBloqueo(id)
+                .or(() -> pagoRepository.findById(id))
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+        if (pago.getEstado() == EstadoPago.CANCELADO) {
+            return PagoResponse.from(pago);
+        }
+        // DIN-02: nunca cancelar comprobantes en verificación, aprobados ni reembolsados.
+        if (pago.getEstado() != EstadoPago.PENDIENTE && pago.getEstado() != EstadoPago.RECHAZADO) {
+            throw new IllegalStateException(
+                    "No se puede cancelar un pago en estado " + pago.getEstado());
+        }
         pago.setEstado(EstadoPago.CANCELADO);
         pago.setDetalle("Pago cancelado");
         pago = pagoRepository.save(pago);
-        notificarOrdenEstadoAsync(pago.getOrdenId(), "CANCELADO", "");
+        final Long ordenId = pago.getOrdenId();
+        ejecutarTrasCommit(() -> notificarOrdenEstadoAsync(ordenId, "CANCELADO", ""));
         log.info("Pago cancelado — id={} orden={}", pago.getId(), pago.getOrdenId());
         return PagoResponse.from(pago);
     }
 
     @Transactional
     public PagoResponse reembolsar(Long id, BigDecimal monto, String motivo) {
-        Pago pago = buscar(id);
-        // D4.7: idempotencia — si ya fue reembolsado en su totalidad, devuelve el estado sin volver a ejecutar
-        if (pago.getEstado() == EstadoPago.REEMBOLSADO) {
-            log.info("Pago id={} ya estaba REEMBOLSADO: idempotencia, sin doble procesamiento", id);
-            return PagoResponse.from(pago);
+        return reembolsar(id, monto, motivo, null);
+    }
+
+    @Transactional
+    public PagoResponse reembolsar(Long id, BigDecimal monto, String motivo, String idempotencyKey) {
+        Pago pago = pagoRepository.buscarConBloqueo(id)
+                .or(() -> pagoRepository.findById(id))
+                .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
+
+        String claveLimpia = (idempotencyKey != null && !idempotencyKey.isBlank()) ? idempotencyKey.trim() : null;
+        if (claveLimpia != null) {
+            if (claveLimpia.equals(pago.getReembolsoIdempotencyKey())
+                    || pagoRepository.findByReembolsoIdempotencyKey(claveLimpia).isPresent()) {
+                log.info("Reembolso idempotente (Idempotency-Key={}) para pago id={}", claveLimpia, id);
+                return PagoResponse.from(pago);
+            }
         }
-        // D4.7: solo se puede reembolsar desde APROBADO (o parcial para completar el reembolso)
+
+        // D4.7: solo se puede reembolsar desde APROBADO o REEMBOLSADO_PARCIAL
         if (pago.getEstado() != EstadoPago.APROBADO && pago.getEstado() != EstadoPago.REEMBOLSADO_PARCIAL) {
+            if (claveLimpia == null && monto == null && pago.getEstado() == EstadoPago.REEMBOLSADO) {
+                return PagoResponse.from(pago);
+            }
             throw new IllegalStateException("Solo se pueden reembolsar pagos APROBADOS. Estado actual: " + pago.getEstado());
         }
 
-        // Si es un pago de Mercado Pago, ejecutar reembolso en la pasarela externa
-        // No se traga la excepción: si Mercado Pago falla, la transacción no se consolida
-        if (mercadoPagoGateway != null && mercadoPagoGateway.esPagoMercadoPago(pago)) {
-            mercadoPagoGateway.procesarReembolso(pago, monto);
+        BigDecimal yaReembolsado = pago.getMontoReembolsadoSeguro();
+        BigDecimal disponible = pago.getMonto().subtract(yaReembolsado);
+        BigDecimal efectivo = monto != null ? monto : disponible;
+        if (efectivo.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("El monto a reembolsar debe ser positivo");
+        }
+        if (efectivo.compareTo(disponible) > 0) {
+            throw new IllegalStateException("El reembolso solicitado (S/ " + efectivo
+                    + ") supera el saldo disponible por reembolsar (S/ " + disponible + ")");
         }
 
-        boolean esParcial = monto != null && monto.compareTo(pago.getMonto()) < 0;
-        pago.setEstado(esParcial ? EstadoPago.REEMBOLSADO_PARCIAL : EstadoPago.REEMBOLSADO);
-        pago.setDetalle((esParcial ? "Reembolso parcial" : "Reembolso") + " procesado por S/ " + (monto != null ? monto : pago.getMonto()) + ". Motivo: " + (motivo != null ? motivo : "Reclamo procedente"));
+        BigDecimal nuevoAcumulado = yaReembolsado.add(efectivo);
+        boolean completo = nuevoAcumulado.compareTo(pago.getMonto()) >= 0;
+
+        if (claveLimpia != null) {
+            pago.setReembolsoIdempotencyKey(claveLimpia);
+        }
+        pago.setMontoReembolsado(nuevoAcumulado);
+        pago.setEstado(completo ? EstadoPago.REEMBOLSADO : EstadoPago.REEMBOLSADO_PARCIAL);
+        pago.setDetalle((completo ? "Reembolso" : "Reembolso parcial")
+                + " procesado por S/ " + efectivo + ". Motivo: " + (motivo != null ? motivo : "Reclamo procedente"));
+
+        // Persistir bajo bloqueo antes de invocar a la pasarela (CON-01); si MP falla, revierte la tx.
         pago = pagoRepository.save(pago);
-        log.info("Pago reembolsado — id={} orden={} monto={} estado={}", pago.getId(), pago.getOrdenId(), monto, pago.getEstado());
+        if (mercadoPagoGateway != null && mercadoPagoGateway.esPagoMercadoPago(pago)) {
+            mercadoPagoGateway.procesarReembolso(pago, efectivo);
+        }
+        log.info("Pago reembolsado — id={} orden={} monto={} acumulado={} estado={}",
+                pago.getId(), pago.getOrdenId(), efectivo, nuevoAcumulado, pago.getEstado());
         return PagoResponse.from(pago);
     }
 
     @Transactional
     public PagoResponse reembolsarPorOrden(Long ordenId, BigDecimal monto, String motivo) {
-        Pago pago = pagoRepository.findByOrdenId(ordenId)
+        return reembolsarPorOrden(ordenId, monto, motivo, null);
+    }
+
+    @Transactional
+    public PagoResponse reembolsarPorOrden(Long ordenId, BigDecimal monto, String motivo, String idempotencyKey) {
+        Pago pago = pagoRepository.buscarPorOrdenIdConBloqueo(ordenId)
+                .or(() -> pagoRepository.findByOrdenId(ordenId))
                 .orElseThrow(() -> new NoSuchElementException("No existe pago asociado a la orden: " + ordenId));
-        return reembolsar(pago.getId(), monto, motivo);
+        return reembolsar(pago.getId(), monto, motivo, idempotencyKey);
     }
 
     /**
      * Aplica un estado informado por la pasarela (webhook) tomando el bloqueo pesimista del pago.
-     *
-     * Antes esas ramas escribían la entidad directamente desde el controlador, sin transacción
-     * ni bloqueo: un webhook {@code in_process} posterior a un {@code approved} podía degradar el
-     * pago de APROBADO a PENDIENTE, y un conflicto de versión se perdía silenciosamente.
+     * Desde APROBADO solo se permite pasar a REEMBOLSADO o REEMBOLSADO_PARCIAL (DIN-06/DIN-07).
      */
     @Transactional
     public PagoResponse actualizarEstadoDesdePasarela(Long pagoId, EstadoPago nuevoEstado, String detalle) {
         Pago pago = pagoRepository.buscarConBloqueo(pagoId)
                 .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + pagoId));
 
-        if (pago.getEstado() == EstadoPago.APROBADO && nuevoEstado == EstadoPago.PENDIENTE) {
-            log.info("Se ignora el paso a PENDIENTE del pago id={}: ya estaba APROBADO", pagoId);
+        EstadoPago actual = pago.getEstado();
+        if (actual == nuevoEstado) {
             return PagoResponse.from(pago);
         }
-        if (pago.getEstado() == nuevoEstado) {
+        if (actual == EstadoPago.APROBADO
+                && nuevoEstado != EstadoPago.REEMBOLSADO && nuevoEstado != EstadoPago.REEMBOLSADO_PARCIAL) {
+            log.info("DIN-06: Se ignora transición {} → {} en pago id={}", actual, nuevoEstado, pagoId);
+            return PagoResponse.from(pago);
+        }
+        if (actual == EstadoPago.REEMBOLSADO_PARCIAL && nuevoEstado != EstadoPago.REEMBOLSADO) {
+            log.info("DIN-07: Se ignora transición {} → {} en pago id={}", actual, nuevoEstado, pagoId);
+            return PagoResponse.from(pago);
+        }
+        if (actual == EstadoPago.REEMBOLSADO || actual == EstadoPago.CANCELADO) {
+            log.info("Estado terminal {} protegido en pago id={}; se ignora {}", actual, pagoId, nuevoEstado);
             return PagoResponse.from(pago);
         }
 
@@ -526,6 +730,45 @@ public class PagoService {
             whatsappNotificationClient.notificarPagoConfirmado(ordenId, monto, metodoPago);
         } catch (Exception e) {
             log.warn("No se pudo encolar el aviso de pago aprobado para la orden {}: {}", ordenId, e.getMessage());
+        }
+    }
+
+    private void ejecutarTrasCommit(Runnable accion) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            try {
+                accion.run();
+            } catch (Exception e) {
+                log.warn("Error al ejecutar acción post-pago: {}", e.getMessage());
+            }
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    accion.run();
+                } catch (Exception e) {
+                    log.warn("Error en callback afterCommit de pagos: {}", e.getMessage());
+                }
+            }
+        });
+    }
+
+    private void emitirBoletaDigital(Pago pago) {
+        if (financeComprobanteClient != null) {
+            financeComprobanteClient.emitirBoletaDigitalAsync(pago);
+        }
+    }
+
+    private OrdenesClient.OrdenInfo leerOrdenSilencioso(Long ordenId) {
+        if (ordenesClient == null) {
+            return null;
+        }
+        try {
+            return ordenesClient.obtener(ordenId);
+        } catch (Exception e) {
+            log.warn("No se pudo verificar estado de orden {} durante confirmación: {}", ordenId, e.getMessage());
+            return null;
         }
     }
 
@@ -634,7 +877,7 @@ public class PagoService {
         if (verificado.aprobado()) {
             String refExterna = "MP-" + paymentId;
             return confirmar(pagoId, new ConfirmarPagoRequest(refExterna,
-                    "Pago aprobado por Mercado Pago (retorno verificado: " + refExterna + ")"), "");
+                    "Pago aprobado por Mercado Pago (retorno verificado: " + refExterna + ")", null, paymentId), "");
         }
         if (verificado.rechazado()) {
             actualizarEstadoDesdePasarela(pagoId, EstadoPago.RECHAZADO, "Pago rechazado en pasarela Mercado Pago");
@@ -656,6 +899,9 @@ public class PagoService {
      */
     @Transactional
     public PagoResponse procesarYapeOtp(YapeOtpPagoRequest request, Long clienteId, String bearerToken) {
+        if (!yapeOtpMockEnabled) {
+            throw new IllegalStateException("El pago simulado Yape OTP está deshabilitado en este entorno");
+        }
         log.info("Procesando pago directo Yape OTP para orden={}, celular={}, monto=S/ {}",
                 request.ordenId(), request.telefono(), request.monto());
 
@@ -700,9 +946,12 @@ public class PagoService {
         pago.setDetalle("Cobro Yape OTP aprobado en tiempo real. Teléfono: " + request.telefono());
         pago = pagoRepository.save(pago);
 
-        // Avanzar la orden DIRECTO a preparación en cocina
-        notificarOrdenAsync(request.ordenId(), bearerToken);
-        avisarAprobacionTrasConfirmar(pago.getOrdenId(), pago.getMonto(), pago.getMetodoPago());
+        final Pago pagoConfirmado = pago;
+        ejecutarTrasCommit(() -> {
+            notificarOrdenAsync(request.ordenId(), bearerToken);
+            encolarAvisoAprobacion(pagoConfirmado.getOrdenId(), pagoConfirmado.getMonto(), pagoConfirmado.getMetodoPago());
+            emitirBoletaDigital(pagoConfirmado);
+        });
         log.info("Pago Yape OTP exitoso para orden #{} — Pasando directo a cocina", request.ordenId());
 
         return PagoResponse.from(pago);
@@ -749,6 +998,11 @@ public class PagoService {
                             + " y está en estado " + orden.estado()
                             + " (delivery: EN_PUERTA/EN_CAMINO; recojo: LISTO/LISTO_PARA_ENTREGAR)");
         }
+        // DIN-14: si el cobro lo ejecuta un repartidor en delivery, debe ser el asignado a la orden.
+        if (repartidorId != null && orden.repartidorId() != null && !orden.repartidorId().equals(repartidorId)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Solo el repartidor asignado a la orden #" + request.ordenId() + " puede cobrar en efectivo");
+        }
 
         // S6: the cash registered is exactly the order total, never what the operator types.
         if (orden.total() == null) {
@@ -787,7 +1041,7 @@ public class PagoService {
         pago.setRepartidorId(repartidorId);
         pago = pagoRepository.save(pago);
 
-        notificarEntregado(request, esRecojo, bearerToken);
+        ejecutarTrasCommit(() -> notificarEntregado(request, esRecojo, bearerToken));
         log.info("Cobro en efectivo registrado para orden #{}. Orden actualizada a ENTREGADO", request.ordenId());
 
         return PagoResponse.from(pago);
@@ -845,11 +1099,19 @@ public class PagoService {
     public EfectivoPendienteResponse efectivoPendiente(Long repartidorId, LocalDateTime desde) {
         List<Pago> pagos = pagoRepository.efectivoPendienteDeRepartidor(
                 repartidorId, desde != null ? desde : LocalDateTime.of(2000, 1, 1, 0, 0));
-        BigDecimal total = pagos.stream().map(Pago::getMonto).reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new EfectivoPendienteResponse(repartidorId, total, pagos.size(),
-                pagos.stream()
-                        .map(p -> new EfectivoPendienteResponse.Item(p.getId(), p.getOrdenId(), p.getMonto(), p.getVerificadoEn()))
-                        .toList());
+        // DIN-04: mantener los cobros aunque hayan tenido reembolso parcial/total y restar lo reembolsado.
+        List<EfectivoPendienteResponse.Item> items = pagos.stream()
+                .map(p -> new EfectivoPendienteResponse.Item(
+                        p.getId(),
+                        p.getOrdenId(),
+                        p.getMonto().subtract(p.getMontoReembolsadoSeguro()),
+                        p.getVerificadoEn()))
+                .filter(item -> item.monto().compareTo(BigDecimal.ZERO) > 0)
+                .toList();
+        BigDecimal total = items.stream()
+                .map(EfectivoPendienteResponse.Item::monto)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new EfectivoPendienteResponse(repartidorId, total, items.size(), items);
     }
 
     /**
@@ -863,7 +1125,9 @@ public class PagoService {
             throw new NoSuchElementException("Alguno de los pagos a liquidar no existe");
         }
         for (Pago p : pagos) {
-            if (p.getMetodoPago() != MetodoPago.CONTRAENTREGA || p.getEstado() != EstadoPago.APROBADO) {
+            boolean estadoLiquidable = p.getEstado() == EstadoPago.APROBADO
+                    || p.getEstado() == EstadoPago.REEMBOLSADO_PARCIAL;
+            if (p.getMetodoPago() != MetodoPago.CONTRAENTREGA || !estadoLiquidable) {
                 throw new IllegalStateException("El pago " + p.getId() + " no es un cobro en efectivo aprobado");
             }
             if (p.getLiquidacionId() != null && !p.getLiquidacionId().equals(liquidacionId)) {

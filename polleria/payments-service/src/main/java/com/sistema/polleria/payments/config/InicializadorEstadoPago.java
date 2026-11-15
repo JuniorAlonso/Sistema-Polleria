@@ -1,36 +1,22 @@
 package com.sistema.polleria.payments.config;
 
 import com.sistema.polleria.payments.entity.EstadoPago;
-import jakarta.persistence.EntityManager;
+import com.sistema.polleria.payments.entity.MetodoPago;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 /**
- * Realinea el esquema de {@code pagos.estado} con el enum {@link EstadoPago}.
- *
- * <p>Hibernate genera la columna y su CHECK a partir de las anotaciones, pero
- * {@code ddl-auto=update} <b>no modifica lo que ya existe</b>: ni ensancha una columna, ni agrega
- * valores a un CHECK. En una base con datos, entonces, el estado nuevo
- * {@code PENDIENTE_VERIFICACION} (22 caracteres) no entraba en {@code varchar(20)} y además no
- * estaba permitido por {@code pagos_estado_check}: la primera evidencia de Yape real fallaba con
- * violación de integridad y el endpoint respondía 409. El mismo CHECK tampoco contemplaba
- * {@code REEMBOLSADO} ni {@code REEMBOLSADO_PARCIAL}, así que los reembolsos de RF29 iban a fallar
- * igual.
- *
- * <p>Los tests no lo detectan porque el perfil de pruebas usa {@code create-drop}: la tabla se crea
- * desde las anotaciones, con el ancho y el CHECK correctos. Este inicializador cubre el caso de una
- * base que ya existe, y es idempotente.
- *
- * <p>Si algo falla se registra en <b>ERROR</b> (no en silencio: ocultar el motivo de un fallo de
- * esquema es lo que hizo que este bug tardara en aparecer) y el servicio igual arranca, porque
- * corregir el esquema de pagos no debe tumbar el resto de las formas de pago. Al final deja en el
- * log la definición real de la restricción, que es la prueba de que la corrección se aplicó.
+ * Realinea el esquema y restricciones CHECK de {@code pagos} usando JdbcTemplate (autocommit
+ * por sentencia) solo cuando falta algún valor del enum, y en un único ALTER TABLE atómico.
  */
 @Slf4j
 @Component
@@ -38,58 +24,51 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InicializadorEstadoPago implements ApplicationRunner {
 
-    /**
-     * Todos los valores del enum. Al agregar un estado nuevo a {@link EstadoPago}, se agrega acá:
-     * una base existente no lo va a permitir sola, y el fallo se ve como un 409 que parece un
-     * pago duplicado.
-     */
-    private static final String VALORES_ESTADO = "'PENDIENTE','APROBADO','RECHAZADO','CANCELADO',"
-            + "'REEMBOLSADO','REEMBOLSADO_PARCIAL','PENDIENTE_VERIFICACION'";
-
-    private final EntityManager entityManager;
+    private final JdbcTemplate jdbc;
 
     @Override
-    @Transactional
     public void run(ApplicationArguments args) {
         ensancharColumna();
-        realinearCheck();
+        realinearCheckEnum("pagos", "estado", "pagos_estado_check", EstadoPago.values());
+        realinearCheckEnum("pagos", "metodo_pago", "pagos_metodo_pago_check", MetodoPago.values());
         logDefinicionActual();
     }
 
-    /** Deja el ancho que declara la entidad ({@code length = 30}). */
     private void ensancharColumna() {
         try {
-            entityManager
-                    .createNativeQuery("ALTER TABLE pagos ALTER COLUMN estado TYPE varchar(30)")
-                    .executeUpdate();
+            jdbc.execute("ALTER TABLE pagos ALTER COLUMN estado TYPE varchar(30)");
         } catch (Exception e) {
             log.error("No se pudo ensanchar pagos.estado: {}", e.getMessage());
         }
     }
 
-    /** Rehace el CHECK con todos los valores del enum, sin depender de cuál estaba antes. */
-    private void realinearCheck() {
+    private void realinearCheckEnum(String tabla, String columna, String constraint, Enum<?>[] valores) {
         try {
-            entityManager
-                    .createNativeQuery("ALTER TABLE pagos DROP CONSTRAINT IF EXISTS pagos_estado_check")
-                    .executeUpdate();
-            entityManager
-                    .createNativeQuery("ALTER TABLE pagos ADD CONSTRAINT pagos_estado_check "
-                            + "CHECK (estado IN (" + VALORES_ESTADO + "))")
-                    .executeUpdate();
+            String[] nombres = Arrays.stream(valores).map(Enum::name).toArray(String[]::new);
+            String actual = jdbc.query(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ?",
+                    rs -> rs.next() ? rs.getString(1) : null,
+                    constraint);
+            boolean completo = actual != null && Arrays.stream(nombres).allMatch(n -> actual.contains("'" + n + "'"));
+            if (completo) {
+                return;
+            }
+            String listaSql = Arrays.stream(nombres)
+                    .map(n -> "'" + n + "'")
+                    .collect(Collectors.joining(","));
+            jdbc.execute("ALTER TABLE " + tabla
+                    + " DROP CONSTRAINT IF EXISTS " + constraint + ","
+                    + " ADD CONSTRAINT " + constraint + " CHECK (" + columna + " IN (" + listaSql + "))");
         } catch (Exception e) {
-            log.error("No se pudo realinear pagos_estado_check: {}. "
-                    + "Los pagos con estados nuevos van a fallar con violación de integridad.", e.getMessage());
+            log.error("No se pudo realinear {}: {}", constraint, e.getMessage());
         }
     }
 
-    /** La definición real, en el log: sin esto no se puede saber si la corrección se aplicó. */
     private void logDefinicionActual() {
         try {
-            Object definicion = entityManager
-                    .createNativeQuery("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                            + "WHERE conname = 'pagos_estado_check'")
-                    .getSingleResult();
+            String definicion = jdbc.queryForObject(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'pagos_estado_check'",
+                    String.class);
             log.info("pagos_estado_check = {}", definicion);
         } catch (Exception e) {
             log.warn("No se pudo leer la definición de pagos_estado_check: {}", e.getMessage());
