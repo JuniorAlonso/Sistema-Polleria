@@ -39,7 +39,7 @@ public class AuthService {
     private boolean trustForwardedHeader = false;
 
     // Roles que requieren 2FA obligatorio
-    private static final Set<Role> ROLES_WITH_2FA = Set.of(Role.ADMIN, Role.MOZO, Role.COCINA, Role.REPARTIDOR);
+    private static final Set<Role> ROLES_WITH_2FA = Set.of(Role.ADMIN, Role.MOZO, Role.COCINA, Role.REPARTIDOR, Role.CAJERO);
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -149,7 +149,7 @@ public class AuthService {
                     .build();
         }
 
-        // Cliente/REPARTIDOR: login directo
+        // Cliente: login directo
         String token = jwtService.generateToken(user);
         var refreshToken = refreshTokenService.createRefreshToken(user);
         log.info("Login exitoso para: {}", user.getEmail());

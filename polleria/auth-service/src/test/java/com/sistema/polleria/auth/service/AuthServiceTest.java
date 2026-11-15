@@ -81,7 +81,36 @@ class AuthServiceTest {
         verify(userRepository).save(captor.capture());
         assertEquals(Role.CAJERO, captor.getValue().getRole());
         assertEquals(Role.CAJERO, response.getRole());
+        assertTrue(response.isRequiresTwoFactor());
         assertNull(response.getToken());
+    }
+
+    @Test
+    void loginCajeroRequiereDobleAutenticacion() {
+        HttpServletRequest httpReq = mock(HttpServletRequest.class);
+        when(httpReq.getRemoteAddr()).thenReturn("10.0.0.8");
+
+        LoginRequest loginReq = new LoginRequest();
+        loginReq.setIdentifier("cajero.polleria@yopmail.com");
+        loginReq.setPassword("Password123!");
+
+        User cajero = User.builder()
+                .id(5L).name("Cajero de Turno").email("cajero.polleria@yopmail.com")
+                .password("encoded").role(Role.CAJERO).active(true).build();
+        when(ipBlacklistService.isBlocked("10.0.0.8")).thenReturn(false);
+        when(userRepository.findByEmail("cajero.polleria@yopmail.com")).thenReturn(Optional.of(cajero));
+        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class))).thenReturn(null);
+
+        AuthResponse response = authService.login(loginReq, httpReq);
+
+        assertTrue(response.isRequiresTwoFactor());
+        assertEquals(Role.CAJERO, response.getRole());
+        assertEquals("cajero.polleria@yopmail.com", response.getEmail());
+        assertNull(response.getToken());
+        assertNull(response.getRefreshToken());
+        verify(twoFactorService).sendVerificationCode(cajero);
+        verify(jwtService, never()).generateToken(any(User.class));
+        verify(refreshTokenService, never()).createRefreshToken(any(User.class));
     }
 
     @Test
