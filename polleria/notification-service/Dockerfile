@@ -11,6 +11,7 @@ RUN git config --system url."https://github.com/".insteadOf "ssh://git@github.co
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    PUPPETEER_NO_SANDBOX=true \
     WHATSAPP_SESSION_PATH=/app/whatsapp-session \
     TZ=America/Lima \
     NODE_ENV=production

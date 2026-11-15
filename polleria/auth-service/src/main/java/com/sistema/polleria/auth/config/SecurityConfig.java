@@ -11,8 +11,6 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.AuthenticationProvider;
-import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -44,9 +42,9 @@ public class SecurityConfig {
     private final Environment environment;
 
     public SecurityConfig(@Lazy JwtAuthFilter jwtAuthFilter,
-                          IpBlacklistFilter ipBlacklistFilter,
-                          UserRepository userRepository,
-                          Environment environment) {
+            IpBlacklistFilter ipBlacklistFilter,
+            UserRepository userRepository,
+            Environment environment) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.ipBlacklistFilter = ipBlacklistFilter;
         this.userRepository = userRepository;
@@ -59,7 +57,10 @@ public class SecurityConfig {
     @Value("${app.cors.allow-loopback:false}")
     private boolean allowLoopback;
 
-    /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
+    /**
+     * Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está
+     * ocupado.
+     */
     static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
     static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
     static final String LOOPBACK_IPV6 = "http://[::1]:[*]";
@@ -100,7 +101,7 @@ public class SecurityConfig {
                         .frameOptions(frame -> frame.deny())
                         .contentTypeOptions(contentType -> {})
                 )
-                .authenticationProvider(authenticationProvider())
+
                 .addFilterBefore(ipBlacklistFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
@@ -126,14 +127,6 @@ public class SecurityConfig {
     public UserDetailsService userDetailsService() {
         return username -> userRepository.findByEmail(username)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado: " + username));
-    }
-
-    @Bean
-    public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService());
-        provider.setPasswordEncoder(passwordEncoder());
-        return provider;
     }
 
     @Bean

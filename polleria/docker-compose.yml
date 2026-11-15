@@ -9,7 +9,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      # Exponemos 5433 al host para evitar colisión con 127.0.0.1:5432 en Windows
+      # y coincidir con application-test.properties (postgres:5432 sigue disponible en red Docker).
       - "127.0.0.1:5433:5432"
     volumes:
       - polleria_postgres_data:/var/lib/postgresql/data

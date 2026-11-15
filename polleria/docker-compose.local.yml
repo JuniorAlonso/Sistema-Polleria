@@ -15,8 +15,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
     ports:
-      # 5433 es el puerto para pruebas locales desde el host (JUnit/Maven).
-      - "127.0.0.1:5432:5432"
+      # 5433 es el puerto expuesto al host (JUnit/Maven y herramientas locales);
+      # 127.0.0.1:5432 suele estar ocupado en Windows por otro proceso/PostgreSQL,
+      # mientras los contenedores internos siguen conectando a postgres:5432 por la red Docker.
       - "127.0.0.1:5433:5432"
     volumes:
       - polleria_postgres_data:/var/lib/postgresql/data
@@ -285,6 +286,7 @@ services:
     environment:
       PORT: 3001
       TZ: America/Lima
+      PUPPETEER_NO_SANDBOX: "true"
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-polleria}
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
       NOTIFICATION_API_KEY: ${NOTIFICATION_API_KEY:?Defina NOTIFICATION_API_KEY en .env}
