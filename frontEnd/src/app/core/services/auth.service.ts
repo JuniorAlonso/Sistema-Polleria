@@ -48,15 +48,28 @@ export class AuthService {
     return this.refreshToken();
   }
 
-  private isTokenExpired(token: string): boolean {
+  private decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {
       const parts = token.split('.');
-      if (parts.length !== 3) return true;
-      const payload = JSON.parse(atob(parts[1]));
-      return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now();
+      if (parts.length !== 3) return null;
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
     } catch {
-      return true;
+      return null;
     }
+  }
+
+  hasExpiredJwt(token: string | null = this.token()): boolean {
+    if (!token) return false;
+    const payload = this.decodeJwtPayload(token);
+    return !!payload && typeof payload['exp'] === 'number' && payload['exp'] * 1000 <= Date.now();
+  }
+
+  private isTokenExpired(token: string): boolean {
+    const payload = this.decodeJwtPayload(token);
+    if (!payload) return true;
+    return typeof payload['exp'] === 'number' && payload['exp'] * 1000 <= Date.now();
   }
 
   private restoreSession(): void {

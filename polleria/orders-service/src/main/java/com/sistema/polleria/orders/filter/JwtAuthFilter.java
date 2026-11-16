@@ -62,6 +62,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(getSigningKey())
+                    .clockSkewSeconds(60)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
