@@ -170,46 +170,6 @@ import { agruparItemsPorRonda, esMesaParaCobrar, etiquetaEstadoComanda, horaDe, 
                     }
                   </div>
 
-                  <!-- Máquina de Estados Operativa de Mesa (Fase 2) -->
-                  <div class="space-y-2 pt-2">
-                    <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
-                    <div class="grid grid-cols-2 gap-2">
-                      <button 
-                        type="button"
-                        (click)="cambiarEstado.emit('OCUPADA')"
-                        class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                        <span>Ocupar Mesa</span>
-                      </button>
-                      <button 
-                        type="button"
-                        [disabled]="(!!comandaMesa() && !puedeSolicitarCuenta()) || solicitandoCuenta()"
-                        (click)="cambiarEstado.emit('POR_COBRAR')"
-                        class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                        <span>Por Cobrar</span>
-                      </button>
-                      <button 
-                        type="button"
-                        (click)="cambiarEstado.emit('EN_LIMPIEZA')"
-                        class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-                        <span>En Limpieza</span>
-                      </button>
-                      <button 
-                        type="button"
-                        (click)="cambiarEstado.emit('LIBRE')"
-                        class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <span>Liberar Mesa</span>
-                      </button>
-                    </div>
-                  </div>
-
                   <!-- Casilla en Cuadrícula de Salón (Solo Admin) -->
                   @if (isAdmin()) {
                     <div class="p-3 rounded-xl bg-black/40 border border-white/5 space-y-2">
