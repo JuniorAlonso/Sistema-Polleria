@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
-import { Order } from '../../../core/models/order.model';
+import { Order, OrderItem } from '../../../core/models/order.model';
 import { TableStatus } from '../../../core/models/table.model';
-import { MesaSalon } from '../mozo.types';
-import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesde } from '../mozo.helpers';
+import { AuthService } from '../../../core/services/auth.service';
+import { ComandaExistente, GrupoRondaComanda, MesaSalon } from '../mozo.types';
+import { agruparItemsPorRonda, esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesde } from '../mozo.helpers';
 
 @Component({
   selector: 'app-mozo-mesa-modal',
@@ -118,12 +119,32 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                     <span class="font-bold text-slate-300 block">Comanda Acumulada:</span>
 
                     @if (comandaMesa(); as comanda) {
-                      <div class="space-y-1 text-slate-400">
-                        @for (item of comanda.items; track $index) {
-                          <p class="flex justify-between">
-                            <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
-                            <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
-                          </p>
+                      <div class="space-y-2 text-slate-400">
+                        @for (grupo of obtenerRondas(comanda); track grupo.ronda) {
+                          <div class="space-y-1">
+                            <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-white/10 text-polleria-gold">
+                              Ronda {{ grupo.ronda }}
+                            </span>
+                            @for (item of grupo.items; track (item.id ?? $index)) {
+                              <div class="flex justify-between items-center gap-2">
+                                <span>{{ item.cantidad }}x {{ item.product.nombre }}</span>
+                                <div class="flex items-center gap-2">
+                                  <span class="font-mono text-white">{{ item.subtotal | currencyPEN }}</span>
+                                  @if (puedeEliminarItem(comanda, item)) {
+                                    <button
+                                      type="button"
+                                      [disabled]="eliminandoItemId() !== null"
+                                      (click)="eliminarItem.emit(item.id!)"
+                                      aria-label="Eliminar ítem"
+                                      class="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-[10px] font-bold transition cursor-pointer"
+                                    >
+                                      Quitar
+                                    </button>
+                                  }
+                                </div>
+                              </div>
+                            }
+                          </div>
                         }
                         @if (comanda.items.length === 0) {
                           <p class="text-slate-500">La comanda no tiene ítems registrados.</p>
@@ -154,6 +175,7 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                     <span class="text-[11px] font-bold text-slate-400 block">Flujo de Estados de Salón:</span>
                     <div class="grid grid-cols-2 gap-2">
                       <button 
+                        type="button"
                         (click)="cambiarEstado.emit('OCUPADA')"
                         class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
                       >
@@ -161,13 +183,16 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                         <span>Ocupar Mesa</span>
                       </button>
                       <button 
+                        type="button"
+                        [disabled]="(!!comandaMesa() && !puedeSolicitarCuenta()) || solicitandoCuenta()"
                         (click)="cambiarEstado.emit('POR_COBRAR')"
-                        class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                        class="py-2.5 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 hover:text-white border border-amber-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
                       >
                         <span class="w-2 h-2 rounded-full bg-amber-400"></span>
                         <span>Por Cobrar</span>
                       </button>
                       <button 
+                        type="button"
                         (click)="cambiarEstado.emit('EN_LIMPIEZA')"
                         class="py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
                       >
@@ -175,6 +200,7 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                         <span>En Limpieza</span>
                       </button>
                       <button 
+                        type="button"
                         (click)="cambiarEstado.emit('LIBRE')"
                         class="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 font-bold transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
                       >
@@ -209,6 +235,7 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                         </div>
                       </div>
                       <button 
+                        type="button"
                         (click)="guardarPosicion.emit()"
                         class="w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
                       >
@@ -221,10 +248,12 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                   <!-- Servir en mesa: marca persistida; el cobro sigue siendo el que libera la mesa -->
                   @if (comandaMesa()?.estado === 'LISTO_COCINA' && !comandaMesa()?.servidoEn) {
                     <button 
+                      type="button"
+                      [disabled]="sirviendo()"
                       (click)="servirMesa.emit()"
-                      class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
+                      class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md animate-pulse motion-reduce:animate-none"
                     >
-                      Servir en mesa
+                      {{ sirviendo() ? 'Registrando servido...' : 'Servir en mesa' }}
                     </button>
                   } @else if (comandaMesa()?.servidoEn) {
                     <p class="text-xs font-bold text-emerald-400">Servida en mesa · pendiente de cobro</p>
@@ -239,15 +268,19 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
                       </div>
                     } @else if (comandaMesa()) {
                       <button 
+                        type="button"
+                        [disabled]="!puedeSolicitarCuenta() || solicitandoCuenta()"
                         (click)="cobrar.emit()"
-                        class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
+                        class="w-full py-3 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center gap-2"
                       >
-                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Solicitar Cobro en Caja (POS)</span>
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>{{ solicitandoCuenta() ? 'Enviando cuenta...' : 'Solicitar Cobro en Caja (POS)' }}</span>
                       </button>
                     } @else {
                       <button 
+                        type="button"
+                        [disabled]="solicitandoCuenta()"
                         (click)="cobrar.emit()"
-                        class="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2"
+                        class="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2"
                       >
                         Liberar Mesa Vacía
                       </button>
@@ -260,12 +293,18 @@ import { esMesaParaCobrar, etiquetaEstadoComanda, horaDe, tiempoTranscurridoDesd
   `
 })
 export class MozoMesaModalComponent {
+  private readonly auth = inject(AuthService);
+
   readonly mesa = input.required<MesaSalon>();
   readonly comandaMesa = input<Order | null>(null);
+  readonly comandaExistente = input<ComandaExistente | null>(null);
   readonly cargandoComanda = input<boolean>(false);
   readonly errorComanda = input<string | null>(null);
   readonly isAdmin = input<boolean>(false);
   readonly ahora = input.required<number>();
+  readonly sirviendo = input<boolean>(false);
+  readonly solicitandoCuenta = input<boolean>(false);
+  readonly eliminandoItemId = input<number | null>(null);
 
   readonly cerrar = output<void>();
   readonly iniciarComanda = output<MesaSalon>();
@@ -275,10 +314,46 @@ export class MozoMesaModalComponent {
   readonly guardarPosicion = output<void>();
   readonly servirMesa = output<void>();
   readonly cobrar = output<void>();
+  readonly eliminarItem = output<number>();
 
   readonly esMesaParaCobrar = esMesaParaCobrar;
   readonly etiquetaEstadoComanda = etiquetaEstadoComanda;
   readonly horaDe = horaDe;
+
+  obtenerRondas(comanda: Order): GrupoRondaComanda[] {
+    return this.comandaExistente()?.rondas ?? agruparItemsPorRonda(comanda.items);
+  }
+
+  puedeEliminarItem(comanda: Order, item: OrderItem): boolean {
+    if (item.id == null) return false;
+    const rolActual = this.auth.currentUser()?.rol;
+    if (rolActual && rolActual !== 'MOZO' && rolActual !== 'ADMIN') {
+      return false;
+    }
+    if (['COMPLETADO', 'ENTREGADO', 'CANCELADO', 'PEDIDO_FANTASMA'].includes(comanda.estado)) {
+      return false;
+    }
+    if (this.isAdmin() || this.auth.isAdmin()) {
+      return [
+        'PAGADO',
+        'RECIBIDO',
+        'EN_PREPARACION',
+        'PREPARANDO',
+        'LISTO',
+        'LISTO_PARA_ENTREGAR',
+        'LISTO_COCINA'
+      ].includes(comanda.estado);
+    }
+    // En OrderAdapter.toOrderStatus('RECIBIDO') se mapea a 'PAGADO' (en cola de cocina).
+    return comanda.estado === 'PAGADO' || comanda.estado === 'RECIBIDO';
+  }
+
+  puedeSolicitarCuenta(): boolean {
+    if (this.mesa().estado === 'POR_COBRAR') return false;
+    const comanda = this.comandaMesa();
+    if (!comanda) return false;
+    return comanda.estado === 'LISTO_COCINA' && !!comanda.servidoEn;
+  }
 
   tiempoTranscurridoDesde(fechaIso?: string | null): string {
     return tiempoTranscurridoDesde(fechaIso, this.ahora());

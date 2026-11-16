@@ -138,3 +138,78 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
     expect(orden.servidoPor).toBe(7);
   });
 });
+
+describe('OrderAdapter.toOrder — mapeo de id y ronda (Plan 1)', () => {
+  const baseSalonDto = {
+    id: 10,
+    tipo: 'SALON' as const,
+    estado: 'RECIBIDO' as const,
+    mesaNumero: 4,
+    total: 84.5,
+    nombreCliente: 'Mesa 04',
+    telefonoCliente: '',
+    creadoEn: '2026-01-01T00:00:00Z'
+  };
+
+  it('mapea correctamente id y ronda de cada ítem persistido', () => {
+    const orden = OrderAdapter.toOrder({
+      ...baseSalonDto,
+      items: [
+        {
+          id: 101,
+          productoId: 1,
+          productoNombre: 'Pollo a la Brasa Entero',
+          cantidad: 1,
+          precioUnitario: 65,
+          subtotal: 65,
+          ronda: 1
+        },
+        {
+          id: 102,
+          productoId: 3,
+          productoNombre: 'Porción Tequeños Criollos',
+          cantidad: 1,
+          precioUnitario: 19.5,
+          subtotal: 19.5,
+          ronda: 2
+        }
+      ]
+    });
+
+    expect(orden.items.length).toBe(2);
+    expect(orden.items[0].id).toBe(101);
+    expect(orden.items[0].ronda).toBe(1);
+    expect(orden.items[1].id).toBe(102);
+    expect(orden.items[1].ronda).toBe(2);
+  });
+
+  it('interpreta ronda null o ausente como ronda 1 (registros históricos)', () => {
+    const orden = OrderAdapter.toOrder({
+      ...baseSalonDto,
+      items: [
+        {
+          id: 201,
+          productoId: 1,
+          productoNombre: 'Pollo a la Brasa Entero',
+          cantidad: 1,
+          precioUnitario: 65,
+          subtotal: 65,
+          ronda: null
+        },
+        {
+          id: 202,
+          productoId: 2,
+          productoNombre: 'Inka Kola 1.5L',
+          cantidad: 1,
+          precioUnitario: 12,
+          subtotal: 12
+        }
+      ]
+    });
+
+    expect(orden.items[0].id).toBe(201);
+    expect(orden.items[0].ronda).toBe(1);
+    expect(orden.items[1].id).toBe(202);
+    expect(orden.items[1].ronda).toBe(1);
+  });
+});

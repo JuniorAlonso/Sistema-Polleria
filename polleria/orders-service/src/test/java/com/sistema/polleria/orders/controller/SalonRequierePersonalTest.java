@@ -175,6 +175,114 @@ class SalonRequierePersonalTest {
     }
 
     @Test
+    void unAdminPuedeTomarComandaDeSalon() throws Exception {
+        long adminId = 8801L;
+        ResponseEntity<String> creada = postSalon(null, tokenDe(adminId, "ADMIN"));
+
+        assertEquals(HttpStatus.CREATED, creada.getStatusCode(),
+                "el ADMIN debe poder abrir una comanda de salón: " + creada.getBody());
+        JsonNode cuerpo = objectMapper.readTree(creada.getBody());
+        ordenesCreadas.add(cuerpo.path("id").asLong());
+        assertEquals(adminId, cuerpo.path("clienteId").asLong());
+        assertEquals(adminId, cuerpo.path("mozoId").asLong());
+        assertEquals(MesaEstado.OCUPADA, estadoDeLaMesa());
+    }
+
+    @Test
+    void cocinaRepartidorCajeroYRolesNoAutorizadosNoPuedenAbrirSalon() {
+        for (String rol : List.of("COCINA", "REPARTIDOR", "CAJERO", "INVITADO")) {
+            ResponseEntity<String> intento = postSalon(null, tokenDe(7000L, rol));
+            assertEquals(HttpStatus.FORBIDDEN, intento.getStatusCode(),
+                    "el rol " + rol + " no debe poder abrir una comanda SALON: " + intento.getBody());
+        }
+
+        // Clave interna inválida tampoco debe permitir abrir SALON
+        ResponseEntity<String> claveInvalida = postSalon("clave-interna-invalida", null);
+        assertEquals(HttpStatus.FORBIDDEN, claveInvalida.getStatusCode(),
+                "una clave interna inválida no debe poder abrir SALON: " + claveInvalida.getBody());
+
+        assertEquals(MesaEstado.LIBRE, estadoDeLaMesa(), "la mesa debe seguir LIBRE");
+        assertEquals(0, comandasActivas(), "no debe haberse creado ninguna comanda SALON");
+    }
+
+    @Test
+    void deliveryYRecojoSiguenFuncionandoParaPublicoYPersonal() throws Exception {
+        Long prodId = productoIdDisponible();
+
+        // Público (sin token) puede abrir DELIVERY y RECOJO (quedan en PENDIENTE_PAGO)
+        Map<String, Object> deliveryPublico = Map.of(
+                "tipo", "DELIVERY",
+                "direccionEntrega", "Av. Prueba 456",
+                "nombreCliente", "Cliente Delivery",
+                "telefonoCliente", "988111222",
+                "items", List.of(Map.of("productoId", prodId, "cantidad", 1)));
+        HttpHeaders json = new HttpHeaders();
+        json.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> respDelivery = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(deliveryPublico, json), String.class);
+        assertEquals(HttpStatus.CREATED, respDelivery.getStatusCode(),
+                "DELIVERY público debe seguir funcionando: " + respDelivery.getBody());
+        Long idDelivery = objectMapper.readTree(respDelivery.getBody()).path("id").asLong();
+        ordenesCreadas.add(idDelivery);
+        assertEquals("PENDIENTE_PAGO", objectMapper.readTree(respDelivery.getBody()).path("estado").asText());
+
+        Map<String, Object> recojoPublico = Map.of(
+                "tipo", "RECOJO",
+                "nombreCliente", "Cliente Recojo",
+                "telefonoCliente", "988111333",
+                "items", List.of(Map.of("productoId", prodId, "cantidad", 1)));
+        ResponseEntity<String> respRecojo = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(recojoPublico, json), String.class);
+        assertEquals(HttpStatus.CREATED, respRecojo.getStatusCode(),
+                "RECOJO público debe seguir funcionando: " + respRecojo.getBody());
+        Long idRecojo = objectMapper.readTree(respRecojo.getBody()).path("id").asLong();
+        ordenesCreadas.add(idRecojo);
+        assertEquals("PENDIENTE_PAGO", objectMapper.readTree(respRecojo.getBody()).path("estado").asText());
+
+        // Personal (p. ej. CAJERO) sigue abriendo RECOJO en RECIBIDO
+        HttpHeaders cabecerasCajero = new HttpHeaders();
+        cabecerasCajero.setContentType(MediaType.APPLICATION_JSON);
+        cabecerasCajero.setBearerAuth(tokenDe(7700L, "CAJERO"));
+        ResponseEntity<String> respRecojoCajero = rest.exchange("/ordenes", HttpMethod.POST,
+                new HttpEntity<>(recojoPublico, cabecerasCajero), String.class);
+        assertEquals(HttpStatus.CREATED, respRecojoCajero.getStatusCode(),
+                "CAJERO debe poder seguir abriendo RECOJO: " + respRecojoCajero.getBody());
+        Long idRecojoCajero = objectMapper.readTree(respRecojoCajero.getBody()).path("id").asLong();
+        ordenesCreadas.add(idRecojoCajero);
+        assertEquals("RECIBIDO", objectMapper.readTree(respRecojoCajero.getBody()).path("estado").asText());
+    }
+
+    @Test
+    void wsPolleriaRechazaConexionAnonimaYAceptaConexionAutenticadaDeOrigenConfiable() {
+        // Conexión anónima a /ws-polleria/** rechazada
+        ResponseEntity<String> anonima = rest.exchange("/ws-polleria/info", HttpMethod.GET,
+                new HttpEntity<>(new HttpHeaders()), String.class);
+        assertEquals(HttpStatus.FORBIDDEN, anonima.getStatusCode(),
+                "Una conexión anónima a /ws-polleria/** debe rechazarse: " + anonima.getBody());
+
+        // Conexión autenticada desde origen confiable conserva el comportamiento permitido
+        HttpHeaders autenticadaHeaders = new HttpHeaders();
+        autenticadaHeaders.setBearerAuth(tokenDe(MOZO_ID, "MOZO"));
+        autenticadaHeaders.setOrigin("http://localhost:4200");
+        ResponseEntity<String> autenticada = rest.exchange("/ws-polleria/info", HttpMethod.GET,
+                new HttpEntity<>(autenticadaHeaders), String.class);
+        assertEquals(HttpStatus.OK, autenticada.getStatusCode(),
+                "Una conexión autenticada de origen permitido debe responder 200: " + autenticada.getBody());
+        assertTrue(autenticada.getBody() != null && autenticada.getBody().contains("\"websocket\":true"),
+                "SockJS /ws-polleria/info debe devolver el descriptor de websocket: " + autenticada.getBody());
+
+        // Origen externo no confiable rechazado aunque esté autenticado
+        HttpHeaders origenExternoHeaders = new HttpHeaders();
+        origenExternoHeaders.setBearerAuth(tokenDe(MOZO_ID, "MOZO"));
+        origenExternoHeaders.setOrigin("https://sitio-externo-no-autorizado.example");
+        ResponseEntity<String> origenExterno = rest.exchange("/ws-polleria/info", HttpMethod.GET,
+                new HttpEntity<>(origenExternoHeaders), String.class);
+        assertEquals(HttpStatus.FORBIDDEN, origenExterno.getStatusCode(),
+                "Un origen externo no confiable debe ser rechazado en /ws-polleria/info");
+    }
+
+    @Test
     void mozoNoPuedeEntregarNiCancelarUnaOrdenSalon() throws Exception {
         Long ordenId = abrirComandaSalon();
         String tokenMozo = tokenDe(MOZO_ID, "MOZO");

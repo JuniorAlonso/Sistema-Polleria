@@ -20,6 +20,21 @@ export class ProductsService {
   readonly searchQuery = signal<string>('');
   readonly isLoading = signal<boolean>(false);
 
+  /**
+   * Timestamps de mutaciones locales por producto para proteger contra respuestas GET obsoletas (H-03).
+   */
+  private readonly ultimasMutacionesPorProducto = new Map<string, number>();
+
+  /**
+   * Guarda contra condiciones de carrera (H-03):
+   * Registra IDs de productos con mutaciones de disponibilidad en curso para que una
+   * respuesta GET antigua o paralela no sobrescriba el estado local más reciente.
+   */
+  private readonly mutacionesEnVuelo = new Set<string>();
+
+  /** Bandera para evitar peticiones GET de carta concurrentes si una sigue en curso. */
+  private cargandoProductos = false;
+
   readonly products = this._products.asReadonly();
 
   readonly filteredProducts = computed(() => {
@@ -52,21 +67,60 @@ export class ProductsService {
   }
 
   /**
-   * RF09: Cargar carta de productos desde orders-service (:8082)
+   * RF09: Cargar carta de productos desde orders-service (:8082).
+   * Protegido contra sobreescritura de mutaciones en vuelo y GETs antiguos desordenados (H-03).
    */
   loadProducts(): void {
+    if (this.cargandoProductos) {
+      return;
+    }
+    this.cargandoProductos = true;
     this.isLoading.set(true);
+    const tiempoInicioGet = Date.now();
+
     this.http.get<BackendProductoResponse[]>(`${this.API_URL}/productos?soloDisponibles=false`).pipe(
       tap(backendList => {
         this.isLoading.set(false);
-        this._products.set(
-          Array.isArray(backendList) ? ProductAdapter.toProductList(backendList) : []
-        );
+        this.cargandoProductos = false;
+        if (!Array.isArray(backendList)) {
+          this._products.set([]);
+          return;
+        }
+
+        const productosDesdeBackend = ProductAdapter.toProductList(backendList);
+
+        // Si no hay mutaciones en vuelo ni recientes, actualiza la lista completa
+        if (this.mutacionesEnVuelo.size === 0 && this.ultimasMutacionesPorProducto.size === 0) {
+          this._products.set(productosDesdeBackend);
+          return;
+        }
+
+        // H-03: Preservar el estado local de productos con mutaciones en vuelo o
+        // con mutación confirmada después de haber iniciado este GET.
+        const productosActuales = new Map(this._products().map(p => [p.id, p]));
+        const fusionados = productosDesdeBackend.map(prodBackend => {
+          const enVuelo = this.mutacionesEnVuelo.has(prodBackend.id);
+          const timestampMutacion = this.ultimasMutacionesPorProducto.get(prodBackend.id) ?? 0;
+          const mutacionMasRecienteQueGet = timestampMutacion >= tiempoInicioGet;
+
+          if (enVuelo || mutacionMasRecienteQueGet) {
+            const actual = productosActuales.get(prodBackend.id);
+            if (actual) {
+              return { ...prodBackend, agotado: actual.agotado };
+            }
+          }
+          return prodBackend;
+        });
+
+        this._products.set(fusionados);
       }),
       catchError(() => {
         this.isLoading.set(false);
-        // Si la API no responde, la carta queda vacía: no se inventan platos.
-        this._products.set([]);
+        this.cargandoProductos = false;
+        // Solo vacía la carta si no hay mutaciones en curso
+        if (this.mutacionesEnVuelo.size === 0) {
+          this._products.set([]);
+        }
         return of(null);
       })
     ).subscribe();
@@ -87,12 +141,18 @@ export class ProductsService {
    * RF10: Toggle Disponibilidad / Agotado conectando a PATCH /productos/{id}/disponibilidad.
    * `alTerminar` recibe null si el backend confirmó, o su mensaje si lo rechazó (p. ej. un plato
    * sin stock no se puede activar); en ese caso la carta vuelve al estado real.
+   *
+   * H-03: Rollback granular por ítem (no destructivo sobre otros productos) y protección con mutacionesEnVuelo.
    */
   toggleAgotado(productId: string, alTerminar?: (error: string | null) => void): void {
     const cleanId = this.extractNumericId(productId);
-    const cartaAnterior = this._products();
+    const productoOriginal = this._products().find(p => p.id === productId);
+    const estadoAgotadoOriginal = productoOriginal ? productoOriginal.agotado : false;
 
-    // Optimistic UI update
+    // Registra la mutación en curso para proteger este producto contra GETs obsoletos
+    this.mutacionesEnVuelo.add(productId);
+
+    // Optimistic UI update individualizado sobre el producto
     this._products.update(products =>
       products.map(p => p.id === productId ? { ...p, agotado: !p.agotado } : p)
     );
@@ -100,6 +160,8 @@ export class ProductsService {
     if (cleanId > 0) {
       this.http.patch<BackendProductoResponse>(`${this.API_URL}/productos/${cleanId}/disponibilidad`, {}).pipe(
         tap(res => {
+          this.mutacionesEnVuelo.delete(productId);
+          this.ultimasMutacionesPorProducto.set(productId, Date.now());
           if (res && res.id) {
             const updated = ProductAdapter.toProduct(res);
             this._products.update(products =>
@@ -109,13 +171,21 @@ export class ProductsService {
           alTerminar?.(null);
         }),
         catchError(err => {
-          // El backend no confirmó el cambio: la carta vuelve al estado real.
-          this._products.set(cartaAnterior);
+          this.mutacionesEnVuelo.delete(productId);
+          this.ultimasMutacionesPorProducto.delete(productId);
+          // Rollback granular: solo revierte el producto específico que falló,
+          // preservando sin alteraciones a todos los demás productos.
+          this._products.update(products =>
+            products.map(p => p.id === productId ? { ...p, agotado: estadoAgotadoOriginal } : p)
+          );
           const mensaje = err?.error?.error || err?.error?.message;
           alTerminar?.(typeof mensaje === 'string' ? mensaje : 'No se pudo actualizar la disponibilidad.');
           return of(null);
         })
       ).subscribe();
+    } else {
+      this.mutacionesEnVuelo.delete(productId);
+      this.ultimasMutacionesPorProducto.delete(productId);
     }
   }
 

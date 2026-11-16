@@ -28,6 +28,7 @@ public class SalonEventPublisher {
                             .nombre(item.getProducto() != null ? item.getProducto().getNombre() : "Producto")
                             .cantidad(item.getCantidad())
                             .notas(item.getNotas())
+                            .ronda(item.getRonda() != null && item.getRonda() >= 1 ? item.getRonda() : 1)
                             .build())
                     .toList();
 

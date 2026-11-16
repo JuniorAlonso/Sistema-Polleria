@@ -1,7 +1,7 @@
 import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
+import { Observable, catchError, finalize, map, of, switchMap, tap, throwError } from 'rxjs';
 import { Order, OrderStatus, CreateOrderRequest } from '../models/order.model';
 import { BackendActualizarEstadoRequest, BackendOrdenResponse } from '../models/api-contracts.model';
 import { OrdersApiService } from '../api/orders-api.service';
@@ -207,6 +207,7 @@ export class OrdersService {
       map(dto => OrderAdapter.toOrder(dto)),
       tap(createdOrder => {
         this.isLoading.set(false);
+        this.registrarMutacionEnVuelo(createdOrder);
         this.orders.update(prev => [createdOrder, ...prev.filter(o => o.id !== createdOrder.id)]);
         this.registerClientOrder(createdOrder);
       }),
@@ -301,6 +302,7 @@ export class OrdersService {
     return this.api.agregarItems(cleanId, body).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
         if (this.currentTrackingOrder()?.id === updated.id) {
           this.currentTrackingOrder.set(updated);
@@ -313,6 +315,49 @@ export class OrdersService {
         return throwError(() => new Error(typeof msg === 'string' ? msg : 'No se pudieron agregar los platos a la comanda'));
       })
     );
+  }
+
+  /**
+   * D1.8 / R1.9: quita un producto individual de la comanda (`DELETE /ordenes/{id}/items/{itemId}`).
+   * Actualiza la orden en el signal `orders` únicamente tras confirmación del backend y propaga
+   * intacto el motivo de rechazo (403 / 409).
+   */
+  eliminarItemDeOrden(ordenId: string | number, itemId: string | number): Observable<Order> {
+    const cleanOrdenId = this.extractNumericId(String(ordenId));
+    if (cleanOrdenId <= 0) {
+      return throwError(() => new Error(`Id de orden inválido: ${ordenId}`));
+    }
+
+    const cleanItemId = Number(String(itemId ?? '').trim());
+    if (!Number.isInteger(cleanItemId) || cleanItemId <= 0) {
+      return throwError(() => new Error(`Id de ítem inválido: ${itemId}`));
+    }
+
+    return this.api.eliminarItem(cleanOrdenId, cleanItemId).pipe(
+      map(dto => OrderAdapter.toOrder(dto)),
+      tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
+        this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
+        if (this.currentTrackingOrder()?.id === updated.id) {
+          this.currentTrackingOrder.set(updated);
+        }
+      }),
+      catchError(err => {
+        const msg = err?.error?.error || err?.error?.message || err?.error?.mensaje || err?.error?.detail
+          || (err?.status === 0 ? 'No se pudo conectar con el servicio de pedidos (:8082)' : null)
+          || 'No se pudo eliminar el producto de la comanda';
+        const error = Object.assign(
+          new Error(typeof msg === 'string' ? msg : 'No se pudo eliminar el producto de la comanda'),
+          { status: err?.status, error: err?.error }
+        );
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /** Alias hacia `eliminarItemDeOrden` para mantener consistencia con `OrdersApiService.eliminarItem`. */
+  eliminarItem(ordenId: string | number, itemId: string | number): Observable<Order> {
+    return this.eliminarItemDeOrden(ordenId, itemId);
   }
 
   /**
@@ -329,6 +374,7 @@ export class OrdersService {
     return this.api.servir(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
         if (this.currentTrackingOrder()?.id === updated.id) {
           this.currentTrackingOrder.set(updated);
@@ -344,19 +390,77 @@ export class OrdersService {
     );
   }
 
+  private cargandoOrdenesActivas = false;
+  /**
+   * Órdenes mutadas con éxito (POST/PATCH/DELETE) mientras una consulta `GET /ordenes`
+   * (o su fallback `/ordenes/activos`) seguía en vuelo, para impedir que la respuesta
+   * GET iniciada antes de la mutación sobrescriba el estado más reciente.
+   */
+  private readonly mutacionesEnVuelo = new Map<string, Order>();
+
+  private registrarMutacionEnVuelo(order: Order): void {
+    if (this.cargandoOrdenesActivas && order?.id) {
+      this.mutacionesEnVuelo.set(String(order.id), order);
+    }
+  }
+
+  private preservarMutacionesEnVuelo(list: Order[]): Order[] {
+    if (this.mutacionesEnVuelo.size === 0) {
+      return list;
+    }
+    const idsPresentes = new Set<string>();
+    const actualizada = list.map(o => {
+      idsPresentes.add(o.id);
+      return this.mutacionesEnVuelo.get(o.id) ?? o;
+    });
+    for (const [id, mutada] of this.mutacionesEnVuelo.entries()) {
+      if (!idsPresentes.has(id)) {
+        actualizada.push(mutada);
+      }
+    }
+    return actualizada;
+  }
+
   /**
    * RF19: Cargar órdenes (activas e históricas)
+   * Evita solicitudes concurrentes si una consulta anterior de polling sigue en vuelo,
+   * y preserva mutaciones confirmadas mientras el GET estaba en tránsito.
    */
   loadActiveOrders(): void {
+    if (this.cargandoOrdenesActivas) {
+      return;
+    }
+    this.cargandoOrdenesActivas = true;
+    this.mutacionesEnVuelo.clear();
+
     this.api.listar().pipe(
       map(dtos => OrderAdapter.toOrderList(dtos)),
       tap(list => {
         this.hasError.set(false);
+        const merged = this.preservarMutacionesEnVuelo(list);
         // An empty answer is the truth too: cancelled/removed orders must leave the list.
-        const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
+        const sorted = [...merged].sort((a, b) => Number(b.id) - Number(a.id));
         const current = this.orders();
         const changed = current.length !== sorted.length ||
-          sorted.some((o, i) => !current[i] || current[i].id !== o.id || current[i].estado !== o.estado || current[i].repartidorId !== o.repartidorId || current[i].updatedAt !== o.updatedAt);
+          sorted.some((o, i) =>
+            !current[i]
+            || current[i].id !== o.id
+            || current[i].estado !== o.estado
+            || current[i].repartidorId !== o.repartidorId
+            || current[i].updatedAt !== o.updatedAt
+            || current[i].total !== o.total
+            || current[i].subtotal !== o.subtotal
+            || current[i].servidoEn !== o.servidoEn
+            || current[i].servidoPor !== o.servidoPor
+            || current[i].canalOrigen !== o.canalOrigen
+            || current[i].notasGenerales !== o.notasGenerales
+            || current[i].enPuertaAt !== o.enPuertaAt
+            || current[i].listoAt !== o.listoAt
+            || current[i].intentosLlamada !== o.intentosLlamada
+            || current[i].llamadaConfirmacionAt !== o.llamadaConfirmacionAt
+            || current[i].motivoFantasma !== o.motivoFantasma
+            || !this.mismosItems(current[i].items, o.items)
+          );
         if (changed) {
           this.orders.set(sorted);
         }
@@ -366,8 +470,9 @@ export class OrdersService {
           map(dtos => OrderAdapter.toOrderList(dtos)),
           tap(list => {
             this.hasError.set(false);
-            if (list.length > 0) {
-              const sorted = [...list].sort((a, b) => Number(b.id) - Number(a.id));
+            const merged = this.preservarMutacionesEnVuelo(list);
+            if (merged.length > 0) {
+              const sorted = [...merged].sort((a, b) => Number(b.id) - Number(a.id));
               this.orders.set(sorted);
             }
           }),
@@ -377,8 +482,27 @@ export class OrdersService {
             return of([]);
           })
         );
+      }),
+      finalize(() => {
+        this.cargandoOrdenesActivas = false;
+        this.mutacionesEnVuelo.clear();
       })
     ).subscribe();
+  }
+
+  private mismosItems(actuales: Order['items'], nuevos: Order['items']): boolean {
+    if (actuales.length !== nuevos.length) return false;
+    return actuales.every((item, idx) => {
+      const otro = nuevos[idx];
+      return !!otro
+        && item.id === otro.id
+        && item.ronda === otro.ronda
+        && item.cantidad === otro.cantidad
+        && item.subtotal === otro.subtotal
+        && item.notas === otro.notas
+        && item.product.id === otro.product.id
+        && item.product.nombre === otro.product.nombre;
+    });
   }
 
   /**
@@ -430,6 +554,7 @@ export class OrdersService {
     return this.api.reclamar(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         // Lo que confirmó el backend es la verdad: el pedido aparece asignado y deja de ofrecerse.
         const existia = this.orders().some(o => o.id === updated.id);
         this.orders.update(prev => existia
@@ -460,6 +585,7 @@ export class OrdersService {
       return this.api.actualizarEstado(cleanId, payload).pipe(
         map(dto => OrderAdapter.toOrder(dto)),
         tap(updated => {
+          this.registrarMutacionEnVuelo(updated);
           this.orders.update(items =>
             items.map(o => o.id === updated.id ? updated : o)
           );
@@ -545,6 +671,7 @@ export class OrdersService {
     return this.api.confirmarLlamada(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
       })
     );
@@ -558,6 +685,7 @@ export class OrdersService {
     return this.api.registrarIntentoLlamada(cleanId, observaciones).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
       })
     );
@@ -571,6 +699,7 @@ export class OrdersService {
     return this.api.marcarEnPuerta(cleanId).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
       })
     );
@@ -584,6 +713,7 @@ export class OrdersService {
     return this.api.declararPedidoFantasma(cleanId, motivo).pipe(
       map(dto => OrderAdapter.toOrder(dto)),
       tap(updated => {
+        this.registrarMutacionEnVuelo(updated);
         this.orders.update(prev => prev.map(o => o.id === updated.id ? updated : o));
       })
     );

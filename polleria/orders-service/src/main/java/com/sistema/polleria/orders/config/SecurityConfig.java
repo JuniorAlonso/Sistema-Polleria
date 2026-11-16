@@ -65,7 +65,7 @@ public class SecurityConfig {
                         // La carta, el tracking de órdenes y actualización de estado son públicos en dev
                         .requestMatchers("/productos/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/zonas/**").permitAll()
-                        .requestMatchers("/ws-polleria/**").permitAll()
+                        .requestMatchers("/ws-polleria/**").authenticated()
                         .requestMatchers(org.springframework.http.HttpMethod.POST, "/ordenes").permitAll()
                         // Seguimiento sin cuenta: verificación del celular por WhatsApp
                         .requestMatchers("/ordenes/seguimiento", "/ordenes/seguimiento/**").permitAll()

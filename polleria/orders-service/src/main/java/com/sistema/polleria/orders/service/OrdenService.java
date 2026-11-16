@@ -113,10 +113,11 @@ public class OrdenService {
             mesa.setEstado(MesaEstado.OCUPADA);
         }
 
-        // Construir items (bloqueando los platos en orden de id para no provocar deadlocks)
+        // Construir items (bloqueando los platos en orden de id para no provocar deadlocks).
+        // Los ítems de la comanda inicial corresponden a la ronda 1 (D1.5).
         bloquearProductos(request.getItems().stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> items = request.getItems().stream()
-                .map(itemReq -> construirItem(orden, itemReq))
+                .map(itemReq -> construirItem(orden, itemReq, 1))
                 .toList();
 
         orden.getItems().addAll(items);
@@ -135,6 +136,7 @@ public class OrdenService {
         numeroPedidoService.asignar(orden);
 
         ordenRepository.save(orden);
+        ordenRepository.flush();
         log.info("Orden #{} creada — tipo: {}, total: S/.{}, N.° {} del cliente",
                 orden.getId(), orden.getTipo(), orden.getTotal(), orden.getNumeroCliente());
         salonEventPublisher.notificarNuevaComanda(orden);
@@ -166,9 +168,10 @@ public class OrdenService {
                     + " y no admite productos nuevos.");
         }
 
+        int siguienteRonda = calcularSiguienteRonda(orden);
         bloquearProductos(itemsReq.stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> nuevos = itemsReq.stream()
-                .map(itemReq -> construirItem(orden, itemReq))
+                .map(itemReq -> construirItem(orden, itemReq, siguienteRonda))
                 .toList();
 
         orden.getItems().addAll(nuevos);
@@ -185,13 +188,102 @@ public class OrdenService {
         }
 
         ordenRepository.save(orden);
-        log.info("Comanda #{} ampliada con {} ítem(s) por usuario {} — nuevo total: S/.{}",
-                id, nuevos.size(), usuarioId, orden.getTotal());
+        ordenRepository.flush();
+        log.info("Comanda #{} ampliada con {} ítem(s) en ronda {} por usuario {} — nuevo total: S/.{}",
+                id, nuevos.size(), siguienteRonda, usuarioId, orden.getTotal());
         salonEventPublisher.notificarNuevaComanda(orden);
         if (orden.getMesa() != null) {
             salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
         }
         return OrdenResponse.from(orden);
+    }
+
+    /**
+     * D1.8: quita un producto individual de una comanda de salón.
+     * <ul>
+     *   <li>{@code MOZO}: solo cuando la orden está en {@link OrdenEstado#RECIBIDO}.</li>
+     *   <li>{@code ADMIN}: en cualquier estado activo (no terminal).</li>
+     *   <li>No permite dejar la comanda sin productos (409).</li>
+     *   <li>Repone stock únicamente si la orden sigue sin cocinarse ({@code RECIBIDO}).</li>
+     * </ul>
+     */
+    @Transactional
+    public OrdenResponse eliminarItem(Long id, Long itemId, Long usuarioId, boolean esAdmin) {
+        Orden orden = buscarOFallarConBloqueo(id);
+
+        if (orden.getTipo() != OrdenTipo.SALON) {
+            throw new IllegalArgumentException(
+                    "Solo las comandas de salón permiten quitar productos individuales; el pedido #" + id
+                    + " es de tipo " + orden.getTipo() + ".");
+        }
+
+        if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
+            throw new ConflictoDeEstadoException(
+                    "La comanda #" + id + " ya está " + orden.getEstado()
+                    + " y no permite quitar productos.");
+        }
+
+        if (!esAdmin && orden.getEstado() != OrdenEstado.RECIBIDO) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "El mozo solo puede quitar productos mientras la comanda está en estado RECIBIDO (estado actual: "
+                    + orden.getEstado() + ").");
+        }
+
+        OrdenItem itemAEliminar = orden.getItems().stream()
+                .filter(i -> java.util.Objects.equals(i.getId(), itemId))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchElementException(
+                        "El ítem #" + itemId + " no existe en la comanda #" + id + "."));
+
+        if (orden.getItems().size() <= 1) {
+            throw new ConflictoDeEstadoException(
+                    "No se puede dejar una comanda sin productos. Para anular la comanda completa debe cancelarse.");
+        }
+
+        if (orden.getEstado() == OrdenEstado.RECIBIDO) {
+            devolverStockItem(itemAEliminar);
+        }
+
+        String nombreProducto = itemAEliminar.getProducto() != null
+                ? itemAEliminar.getProducto().getNombre()
+                : ("producto #" + itemId);
+        String notaEliminacion = "Ítem quitado: " + itemAEliminar.getCantidad() + "x " + nombreProducto;
+        String obsActual = orden.getObservaciones();
+        String nuevaObs = (obsActual == null || obsActual.isBlank())
+                ? notaEliminacion
+                : obsActual + " | " + notaEliminacion;
+        if (nuevaObs.length() > 500) {
+            nuevaObs = nuevaObs.substring(0, 500);
+        }
+        orden.setObservaciones(nuevaObs);
+
+        orden.getItems().remove(itemAEliminar);
+        orden.recalcularTotal();
+
+        ordenRepository.save(orden);
+        ordenRepository.flush();
+        log.info("Comanda #{}: ítem #{} ({}) eliminado por usuario {} (admin={}) — nuevo total: S/.{}",
+                id, itemId, notaEliminacion, usuarioId, esAdmin, orden.getTotal());
+        salonEventPublisher.notificarNuevaComanda(orden);
+        if (orden.getMesa() != null) {
+            salonEventPublisher.notificarMesaActualizada(mesaService.mapearMesaConOrdenActiva(orden.getMesa()));
+        }
+        return OrdenResponse.from(orden);
+    }
+
+    /**
+     * D1.5: calcula la siguiente ronda disponible sobre una comanda existente (max + 1).
+     * Los ítems legados con {@code ronda == null} se interpretan como ronda 1.
+     */
+    private int calcularSiguienteRonda(Orden orden) {
+        if (orden.getItems() == null || orden.getItems().isEmpty()) {
+            return 1;
+        }
+        int maxRonda = orden.getItems().stream()
+                .mapToInt(item -> item.getRonda() != null && item.getRonda() >= 1 ? item.getRonda() : 1)
+                .max()
+                .orElse(1);
+        return maxRonda + 1;
     }
 
     /**
@@ -212,6 +304,10 @@ public class OrdenService {
         if (!checkoutPublico) {
             return pedido != null ? pedido : OrdenEstado.RECIBIDO;
         }
+        if (request.getTipo() == OrdenTipo.SALON) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "La comanda de salón la toma el personal de la pollería (mozo o administrador).");
+        }
         if (pedido == OrdenEstado.RECIBIDO) {
             throw new IllegalArgumentException("El checkout público no puede abrir un pedido en RECIBIDO: "
                     + "use PENDIENTE_PAGO o PENDIENTE_CONFIRMACION");
@@ -230,7 +326,7 @@ public class OrdenService {
      * Ítem de comanda validando que el producto exista, esté disponible y tenga stock. El stock se
      * descuenta aquí mismo, dentro de la transacción del pedido: si otro ítem falla, se revierte.
      */
-    private OrdenItem construirItem(Orden orden, OrdenItemRequest itemReq) {
+    private OrdenItem construirItem(Orden orden, OrdenItemRequest itemReq, int ronda) {
         Producto producto = productoService.buscarConBloqueo(itemReq.getProductoId());
         if (!producto.isDisponible()) {
             throw new IllegalArgumentException("El producto '" + producto.getNombre() + "' está agotado");
@@ -243,6 +339,7 @@ public class OrdenService {
                 .precioUnitario(producto.getPrecio())
                 .subtotal(producto.getPrecio().multiply(java.math.BigDecimal.valueOf(itemReq.getCantidad())))
                 .notas(itemReq.getNotas())
+                .ronda(ronda)
                 .build();
     }
 
@@ -271,13 +368,20 @@ public class OrdenService {
     private void devolverStock(Orden orden) {
         bloquearProductos(orden.getItems().stream().map(i -> i.getProducto().getId()).toList());
         for (OrdenItem item : orden.getItems()) {
-            Producto producto = productoService.buscarConBloqueo(item.getProducto().getId());
-            Integer stock = producto.getStock();
-            if (stock != null) {
-                producto.setStock(stock + item.getCantidad());
-                if (stock == 0) {
-                    producto.setDisponible(true);
-                }
+            devolverStockItem(item);
+        }
+    }
+
+    private void devolverStockItem(OrdenItem item) {
+        if (item.getProducto() == null || item.getProducto().getId() == null) {
+            return;
+        }
+        Producto producto = productoService.buscarConBloqueo(item.getProducto().getId());
+        Integer stock = producto.getStock();
+        if (stock != null) {
+            producto.setStock(stock + item.getCantidad());
+            if (stock == 0) {
+                producto.setDisponible(true);
             }
         }
     }

@@ -58,4 +58,30 @@ class OrigenesCorsLoopbackTest {
         assertEquals("http://localhost:4200", configuracion().checkOrigin("http://localhost:4200"),
                 "la lista de cors.allowed-origins debe seguir vigente");
     }
+
+    @Test
+    void webSocketConfigReutilizaLaListaDeOrigenesConfiablesSinComodinUniversal() throws Exception {
+        WebSocketConfig wsConfig = new WebSocketConfig();
+        var field = WebSocketConfig.class.getDeclaredField("allowedOrigins");
+        field.setAccessible(true);
+        field.set(wsConfig, CONFIGURADOS);
+
+        var registry = org.mockito.Mockito.mock(
+                org.springframework.web.socket.config.annotation.StompEndpointRegistry.class);
+        var registration = org.mockito.Mockito.mock(
+                org.springframework.web.socket.config.annotation.StompWebSocketEndpointRegistration.class);
+        org.mockito.Mockito.when(registry.addEndpoint("/ws-polleria")).thenReturn(registration);
+        org.mockito.Mockito.when(registration.setAllowedOriginPatterns(org.mockito.Mockito.any(String[].class)))
+                .thenReturn(registration);
+
+        wsConfig.registerStompEndpoints(registry);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String[].class);
+        org.mockito.Mockito.verify(registration).setAllowedOriginPatterns(captor.capture());
+        java.util.List<String> registrados = java.util.Arrays.asList(captor.getValue());
+        assertEquals(SecurityConfig.origenesPermitidos(CONFIGURADOS), registrados,
+                "WebSocketConfig debe reutilizar exactamente los orígenes confiables de SecurityConfig");
+        org.junit.jupiter.api.Assertions.assertFalse(registrados.contains("*"),
+                "WebSocketConfig no debe permitir el comodín universal '*'");
+    }
 }

@@ -1,6 +1,18 @@
 /** Mapa de nombres: Order / OrderStatus (UI) <-> BackendOrdenResponse (api-contracts.model.ts) via OrderAdapter. */
 import { CartItem } from './product.model';
 
+/**
+ * Ítem perteneciente a una orden (persistido en orden_items).
+ * Extiende CartItem con los metadatos propios de la comanda (`id` y `ronda`),
+ * manteniendo intacto CartItem para los ítems temporales del carrito.
+ */
+export interface OrderItem extends CartItem {
+  /** Identificador del ítem persistido en `orden_items`. */
+  id?: number;
+  /** Número de ronda de envío a cocina (1 para la comanda inicial o registros históricos). */
+  ronda?: number;
+}
+
 export type OrderType = 'DELIVERY' | 'RECOJO_EN_TIENDA' | 'SALON';
 
 /**
@@ -47,7 +59,7 @@ export interface Order {
   codigoSeguimiento: string; // Ej: POL-9482 (uso interno del personal)
   numeroCliente?: number;    // Número que ve el cliente: su pedido N.° 1, 2, 3...
   cliente: OrderCustomerInfo;
-  items: CartItem[];
+  items: OrderItem[];
   tipo: OrderType;
   estado: OrderStatus;
   /** Canal de origen del pedido (S1). Opcional: las órdenes viejas no tienen canal. */

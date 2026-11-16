@@ -42,23 +42,27 @@ public class OrdenResponse {
     @Data
     @Builder
     public static class ItemResponse {
+        private Long id;
         private Long productoId;
         private String productoNombre;
         private Integer cantidad;
         private BigDecimal precioUnitario;
         private BigDecimal subtotal;
         private String notas;
+        private Integer ronda;
     }
 
     public static OrdenResponse from(Orden o) {
         List<ItemResponse> items = o.getItems().stream()
                 .map(item -> ItemResponse.builder()
+                        .id(item.getId())
                         .productoId(item.getProducto().getId())
                         .productoNombre(item.getProducto().getNombre())
                         .cantidad(item.getCantidad())
                         .precioUnitario(item.getPrecioUnitario())
                         .subtotal(item.getSubtotal())
                         .notas(item.getNotas())
+                        .ronda(item.getRonda() != null && item.getRonda() >= 1 ? item.getRonda() : 1)
                         .build())
                 .toList();
 

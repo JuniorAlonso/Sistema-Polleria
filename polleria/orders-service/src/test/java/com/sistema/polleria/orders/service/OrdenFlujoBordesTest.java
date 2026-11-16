@@ -60,6 +60,16 @@ class OrdenFlujoBordesTest {
     }
 
     @Test
+    void checkoutPublicoNoPuedeAbrirComandaDeSalon() {
+        CrearOrdenRequest r = crearRequest(OrdenTipo.SALON, null);
+        r.setMesaId(1L);
+
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> ordenService.crear(r, 0L, true));
+        verify(ordenRepository, never()).save(any(Orden.class));
+    }
+
+    @Test
     void checkoutPublicoSinEstadoAbreDeliveryYRecojoEnPendientePago() {
         ArgumentCaptor<Orden> guardada = guardar();
         for (OrdenTipo tipo : List.of(OrdenTipo.DELIVERY, OrdenTipo.RECOJO)) {

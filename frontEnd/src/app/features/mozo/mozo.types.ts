@@ -1,3 +1,4 @@
+import { OrderItem, OrderStatus } from '../../core/models/order.model';
 import { Product } from '../../core/models/product.model';
 import { TableStatus } from '../../core/models/table.model';
 
@@ -23,7 +24,7 @@ export interface MesaSalon {
   ordenId?: string;
   servidoEn?: string | null;
   creadoEn?: string | null;
-  items?: { producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
+  items?: { id?: number; ronda?: number; producto: string; cantidad: number; precio: number; notas?: string; listo?: boolean }[];
 }
 
 export interface AlertaPlatoListo {
@@ -38,8 +39,38 @@ export interface AlertaPlatoListo {
   atendido: boolean;
 }
 
+/** Ítem temporal del selector de carta (aún no enviado al backend). */
 export interface ComandaItem {
   producto: Product;
   cantidad: number;
   notas: string;
+}
+
+/** Ítem persistido dentro de una comanda activa de salón, con id de ítem y número de ronda. */
+export interface ComandaExistenteItem {
+  id?: number;
+  ronda: number;
+  productoId: string;
+  nombre: string;
+  cantidad: number;
+  precioUnitario: number;
+  subtotal: number;
+  notas?: string;
+}
+
+/** Agrupación de ítems persistidos por número de ronda (1, 2, ...). */
+export interface GrupoRondaComanda {
+  ronda: number;
+  items: OrderItem[];
+}
+
+/** Representación de la comanda activa de una mesa con sus ítems y rondas mapeados desde OrderItem. */
+export interface ComandaExistente {
+  id: string;
+  codigoSeguimiento: string;
+  estado: OrderStatus;
+  total: number;
+  servidoEn?: string;
+  items: ComandaExistenteItem[];
+  rondas: GrupoRondaComanda[];
 }

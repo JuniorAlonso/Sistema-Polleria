@@ -63,11 +63,29 @@ import { Order } from '../../../core/models/order.model';
             <!-- Listado de Comandas para Cobro -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               @for (orden of comandas(); track orden.id) {
+                @let esPorCobrar = estaPorCobrar(orden);
                 <div 
-                  class="p-4 rounded-2xl bg-[#14161a] border border-white/10 hover:border-emerald-500/50 transition flex flex-col justify-between gap-4 cursor-pointer shadow-lg"
+                  class="p-4 rounded-2xl bg-[#14161a] border transition flex flex-col justify-between gap-4 cursor-pointer shadow-lg relative overflow-hidden"
+                  [ngClass]="esPorCobrar 
+                    ? 'border-amber-500 shadow-[0_0_25px_rgba(245,158,11,0.35)] ring-2 ring-amber-500/60 animate-pulse' 
+                    : 'border-white/10 hover:border-emerald-500/50'"
                   (click)="cobrar.emit(orden)"
                 >
-                  <div>
+                  <!-- Cintillo / Indicador superior de cobro urgente -->
+                  @if (esPorCobrar) {
+                    <div class="absolute top-0 right-0 left-0 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 py-1 px-3 text-[10px] font-black uppercase tracking-widest text-slate-950 flex items-center justify-between shadow-sm">
+                      <span class="flex items-center gap-1.5">
+                        <span class="relative flex h-2 w-2">
+                          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-950 opacity-75"></span>
+                          <span class="relative inline-flex rounded-full h-2 w-2 bg-slate-950"></span>
+                        </span>
+                        ¡CUENTA SOLICITADA EN MESA!
+                      </span>
+                      <span class="font-mono text-[9px] bg-slate-950/20 px-1.5 py-0.5 rounded">PRIORIDAD 1</span>
+                    </div>
+                  }
+
+                  <div [class.pt-4]="esPorCobrar">
                     <!-- Header Card -->
                     <div class="flex items-start justify-between gap-2 mb-2">
                       <div class="flex items-center gap-2">
@@ -76,7 +94,9 @@ import { Order } from '../../../core/models/order.model';
                         </span>
                         <!-- Badge Tipo -->
                         @if (orden.tipo === 'SALON') {
-                          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                            [ngClass]="esPorCobrar ? 'bg-amber-400 text-slate-950 border-amber-300 font-black' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'"
+                          >
                             Mesa {{ orden.cliente.mesaNumero || 'S/N' }}
                           </span>
                         } @else if (orden.tipo === 'DELIVERY') {
@@ -120,20 +140,23 @@ import { Order } from '../../../core/models/order.model';
                   <!-- Footer Card con Total y Botón de Cobro -->
                   <div class="border-t border-white/10 pt-3 flex items-center justify-between gap-3">
                     <div>
-                      <span class="text-[10px] text-slate-400 uppercase font-semibold block">Total a Cobrar</span>
-                      <span class="font-display text-2xl text-polleria-gold font-bold">
+                      <span class="text-[10px] uppercase font-semibold block" [ngClass]="esPorCobrar ? 'text-amber-400 font-bold' : 'text-slate-400'">Total a Cobrar</span>
+                      <span class="font-display text-2xl font-bold" [ngClass]="esPorCobrar ? 'text-amber-400' : 'text-polleria-gold'">
                         {{ orden.total | currencyPEN }}
                       </span>
                     </div>
                     <button
                       type="button"
                       (click)="$event.stopPropagation(); cobrar.emit(orden)"
-                      class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20 cursor-pointer"
+                      class="px-4 py-2.5 font-black text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-1.5 shadow-md cursor-pointer active:scale-95"
+                      [ngClass]="esPorCobrar 
+                        ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-500/30 ring-2 ring-amber-300/50' 
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>
                       </svg>
-                      <span>Cobrar</span>
+                      <span>{{ esPorCobrar ? 'Cobrar Urgente' : 'Cobrar' }}</span>
                     </button>
                   </div>
                 </div>
@@ -153,9 +176,17 @@ export class CajeroPosTabComponent {
   readonly cajaAbierta = input.required<boolean>();
   readonly totalPorCobrar = input<number>(0);
   readonly comandas = input.required<Order[]>();
+  readonly mesasPorCobrarMap = input<Set<string>>(new Set());
   /** Texto de busqueda (two-way): el contenedor mantiene el valor. */
   readonly busquedaTexto = model<string>('');
 
   readonly abrirCaja = output<void>();
   readonly cobrar = output<Order>();
+
+  estaPorCobrar(orden: Order): boolean {
+    if (orden.tipo !== 'SALON') return false;
+    const num = orden.cliente?.mesaNumero ? Number(orden.cliente.mesaNumero) : 0;
+    const id = (orden as any).mesaId ? Number((orden as any).mesaId) : 0;
+    return this.mesasPorCobrarMap().has(`num-${num}`) || this.mesasPorCobrarMap().has(`id-${id}`);
+  }
 }

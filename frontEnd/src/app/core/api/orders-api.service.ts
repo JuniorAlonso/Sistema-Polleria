@@ -48,6 +48,10 @@ export class OrdersApiService {
     return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${id}/items`, body);
   }
 
+  eliminarItem(id: number | string, itemId: number | string): Observable<BackendOrdenResponse> {
+    return this.http.delete<BackendOrdenResponse>(`${this.API_URL}/ordenes/${id}/items/${itemId}`);
+  }
+
   servir(id: number | string): Observable<BackendOrdenResponse> {
     return this.http.post<BackendOrdenResponse>(`${this.API_URL}/ordenes/${id}/servir`, {});
   }

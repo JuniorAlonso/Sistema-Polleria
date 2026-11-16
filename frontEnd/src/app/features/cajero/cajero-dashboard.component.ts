@@ -10,6 +10,7 @@ import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { TipoMovimiento } from '../../core/models/finance.model';
 import { RepartidoresService } from '../../core/services/repartidores.service';
+import { SalonService } from '../../core/services/salon.service';
 import { BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 import { CajeroTab, CapturaPendiente, EntregaRecojoEvent, MetodoCobro, RechazarCapturaEvent } from './models/cajero.models';
 import { normalizarCodigoTicket } from './models/cajero-plazos.helpers';
@@ -96,6 +97,7 @@ export type { CajeroTab, MetodoCobro };
               [cajaAbierta]="cajaAbierta()"
               [totalPorCobrar]="comandasPorCobrar().length"
               [comandas]="comandasFiltradas()"
+              [mesasPorCobrarMap]="mesasPorCobrarSet()"
               [(busquedaTexto)]="busquedaTexto"
               (abrirCaja)="activeTab.set('ARQUEO')"
               (cobrar)="seleccionarOrdenParaCobro($event)"
@@ -281,6 +283,8 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
   readonly repartidoresService = inject(RepartidoresService);
+  readonly salonService = inject(SalonService);
+  private notifiedMesas = new Set<string>();
   readonly auth = inject(AuthService);
   private notify = inject(NotificationService);
   private readonly cobroSalon = inject(CobroSalonFacade);
@@ -414,11 +418,29 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
    */
   readonly comandasPorCobrar = computed(() => {
     const pagosMap = this.paymentService.pagosPorOrdenMap();
-    return this.ordersService.orders().filter(o => {
+    const mesasMap = new Map<number, string>(this.salonService.mesas().map(m => [Number(m.numero), m.estado]));
+    const mesasIdMap = new Map<number, string>(this.salonService.mesas().map(m => [Number(m.id), m.estado]));
+
+    const filtradas = this.ordersService.orders().filter(o => {
       if (o.tipo !== 'SALON') return false;
       if (['CANCELADO', 'COMPLETADO', 'PEDIDO_FANTASMA'].includes(o.estado)) return false;
       const pago = pagosMap.get(String(o.id));
       return !pago || pago.estado !== 'APROBADO';
+    });
+
+    // Priorizar al inicio (posición 1) las mesas que están en estado POR_COBRAR
+    return [...filtradas].sort((a, b) => {
+      const aMesaNum = a.cliente?.mesaNumero ? Number(a.cliente.mesaNumero) : 0;
+      const bMesaNum = b.cliente?.mesaNumero ? Number(b.cliente.mesaNumero) : 0;
+      const aMesaId = (a as any).mesaId ? Number((a as any).mesaId) : 0;
+      const bMesaId = (b as any).mesaId ? Number((b as any).mesaId) : 0;
+
+      const aPorCobrar = mesasMap.get(aMesaNum) === 'POR_COBRAR' || mesasIdMap.get(aMesaId) === 'POR_COBRAR';
+      const bPorCobrar = mesasMap.get(bMesaNum) === 'POR_COBRAR' || mesasIdMap.get(bMesaId) === 'POR_COBRAR';
+
+      if (aPorCobrar && !bPorCobrar) return -1;
+      if (!aPorCobrar && bPorCobrar) return 1;
+      return 0;
     });
   });
 
@@ -436,6 +458,17 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     }
 
     return list;
+  });
+
+  readonly mesasPorCobrarSet = computed(() => {
+    const set = new Set<string>();
+    for (const m of this.salonService.mesas()) {
+      if (m.estado === 'POR_COBRAR') {
+        set.add(`num-${m.numero}`);
+        set.add(`id-${m.id}`);
+      }
+    }
+    return set;
   });
 
   // Cálculos de saldo de caja
@@ -496,12 +529,33 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   refrescarTodo(): void {
     this.cargando.set(true);
     this.ordersService.loadActiveOrders();
+    this.salonService.cargarMesas();
     this.paymentService.cargarPagos().subscribe();
     this.financeService.obtenerCajaActual();
     this.financeService.cargarMovimientos();
     this.cargarLiquidaciones();
     this.cargarCapturas();
+    this.verificarAlertasMesasPorCobrar();
     setTimeout(() => this.cargando.set(false), 800);
+  }
+
+  private verificarAlertasMesasPorCobrar(): void {
+    const mesasMap = new Map<number, string>(this.salonService.mesas().map(m => [Number(m.numero), m.estado]));
+    const comandas = this.comandasPorCobrar();
+
+    for (const orden of comandas) {
+      const numMesa = orden.cliente?.mesaNumero ? Number(orden.cliente.mesaNumero) : 0;
+      if (numMesa > 0 && mesasMap.get(numMesa) === 'POR_COBRAR') {
+        const key = `${orden.id}-${numMesa}`;
+        if (!this.notifiedMesas.has(key)) {
+          this.notifiedMesas.add(key);
+          this.notify.showInfo(
+            `🔔 ¡Mesa ${numMesa} solicita la cuenta!`,
+            `Comanda #${orden.codigoSeguimiento || orden.id} — Total: S/ ${orden.total.toFixed(2)}`
+          );
+        }
+      }
+    }
   }
 
   seleccionarOrdenParaCobro(orden: Order): void {

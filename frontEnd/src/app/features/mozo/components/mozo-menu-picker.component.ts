@@ -26,8 +26,9 @@ import { MesaSalon } from '../mozo.types';
                       (ngModelChange)="mesaChange.emit($event)"
                       class="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white focus:outline-none focus:ring-1 focus:ring-polleria-gold"
                     >
+                      <option [ngValue]="null">-- Seleccioná una mesa --</option>
                       @for (m of mesas(); track m.id) {
-                        <option [value]="m.id">{{ m.nombre }} ({{ m.estado }})</option>
+                        <option [ngValue]="m.id">{{ m.nombre }} ({{ m.estado }})</option>
                       }
                     </select>
                   </div>
@@ -36,7 +37,7 @@ import { MesaSalon } from '../mozo.types';
                 <!-- Products Grid -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   @for (prod of products(); track prod.id) {
-                    <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 flex flex-col justify-between gap-3 shadow hover:border-polleria-gold/40 transition">
+                    <div class="p-4 rounded-2xl bg-[#14161a] border border-white/10 flex flex-col justify-between gap-3 shadow hover:border-polleria-gold/40 transition" [class.opacity-60]="prod.agotado">
                       <div class="flex items-center gap-3">
                         <img [src]="prod.imagenUrl" [alt]="prod.nombre" class="w-16 h-16 rounded-xl object-cover shrink-0 bg-slate-800"/>
                         <div class="min-w-0">
@@ -46,10 +47,12 @@ import { MesaSalon } from '../mozo.types';
                         </div>
                       </div>
                       <button 
+                        type="button"
+                        [disabled]="prod.agotado"
                         (click)="agregar.emit(prod)"
-                        class="w-full py-2 rounded-xl bg-polleria-gold/10 hover:bg-polleria-gold text-polleria-gold hover:text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                        class="w-full py-2 rounded-xl bg-polleria-gold/10 hover:bg-polleria-gold disabled:opacity-50 disabled:cursor-not-allowed text-polleria-gold hover:text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        <span>+ Agregar a la comanda</span>
+                        <span>{{ prod.agotado ? 'Agotado' : '+ Agregar a la comanda' }}</span>
                       </button>
                     </div>
                   }
@@ -59,8 +62,8 @@ import { MesaSalon } from '../mozo.types';
 export class MozoMenuPickerComponent {
   readonly mesas = input.required<MesaSalon[]>();
   readonly products = input.required<Product[]>();
-  readonly selectedMesaForOrder = input.required<number | string>();
+  readonly selectedMesaForOrder = input.required<number | string | null>();
 
-  readonly mesaChange = output<number | string>();
+  readonly mesaChange = output<number | string | null>();
   readonly agregar = output<Product>();
 }

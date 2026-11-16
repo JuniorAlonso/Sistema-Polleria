@@ -696,3 +696,281 @@ describe('OrdersService — createOrder desde un Order del checkout', () => {
     expect(service.myOrders()[0].id).toBe('77');
   });
 });
+
+/**
+ * D1.8 / R1.9 — quitar un ítem individual de una comanda (`DELETE /ordenes/{id}/items/{itemId}`).
+ */
+describe('OrdersService — eliminarItemDeOrden (D1.8 / R1.9)', () => {
+  let service: OrdersService;
+  let http: HttpTestingController;
+
+  const comandaConDosItems = (): Order => ({
+    id: '7',
+    codigoSeguimiento: 'POL-7',
+    cliente: { nombre: 'Mesa 03', celular: '', mesaNumero: 3 },
+    items: [
+      {
+        id: 101,
+        ronda: 1,
+        product: {
+          id: '1',
+          nombre: 'Pollo a la Brasa Entero',
+          descripcion: '',
+          precio: 65,
+          imagenUrl: '',
+          categoria: 'POLLOS_A_LA_BRASA',
+          agotado: false
+        },
+        cantidad: 1,
+        subtotal: 65
+      },
+      {
+        id: 102,
+        ronda: 2,
+        product: {
+          id: '2',
+          nombre: 'Jarra Chicha Morada 1L',
+          descripcion: '',
+          precio: 14,
+          imagenUrl: '',
+          categoria: 'BEBIDAS',
+          agotado: false
+        },
+        cantidad: 1,
+        subtotal: 14
+      }
+    ],
+    tipo: 'SALON',
+    estado: 'PAGADO',
+    subtotal: 79,
+    costoEnvio: 0,
+    descuento: 0,
+    total: 79,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  });
+
+  const dtoTrasEliminar = () => ({
+    id: 7,
+    tipo: 'SALON' as const,
+    estado: 'RECIBIDO' as const,
+    mesaNumero: 3,
+    nombreCliente: 'Mesa 03',
+    telefonoCliente: '',
+    total: 65,
+    observaciones: '[Ítem quitado por MOZO #4: 1x Jarra Chicha Morada 1L]',
+    items: [
+      {
+        id: 101,
+        productoId: 1,
+        productoNombre: 'Pollo a la Brasa Entero',
+        cantidad: 1,
+        precioUnitario: 65,
+        subtotal: 65,
+        ronda: 1
+      }
+    ],
+    creadoEn: '2026-01-01T00:00:00Z'
+  });
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(OrdersService);
+    http = TestBed.inject(HttpTestingController);
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => http.verify());
+
+  it('hace DELETE a /ordenes/7/items/102 y actualiza la orden en el signal orders()', () => {
+    const inicial = comandaConDosItems();
+    service.orders.set([inicial]);
+    service.currentTrackingOrder.set(inicial);
+
+    let resultado: Order | null = null;
+    service.eliminarItemDeOrden('POL-7', 102).subscribe(o => (resultado = o));
+
+    const req = http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/102'));
+    req.flush(dtoTrasEliminar());
+
+    expect(resultado).not.toBeNull();
+    expect(resultado!.total).toBe(65);
+    expect(resultado!.items.length).toBe(1);
+    expect(resultado!.items[0].id).toBe(101);
+    expect(resultado!.items[0].ronda).toBe(1);
+
+    expect(service.orders()[0].total).toBe(65);
+    expect(service.orders()[0].items.length).toBe(1);
+    expect(service.currentTrackingOrder()?.total).toBe(65);
+  });
+
+  it('no oculta errores 403 Forbidden y conserva intacta la orden en memoria', () => {
+    service.orders.set([comandaConDosItems()]);
+
+    let errorCapturado: (Error & { status?: number }) | null = null;
+    service.eliminarItemDeOrden('7', 102).subscribe({
+      error: err => (errorCapturado = err)
+    });
+
+    http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/102'))
+      .flush(
+        { error: 'El mozo solo puede quitar productos cuando la comanda está en estado RECIBIDO (estado actual: EN_PREPARACION).' },
+        { status: 403, statusText: 'Forbidden' }
+      );
+
+    expect(errorCapturado).not.toBeNull();
+    expect(errorCapturado!.status).toBe(403);
+    expect(errorCapturado!.message).toContain('solo puede quitar productos cuando la comanda está en estado RECIBIDO');
+    expect(service.orders()[0].items.length).toBe(2);
+    expect(service.orders()[0].total).toBe(79);
+  });
+
+  it('no oculta errores 409 Conflict (último ítem) y conserva intacta la orden en memoria', () => {
+    service.orders.set([comandaConDosItems()]);
+
+    let errorCapturado: (Error & { status?: number }) | null = null;
+    service.eliminarItem('7', 101).subscribe({
+      error: err => (errorCapturado = err)
+    });
+
+    http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/101'))
+      .flush(
+        { error: 'No se puede dejar la comanda #7 sin productos. Para anular toda la comanda utilice la cancelación.' },
+        { status: 409, statusText: 'Conflict' }
+      );
+
+    expect(errorCapturado).not.toBeNull();
+    expect(errorCapturado!.status).toBe(409);
+    expect(errorCapturado!.message).toContain('No se puede dejar la comanda #7 sin productos');
+    expect(service.orders()[0].items.length).toBe(2);
+    expect(service.orders()[0].total).toBe(79);
+  });
+
+  it('rechaza orderId o itemId inválidos sin disparar petición HTTP', () => {
+    let msgOrden = '';
+    let msgItem = '';
+
+    service.eliminarItemDeOrden('invalido', 101).subscribe({ error: err => (msgOrden = err.message) });
+    service.eliminarItemDeOrden('7', 0).subscribe({ error: err => (msgItem = err.message) });
+
+    http.expectNone(r => r.method === 'DELETE');
+    expect(msgOrden).toContain('inválido');
+    expect(msgItem).toContain('inválido');
+  });
+
+  it('loadActiveOrders libera cargandoOrdenesActivas con finalize tras éxito o fallo y actualiza rondas/eliminaciones sin duplicar ítems', () => {
+    const dtoInicial = {
+      id: 7,
+      tipo: 'SALON' as const,
+      estado: 'RECIBIDO' as const,
+      total: 79,
+      mesaNumero: 3,
+      nombreCliente: 'Mesa 03',
+      telefonoCliente: '',
+      creadoEn: '2026-01-01T12:00:00Z',
+      items: [
+        { id: 101, productoId: 1, productoNombre: 'Pollo Entero', cantidad: 1, precioUnitario: 65, subtotal: 65, ronda: 1 },
+        { id: 102, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 14, subtotal: 14, ronda: 1 }
+      ]
+    };
+
+    // 1. Llamada en vuelo ignora llamada simultánea pero libera al finalizar
+    service.loadActiveOrders();
+    service.loadActiveOrders();
+    const reqs = http.match(r => r.method === 'GET' && r.url.endsWith('/ordenes'));
+    expect(reqs.length).toBe(1);
+    reqs[0].flush([dtoInicial]);
+    expect(service.orders().length).toBe(1);
+    expect(service.orders()[0].items.length).toBe(2);
+
+    // 2. Tras fallo de /ordenes y /ordenes/activos, finalize libera la bandera y permite nuevas consultas
+    service.loadActiveOrders();
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes'))
+      .flush({}, { status: 500, statusText: 'Server Error' });
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/activos'))
+      .flush({}, { status: 500, statusText: 'Server Error' });
+    expect(service.hasError()).toBeTrue();
+
+    // 3. Siguiente consulta funciona y detecta eliminación de ítem (mismo creadoEn/estado)
+    service.loadActiveOrders();
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes')).flush([
+      {
+        ...dtoInicial,
+        total: 65,
+        items: [
+          { id: 101, productoId: 1, productoNombre: 'Pollo Entero', cantidad: 1, precioUnitario: 65, subtotal: 65, ronda: 1 }
+        ]
+      }
+    ]);
+    expect(service.hasError()).toBeFalse();
+    expect(service.orders()[0].items.length).toBe(1);
+    expect(service.orders()[0].total).toBe(65);
+  });
+
+  it('no permite que una respuesta GET /ordenes antigua sobrescriba una mutación (DELETE / PATCH / POST) completada mientras el GET estaba en vuelo', () => {
+    service.orders.set([comandaConDosItems()]);
+
+    // 1 y 2. Iniciar GET /ordenes y mantener su respuesta pendiente
+    service.loadActiveOrders();
+    const getAntiguo = http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes'));
+
+    // 3. Ejecutar mutación (DELETE de ítem 102 y PATCH de estado a EN_PREPARACION) mientras el GET sigue pendiente
+    service.eliminarItemDeOrden('7', 102).subscribe();
+    const deleteReq = http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/102'));
+
+    // 4. Recibir primero la respuesta exitosa de la mutación (orden #7 ahora tiene 1 ítem y total 65)
+    deleteReq.flush(dtoTrasEliminar());
+    expect(service.orders()[0].items.length).toBe(1);
+    expect(service.orders()[0].total).toBe(65);
+
+    service.updateOrderStatus('7', 'EN_PREPARACION').subscribe();
+    const patchReq = http.expectOne(r => r.method === 'PATCH' && r.url.endsWith('/ordenes/7/estado'));
+    patchReq.flush({
+      ...dtoTrasEliminar(),
+      estado: 'PREPARANDO'
+    });
+    expect(service.orders()[0].estado).toBe('EN_PREPARACION');
+
+    // 5. Recibir después la respuesta antigua del GET (donde la orden #7 seguía en RECIBIDO con 2 ítems y total 79, más otra orden #5)
+    getAntiguo.flush([
+      {
+        id: 7,
+        tipo: 'SALON',
+        estado: 'RECIBIDO',
+        total: 79,
+        mesaNumero: 3,
+        nombreCliente: 'Mesa 03',
+        telefonoCliente: '',
+        creadoEn: '2026-01-01T12:00:00Z',
+        items: [
+          { id: 101, productoId: 1, productoNombre: 'Pollo Entero', cantidad: 1, precioUnitario: 65, subtotal: 65, ronda: 1 },
+          { id: 102, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 14, subtotal: 14, ronda: 1 }
+        ]
+      },
+      {
+        id: 5,
+        tipo: 'DELIVERY',
+        estado: 'RECIBIDO',
+        total: 40,
+        nombreCliente: 'Cliente Delivery',
+        telefonoCliente: '999111222',
+        creadoEn: '2026-01-01T11:50:00Z',
+        items: [
+          { id: 90, productoId: 1, productoNombre: 'Medio Pollo', cantidad: 1, precioUnitario: 40, subtotal: 40, ronda: 1 }
+        ]
+      }
+    ]);
+
+    // 6. Verificar que el signal orders conserva la mutación más reciente de #7 y también incorpora la orden #5 no mutada
+    const orden7 = service.orders().find(o => o.id === '7')!;
+    const orden5 = service.orders().find(o => o.id === '5')!;
+    expect(orden7).toBeDefined();
+    expect(orden7.estado).withContext('no debe regresar al estado antiguo PAGADO/RECIBIDO').toBe('EN_PREPARACION');
+    expect(orden7.items.length).withContext('no debe restaurar el ítem eliminado').toBe(1);
+    expect(orden7.total).withContext('no debe restaurar el total antiguo 79').toBe(65);
+    expect(orden5).toBeDefined();
+    expect(orden5.total).toBe(40);
+  });
+});

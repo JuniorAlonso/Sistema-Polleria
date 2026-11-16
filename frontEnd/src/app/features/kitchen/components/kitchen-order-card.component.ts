@@ -2,7 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { CommonModule } from '@angular/common';
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { OrderStatusBadgeComponent } from '../../../shared/components/order-status-badge/order-status-badge.component';
-import { codigoNumerico } from '../kitchen.types';
+import {
+  GrupoRondaKds,
+  agruparItemsPorRondaKds,
+  codigoNumerico,
+  esTransicionCocinaPermitida,
+  obtenerEtiquetaTipoKds
+} from '../kitchen.types';
 
 @Component({
   selector: 'app-kitchen-order-card',
@@ -26,8 +32,12 @@ import { codigoNumerico } from '../kitchen.types';
                         <span class="font-mono text-base font-black text-white">
                           #{{ codeNum() }}
                         </span>
-                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-white/10 text-slate-300">
-                          {{ order().tipo }}
+                        <span
+                          class="px-2 py-0.5 rounded text-[10px] font-bold"
+                          [ngClass]="esMostrador() ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-white/10 text-slate-300'"
+                          data-testid="order-type-badge"
+                        >
+                          {{ etiquetaTipo() }}
                         </span>
                         @if (esNueva()) {
                           <span class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse motion-reduce:animate-none">
@@ -60,20 +70,48 @@ import { codigoNumerico } from '../kitchen.types';
                     </div>
                   </div>
 
-                  <div class="p-4 flex-1 space-y-2.5 overflow-y-auto max-h-64">
-                    @for (item of order().items; track item.product.id) {
-                      <div class="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-start gap-3 text-xs">
-                        <span class="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center font-extrabold text-sm shrink-0">
-                          {{ item.cantidad }}x
-                        </span>
-                        <div class="flex-1">
-                          <p class="font-bold text-slate-100 text-sm">{{ item.product.nombre }}</p>
-                          @if (item.notas) {
-                            <p class="text-amber-300 font-medium italic mt-0.5 bg-amber-950/40 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                              <span class="flex items-center gap-1"><svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>{{ item.notas }}</span>
-                            </p>
+                  <div class="p-4 flex-1 space-y-3 overflow-y-auto max-h-64">
+                    @for (grupo of gruposRonda(); track grupo.ronda) {
+                      <div
+                        class="space-y-2 rounded-2xl p-2.5 border"
+                        [ngClass]="grupo.ronda > 1 ? 'bg-amber-500/5 border-amber-500/30' : 'bg-white/[0.02] border-white/10'"
+                        [attr.data-ronda]="grupo.ronda"
+                        data-testid="kds-ronda-group"
+                      >
+                        <div class="flex items-center justify-between px-1">
+                          <span
+                            class="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider"
+                            [ngClass]="grupo.ronda > 1 ? 'bg-amber-500 text-slate-950' : 'bg-white/10 text-slate-300'"
+                            data-testid="kds-ronda-badge"
+                          >
+                            RONDA {{ grupo.ronda }}
+                          </span>
+                          @if (grupo.ronda > 1) {
+                            <span class="text-[10px] font-bold text-amber-300 uppercase tracking-wide">
+                              Adición
+                            </span>
                           }
                         </div>
+
+                        @for (item of grupo.items; track item.id ?? $index) {
+                          <div
+                            class="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-start gap-3 text-xs"
+                            [attr.data-item-id]="item.id ?? null"
+                            data-testid="kds-order-item"
+                          >
+                            <span class="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center font-extrabold text-sm shrink-0">
+                              {{ item.cantidad }}x
+                            </span>
+                            <div class="flex-1">
+                              <p class="font-bold text-slate-100 text-sm">{{ item.product.nombre }}</p>
+                              @if (item.notas) {
+                                <p class="text-amber-300 font-medium italic mt-0.5 bg-amber-950/40 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                  <span class="flex items-center gap-1"><svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>{{ item.notas }}</span>
+                                </p>
+                              }
+                            </div>
+                          </div>
+                        }
                       </div>
                     }
                     @if (order().notasGenerales || order().cliente.referencia) {
@@ -92,15 +130,19 @@ import { codigoNumerico } from '../kitchen.types';
                       </div>
                     } @else if (order().estado === 'PAGADO') {
                       <button
-                        (click)="cambiarEstado.emit('EN_PREPARACION')"
-                        class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                        type="button"
+                        [disabled]="procesando()"
+                        (click)="solicitarCambioEstado('EN_PREPARACION')"
+                        class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer"
                       >
                         <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/></svg>Empezar a Preparar</span>
                       </button>
                     } @else if (order().estado === 'EN_PREPARACION') {
                       <button
-                        (click)="cambiarEstado.emit('LISTO_COCINA')"
-                        class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer animate-pulse"
+                        type="button"
+                        [disabled]="procesando()"
+                        (click)="solicitarCambioEstado('LISTO_COCINA')"
+                        class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer animate-pulse"
                       >
                         <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>{{ order().tipo === 'SALON' ? 'Listo para servir en mesa' : 'Listo para Reparto / Empacado' }}</span></span>
                       </button>
@@ -121,9 +163,19 @@ export class KitchenOrderCardComponent {
   readonly order = input.required<Order>();
   /** Minutos de espera calculados por el contenedor (depende del reloj). */
   readonly minutosEspera = input.required<number>();
+  /** Indica si hay una actualización de estado en curso para bloquear doble clic. */
+  readonly procesando = input<boolean>(false);
   readonly cambiarEstado = output<OrderStatus>();
 
   readonly codeNum = computed(() => codigoNumerico(this.order().codigoSeguimiento));
+
+  readonly etiquetaTipo = computed(() => obtenerEtiquetaTipoKds(this.order()));
+
+  readonly esMostrador = computed(() => this.etiquetaTipo() === 'MOSTRADOR');
+
+  readonly gruposRonda = computed<GrupoRondaKds[]>(() =>
+    agruparItemsPorRondaKds(this.order().items)
+  );
 
   /** Una comanda recién recibida (todavía sin empezar) se marca como nueva. */
   readonly esNueva = computed(() => {
@@ -141,4 +193,10 @@ export class KitchenOrderCardComponent {
       ? 'text-rose-300 bg-rose-500/15 border-rose-500/30'
       : 'text-slate-300 bg-white/5 border-white/10'
   );
+
+  solicitarCambioEstado(nuevoEstado: OrderStatus): void {
+    if (this.procesando()) return;
+    if (!esTransicionCocinaPermitida(this.order().estado, nuevoEstado)) return;
+    this.cambiarEstado.emit(nuevoEstado);
+  }
 }

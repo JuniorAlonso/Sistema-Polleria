@@ -37,6 +37,13 @@ public class OrdenItem {
     @Column(length = 300)
     private String notas;
 
+    /**
+     * D1.5: ronda de envío a cocina (1 en la apertura, max + 1 en cada agregado posterior).
+     * Nullable para compatibilidad con registros existentes; NULL se interpreta como ronda 1.
+     */
+    @Column(name = "ronda")
+    private Integer ronda;
+
     @PrePersist
     @PreUpdate
     protected void calcularSubtotal() {

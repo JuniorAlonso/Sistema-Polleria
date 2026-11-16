@@ -160,4 +160,151 @@ describe('ProductsService — sin carta simulada', () => {
       .withContext('un plato que sigue en la base de datos no puede desaparecer de la carta')
       .toBe(1);
   });
+
+  describe('Concurrencia y Mutaciones en Vuelo (H-03)', () => {
+    const platoA = {
+      id: 1,
+      nombre: 'Pollo a la Brasa 1/4',
+      descripcion: '',
+      precio: 22,
+      categoria: 'POLLOS_A_LA_BRASA',
+      imagenUrl: '',
+      disponible: true,
+      stock: 10
+    };
+
+    const platoB = {
+      id: 2,
+      nombre: 'Inca Kola 1.5L',
+      descripcion: '',
+      precio: 13,
+      categoria: 'BEBIDAS',
+      imagenUrl: '',
+      disponible: true,
+      stock: 20
+    };
+
+    beforeEach(() => {
+      // Estado inicial con dos productos disponibles
+      http.expectOne(esGet).flush([platoA, platoB]);
+      expect(service.products().length).toBe(2);
+      expect(service.products()[0].agotado).toBeFalse();
+      expect(service.products()[1].agotado).toBeFalse();
+    });
+
+    it('A. GET iniciado → toggle exitoso → respuesta GET antigua: conserva el resultado del toggle', () => {
+      // 1. Iniciar un GET (p. ej. por polling) que queda pendiente
+      service.loadProducts();
+      const reqGetPendiente = http.expectOne(esGet);
+
+      // 2. Ejecutar toggle del producto 1 (marcarlo como agotado)
+      service.toggleAgotado('1');
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+
+      // 3. Responder exitosamente la mutación PATCH
+      const reqPatch = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/1/disponibilidad'));
+      reqPatch.flush({ ...platoA, disponible: false });
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+
+      // 4. Responder después el GET antiguo que traía disponible=true
+      reqGetPendiente.flush([platoA, platoB]);
+
+      // El producto 1 DEBE conservar agotado=true (no sobreescrito por el GET antiguo)
+      const finalProd1 = service.products().find(p => p.id === '1');
+      expect(finalProd1?.agotado).toBeTrue();
+      expect(service.products().find(p => p.id === '2')?.agotado).toBeFalse();
+    });
+
+    it('B. GET iniciado → toggle fallido → respuesta GET: rollback coherente sin lista obsoleta', () => {
+      // 1. Iniciar GET pendiente
+      service.loadProducts();
+      const reqGetPendiente = http.expectOne(esGet);
+
+      // 2. Toggle optimista
+      service.toggleAgotado('1');
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+
+      // 3. La mutación falla en backend (p. ej. error 400 sin stock)
+      const reqPatch = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/1/disponibilidad'));
+      reqPatch.flush({ error: 'Sin stock' }, { status: 400, statusText: 'Bad Request' });
+
+      // Rollback individual: vuelve a disponible=true (agotado=false)
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeFalse();
+
+      // 4. El GET pendiente responde con datos de backend
+      reqGetPendiente.flush([platoA, platoB]);
+
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeFalse();
+      expect(service.products().find(p => p.id === '2')?.agotado).toBeFalse();
+    });
+
+    it('C. Toggle de producto A mientras se actualiza producto B: la actualización de B no se pierde', () => {
+      // Iniciar toggle sobre A ('1')
+      service.toggleAgotado('1');
+      const reqPatchA = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/1/disponibilidad'));
+
+      // Simular respuesta exitosa de A
+      reqPatchA.flush({ ...platoA, disponible: false });
+
+      // Siguiente GET refresca B
+      service.loadProducts();
+      const reqGet = http.expectOne(esGet);
+      reqGet.flush([
+        { ...platoA, disponible: false },
+        { ...platoB, precio: 15 } // B cambió de precio
+      ]);
+
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+      expect(service.products().find(p => p.id === '2')?.precio).toBe(15);
+    });
+
+    it('D. Dos productos distintos con mutaciones simultáneas: no interfieren entre sí', () => {
+      // Toggle de producto 1
+      service.toggleAgotado('1');
+      // Toggle de producto 2
+      service.toggleAgotado('2');
+
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+      expect(service.products().find(p => p.id === '2')?.agotado).toBeTrue();
+
+      const patchA = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/1/disponibilidad'));
+      const patchB = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/2/disponibilidad'));
+
+      // Un GET intermedio no debe pisar ninguna de las dos mutaciones en vuelo
+      service.loadProducts();
+      const reqGet = http.expectOne(esGet);
+      reqGet.flush([platoA, platoB]); // GET traía ambos disponibles
+
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+      expect(service.products().find(p => p.id === '2')?.agotado).toBeTrue();
+
+      // Resolver ambas mutaciones
+      patchA.flush({ ...platoA, disponible: false });
+      patchB.flush({ ...platoB, disponible: false });
+
+      expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+      expect(service.products().find(p => p.id === '2')?.agotado).toBeTrue();
+    });
+
+    it('E. Error HTTP 400/403/500: la interfaz se recupera y las guardas se liberan', () => {
+      for (const errStatus of [400, 403, 500]) {
+        let errorCapturado: string | null = null;
+        service.toggleAgotado('1', err => errorCapturado = err);
+        expect(service.products().find(p => p.id === '1')?.agotado).toBeTrue();
+
+        const reqPatch = http.expectOne(req => req.method === 'PATCH' && req.url.endsWith('/productos/1/disponibilidad'));
+        reqPatch.flush({ message: `Fallo ${errStatus}` }, { status: errStatus, statusText: 'Error' });
+
+        // Estado revertido limpiamente
+        expect(service.products().find(p => p.id === '1')?.agotado).toBeFalse();
+        expect(errorCapturado).toBeTruthy();
+
+        // Guarda liberada: un nuevo GET puede actualizar sin quedar bloqueado
+        service.loadProducts();
+        const reqGet = http.expectOne(esGet);
+        reqGet.flush([platoA, platoB]);
+        expect(service.products().find(p => p.id === '1')?.agotado).toBeFalse();
+      }
+    });
+  });
 });

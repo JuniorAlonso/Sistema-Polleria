@@ -159,15 +159,20 @@ export class SalonService implements OnDestroy {
   }
 
   private manejarErrorMutacion(err: any): Observable<never> {
+    const msg = err?.error?.error || err?.error?.mensaje || err?.error?.message || err?.message;
     if (err?.status === 409) {
       this.notify.showWarning(
-        '⚠️ Conflicto de Concurrencia',
-        '⚠️ Conflicto: Otro usuario modificó esta mesa. Actualizando vista...'
+        '⚠️ Conflicto en la Mesa',
+        msg || '⚠️ Conflicto: Otro usuario modificó esta mesa. Actualizando vista...'
       );
       this.cargarMesas();
+    } else if (err?.status === 403) {
+      this.notify.showError(
+        'Acceso Denegado',
+        msg || 'No tienes permisos para realizar esta operación en la mesa.'
+      );
     } else {
-      const msg = err?.error?.error || 'No se pudo completar la operación en la mesa';
-      this.notify.showError('Error en Operación', msg);
+      this.notify.showError('Error en Operación', msg || 'No se pudo completar la operación en la mesa');
     }
     return throwError(() => err);
   }
@@ -189,8 +194,9 @@ export class SalonService implements OnDestroy {
   actualizarEstado(id: string | number, estado: TableStatus, forzar: boolean = false): Observable<RestaurantTable> {
     return this.http.put<RestaurantTable>(`${this.API_URL}/mesas/${id}/estado`, { estado, forzar }).pipe(
       tap(actualizada => {
-        this.mesas.update(prev => prev.map(m => m.id === id ? { ...m, estado } : m));
-        this.notify.showSuccess(`Mesa #${actualizada.numero} actualizada a ${estado}`);
+        const estadoFinal = actualizada?.estado ?? estado;
+        this.mesas.update(prev => prev.map(m => m.id === id ? { ...m, estado: estadoFinal } : m));
+        this.notify.showSuccess(`Mesa #${actualizada.numero} actualizada a ${estadoFinal}`);
       }),
       catchError(err => this.manejarErrorMutacion(err))
     );
@@ -250,9 +256,13 @@ export class SalonService implements OnDestroy {
         return;
       }
       this.http.get<RestaurantTable[]>(`${this.API_URL}/mesas`).pipe(
-        catchError(() => of([]))
+        tap(() => this.hasError.set(false)),
+        catchError(() => {
+          this.hasError.set(true);
+          return of(null);
+        })
       ).subscribe(nuevasMesas => {
-        if (nuevasMesas.length > 0) {
+        if (Array.isArray(nuevasMesas) && nuevasMesas.length > 0) {
           // Detectar si alguna mesa pasó a tener orden lista
           nuevasMesas.forEach(nm => {
             if (nm.ordenActiva && nm.ordenActiva.estadoOrden === 'LISTO') {

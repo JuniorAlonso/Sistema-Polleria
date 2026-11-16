@@ -26,8 +26,9 @@ import { esMiComanda } from '../mozo.helpers';
             </div>
             <button
               type="button"
+              [disabled]="sirviendo()"
               (click)="servir.emit(alerta())"
-              class="shrink-0 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer"
+              class="shrink-0 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer"
             >
               Servir en mesa
             </button>
@@ -36,6 +37,7 @@ import { esMiComanda } from '../mozo.helpers';
 export class MozoAlertBannerComponent {
   readonly alerta = input.required<AlertaPlatoListo>();
   readonly miUserId = input<number | null | undefined>(null);
+  readonly sirviendo = input<boolean>(false);
 
   readonly servir = output<AlertaPlatoListo>();
 

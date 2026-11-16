@@ -33,7 +33,7 @@ function mesa(over: Partial<MesaSalon> = {}): MesaSalon {
   };
 }
 
-function dtoOrden(over: { id?: number; estado?: string; total?: number; items?: unknown[] } = {}) {
+function dtoOrden(over: { id?: number; estado?: string; total?: number; servidoEn?: string | null; items?: unknown[] } = {}) {
   return {
     id: over.id ?? 7,
     tipo: 'SALON',
@@ -42,9 +42,10 @@ function dtoOrden(over: { id?: number; estado?: string; total?: number; items?: 
     mesaNumero: 3,
     nombreCliente: 'Mesa 03',
     telefonoCliente: '',
+    servidoEn: over.servidoEn ?? null,
     items: over.items ?? [
-      { productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5 },
-      { productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13 }
+      { id: 101, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+      { id: 102, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
     ],
     creadoEn: '2026-01-01T00:00:00Z'
   };
@@ -95,11 +96,12 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
     http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
   }
 
-  it('SOLO EL CAJERO COBRA: solicitar cobro en mesa con comanda activa envía la cuenta a caja pasando la mesa a POR_COBRAR', () => {
-    component.seleccionarMesa(mesa());
+  it('SOLO EL CAJERO COBRA: solicitar cobro en mesa con comanda lista y servida envía la cuenta a caja pasando la mesa a POR_COBRAR', () => {
+    component.seleccionarMesa(mesa({ servidoEn: '2026-01-01T00:05:00Z' }));
 
-    // S6.5: al abrir el modal se lee la comanda real del backend.
-    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
+    // S6.5: al abrir el modal se lee la comanda real del backend (LISTO y servida).
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T00:05:00Z' }));
 
     component.cobrarMesaModal();
 
@@ -108,7 +110,8 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
     put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
 
     // Recarga comanda de la mesa y lista de mesas
-    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T00:05:00Z' }));
     flushMesasReload();
 
     const exito = notify.showSuccess as jasmine.Spy;
@@ -118,8 +121,9 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
   });
 
   it('un rechazo del backend al enviar la cuenta no anuncia éxito y muestra el motivo real', () => {
-    component.seleccionarMesa(mesa());
-    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden());
+    component.seleccionarMesa(mesa({ servidoEn: '2026-01-01T00:05:00Z' }));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T00:05:00Z' }));
 
     component.cobrarMesaModal();
 
@@ -132,6 +136,27 @@ describe('MozoSalonComponent — cobro de mesa y comanda real', () => {
     expect(error).toHaveBeenCalled();
     expect(error.calls.mostRecent().args.join(' '))
       .toContain('La mesa no está operativa');
+  });
+
+  it('D1.6: no permite solicitar la cuenta si la comanda no está LISTO o aún no fue servida', () => {
+    // Caso 1: EN_PREPARACION
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'EN_PREPARACION', servidoEn: null }));
+
+    component.cobrarMesaModal();
+    http.expectNone(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(notify.showWarning).toHaveBeenCalled();
+
+    // Caso 2: LISTO pero sin servidoEn
+    (notify.showWarning as jasmine.Spy).calls.reset();
+    component.seleccionarMesa(mesa({ servidoEn: null }));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: null }));
+
+    component.cobrarMesaModal();
+    http.expectNone(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(notify.showWarning).toHaveBeenCalled();
   });
 
   it('cobrar una mesa sin comanda activa mantiene la liberación directa de la mesa (comportamiento previo)', () => {
@@ -453,23 +478,30 @@ describe('MozoSalonComponent — servido persistido', () => {
     expect(component.mesas()[0].platosListos).toBe(false);
   });
 
-  it('servir persiste la marca y recarga las mesas', () => {
+  it('servir persiste la marca y recarga las mesas SIN pasar automáticamente a POR_COBRAR (D1.1 / D1.6)', () => {
     salon.mesas.set([mesaDelBackend()]);
 
     component.servirAlerta(component.alertasPendientes()[0]);
 
     const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
-    post.flush(dtoOrden({ estado: 'LISTO' }));
+    post.flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
 
-    const put = http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
-    expect(put.request.body.estado).toBe('POR_COBRAR');
-    put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
+    // D1.6: Servir NO cambia la mesa a POR_COBRAR
+    http.expectNone(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
     flushMesasReload();
 
     const exito = notify.showSuccess as jasmine.Spy;
     expect(exito).toHaveBeenCalled();
     expect(exito.calls.allArgs().flat().join(' ')).toContain('comanda servida');
     expect((notify.showError as jasmine.Spy)).not.toHaveBeenCalled();
+  });
+
+  it('esMesaParaCobrar no confunde servidoEn con el estado POR_COBRAR de la mesa', () => {
+    const mesaServidaPeroOcupada = mesa({ estado: 'OCUPADA', servidoEn: '2026-01-01T12:00:00Z' });
+    const mesaPorCobrar = mesa({ estado: 'POR_COBRAR', servidoEn: '2026-01-01T12:00:00Z' });
+
+    expect(component.esMesaParaCobrar(mesaServidaPeroOcupada)).toBeFalse();
+    expect(component.esMesaParaCobrar(mesaPorCobrar)).toBeTrue();
   });
 
   it('un rechazo del backend muestra el motivo y no recarga las mesas', () => {
@@ -513,7 +545,7 @@ describe('MozoSalonComponent — servido persistido', () => {
     expect(fixture.nativeElement.textContent).toContain('No hay platos listos pendientes de servir.');
   });
 
-  it('servir desde el modal persiste y recarga la comanda y las mesas', () => {
+  it('servir desde el modal persiste y recarga la comanda y las mesas sin pasar a POR_COBRAR', () => {
     component.seleccionarMesa(mesa());
     http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
     fixture.detectChanges();
@@ -522,16 +554,352 @@ describe('MozoSalonComponent — servido persistido', () => {
     component.servirMesaSeleccionada();
 
     const post = http.expectOne(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
-    post.flush(dtoOrden({ estado: 'LISTO' }));
+    post.flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
 
-    const put = http.expectOne(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
-    expect(put.request.body.estado).toBe('POR_COBRAR');
-    put.flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
+    // D1.6: Servir NO envía PUT /mesas/3/estado a POR_COBRAR
+    http.expectNone(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
 
-    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
     flushMesasReload();
 
     expect(notify.showSuccess).toHaveBeenCalled();
     expect(notify.showError).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Etapa 2 Plan 1 — Selección explícita de mesa, agrupación por rondas, eliminación individual
+ * por itemId y prevención de solicitudes duplicadas.
+ */
+describe('MozoSalonComponent — Etapa 2 (selección explícita, rondas, eliminar ítem y duplicados)', () => {
+  let fixture: ComponentFixture<MozoSalonComponent>;
+  let component: MozoSalonComponent;
+  let http: HttpTestingController;
+  let notify: NotificationService;
+  let salon: SalonService;
+  let auth: AuthService;
+
+  const productoDisponible: Product = {
+    id: 'prod-1',
+    nombre: 'Chaufa de Pollo',
+    descripcion: 'Chaufa clásico',
+    precio: 32.5,
+    imagenUrl: '',
+    categoria: 'POLLOS_A_LA_BRASA',
+    agotado: false
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    TestBed.configureTestingModule({
+      imports: [MozoSalonComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])]
+    });
+
+    auth = TestBed.inject(AuthService);
+    auth.token.set(tokenDeSesion());
+    fixture = TestBed.createComponent(MozoSalonComponent);
+    component = fixture.componentInstance;
+    http = TestBed.inject(HttpTestingController);
+    notify = TestBed.inject(NotificationService);
+    salon = TestBed.inject(SalonService);
+
+    spyOn(notify, 'showSuccess');
+    spyOn(notify, 'showError');
+    spyOn(notify, 'showInfo');
+    spyOn(notify, 'showWarning');
+
+    fixture.detectChanges();
+    http.match(req => req.method === 'GET').forEach(req => req.flush([]));
+  });
+
+  afterEach(() => {
+    fixture.destroy();
+    http.verify();
+  });
+
+  it('no preselecciona la Mesa 1 al iniciar y exige selección explícita para enviar comanda', () => {
+    salon.mesas.set([
+      { id: 1, numero: 1, capacidad: 4, estado: 'LIBRE', posicionX: 1, posicionY: 1, zona: 'SALON_PRINCIPAL' }
+    ]);
+    expect(component.selectedMesaForOrder).toBeNull();
+    expect(component.mesaParaComanda()).toBeUndefined();
+
+    component.comandaItems = [{ producto: productoDisponible, cantidad: 1, notas: '' }];
+    component.enviarComandaACocina();
+
+    http.expectNone(r => r.method === 'POST');
+    expect(notify.showError).toHaveBeenCalledWith('Seleccioná una mesa válida');
+  });
+
+  it('muestra los productos agrupados por ronda e interpreta registros históricos sin ronda como Ronda 1', () => {
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'EN_PREPARACION',
+      items: [
+        { id: 501, productoId: 1, productoNombre: 'Pollo Entero', cantidad: 1, precioUnitario: 65, subtotal: 65, ronda: null },
+        { id: 502, productoId: 2, productoNombre: 'Tequeños Criollos', cantidad: 1, precioUnitario: 19.5, subtotal: 19.5, ronda: 2 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    const existente = component.comandaExistente();
+    expect(existente).not.toBeNull();
+    expect(existente!.rondas.length).toBe(2);
+    expect(existente!.rondas[0].ronda).toBe(1);
+    expect(existente!.rondas[0].items[0].id).toBe(501);
+    expect(existente!.rondas[1].ronda).toBe(2);
+    expect(existente!.rondas[1].items[0].id).toBe(502);
+
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Ronda 1');
+    expect(texto).toContain('Ronda 2');
+  });
+
+  it('D1.8: elimina un ítem individual usando su id real (itemId) cuando la orden está RECIBIDO y actualiza la comanda', () => {
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'RECIBIDO',
+      total: 45.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    // Verifica que el botón Quitar está visible para MOZO en estado RECIBIDO
+    const botonesQuitar = fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]');
+    expect(botonesQuitar.length).toBe(2);
+
+    component.eliminarItemComandaModal(302);
+
+    // Debe invocar DELETE con el itemId 302 (nunca el productoId 2)
+    const del = http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/302'));
+    del.flush(dtoOrden({
+      estado: 'RECIBIDO',
+      total: 32.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 }
+      ]
+    }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+    fixture.detectChanges();
+
+    expect(component.comandaMesa()!.total).toBe(32.5);
+    expect(component.comandaMesa()!.items.length).toBe(1);
+    expect(component.comandaMesa()!.items[0].id).toBe(301);
+    expect(notify.showSuccess).toHaveBeenCalledWith('Producto eliminado de la comanda');
+  });
+
+  it('D1.8: si el backend rechaza eliminar con 409 (último ítem) o 403, muestra el motivo y no simula eliminación local', () => {
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'RECIBIDO',
+      total: 32.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 }
+      ]
+    }));
+
+    component.eliminarItemComandaModal(301);
+
+    http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/301'))
+      .flush(
+        { error: 'No se puede dejar la comanda #7 sin productos.' },
+        { status: 409, statusText: 'Conflict' }
+      );
+
+    expect(component.comandaMesa()!.items.length).toBe(1);
+    expect(component.comandaMesa()!.total).toBe(32.5);
+    const errorSpy = notify.showError as jasmine.Spy;
+    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy.calls.mostRecent().args.join(' ')).toContain('No se puede dejar la comanda #7 sin productos');
+  });
+
+  it('D1.8: MOZO no puede eliminar ítems cuando la comanda está en PREPARANDO', () => {
+    auth.currentUser.set({ id: '7', nombre: 'Mozo 1', correo: 'mozo@test.com', celular: '999888777', rol: 'MOZO' });
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'PREPARANDO',
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    const botonesQuitar = fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]');
+    expect(botonesQuitar.length).toBe(0);
+
+    component.eliminarItemComandaModal(302);
+    http.expectNone(r => r.method === 'DELETE');
+    expect(notify.showWarning).toHaveBeenCalled();
+  });
+
+  it('D1.8: MOZO no puede eliminar ítems cuando la comanda está en LISTO', () => {
+    auth.currentUser.set({ id: '7', nombre: 'Mozo 1', correo: 'mozo@test.com', celular: '999888777', rol: 'MOZO' });
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'LISTO',
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    const botonesQuitar = fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]');
+    expect(botonesQuitar.length).toBe(0);
+
+    component.eliminarItemComandaModal(302);
+    http.expectNone(r => r.method === 'DELETE');
+    expect(notify.showWarning).toHaveBeenCalled();
+  });
+
+  it('D1.8: ADMIN puede eliminar ítems en estados activos permitidos (PREPARANDO y LISTO)', () => {
+    auth.currentUser.set({ id: '1', nombre: 'Admin', correo: 'admin@test.com', celular: '999888777', rol: 'ADMIN' });
+
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'PREPARANDO',
+      total: 45.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]').length).toBe(2);
+
+    component.eliminarItemComandaModal(302);
+    const del1 = http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/302'));
+    del1.flush(dtoOrden({
+      estado: 'LISTO',
+      total: 32.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 303, productoId: 3, productoNombre: 'Chicha Morada', cantidad: 1, precioUnitario: 14, subtotal: 14, ronda: 2 }
+      ]
+    }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]').length).toBe(2);
+
+    component.eliminarItemComandaModal(303);
+    const del2 = http.expectOne(r => r.method === 'DELETE' && r.url.endsWith('/ordenes/7/items/303'));
+    del2.flush(dtoOrden({
+      estado: 'LISTO',
+      total: 32.5,
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 }
+      ]
+    }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+  });
+
+  it('D1.8: ADMIN no puede eliminar ítems en estados terminales (ENTREGADO y CANCELADO)', () => {
+    auth.currentUser.set({ id: '1', nombre: 'Admin', correo: 'admin@test.com', celular: '999888777', rol: 'ADMIN' });
+
+    for (const estadoTerminal of ['ENTREGADO', 'CANCELADO']) {
+      (notify.showWarning as jasmine.Spy).calls.reset();
+      component.seleccionarMesa(mesa());
+      http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+        estado: estadoTerminal,
+        items: [
+          { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+          { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+        ]
+      }));
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]').length).toBe(0);
+
+      component.eliminarItemComandaModal(302);
+      http.expectNone(r => r.method === 'DELETE');
+      expect(notify.showWarning).toHaveBeenCalled();
+    }
+  });
+
+  it('D1.8: COCINA (CHEF) no tiene acceso a eliminar ítems ni siquiera en RECIBIDO', () => {
+    auth.currentUser.set({ id: '9', nombre: 'Chef', correo: 'chef@test.com', celular: '999888777', rol: 'CHEF' });
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'RECIBIDO',
+      items: [
+        { id: 301, productoId: 1, productoNombre: 'Chaufa de Pollo', cantidad: 1, precioUnitario: 32.5, subtotal: 32.5, ronda: 1 },
+        { id: 302, productoId: 2, productoNombre: 'Inca Kola 1.5L', cantidad: 1, precioUnitario: 13, subtotal: 13, ronda: 1 }
+      ]
+    }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelectorAll('button[aria-label="Eliminar ítem"]').length).toBe(0);
+
+    component.eliminarItemComandaModal(302);
+    http.expectNone(r => r.method === 'DELETE');
+    expect(notify.showError).toHaveBeenCalledWith('Acceso denegado', 'No tienes permisos para quitar productos de la comanda.');
+  });
+
+  it('D1.1 / D1.6: no permite solicitar cuenta repetidamente cuando la mesa ya está en POR_COBRAR', () => {
+    component.seleccionarMesa(mesa({ estado: 'POR_COBRAR' }));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({
+      estado: 'LISTO',
+      servidoEn: '2026-01-01T12:00:00Z'
+    }));
+    fixture.detectChanges();
+
+    const btnSolicitarCuenta = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>)
+      .find(b => b.textContent?.includes('Solicitar cuenta'));
+    expect(btnSolicitarCuenta).toBeUndefined();
+
+    component.cobrarMesaModal();
+    http.expectNone(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(notify.showInfo).toHaveBeenCalledWith('Cuenta ya solicitada', 'La Mesa 03 ya se encuentra en estado POR_COBRAR.');
+  });
+
+  it('previene solicitudes duplicadas al enviar comanda, al servir y al solicitar cuenta', () => {
+    // 1. Duplicado al enviar comanda
+    salon.mesas.set([
+      { id: 3, numero: 3, capacidad: 4, estado: 'LIBRE', posicionX: 1, posicionY: 1, zona: 'SALON_PRINCIPAL' }
+    ]);
+    component.selectedMesaForOrder = 3;
+    component.comandaItems = [{ producto: productoDisponible, cantidad: 1, notas: '' }];
+
+    component.enviarComandaACocina();
+    component.enviarComandaACocina(); // segundo clic mientras está en vuelo
+
+    const postReqs = http.match(r => r.method === 'POST' && r.url.endsWith('/ordenes'));
+    expect(postReqs.length).toBe(1);
+    postReqs[0].flush(dtoOrden({ estado: 'RECIBIDO' }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+
+    // 2. Duplicado al servir
+    component.seleccionarMesa(mesa());
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7')).flush(dtoOrden({ estado: 'LISTO' }));
+
+    component.servirMesaSeleccionada();
+    component.servirMesaSeleccionada(); // segundo clic mientras está en vuelo
+
+    const servirReqs = http.match(r => r.method === 'POST' && r.url.endsWith('/ordenes/7/servir'));
+    expect(servirReqs.length).toBe(1);
+    servirReqs[0].flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
+
+    // 3. Duplicado al solicitar cuenta
+    component.cobrarMesaModal();
+    component.cobrarMesaModal(); // segundo clic mientras está en vuelo
+
+    const cobrarReqs = http.match(r => r.method === 'PUT' && r.url.endsWith('/mesas/3/estado'));
+    expect(cobrarReqs.length).toBe(1);
+    cobrarReqs[0].flush({ id: 3, numero: 3, capacidad: 4, estado: 'POR_COBRAR', posicionX: 1, posicionY: 1 });
+    http.expectOne(r => r.method === 'GET' && r.url.endsWith('/ordenes/7'))
+      .flush(dtoOrden({ estado: 'LISTO', servidoEn: '2026-01-01T12:00:00Z' }));
+    http.match(r => r.method === 'GET' && r.url.endsWith('/mesas')).forEach(r => r.flush([]));
   });
 });

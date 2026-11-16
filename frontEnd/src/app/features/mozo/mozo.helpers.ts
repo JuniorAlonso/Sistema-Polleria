@@ -1,11 +1,61 @@
-import { Order, OrderStatus } from '../../core/models/order.model';
-import { AlertaPlatoListo, MesaSalon } from './mozo.types';
+import { Order, OrderItem, OrderStatus } from '../../core/models/order.model';
+import { AlertaPlatoListo, ComandaExistente, GrupoRondaComanda, MesaSalon } from './mozo.types';
 
 /** Funciones puras de presentación del módulo mozo (sin servicios ni estado). */
 
+/**
+ * D1.1 / D1.6: Una mesa está por cobrar únicamente cuando su estado es 'POR_COBRAR'.
+ * `servidoEn` registra la entrega en mesa y no equivale a solicitar la cuenta.
+ */
 export function esMesaParaCobrar(mesa: MesaSalon | null | undefined): boolean {
   if (!mesa) return false;
-  return mesa.estado === 'POR_COBRAR' || !!mesa.servidoEn;
+  return mesa.estado === 'POR_COBRAR';
+}
+
+/**
+ * D1.5: Agrupa los OrderItem persistidos por número de ronda.
+ * Los registros históricos sin `ronda` (o con valor inválido) se agrupan en la ronda 1.
+ */
+export function agruparItemsPorRonda(items: OrderItem[] | null | undefined): GrupoRondaComanda[] {
+  if (!items?.length) return [];
+  const mapa = new Map<number, OrderItem[]>();
+  for (const item of items) {
+    const ronda = typeof item.ronda === 'number' && Number.isFinite(item.ronda) && item.ronda >= 1
+      ? item.ronda
+      : 1;
+    const grupo = mapa.get(ronda) ?? [];
+    grupo.push({ ...item, ronda });
+    mapa.set(ronda, grupo);
+  }
+  return Array.from(mapa.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([ronda, grupoItems]) => ({ ronda, items: grupoItems }));
+}
+
+/**
+ * Construye `ComandaExistente` a partir de `Order`, conservando `id` y `ronda` de cada `OrderItem`.
+ */
+export function mapearOrdenAComandaExistente(orden: Order | null | undefined): ComandaExistente | null {
+  if (!orden) return null;
+  const rondas = agruparItemsPorRonda(orden.items);
+  return {
+    id: orden.id,
+    codigoSeguimiento: orden.codigoSeguimiento,
+    estado: orden.estado,
+    total: orden.total,
+    servidoEn: orden.servidoEn,
+    items: (orden.items || []).map(item => ({
+      id: item.id,
+      ronda: typeof item.ronda === 'number' && item.ronda >= 1 ? item.ronda : 1,
+      productoId: item.product.id,
+      nombre: item.product.nombre,
+      cantidad: item.cantidad,
+      precioUnitario: item.product.precio,
+      subtotal: item.subtotal,
+      notas: item.notas
+    })),
+    rondas
+  };
 }
 
 export function tiempoTranscurridoDesde(fechaIso: string | null | undefined, ahora: number): string {

@@ -95,7 +95,7 @@ public class MesaController {
     }
 
     @RequestMapping(value = "/{id}/posicion", method = {RequestMethod.PATCH, RequestMethod.PUT})
-    @PreAuthorize("hasAnyAuthority('ADMIN', 'MOZO')")
+    @PreAuthorize("hasAuthority('ADMIN')")
     public ResponseEntity<MesaResponse> actualizarPosicion(
             @PathVariable Long id,
             @Valid @RequestBody ActualizarPosicionMesaRequest request

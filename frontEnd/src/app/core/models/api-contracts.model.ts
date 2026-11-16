@@ -119,12 +119,14 @@ export interface BackendCrearOrdenRequest {
 }
 
 export interface BackendItemResponse {
+  id?: number;
   productoId: number;
   productoNombre: string;
   cantidad: number;
   precioUnitario: number;
   subtotal: number;
   notas?: string;
+  ronda?: number | null;
 }
 
 export interface BackendOrdenResponse {

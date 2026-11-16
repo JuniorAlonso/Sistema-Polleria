@@ -13,4 +13,5 @@ public class ItemPedidoListoDto {
     private String nombre;
     private Integer cantidad;
     private String notas;
+    private Integer ronda;
 }

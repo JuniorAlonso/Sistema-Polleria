@@ -15,14 +15,27 @@ import { KitchenTab } from '../kitchen.types';
           </div>
 
           <div class="flex items-center gap-3">
-            <div class="hidden sm:flex items-center gap-3 text-xs">
-              <span class="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                <svg class="w-3.5 h-3.5 inline mr-1 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>En Preparación: {{ preparingCount() }}
-              </span>
-              <span class="px-3 py-1 rounded-xl bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>Listos para Reparto: {{ readyCount() }}
-              </span>
-            </div>
+            @if (activeTab() === 'DISPONIBILIDAD') {
+              <div class="flex items-center gap-2 text-xs">
+                <span data-testid="header-agotados-badge" class="px-3 py-1 rounded-xl bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                  </svg>Agotados: {{ agotadosCount() }}
+                </span>
+                <span class="hidden sm:inline-block px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  Total carta: {{ totalProductsCount() }}
+                </span>
+              </div>
+            } @else {
+              <div class="hidden sm:flex items-center gap-3 text-xs">
+                <span class="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>En Preparación: {{ preparingCount() }}
+                </span>
+                <span class="px-3 py-1 rounded-xl bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>Listos para Reparto: {{ readyCount() }}
+                </span>
+              </div>
+            }
           </div>
 
         </header>
@@ -33,4 +46,6 @@ export class KitchenHeaderComponent {
   readonly activeTab = input.required<KitchenTab>();
   readonly preparingCount = input.required<number>();
   readonly readyCount = input.required<number>();
+  readonly agotadosCount = input<number>(0);
+  readonly totalProductsCount = input<number>(0);
 }

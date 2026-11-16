@@ -44,6 +44,26 @@ import { KitchenTab } from '../kitchen.types';
             </span>
           </button>
 
+          <button
+            type="button"
+            data-testid="tab-disponibilidad"
+            (click)="tabChange.emit('DISPONIBILIDAD')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'DISPONIBILIDAD' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+              </svg>
+              <span>Disponibilidad</span>
+            </div>
+            @if (agotadosCount() > 0) {
+              <span data-testid="sidebar-agotados-badge" class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-xs">
+                {{ agotadosCount() }} agotados
+              </span>
+            }
+          </button>
+
         </nav>
 
         <div class="p-3 border-t border-white/10 bg-[#101215] shrink-0">
@@ -80,6 +100,7 @@ import { KitchenTab } from '../kitchen.types';
 export class KitchenSidebarComponent {
   readonly activeTab = input.required<KitchenTab>();
   readonly kitchenOrdersCount = input.required<number>();
+  readonly agotadosCount = input<number>(0);
   readonly userName = input<string | undefined>(undefined);
   readonly tabChange = output<KitchenTab>();
   readonly logout = output<void>();

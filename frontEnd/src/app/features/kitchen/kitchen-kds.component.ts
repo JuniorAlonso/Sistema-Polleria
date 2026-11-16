@@ -3,14 +3,22 @@ import { isPlatformBrowser } from '@angular/common';
 import { Router } from '@angular/router';
 import { Subscription, interval } from 'rxjs';
 import { OrdersService } from '../../core/services/orders.service';
+import { ProductsService } from '../../core/services/products.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order, OrderStatus } from '../../core/models/order.model';
-import { KitchenTab, KdsFilter, codigoNumerico } from './kitchen.types';
+import { Product } from '../../core/models/product.model';
+import {
+  KitchenTab,
+  KdsFilter,
+  codigoNumerico,
+  esTransicionCocinaPermitida
+} from './kitchen.types';
 import { KitchenSidebarComponent } from './components/kitchen-sidebar.component';
 import { KitchenHeaderComponent } from './components/kitchen-header.component';
 import { KitchenFilterBarComponent } from './components/kitchen-filter-bar.component';
 import { KitchenOrderCardComponent } from './components/kitchen-order-card.component';
+import { KitchenDisponibilidadComponent } from './components/kitchen-disponibilidad.component';
 
 export type { KitchenTab, KdsFilter } from './kitchen.types';
 
@@ -21,7 +29,8 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
     KitchenSidebarComponent,
     KitchenHeaderComponent,
     KitchenFilterBarComponent,
-    KitchenOrderCardComponent
+    KitchenOrderCardComponent,
+    KitchenDisponibilidadComponent
   ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
@@ -29,8 +38,9 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
       <app-kitchen-sidebar
         [activeTab]="activeTab()"
         [kitchenOrdersCount]="kitchenOrdersCount()"
+        [agotadosCount]="agotadosCount()"
         [userName]="authService.currentUser()?.nombre"
-        (tabChange)="activeTab.set($event)"
+        (tabChange)="onTabChange($event)"
         (logout)="cerrarSesion()"
       />
 
@@ -41,6 +51,8 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
           [activeTab]="activeTab()"
           [preparingCount]="preparingCount()"
           [readyCount]="readyCount()"
+          [agotadosCount]="agotadosCount()"
+          [totalProductsCount]="productsService.products().length"
         />
 
         @if (activeTab() === 'KDS') {
@@ -73,6 +85,7 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
                 <app-kitchen-order-card
                   [order]="order"
                   [minutosEspera]="minutosEspera(order)"
+                  [procesando]="estaProcesandoOrden(order.id)"
                   (cambiarEstado)="cambiarEstadoOrden(order, $event)"
                 />
               } @empty {
@@ -89,6 +102,14 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
             </div>
 
           </main>
+        } @else if (activeTab() === 'DISPONIBILIDAD') {
+          <app-kitchen-disponibilidad
+            [productos]="productsService.products()"
+            [cargando]="productsService.isLoading()"
+            [modificandoIds]="procesandoProductoIds()"
+            (toggleDisponibilidad)="alternarDisponibilidadProducto($event)"
+            (recargar)="recargarProductos()"
+          />
         }
 
       </div>
@@ -97,6 +118,7 @@ export type { KitchenTab, KdsFilter } from './kitchen.types';
 })
 export class KitchenKdsComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
+  readonly productsService = inject(ProductsService);
   readonly authService = inject(AuthService);
   private notify = inject(NotificationService);
   private router = inject(Router);
@@ -105,6 +127,10 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
 
   readonly activeTab = signal<KitchenTab>('KDS');
   readonly kdsFilter = signal<KdsFilter>('TODAS');
+  /** Guarda de órdenes con actualización de estado en curso para evitar doble clic / peticiones simultáneas. */
+  readonly procesandoOrdenIds = signal<Set<string>>(new Set());
+  /** Guarda de productos con alternancia de disponibilidad en curso para evitar solicitudes duplicadas por clics repetidos. */
+  readonly procesandoProductoIds = signal<Set<string>>(new Set());
 
   readonly rawKitchenOrders = computed(() =>
     this.ordersService.orders()
@@ -115,6 +141,10 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   );
 
   readonly kitchenOrdersCount = computed(() => this.rawKitchenOrders().length);
+
+  readonly agotadosCount = computed(() =>
+    this.productsService.products().filter(p => p.agotado).length
+  );
 
   readonly pendingCount = computed(() =>
     this.rawKitchenOrders().filter(o => o.estado === 'PAGADO').length
@@ -160,6 +190,76 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
     }
   }
 
+  onTabChange(tab: KitchenTab): void {
+    this.activeTab.set(tab);
+    if (tab === 'DISPONIBILIDAD') {
+      // Requisito 5: Refrescar información mediante loadProducts() al entrar en la sección
+      this.recargarProductos();
+    }
+  }
+
+  recargarProductos(): void {
+    this.productsService.loadProducts();
+  }
+
+  estaProcesandoProducto(productId: string): boolean {
+    return this.procesandoProductoIds().has(String(productId));
+  }
+
+  private marcarProcesandoProducto(productId: string, enCurso: boolean): void {
+    const clave = String(productId);
+    this.procesandoProductoIds.update(prev => {
+      const siguiente = new Set(prev);
+      if (enCurso) {
+        siguiente.add(clave);
+      } else {
+        siguiente.delete(clave);
+      }
+      return siguiente;
+    });
+  }
+
+  alternarDisponibilidadProducto(producto: Product): void {
+    // Requisito 7: Evitar solicitudes duplicadas al hacer clic repetidamente
+    if (this.estaProcesandoProducto(producto.id)) {
+      return;
+    }
+
+    const estadoDestino = producto.agotado ? 'DISPONIBLE' : 'AGOTADO';
+    this.marcarProcesandoProducto(producto.id, true);
+
+    this.productsService.toggleAgotado(producto.id, errorMsg => {
+      this.marcarProcesandoProducto(producto.id, false);
+      if (errorMsg) {
+        // Requisito 8: Mostrar mensajes de error sin ocultar fallos del backend
+        this.notify.showError(errorMsg);
+      } else {
+        // Requisito 8: Mostrar mensajes de éxito
+        const detalle = estadoDestino === 'DISPONIBLE'
+          ? `"${producto.nombre}" ahora está disponible para la venta.`
+          : `"${producto.nombre}" marcado como agotado.`;
+        this.notify.showSuccess(detalle);
+      }
+    });
+  }
+
+  estaProcesandoOrden(orderId: string): boolean {
+    return this.procesandoOrdenIds().has(String(orderId));
+  }
+
+  private marcarProcesando(orderId: string, enCurso: boolean): void {
+    const clave = String(orderId);
+    this.procesandoOrdenIds.update(prev => {
+      const siguiente = new Set(prev);
+      if (enCurso) {
+        siguiente.add(clave);
+      } else {
+        siguiente.delete(clave);
+      }
+      return siguiente;
+    });
+  }
+
   getCodeNum(code: string): string {
     return codigoNumerico(code);
   }
@@ -185,27 +285,53 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
   getActiveTabLabel(): string {
     switch (this.activeTab()) {
       case 'KDS': return 'Comandas de Cocina & Horno en Vivo';
+      case 'DISPONIBILIDAD': return 'Disponibilidad de Platos & Carta';
       default: return 'Panel Cocina';
     }
   }
 
   cambiarEstadoOrden(order: Order, nuevoEstado: OrderStatus): void {
-    // Cocina solo avanza lo que ya está pagado/confirmado: PAGADO -> EN_PREPARACION -> LISTO_COCINA.
-    const permitido =
-      (order.estado === 'PAGADO' && nuevoEstado === 'EN_PREPARACION') ||
-      (order.estado === 'EN_PREPARACION' && nuevoEstado === 'LISTO_COCINA');
-    if (!permitido) {
+    if (this.estaProcesandoOrden(order.id)) {
+      return;
+    }
+
+    // D1.2 / R1.7: La cocina nunca puede cerrar (COMPLETADO/ENTREGADO), cancelar ni despachar una comanda.
+    const estadosProhibidosCocina: OrderStatus[] = [
+      'COMPLETADO',
+      'ENTREGADO',
+      'CANCELADO',
+      'PEDIDO_FANTASMA',
+      'EN_REPARTO',
+      'EN_CAMINO',
+      'EN_PUERTA'
+    ];
+    if (estadosProhibidosCocina.includes(nuevoEstado)) {
+      this.notify.showWarning(`La cocina no tiene permisos para pasar la orden #${this.getCodeNum(order.codigoSeguimiento)} a ${nuevoEstado}`);
+      return;
+    }
+
+    // Cocina solo avanza lo que ya está en cola o en preparación: PAGADO -> EN_PREPARACION -> LISTO_COCINA.
+    if (!esTransicionCocinaPermitida(order.estado, nuevoEstado)) {
       this.notify.showWarning(`La orden #${this.getCodeNum(order.codigoSeguimiento)} todavía no se puede cocinar`);
       return;
     }
+
+    this.marcarProcesando(order.id, true);
     this.ordersService.updateOrderStatus(order.id, nuevoEstado).subscribe({
       next: () => {
+        this.marcarProcesando(order.id, false);
         this.notify.showSuccess(`Orden #${this.getCodeNum(order.codigoSeguimiento)} actualizada a ${nuevoEstado}`);
       },
       error: err => {
-        this.notify.showError(
-          err?.error?.error || err?.error?.message || `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`
-        );
+        this.marcarProcesando(order.id, false);
+        const motivo =
+          err?.error?.error ||
+          err?.error?.mensaje ||
+          err?.error?.message ||
+          err?.error?.detail ||
+          err?.message ||
+          `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`;
+        this.notify.showError(motivo);
       }
     });
   }

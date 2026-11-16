@@ -33,6 +33,7 @@ class ProductoStockTest {
         pollo = Producto.builder().id(10L).nombre("Pollo entero").categoria(Categoria.POLLO_ENTERO)
                 .precio(new BigDecimal("60.00")).disponible(false).stock(0).build();
         lenient().when(productoRepository.findById(10L)).thenReturn(Optional.of(pollo));
+        lenient().when(productoRepository.findByIdConBloqueo(10L)).thenReturn(Optional.of(pollo));
     }
 
     @Test
@@ -55,14 +56,21 @@ class ProductoStockTest {
     }
 
     @Test
-    void unPlatoConStockSeDesactivaAMano() {
-        pollo.setStock(5);
+    void toggleDisponibilidadUtilizaBloqueoPesimistaYSigueSecuenciaConsistente() {
+        pollo.setStock(10);
         pollo.setDisponible(true);
 
+        // Primer toggle: desactiva
         productoService.toggleDisponibilidad(10L);
-
         assertFalse(pollo.isDisponible());
-        assertEquals(5, pollo.getStock());
+
+        // Segundo toggle: reactiva
+        productoService.toggleDisponibilidad(10L);
+        assertTrue(pollo.isDisponible());
+
+        // Verifica que siempre leyó mediante findByIdConBloqueo (bloqueo pesimista PESSIMISTIC_WRITE)
+        verify(productoRepository, times(2)).findByIdConBloqueo(10L);
+        verify(productoRepository, times(2)).save(pollo);
     }
 
     @Test

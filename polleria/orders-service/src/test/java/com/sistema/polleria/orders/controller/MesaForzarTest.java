@@ -144,6 +144,55 @@ class MesaForzarTest {
         assertEquals(MesaEstado.LIBRE, estadoDeLaMesa());
     }
 
+    @Test
+    void elMozoNoPuedeModificarLaPosicionDeUnaMesa() {
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+
+        ResponseEntity<String> intentoPatch = cambiarPosicion(mesaId, 120, 240, HttpMethod.PATCH, tokenMozo);
+        assertEquals(HttpStatus.FORBIDDEN, intentoPatch.getStatusCode(),
+                "MOZO debe recibir 403 al intentar PATCH /mesas/{id}/posicion: " + intentoPatch.getBody());
+
+        ResponseEntity<String> intentoPut = cambiarPosicion(mesaId, 120, 240, HttpMethod.PUT, tokenMozo);
+        assertEquals(HttpStatus.FORBIDDEN, intentoPut.getStatusCode(),
+                "MOZO debe recibir 403 al intentar PUT /mesas/{id}/posicion: " + intentoPut.getBody());
+
+        var mesa = mesaRepository.findById(mesaId).orElseThrow();
+        assertEquals(0, mesa.getPosicionX(), "posicionX no debe cambiar tras intento de MOZO");
+        assertEquals(0, mesa.getPosicionY(), "posicionY no debe cambiar tras intento de MOZO");
+    }
+
+    @Test
+    void elAdminPuedeModificarLaPosicionDeUnaMesaYMozoConservaPermisosDeConsulta() throws Exception {
+        String tokenAdmin = tokenDe(ADMIN_ID, "ADMIN");
+        String tokenMozo = tokenDe(MOZO_ID, "MOZO");
+
+        ResponseEntity<String> actualizadoPatch = cambiarPosicion(mesaId, 150, 260, HttpMethod.PATCH, tokenAdmin);
+        assertEquals(HttpStatus.OK, actualizadoPatch.getStatusCode(),
+                "ADMIN debe poder modificar la posición con PATCH: " + actualizadoPatch.getBody());
+        assertEquals(150, objectMapper.readTree(actualizadoPatch.getBody()).path("posicionX").asInt());
+        assertEquals(260, objectMapper.readTree(actualizadoPatch.getBody()).path("posicionY").asInt());
+
+        ResponseEntity<String> actualizadoPut = cambiarPosicion(mesaId, 300, 400, HttpMethod.PUT, tokenAdmin);
+        assertEquals(HttpStatus.OK, actualizadoPut.getStatusCode(),
+                "ADMIN debe poder modificar la posición con PUT: " + actualizadoPut.getBody());
+        var mesa = mesaRepository.findById(mesaId).orElseThrow();
+        assertEquals(300, mesa.getPosicionX());
+        assertEquals(400, mesa.getPosicionY());
+
+        // MOZO conserva permisos de consulta sobre mesas
+        ResponseEntity<String> consulta = rest.exchange("/mesas/" + mesaId, HttpMethod.GET,
+                new HttpEntity<>(cabecerasDe(tokenMozo)), String.class);
+        assertEquals(HttpStatus.OK, consulta.getStatusCode(),
+                "MOZO debe conservar permiso de consulta de mesa: " + consulta.getBody());
+        assertEquals(300, objectMapper.readTree(consulta.getBody()).path("posicionX").asInt());
+    }
+
+    private ResponseEntity<String> cambiarPosicion(Long id, int x, int y, HttpMethod metodo, String token) {
+        return rest.exchange("/mesas/" + id + "/posicion", metodo,
+                new HttpEntity<>(Map.of("posicionX", x, "posicionY", y), cabecerasDe(token)),
+                String.class);
+    }
+
     private void crearComandaDeSalon() throws Exception {
         Long productoId = productoRepository.findByDisponibleTrue().stream()
                 .findFirst().orElseThrow(() -> new IllegalStateException("no hay productos disponibles"))

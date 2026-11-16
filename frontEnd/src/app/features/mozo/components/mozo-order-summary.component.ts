@@ -14,7 +14,9 @@ import { ComandaItem } from '../mozo.types';
                 <div>
                   <div class="flex justify-between items-center pb-4 border-b border-white/10">
                     <div>
-                      <h3 class="text-base font-extrabold text-white">Comanda Mesa #{{ mesaTitulo() }}</h3>
+                      <h3 class="text-base font-extrabold text-white">
+                        {{ mesaTitulo() ? 'Comanda Mesa #' + mesaTitulo() : 'Comanda (Seleccioná una mesa)' }}
+                      </h3>
                       <p class="text-xs text-slate-400">Mozo: {{ userName() || 'Yovana M.' }}</p>
                     </div>
                     <span class="px-2.5 py-1 rounded-full bg-polleria-crimson text-white text-xs font-bold">
@@ -68,13 +70,16 @@ import { ComandaItem } from '../mozo.types';
                   </div>
 
                   <button 
-                    [disabled]="items().length === 0"
+                    type="button"
+                    [disabled]="items().length === 0 || !mesaTitulo() || enviando()"
                     (click)="enviar.emit()"
-                    class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
+                    class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
                   >
                     <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    @if (ordenActivaId(); as ordenId) {
-                      <span>Agregar a la comanda #{{ ordenId }}</span>
+                    @if (enviando()) {
+                      <span>Enviando a cocina...</span>
+                    } @else if (ordenActivaId()) {
+                      <span>Agregar a la comanda #{{ ordenActivaId() }}</span>
                     } @else {
                       <span>Enviar a Cocina & Horno</span>
                     }
@@ -84,12 +89,13 @@ import { ComandaItem } from '../mozo.types';
   `
 })
 export class MozoOrderSummaryComponent {
-  readonly mesaTitulo = input.required<number | string | undefined>();
+  readonly mesaTitulo = input.required<number | string | null | undefined>();
   readonly userName = input<string | null | undefined>();
   readonly ordenActivaId = input<string | undefined>();
   readonly estadoComandaLabel = input<string>('');
   readonly items = input.required<ComandaItem[]>();
   readonly total = input.required<number>();
+  readonly enviando = input<boolean>(false);
 
   readonly eliminar = output<number>();
   readonly notasChange = output<{ index: number; notas: string }>();

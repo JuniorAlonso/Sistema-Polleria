@@ -46,8 +46,10 @@ import { esMiComanda } from '../mozo.helpers';
                   </div>
 
                   <button 
+                    type="button"
+                    [disabled]="sirviendo()"
                     (click)="servir.emit(a)"
-                    class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
+                    class="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow flex items-center gap-1.5"
                   >
                     <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Servir en mesa
                   </button>
@@ -64,6 +66,7 @@ import { esMiComanda } from '../mozo.helpers';
 export class MozoAlertasListComponent {
   readonly alertas = input.required<AlertaPlatoListo[]>();
   readonly miUserId = input<number | null | undefined>(null);
+  readonly sirviendo = input<boolean>(false);
 
   readonly servir = output<AlertaPlatoListo>();
 

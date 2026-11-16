@@ -73,7 +73,7 @@ public class ProductoService {
 
     @Transactional
     public ProductoResponse toggleDisponibilidad(Long id) {
-        Producto producto = buscarOFallar(id);
+        Producto producto = buscarConBloqueo(id);
         if (!producto.isDisponible() && sinStock(producto)) {
             throw new IllegalArgumentException(
                     "'" + producto.getNombre() + "' no tiene stock: repón unidades antes de activarlo.");

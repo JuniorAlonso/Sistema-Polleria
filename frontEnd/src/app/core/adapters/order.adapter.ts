@@ -4,8 +4,7 @@ import {
   BackendOrdenResponse,
   BackendOrdenTipo
 } from '../models/api-contracts.model';
-import { CreateOrderRequest, Order, OrderChannel, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
-import { CartItem } from '../models/product.model';
+import { CreateOrderRequest, Order, OrderChannel, OrderItem, OrderStatus, OrderType, PaymentMethod } from '../models/order.model';
 
 /**
  * Contrato de T2 (S1): el backend ya expone `canalOrigen` en la respuesta y lo acepta en el alta,
@@ -125,7 +124,7 @@ export class OrderAdapter {
     const estado = this.toOrderStatus(dto.estado);
     const trackingCode = `POL-${dto.id}`;
 
-    const items: CartItem[] = (dto.items || []).map(item => {
+    const items: OrderItem[] = (dto.items || []).map(item => {
       const precioUnitario = typeof item.precioUnitario === 'number'
         ? item.precioUnitario
         : parseFloat(String(item.precioUnitario)) || 0;
@@ -134,7 +133,17 @@ export class OrderAdapter {
         ? item.subtotal
         : parseFloat(String(item.subtotal)) || precioUnitario * (item.cantidad || 1);
 
+      const id = item.id != null && Number.isFinite(Number(item.id))
+        ? Number(item.id)
+        : undefined;
+
+      const ronda = typeof item.ronda === 'number' && Number.isFinite(item.ronda) && item.ronda >= 1
+        ? item.ronda
+        : 1;
+
       return {
+        id: id,
+        ronda: ronda,
         product: {
           id: String(item.productoId),
           nombre: item.productoNombre || 'Producto',

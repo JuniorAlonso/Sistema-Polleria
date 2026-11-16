@@ -23,6 +23,13 @@ describe('Api services', () => {
     req.flush({});
   });
 
+  it('OrdersApiService.eliminarItem hace DELETE /ordenes/:id/items/:itemId', () => {
+    TestBed.inject(OrdersApiService).eliminarItem(7, 42).subscribe();
+    const req = httpMock.expectOne(r => r.url.endsWith('/ordenes/7/items/42'));
+    expect(req.request.method).toBe('DELETE');
+    req.flush({});
+  });
+
   it('PaymentsApiService.listar hace GET /pagos', () => {
     TestBed.inject(PaymentsApiService).listar().subscribe();
     const req = httpMock.expectOne(r => r.url.endsWith('/pagos'));

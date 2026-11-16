@@ -32,6 +32,7 @@ import java.util.Set;
 public class OrdenController {
 
     private static final Set<String> ROLES_PERSONAL = Set.of("ADMIN", "MOZO", "COCINA", "REPARTIDOR", "CAJERO");
+    private static final Set<String> ROLES_APERTURA_SALON = Set.of("ADMIN", "MOZO");
     private static final Set<String> ROLES_CIERRE_SALON = Set.of("ADMIN", "CAJERO");
 
     private final OrdenService ordenService;
@@ -47,10 +48,10 @@ public class OrdenController {
             @RequestHeader(value = "X-Internal-Key", required = false) String claveInterna
     ) {
         // El checkout público es DELIVERY/RECOJO: un invitado debe poder pedir. La comanda de
-        // salón, en cambio, la toma el personal de la pollería (mozo o administrador) o un
-        // microservicio con la clave interna; si no, cualquiera ocuparía una mesa.
+        // salón, en cambio, la toma exclusivamente un mozo, un administrador o un microservicio
+        // con la clave interna; ni visitantes ni otros roles de personal pueden ocupar una mesa.
         if (request.getTipo() == OrdenTipo.SALON && !esLlamadaInterna(claveInterna)
-                && !esPersonal(authentication)) {
+                && !puedeAbrirComandaSalon(authentication)) {
             throw new AccessDeniedException(
                     "La comanda de salón la toma el personal de la pollería (mozo o administrador).");
         }
@@ -86,6 +87,21 @@ public class OrdenController {
     ) {
         return ResponseEntity.ok(
                 ordenService.agregarItems(id, request.getItems(), extraerUserId(authentication)));
+    }
+
+    /**
+     * D1.8: quita un producto individual de una comanda de salón.
+     * MOZO solo con orden en RECIBIDO; ADMIN en cualquier estado activo.
+     */
+    @DeleteMapping("/{id}/items/{itemId}")
+    @PreAuthorize("hasAnyAuthority('ADMIN','MOZO')")
+    public ResponseEntity<OrdenResponse> eliminarItem(
+            @PathVariable Long id,
+            @PathVariable Long itemId,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                ordenService.eliminarItem(id, itemId, extraerUserId(authentication), esAdmin(authentication)));
     }
 
     /**
@@ -308,6 +324,16 @@ public class OrdenController {
 
         return ResponseEntity.ok(ordenService.actualizarEstado(
                 id, request, extraerUserId(authentication), esLlamadaInterna(claveInterna)));
+    }
+
+    private boolean puedeAbrirComandaSalon(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> ROLES_APERTURA_SALON.contains(a.getAuthority()));
+    }
+
+    private boolean esAdmin(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()));
     }
 
     private boolean puedeCerrarComandaSalon(Authentication authentication) {

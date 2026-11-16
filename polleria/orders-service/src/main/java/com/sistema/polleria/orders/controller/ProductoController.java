@@ -56,7 +56,7 @@ public class ProductoController {
     }
 
     @PatchMapping("/{id}/disponibilidad")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'COCINA', 'ROLE_COCINA')")
     public ResponseEntity<ProductoResponse> toggleDisponibilidad(@PathVariable Long id) {
         return ResponseEntity.ok(productoService.toggleDisponibilidad(id));
     }
