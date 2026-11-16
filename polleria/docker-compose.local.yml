@@ -38,7 +38,7 @@ services:
     container_name: polleria-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@polleria.local}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@polleria.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Defina PGADMIN_DEFAULT_PASSWORD en .env}
     ports:
       - "127.0.0.1:5050:80"

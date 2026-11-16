@@ -295,7 +295,12 @@ const MAX_INTENTOS_ARRANQUE = 5;
  */
 async function limpiarLocksHuerfanos() {
     for (const nombre of ARCHIVOS_LOCK) {
-        await fs.promises.rm(path.join(PERFIL_CHROMIUM, nombre), { force: true }).catch(() => {});
+        const ruta = path.join(PERFIL_CHROMIUM, nombre);
+        await fs.promises.rm(ruta, { force: true }).catch(err => {
+            if (err && err.code !== 'ENOENT') {
+                console.warn(`⚠️ No se pudo eliminar el lock huérfano ${ruta}: ${err.message}`);
+            }
+        });
     }
 }
 
@@ -305,6 +310,7 @@ async function limpiarLocksHuerfanos() {
 async function intentarArranque(intento) {
     iniciarWatchdog(45000);
     try {
+        await limpiarLocksHuerfanos();
         await client.initialize();
         ultimoError = null;
         return true;
