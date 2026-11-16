@@ -53,9 +53,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        List<String> origins = SecurityConfig.origenesPermitidos(allowedOrigins, allowLoopback);
+        String[] origenes = SecurityConfig.origenesPermitidos(allowedOrigins)
+                .toArray(String[]::new);
         registry.addEndpoint("/ws-polleria")
-                .setAllowedOriginPatterns(origins.toArray(String[]::new))
+                .setAllowedOriginPatterns(origenes)
                 .withSockJS();
     }
 

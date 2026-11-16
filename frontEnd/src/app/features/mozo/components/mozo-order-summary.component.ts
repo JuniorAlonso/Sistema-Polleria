@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
@@ -71,13 +71,13 @@ import { ComandaItem } from '../mozo.types';
 
                   <button 
                     type="button"
-                    [disabled]="items().length === 0 || !mesaTitulo() || enviando()"
+                    [disabled]="items().length === 0 || !mesaTitulo() || estaEnviando()"
                     (click)="enviar.emit()"
                     class="w-full py-3 rounded-xl bg-polleria-crimson hover:bg-polleria-crimsonHover disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
                   >
                     <svg class="w-4 h-4 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    @if (enviando()) {
-                      <span>Enviando a cocina...</span>
+                    @if (estaEnviando()) {
+                      <span>Enviando comanda...</span>
                     } @else if (ordenActivaId()) {
                       <span>Agregar a la comanda #{{ ordenActivaId() }}</span>
                     } @else {
@@ -96,6 +96,8 @@ export class MozoOrderSummaryComponent {
   readonly items = input.required<ComandaItem[]>();
   readonly total = input.required<number>();
   readonly enviando = input<boolean>(false);
+  readonly procesando = input<boolean>(false);
+  readonly estaEnviando = computed(() => this.enviando() || this.procesando());
 
   readonly eliminar = output<number>();
   readonly notasChange = output<{ index: number; notas: string }>();

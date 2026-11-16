@@ -1057,7 +1057,6 @@ class OrdenServiceFase2Test {
         orden.recalcularTotal();
 
         when(ordenRepository.buscarConBloqueo(607L)).thenReturn(Optional.of(orden));
-        when(ordenRepository.findById(607L)).thenReturn(Optional.of(orden));
         when(productoService.buscarConBloqueo(17L)).thenReturn(prodA);
         when(productoService.buscarConBloqueo(18L)).thenReturn(prodB);
         when(ordenRepository.save(any(Orden.class))).thenReturn(orden);

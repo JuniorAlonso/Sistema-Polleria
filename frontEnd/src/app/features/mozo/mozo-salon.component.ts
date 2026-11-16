@@ -259,7 +259,6 @@ export class MozoSalonComponent implements OnInit, OnDestroy {
   // Estado de Carga y Espera para Operaciones de Salón
   readonly isProcesandoMesa = signal<boolean>(false);
   readonly mensajeProcesandoMesa = signal<string>('Sincronizando con el servidor...');
-  readonly enviandoComanda = signal<boolean>(false);
 
   private timerInterval: any = null;
   readonly tiempoActual = signal<number>(Date.now());

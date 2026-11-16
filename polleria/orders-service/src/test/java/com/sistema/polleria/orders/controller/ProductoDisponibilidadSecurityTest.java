@@ -65,6 +65,9 @@ class ProductoDisponibilidadSecurityTest {
     @MockBean
     private ProductoService productoService;
 
+    @MockBean
+    private com.sistema.polleria.orders.service.MinioProductoService minioProductoService;
+
     @AfterEach
     void limpiarContextoSeguridad() {
         SecurityContextHolder.clearContext();
