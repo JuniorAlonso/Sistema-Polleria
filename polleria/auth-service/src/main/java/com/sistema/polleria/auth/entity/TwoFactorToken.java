@@ -31,6 +31,10 @@ public class TwoFactorToken {
     @Builder.Default
     private boolean used = false;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private int attempts = 0;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

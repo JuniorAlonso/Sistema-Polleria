@@ -14,6 +14,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -49,12 +51,13 @@ class IncidenteServiceTest {
                 .responsable("Soporte Técnico")
                 .build();
 
-        IncidenteResponse res = incidenteService.registrar(req);
+        IncidenteResponse res = incidenteService.registrar(req, "admin@polleria.pe");
 
         assertThat(res.getId()).isEqualTo(10L);
         assertThat(res.getEstado()).isEqualTo(EstadoIncidente.ABIERTO);
         assertThat(res.getSeveridad()).isEqualTo(Severidad.ALTA);
         assertThat(res.getTitulo()).isEqualTo("Caída de conexión de terminal POS");
+        assertThat(res.getReportadoPor()).isEqualTo("admin@polleria.pe");
         verify(incidenteRepository).save(any(Incidente.class));
     }
 
@@ -80,7 +83,8 @@ class IncidenteServiceTest {
                 .responsable("Mantenimiento Externo")
                 .build();
 
-        IncidenteResponse res = incidenteService.resolver(5L, req);
+        // Without the authenticated email, the responsable from the request is kept.
+        IncidenteResponse res = incidenteService.resolver(5L, req, null);
 
         assertThat(res.getId()).isEqualTo(5L);
         assertThat(res.getEstado()).isEqualTo(EstadoIncidente.RESUELTO);
@@ -95,13 +99,15 @@ class IncidenteServiceTest {
     @DisplayName("Debe filtrar incidentes por severidad y estado")
     void listar_filtraCorrectamente() {
         Incidente i1 = Incidente.builder().id(1L).severidad(Severidad.CRITICA).estado(EstadoIncidente.ABIERTO).build();
-        when(incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(Severidad.CRITICA, EstadoIncidente.ABIERTO))
+        when(incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(
+                eq(Severidad.CRITICA), eq(EstadoIncidente.ABIERTO), any(Pageable.class)))
                 .thenReturn(List.of(i1));
 
         List<IncidenteResponse> res = incidenteService.listar(Severidad.CRITICA, EstadoIncidente.ABIERTO);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0).getId()).isEqualTo(1L);
-        verify(incidenteRepository).findBySeveridadAndEstadoOrderByOcurridoEnDesc(Severidad.CRITICA, EstadoIncidente.ABIERTO);
+        verify(incidenteRepository).findBySeveridadAndEstadoOrderByOcurridoEnDesc(
+                Severidad.CRITICA, EstadoIncidente.ABIERTO, PageRequest.of(0, 500));
     }
 }

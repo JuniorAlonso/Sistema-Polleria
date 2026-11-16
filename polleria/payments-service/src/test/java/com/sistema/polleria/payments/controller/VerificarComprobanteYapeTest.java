@@ -318,13 +318,39 @@ class VerificarComprobanteYapeTest {
     }
 
     @Test
-    @DisplayName("PRESERVE: cancelar un pago sigue funcionando para un CLIENTE y no le entrega la clave")
+    @DisplayName("SEC-03/DIN-02: solo el dueño (o personal) cancela un pago RECHAZADO/PENDIENTE y nunca expone la clave")
     void cancelarSigueFuncionandoYNoExponeLaClave() throws Exception {
         Assumptions.assumeTrue(postgresDisponible(),
                 "PostgreSQL de pruebas no disponible en localhost:5433");
         long ordenId = 978109L;
+        org.mockito.Mockito.when(ordenesClient.obtener(ordenId))
+                .thenReturn(new OrdenesClient.OrdenInfo(
+                        ordenId, "PENDIENTE_PAGO", "DELIVERY", new java.math.BigDecimal("45.50"),
+                        944L, java.time.LocalDateTime.now()));
         long pagoId = registrarComprobante(ordenId, "comprobantes/yape/978109/cancelado.jpg");
         String tokenCliente = token(944L, "CLIENTE", "cliente@prueba.local");
+        String tokenOtroCliente = token(945L, "CLIENTE", "otro@prueba.local");
+
+        // SEC-03: otro cliente recibe 403.
+        ResponseEntity<String> ajeno = rest.exchange(
+                "/pagos/" + pagoId + "/cancelar",
+                HttpMethod.PATCH,
+                entidadSinCuerpo(tokenOtroCliente),
+                String.class);
+        assertThat(ajeno.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        // DIN-02: no se puede cancelar mientras está PENDIENTE_VERIFICACION.
+        ResponseEntity<String> enVerificacion = rest.exchange(
+                "/pagos/" + pagoId + "/cancelar",
+                HttpMethod.PATCH,
+                entidadSinCuerpo(tokenCliente),
+                String.class);
+        assertThat(enVerificacion.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // Tras rechazo, el cliente dueño sí puede cancelarlo sin recibir la clave del comprobante.
+        ResponseEntity<String> rechazo = verificar(
+                pagoId, "{\"aprobado\": false, \"motivoRechazo\": \"Captura borrosa\"}", tokenAdmin());
+        assertThat(rechazo.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         ResponseEntity<String> respuesta = rest.exchange(
                 "/pagos/" + pagoId + "/cancelar",
@@ -502,9 +528,16 @@ class VerificarComprobanteYapeTest {
     private boolean postgresDisponible() {
         try (Connection c = DriverManager.getConnection(
                 "jdbc:postgresql://localhost:5433/polleria_test", "postgres", "postgres123")) {
-            return c.isValid(2);
+            if (c.isValid(2)) {
+                return true;
+            }
         } catch (Exception e) {
-            return false;
+            // Checked below so -Drequire.db=true fails loudly.
         }
+        if ("true".equalsIgnoreCase(System.getProperty("require.db"))
+                || "true".equalsIgnoreCase(System.getenv("REQUIRE_DB"))) {
+            throw new AssertionError("PostgreSQL requerido (-Drequire.db=true) no disponible en localhost:5433");
+        }
+        return false;
     }
 }

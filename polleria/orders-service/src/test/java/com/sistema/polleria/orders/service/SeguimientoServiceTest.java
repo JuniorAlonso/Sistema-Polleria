@@ -58,7 +58,7 @@ class SeguimientoServiceTest {
 
         ArgumentCaptor<CodigoSeguimiento> guardado = ArgumentCaptor.forClass(CodigoSeguimiento.class);
         verify(codigoRepository).save(guardado.capture());
-        assertTrue(guardado.getValue().getCodigo().matches("\\d{4}"));
+        assertTrue(guardado.getValue().getCodigo().matches("\\d{6}"));
         verify(notificationService).enviarCodigoSeguimiento("938924552", guardado.getValue().getCodigo());
     }
 
@@ -71,12 +71,25 @@ class SeguimientoServiceTest {
 
         verify(codigoRepository, never()).save(any());
         verifyNoInteractions(notificationService);
+
+        assertThrows(DemasiadasSolicitudesException.class,
+                () -> seguimientoService.solicitarCodigo("938924552"),
+                "Un número sin pedidos debe recibir exactamente el mismo 429 en el cooldown para no enumerar clientes");
+    }
+
+    @Test
+    void rechazaAlSuperarElLimiteDiarioDeSolicitudes() {
+        when(codigoRepository.findTopByTelefonoOrderByCreadoEnDesc("938924552")).thenReturn(Optional.empty());
+        when(codigoRepository.countByTelefonoAndCreadoEnAfter(eq("938924552"), any())).thenReturn(5L);
+
+        assertThrows(DemasiadasSolicitudesException.class, () -> seguimientoService.solicitarCodigo("938924552"));
+        verifyNoInteractions(notificationService);
     }
 
     @Test
     void noPermitePedirOtroCodigoAntesDeUnMinuto() {
         CodigoSeguimiento reciente = CodigoSeguimiento.builder()
-                .telefono("938924552").codigo("1111")
+                .telefono("938924552").codigo("111111")
                 .creadoEn(LocalDateTime.now().minusSeconds(20))
                 .expiraEn(LocalDateTime.now().plusMinutes(4))
                 .build();
@@ -93,11 +106,11 @@ class SeguimientoServiceTest {
 
     @Test
     void codigoIncorrectoSumaUnIntento() {
-        CodigoSeguimiento codigo = vigente("4827");
+        CodigoSeguimiento codigo = vigente("482719");
         when(codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc("938924552")).thenReturn(Optional.of(codigo));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-                () -> seguimientoService.verificarCodigo("938924552", "0000"));
+                () -> seguimientoService.verificarCodigo("938924552", "000000"));
 
         assertEquals(1, codigo.getIntentos());
         assertTrue(error.getMessage().contains("4 intentos"));
@@ -105,10 +118,10 @@ class SeguimientoServiceTest {
 
     @Test
     void codigoCorrectoDaAccesoSoloALosPedidosDeEseCelular() {
-        CodigoSeguimiento codigo = vigente("4827");
+        CodigoSeguimiento codigo = vigente("482719");
         when(codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc("938924552")).thenReturn(Optional.of(codigo));
 
-        String token = seguimientoService.verificarCodigo("938924552", "4827");
+        String token = seguimientoService.verificarCodigo("938924552", "482719");
         assertTrue(codigo.isUsado());
 
         Orden orden = Orden.builder().id(5L).numeroCliente(2).tipo(OrdenTipo.DELIVERY)
@@ -135,8 +148,8 @@ class SeguimientoServiceTest {
     @Test
     void cancelarPedidoDelegaConEstadoCanceladoYRechazaElDeOtroCelular() {
         when(codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc("938924552"))
-                .thenReturn(Optional.of(vigente("4827")));
-        String token = seguimientoService.verificarCodigo("938924552", "4827");
+                .thenReturn(Optional.of(vigente("482719")));
+        String token = seguimientoService.verificarCodigo("938924552", "482719");
 
         Orden propia = Orden.builder().id(7L).tipo(OrdenTipo.DELIVERY)
                 .telefonoCliente("51 938 924 552").items(new ArrayList<>()).build();

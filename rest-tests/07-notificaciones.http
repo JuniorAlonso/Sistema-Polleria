@@ -1,0 +1,387 @@
+###############################################################################
+# 07 - NOTIFICACIONES (notification-service, Node/Express)
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# Cubre todo src/http/app.js: avisos internos por WhatsApp (X-Internal-Key),
+# ajustes anti-baneo, historial, QR, reinicio de sesion, estado y la pagina /qr.
+#
+# Notas del contrato de este servicio:
+# - Sin token, requiereRol responde 401 (no 403 como los servicios Spring);
+#   rol incorrecto responde 403. Clave interna ausente o invalida: 401.
+# - Los avisos se registran en notification_log (persistido) y quedan EN_COLA
+#   mientras WhatsApp no este conectado. Para no escribirle nunca a una persona
+#   real, el destinatario de los casos felices es el JID "0@c.us", que no existe.
+# - POST qr/reiniciar borra la carpeta de sesion de WhatsApp y obliga a escanear
+#   un QR nuevo: solo se prueba su control de acceso (401/403), nunca con ADMIN.
+# - PATCH ajustes persiste en Postgres: se leen primero y se restauran al final.
+#
+# 2FA: en REST Client copia el codigo de ADMIN en @OTP_ADMIN.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@NOTIF_BASE = http://localhost:3001
+@NOTIF_URL = http://localhost:3001/api/notificaciones
+@PASSWORD = Password123!
+@CLAVE_INTERNA = {{$dotenv NOTIFICATION_API_KEY}}
+@DESTINO_FICTICIO = 0@c.us
+@ORDEN_PRUEBA = 970707
+
+@OTP_ADMIN = 000000
+
+### 1.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.2 Login ADMIN - paso 1 (pide 2FA)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.3 Login ADMIN - paso 2 (verify-2fa)
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+###############################################################################
+# 2. ESTADO Y QR
+###############################################################################
+
+### 2.1 Estado publico del servicio (sin token)
+# Esperado: HTTP 200
+# @assert $.status == ok
+# @assert $.whatsapp exists
+# @assert $.cola exists
+# @assert $.antiBaneo.ventana exists
+GET {{NOTIF_URL}}/status
+
+### 2.2 QR del panel - ADMIN obtiene estado y QR (o null si no hay QR)
+# Esperado: HTTP 200
+# @assert $.whatsapp exists
+# @assert $.timestamp exists
+# @name qrAdmin
+GET {{NOTIF_URL}}/qr
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 2.3 QR del panel - CLIENTE no tiene permiso
+# Esperado: HTTP 403
+GET {{NOTIF_URL}}/qr
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 2.4 QR del panel - sin token
+# Esperado: HTTP 401
+GET {{NOTIF_URL}}/qr
+
+### 2.5 QR del panel - token invalido
+# Esperado: HTTP 401
+GET {{NOTIF_URL}}/qr
+Authorization: Bearer token.invalido.123
+
+### 2.6 Reiniciar sesion WhatsApp - CLIENTE no tiene permiso (no se reinicia nada)
+# Esperado: HTTP 403
+POST {{NOTIF_URL}}/qr/reiniciar
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 2.7 Reiniciar sesion WhatsApp - sin token
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/qr/reiniciar
+
+### 2.8 Pagina /qr fuera del router - sin clave desde fuera del contenedor
+# Esperado: HTTP 403
+GET {{NOTIF_BASE}}/qr
+
+### 2.9 Pagina /qr fuera del router - con X-Internal-Key devuelve HTML
+# Esperado: HTTP 200
+GET {{NOTIF_BASE}}/qr
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+###############################################################################
+# 3. AVISOS INTERNOS POR WHATSAPP (X-Internal-Key)
+###############################################################################
+
+### 3.1 Pago confirmado - sin clave interna
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "montoTotal": 45.5 }
+
+### 3.2 Pago confirmado - clave interna incorrecta
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: clave-incorrecta
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "montoTotal": 45.5 }
+
+### 3.3 Pago confirmado - montoTotal 0 es invalido
+# Esperado: HTTP 400
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "montoTotal": 0 }
+
+### 3.4 Pago confirmado - encolado (idempotente por eventoId)
+# Esperado: HTTP 202
+# @assert $.status == EN_COLA
+# @assert $.notificacionId exists
+# @name pagoEncolado
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "numeroPedido": "REST-07", "telefono": "{{DESTINO_FICTICIO}}", "nombreCliente": "Prueba REST", "montoTotal": 45.5, "tiempoEstimado": 30, "eventoId": "rest07-pago-{{qrAdmin.response.body.$.timestamp}}" }
+
+### 3.5 Pago confirmado - mismo eventoId (header) no duplica el aviso
+# Esperado: HTTP 202
+# @assert $.notificacionId == {{pagoEncolado.response.body.$.notificacionId}}
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+X-Idempotency-Key: rest07-pago-{{qrAdmin.response.body.$.timestamp}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "numeroPedido": "REST-07", "telefono": "{{DESTINO_FICTICIO}}", "nombreCliente": "Prueba REST", "montoTotal": 45.5, "tiempoEstimado": 30 }
+
+### 3.6 Pago confirmado - telefono con formato invalido queda en ERROR
+# Esperado: HTTP 422
+# @assert $.status == ERROR
+# @assert $.mensaje contains formato
+POST {{NOTIF_URL}}/whatsapp/pago
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "12345", "montoTotal": 45.5 }
+
+### 3.7 Cambio de estado - estadoNuevo fuera de la lista
+# Esperado: HTTP 400
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "estadoNuevo": "VOLANDO" }
+
+### 3.8 Cambio de estado - faltan campos
+# Esperado: HTTP 400
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}} }
+
+### 3.9 Cambio de estado - sin clave interna
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "estadoNuevo": "EN_CAMINO" }
+
+### 3.10 Cambio de estado - EN_CAMINO encolado
+# Esperado: HTTP 202
+# @assert $.status == EN_COLA
+# @name estadoEncolado
+POST {{NOTIF_URL}}/whatsapp/estado
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "numeroPedido": "REST-07", "telefono": "{{DESTINO_FICTICIO}}", "estadoNuevo": "EN_CAMINO", "eventoId": "rest07-estado-{{qrAdmin.response.body.$.timestamp}}" }
+
+### 3.11 Comprobante rechazado - sin motivo
+# Esperado: HTTP 400
+POST {{NOTIF_URL}}/whatsapp/comprobante-rechazado
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "motivo": "   " }
+
+### 3.12 Comprobante rechazado - sin clave interna
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/whatsapp/comprobante-rechazado
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "telefono": "{{DESTINO_FICTICIO}}", "motivo": "Monto no coincide" }
+
+### 3.13 Comprobante rechazado - encolado
+# Esperado: HTTP 202
+# @assert $.status == EN_COLA
+POST {{NOTIF_URL}}/whatsapp/comprobante-rechazado
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "ordenId": {{ORDEN_PRUEBA}}, "numeroPedido": "REST-07", "telefono": "{{DESTINO_FICTICIO}}", "nombreCliente": "Prueba REST", "motivo": "Monto no coincide", "eventoId": "rest07-rechazo-{{qrAdmin.response.body.$.timestamp}}" }
+
+### 3.14 Codigo de seguimiento - codigo con letras es invalido
+# Esperado: HTTP 400
+POST {{NOTIF_URL}}/whatsapp/codigo
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "telefono": "{{DESTINO_FICTICIO}}", "codigo": "12ab" }
+
+### 3.15 Codigo de seguimiento - sin clave interna
+# Esperado: HTTP 401
+POST {{NOTIF_URL}}/whatsapp/codigo
+Content-Type: application/json
+
+{ "telefono": "{{DESTINO_FICTICIO}}", "codigo": "1234" }
+
+### 3.16 Codigo de seguimiento - encolado
+# Esperado: HTTP 202
+# @assert $.status == EN_COLA
+POST {{NOTIF_URL}}/whatsapp/codigo
+Content-Type: application/json
+X-Internal-Key: {{CLAVE_INTERNA}}
+
+{ "telefono": "{{DESTINO_FICTICIO}}", "codigo": "4821", "eventoId": "rest07-codigo-{{qrAdmin.response.body.$.timestamp}}" }
+
+###############################################################################
+# 4. HISTORIAL (RF32, solo ADMIN)
+###############################################################################
+
+### 4.1 Historial filtrado por orden: el aviso mas reciente es el comprobante rechazado
+# Esperado: HTTP 200
+# @assert $[0].ordenId == {{ORDEN_PRUEBA}}
+# @assert $[0].eventoId == rest07-rechazo-{{qrAdmin.response.body.$.timestamp}}
+# @assert $[0].tipo == COMPROBANTE_RECHAZADO
+GET {{NOTIF_URL}}/historial?ordenId={{ORDEN_PRUEBA}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.2 Historial filtrado por estado ERROR y fecha de hoy
+# Esperado: HTTP 200
+# @assert $[0].estado == ERROR
+GET {{NOTIF_URL}}/historial?estado=ERROR&desde={{$localDatetime 'YYYY-MM-DD'}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.3 Historial EN_COLA de hoy incluye el codigo de seguimiento (enmascarado ****)
+# Esperado: HTTP 200
+# @assert $ contains rest07-codigo-{{qrAdmin.response.body.$.timestamp}}
+# @assert $ contains ****
+GET {{NOTIF_URL}}/historial?estado=EN_COLA&desde={{$localDatetime 'YYYY-MM-DD'}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.4 Historial - ordenId invalido
+# Esperado: HTTP 400
+GET {{NOTIF_URL}}/historial?ordenId=abc
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.5 Historial - estado invalido
+# Esperado: HTTP 400
+GET {{NOTIF_URL}}/historial?estado=PERDIDO
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.6 Historial - fecha invalida
+# Esperado: HTTP 400
+GET {{NOTIF_URL}}/historial?desde=no-es-fecha
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.7 Historial - CLIENTE no tiene permiso
+# Esperado: HTTP 403
+GET {{NOTIF_URL}}/historial
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.8 Historial - sin token
+# Esperado: HTTP 401
+GET {{NOTIF_URL}}/historial
+
+###############################################################################
+# 5. AJUSTES ANTI-BANEO (solo ADMIN). Se leen, se cambian y se restauran.
+###############################################################################
+
+### 5.1 Ajustes - lectura inicial (valores a restaurar)
+# Esperado: HTTP 200
+# @assert $.ajustes.intervaloMs exists
+# @assert $.ajustes.jitterPct exists
+# @name ajustesOriginales
+GET {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.2 Ajustes - CLIENTE no puede leerlos
+# Esperado: HTTP 403
+GET {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 5.3 Ajustes - sin token
+# Esperado: HTTP 401
+GET {{NOTIF_URL}}/ajustes
+
+### 5.4 Ajustes - CLIENTE no puede cambiarlos
+# Esperado: HTTP 403
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "jitterPct": 37 }
+
+### 5.5 Ajustes - jitterPct mayor a 100 es rechazado
+# Esperado: HTTP 400
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "jitterPct": 150 }
+
+### 5.6 Ajustes - numeroAsesor con formato invalido es rechazado
+# Esperado: HTTP 400
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "numeroAsesor": "12345" }
+
+### 5.7 Ajustes - el cuerpo debe ser un objeto
+# Esperado: HTTP 400
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+[1, 2]
+
+### 5.8 Ajustes - los rechazos no cambiaron nada
+# Esperado: HTTP 200
+# @assert $.ajustes.jitterPct == {{ajustesOriginales.response.body.$.ajustes.jitterPct}}
+# @assert $.ajustes.numeroAsesor == {{ajustesOriginales.response.body.$.ajustes.numeroAsesor}}
+GET {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.9 Ajustes - ADMIN cambia jitterPct
+# Esperado: HTTP 200
+# @assert $.jitterPct == 37
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "jitterPct": 37 }
+
+### 5.10 Ajustes - el cambio se refleja en la lectura
+# Esperado: HTTP 200
+# @assert $.ajustes.jitterPct == 37
+GET {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.11 Ajustes - restaurar todos los valores originales
+# Esperado: HTTP 200
+# @assert $.jitterPct == {{ajustesOriginales.response.body.$.ajustes.jitterPct}}
+PATCH {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{{ajustesOriginales.response.body.$.ajustes}}
+
+### 5.12 Ajustes - quedaron exactamente como al inicio
+# Esperado: HTTP 200
+# @assert $.ajustes == {{ajustesOriginales.response.body.$.ajustes}}
+GET {{NOTIF_URL}}/ajustes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}

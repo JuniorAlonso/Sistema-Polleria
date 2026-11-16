@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { PaymentService } from '../../../core/services/payment.service';
 import { OrdersService } from '../../../core/services/orders.service';
 import { CartService } from '../../../core/services/cart.service';
+import { parsePositiveIntId } from '../../../core/utils/id';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { Observable, Subscription, catchError, interval, map, of } from 'rxjs';
 
@@ -251,6 +252,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   private pollingSub?: Subscription;
   private countdownSub?: Subscription;
   private pagoId?: number;
+  private ordenId?: number;
 
   ngOnInit(): void {
     const url = this.router.url;
@@ -258,23 +260,48 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
     // Detectar estado basado en la ruta y en los query params de Mercado Pago
     this.route.queryParams.subscribe(params => {
       const mpStatus = params['collection_status'] || params['status'];
-      const extRef = params['external_reference'];
+      let extRef = params['external_reference'];
       const pId = params['payment_id'] || params['collection_id'];
 
       if (pId) {
         this.paymentId.set(String(pId));
       }
 
-      if (extRef && !isNaN(Number(extRef))) {
-        this.pagoId = Number(extRef);
+      this.resolverDatosPedido();
+
+      if (!extRef && this.pagoId) {
+        extRef = String(this.pagoId);
+      } else if (extRef) {
+        const parsedExtRef = parsePositiveIntId(extRef);
+        if (parsedExtRef) {
+          this.pagoId = parsedExtRef;
+        }
       }
 
       // The URL / Mercado Pago params are only a hint: the backend decides the final state.
       const pistaFallo = url.includes('/failure') || mpStatus === 'rejected';
       this.currentStatus.set(pistaFallo ? 'FAILURE' : 'PENDING');
 
-      this.resolverDatosPedido();
-      this.verificarEstado(pistaFallo);
+      // Si Mercado Pago redirige con aprobación en el retorno GET, confirmamos con el backend
+      if (extRef && (mpStatus === 'approved' || url.includes('/success'))) {
+        const queryParams = { ...params, external_reference: extRef };
+        this.paymentService.confirmarRetornoMercadoPago(queryParams as Record<string, string>).subscribe({
+          next: (tx) => {
+            if (tx && tx.estado === 'APROBADO') {
+              this.pollingSub?.unsubscribe();
+              this.currentStatus.set('SUCCESS');
+              this.cartService.clearCart();
+              this.limpiarEstadoGuardado();
+              this.iniciarCountdownRedireccion();
+            }
+          },
+          error: (err) => console.warn('Aviso: confirmación por retorno GET:', err)
+        });
+      }
+
+      if (this.currentStatus() !== 'SUCCESS') {
+        this.verificarEstado(pistaFallo);
+      }
     });
   }
 
@@ -293,12 +320,13 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   private consultarEstado(): Observable<StatusType | null> {
     if (this.pagoId) {
       return this.paymentService.obtener(this.pagoId).pipe(
-        map(tx => {
-          if (!tx) return null;
-          if (tx.estado === 'APROBADO') return 'SUCCESS';
-          if (tx.estado === 'RECHAZADO' || tx.estado === 'CANCELADO') return 'FAILURE';
-          return 'PENDING';
-        }),
+        map(tx => this.mapearEstadoPago(tx?.estado)),
+        catchError(() => of(null))
+      );
+    }
+    if (this.ordenId) {
+      return this.paymentService.obtenerPorOrden(this.ordenId).pipe(
+        map(tx => this.mapearEstadoPago(tx?.estado)),
         catchError(() => of(null))
       );
     }
@@ -308,7 +336,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
       map(ord => {
         if (!ord) return null;
         if (ord.estado === 'CANCELADO' || ord.estado === 'PEDIDO_FANTASMA') return 'FAILURE';
-        if (ord.estado === 'PENDIENTE_PAGO' || ord.estado === 'PENDIENTE_CONFIRMACION' || ord.estado === 'RECIBIDO') {
+        if (ord.estado === 'PENDIENTE_PAGO' || ord.estado === 'PENDIENTE_CONFIRMACION') {
           return 'PENDING';
         }
         return 'SUCCESS';
@@ -317,9 +345,24 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
     );
   }
 
+  private mapearEstadoPago(estado?: string | null): StatusType | null {
+    if (!estado) return null;
+    if (estado === 'APROBADO') return 'SUCCESS';
+    if (
+      estado === 'RECHAZADO' ||
+      estado === 'CANCELADO' ||
+      estado === 'REEMBOLSADO' ||
+      estado === 'REEMBOLSADO_PARCIAL'
+    ) {
+      return 'FAILURE';
+    }
+    return 'PENDING';
+  }
+
   private aplicarResultado(resultado: StatusType | null, pistaFallo = false): void {
     if (resultado === 'SUCCESS') {
       this.pollingSub?.unsubscribe();
+      this.limpiarEstadoGuardado();
       if (this.currentStatus() !== 'SUCCESS') {
         this.currentStatus.set('SUCCESS');
         this.cartService.clearCart();
@@ -327,11 +370,25 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
       }
     } else if (resultado === 'FAILURE') {
       this.pollingSub?.unsubscribe();
+      this.limpiarEstadoGuardado();
       this.currentStatus.set('FAILURE');
     } else if (resultado === 'PENDING') {
+      if (this.currentStatus() !== 'SUCCESS') {
+        this.currentStatus.set('PENDING');
+      }
+    } else if (!pistaFallo && this.currentStatus() !== 'PENDING' && this.currentStatus() !== 'SUCCESS') {
       this.currentStatus.set('PENDING');
-    } else if (!pistaFallo && this.currentStatus() !== 'PENDING') {
-      this.currentStatus.set('PENDING');
+    }
+  }
+
+  private limpiarEstadoGuardado(): void {
+    if (isPlatformBrowser(this.platformId) && window.localStorage) {
+      try {
+        localStorage.removeItem('sanpollo_last_order');
+        localStorage.removeItem('sanpollo_current_order');
+      } catch {
+        // Ignore storage cleanup error
+      }
     }
   }
 
@@ -341,7 +398,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   }
 
   private resolverDatosPedido(): void {
-    // 1. Intentar leer desde localStorage
+    // 1. Intentar leer desde localStorage sin confundir ordenId con pagoId (FE-04)
     if (isPlatformBrowser(this.platformId) && window.localStorage) {
       try {
         const raw = localStorage.getItem('sanpollo_last_order');
@@ -349,6 +406,14 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
           const parsed = JSON.parse(raw);
           if (parsed.code) this.trackingCode.set(parsed.code);
           if (parsed.total) this.orderTotal.set(parsed.total);
+          const parsedPagoId = parsePositiveIntId(parsed.pagoId);
+          if (parsedPagoId && !this.pagoId) {
+            this.pagoId = parsedPagoId;
+          }
+          const parsedOrdenId = parsePositiveIntId(parsed.ordenId ?? parsed.id);
+          if (parsedOrdenId && !this.ordenId) {
+            this.ordenId = parsedOrdenId;
+          }
         }
       } catch (e) {
         console.warn('Error leyendo orden de localStorage:', e);

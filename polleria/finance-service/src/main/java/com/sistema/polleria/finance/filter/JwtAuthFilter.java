@@ -49,6 +49,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     .parseSignedClaims(token)
                     .getPayload();
 
+            String tipo = claims.get("tipo", String.class);
+            if ("seguimiento".equalsIgnoreCase(tipo)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             String email = claims.getSubject();
             String role  = claims.get("role", String.class);
             Object rawUserId = claims.get("userId");

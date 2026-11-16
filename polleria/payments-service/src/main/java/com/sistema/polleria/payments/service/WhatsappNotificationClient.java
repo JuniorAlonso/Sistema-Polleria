@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -42,14 +43,20 @@ public class WhatsappNotificationClient {
             @Value("${notification.service.internal-key:}") String internalKey,
             @Value("${orders.service.internal-key:}") String ordersInternalKey,
             @Value("${notification.whatsapp.tiempo-estimado:35-45 min}") String tiempoEstimado) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(java.time.Duration.ofSeconds(3));
+        factory.setReadTimeout(java.time.Duration.ofSeconds(5));
         this.ordersRestClient = ordersRestClient;
-        this.notificationRestClient = RestClient.builder().baseUrl(notificationUrl).build();
+        this.notificationRestClient = RestClient.builder()
+                .baseUrl(notificationUrl)
+                .requestFactory(factory)
+                .build();
         this.internalKey = internalKey;
         this.ordersInternalKey = ordersInternalKey;
         this.tiempoEstimado = tiempoEstimado;
     }
 
-    @Async
+    @Async("whatsappExecutor")
     public void notificarPagoConfirmado(Long ordenId, BigDecimal monto, MetodoPago metodoPago) {
         try {
             Map<String, Object> orden = ordersRestClient.get()
@@ -104,7 +111,7 @@ public class WhatsappNotificationClient {
      * los fallos: una caída del notification-service nunca puede revertir el rechazo ni romper la
      * respuesta al admin.
      */
-    @Async
+    @Async("whatsappExecutor")
     public void notificarComprobanteRechazado(Long ordenId, String motivo) {
         try {
             Map<String, Object> orden = ordersRestClient.get()

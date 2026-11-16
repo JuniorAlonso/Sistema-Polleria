@@ -1,0 +1,1299 @@
+###############################################################################
+# 03 - ORDENES (orders-service: OrdenController + SeguimientoController)
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs 03-ordenes.http
+#
+# Flujos cubiertos de punta a punta:
+#   A. SALON: mesa propia -> comanda -> segunda ronda -> cocina -> LISTO -> servir
+#      -> nueva ronda (vuelve a cocina) -> POR_COBRAR -> cierre por CAJERO -> mesa LIBRE
+#   B. DELIVERY contraentrega: intento de llamada -> confirmar llamada -> cocina -> LISTO
+#      -> reclamo del repartidor -> EN_CAMINO -> EN_PUERTA -> ENTREGADO (tras el cobro)
+#   C. ContraPago con 2 intentos fallidos de llamada -> CANCELADO automatico
+#   D. RECOJO de cliente registrado: comprobante -> pago aprobado -> cocina -> ticket POL-<id>
+#   E. Cancelacion por el cliente dueno
+#   F. Pedido fantasma (DELIVERY) y sancion del celular para ContraPago
+#   G. Seguimiento sin cuenta (codigo por WhatsApp) y cancelacion del invitado
+#
+# Datos: usa productos sembrados SIN control de stock (id 1 y 9), crea su propia mesa con un
+# numero alto aleatorio (se da de baja al final) y celulares aleatorios 9XXXXXXXX por corrida.
+# La sancion del flujo F solo afecta a su celular desechable: la orden no lleva ipOrigen ni
+# clienteId, asi que no se bloquea ninguna IP ni correo.
+#
+# Clave interna: {{$dotenv INTERNAL_API_KEY}} simula a payments-service / bot de WhatsApp.
+# 2FA: en REST Client copia el codigo en @OTP_*. El runner lo lee con "# @otp".
+# Seguimiento: el codigo que el cliente recibe por WhatsApp se lee con "# @sql" (codigos_seguimiento).
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PASSWORD = Password123!
+@INTERNAL_KEY = {{$dotenv INTERNAL_API_KEY}}
+
+@OTP_ADMIN = 000000
+@OTP_MOZO = 000000
+@OTP_COCINA = 000000
+@OTP_REPARTIDOR = 000000
+@OTP_CAJERO = 000000
+
+@PRODUCTO_POLLO = 1
+@PRODUCTO_CHICHA = 9
+
+@MESA_NUM = {{$randomInt 90000 99999}}
+@TEL_DELIVERY = 9{{$randomInt 10000000 99999999}}
+@TEL_INTENTOS = 9{{$randomInt 10000000 99999999}}
+@TEL_FANTASMA = 9{{$randomInt 10000000 99999999}}
+@TEL_SEGUIMIENTO = 9{{$randomInt 10000000 99999999}}
+
+###############################################################################
+# 0. SESIONES
+###############################################################################
+
+### 0.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.2 Login ADMIN - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.3 Login ADMIN - paso 2
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 0.4 Login MOZO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "mozo.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.5 Login MOZO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_MOZO mozo.polleria@yopmail.com
+# @assert $.role == MOZO
+# @name loginMozo
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "mozo.polleria@yopmail.com", "code": "{{OTP_MOZO}}" }
+
+### 0.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+### 0.8 Login REPARTIDOR - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "repartidor.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.9 Login REPARTIDOR - paso 2
+# Esperado: HTTP 200
+# @otp OTP_REPARTIDOR repartidor.polleria@yopmail.com
+# @assert $.role == REPARTIDOR
+# @name loginRepartidor
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "repartidor.polleria@yopmail.com", "code": "{{OTP_REPARTIDOR}}" }
+
+### 0.10 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.11 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+###############################################################################
+# 1. VALIDACIONES DE CREACION (POST /ordenes)
+###############################################################################
+
+### 1.1 Sin productos: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [] }
+
+### 1.2 Sin tipo: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "nombreCliente": "QA", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### 1.3 DELIVERY sin direccion: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### 1.4 Estado inicial no permitido (EN_PREPARACION): 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "estadoInicial": "EN_PREPARACION", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### 1.5 Checkout publico no puede abrir en RECIBIDO: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "estadoInicial": "RECIBIDO", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### 1.6 Cantidad 0: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 0 } ] }
+
+### 1.7 Producto inexistente: 404
+# Esperado: HTTP 404
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "nombreCliente": "QA", "telefonoCliente": "987000001", "items": [ { "productoId": 999999999, "cantidad": 1 } ] }
+
+### 1.8 ContraPago con monto menor al total (24.50 + delivery): 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "estadoInicial": "PENDIENTE_CONFIRMACION", "direccionEntrega": "Av. QA 123", "nombreCliente": "QA", "telefonoCliente": "987000001", "montoPagaCon": 10, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### 1.9 JSON invalido (tipo desconocido): 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "VOLADOR", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+###############################################################################
+# A. FLUJO SALON
+###############################################################################
+
+### A.1 ADMIN crea una mesa propia con numero alto
+# Esperado: HTTP 201
+# @assert $.estado == LIBRE
+# @name mesaQa
+POST {{ORDERS_URL}}/mesas
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "numero": {{MESA_NUM}}, "capacidad": 4, "posicionX": 5, "posicionY": 5 }
+
+### A.2 Anonimo no puede abrir comanda de salon: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{mesaQa.response.body.$.id}}, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### A.3 CLIENTE no puede abrir comanda de salon: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{mesaQa.response.body.$.id}}, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### A.4 SALON sin mesa: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### A.5 SALON con mesa inexistente: 404
+# Esperado: HTTP 404
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": 999999999, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### A.6 MOZO abre la comanda: RECIBIDO, mesa OCUPADA, canal SALON
+# Esperado: HTTP 201
+# @assert $.tipo == SALON
+# @assert $.estado == RECIBIDO
+# @assert $.canalOrigen == SALON
+# @assert $.mesaEstado == OCUPADA
+# @assert $.mozoId exists
+# @assert $.total == 24.5
+# @name comandaSalon
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{mesaQa.response.body.$.id}}, "observaciones": "QA comanda", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1, "notas": "sin aji" } ] }
+
+### A.7 Segunda comanda en la misma mesa: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{mesaQa.response.body.$.id}}, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### A.8 Segunda ronda (MOZO): misma orden, total recalculado
+# Esperado: HTTP 200
+# @assert $.id == {{comandaSalon.response.body.$.id}}
+# @assert $.total == 38.5
+# @assert $.items[1].productoId == 9
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### A.9 Segunda ronda por COCINA: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/items
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### A.10 Segunda ronda sin items: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [] }
+
+### A.11 Segunda ronda sobre orden inexistente: 404
+# Esperado: HTTP 404
+POST {{ORDERS_URL}}/ordenes/999999999/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### A.12 Servir antes de LISTO: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.13 Activos (MOZO) incluye la comanda
+# Esperado: HTTP 200
+# @assert $ contains "id":{{comandaSalon.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes/activos
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.14 Activos por COCINA: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/activos
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+
+### A.15 Cola de cocina (COCINA) incluye la comanda
+# Esperado: HTTP 200
+# @assert $ contains "id":{{comandaSalon.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes/cocina
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+
+### A.16 Cola de cocina por MOZO: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/cocina
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.17 Transicion invalida RECIBIDO -> LISTO: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### A.18 COCINA inicia la preparacion
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### A.19 COCINA marca LISTO
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+# @assert $.listoAt exists
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### A.20 Servir por CAJERO: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### A.21 MOZO sirve en mesa: marca servido, sigue LISTO
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+# @assert $.servidoEn exists
+# @assert $.servidoPor exists
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.22 Servir otra vez es idempotente
+# Esperado: HTTP 200
+# @assert $.servidoEn exists
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.23 Tercera ronda sobre comanda LISTO: vuelve a EN_PREPARACION y limpia servido
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+# @assert $.servidoEn notExists
+# @assert $.total == 52.5
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1, "notas": "helada" } ] }
+
+### A.24 COCINA termina la nueva ronda (LISTO)
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### A.25 MOZO sirve la nueva ronda
+# Esperado: HTTP 200
+# @assert $.servidoEn exists
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.26 MOZO no puede cerrar una comanda de salon: 403
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### A.27 MOZO no puede cancelar una comanda de salon: 403
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### A.28 CAJERO no cierra si la mesa no esta POR_COBRAR: 409
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### A.29 MOZO solicita el cobro: mesa POR_COBRAR
+# Esperado: HTTP 200
+# @assert $.estado == POR_COBRAR
+PATCH {{ORDERS_URL}}/mesas/{{mesaQa.response.body.$.id}}/estado
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "POR_COBRAR" }
+
+### A.30 CAJERO cierra la comanda: ENTREGADO y mesa LIBRE
+# Esperado: HTTP 200
+# @assert $.estado == ENTREGADO
+# @assert $.mesaEstado == LIBRE
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### A.31 La mesa quedo LIBRE
+# Esperado: HTTP 200
+# @assert $.estado == LIBRE
+GET {{ORDERS_URL}}/mesas/{{mesaQa.response.body.$.id}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.32 Ronda sobre comanda cerrada: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### A.33 Servir comanda cerrada: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### A.34 Estado terminal no cambia (ENTREGADO -> CANCELADO): 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{comandaSalon.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+###############################################################################
+# B. DELIVERY CONTRAENTREGA (ContraPago con confirmacion de llamada)
+###############################################################################
+
+### B.1 Invitado crea DELIVERY ContraPago: PENDIENTE_CONFIRMACION, vuelto estimado
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @assert $.canalOrigen == WEB
+# @assert $.requiereCobroEfectivo == true
+# @assert $.clienteId == 0
+# @assert $.total >= 24.51
+# @assert $.vueltoEstimado exists
+# @name ordenDelivery
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "estadoInicial": "PENDIENTE_CONFIRMACION", "direccionEntrega": "Av. QA Delivery 100", "referencia": "Puerta azul", "nombreCliente": "QA Delivery", "telefonoCliente": "{{TEL_DELIVERY}}", "montoPagaCon": 200, "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### B.2 Anonimo no ve la orden por id: 404 (anti-enumeracion)
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}
+
+### B.3 CLIENTE ajeno no ve la orden: 404
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### B.4 Servicio con clave interna ve la orden
+# Esperado: HTTP 200
+# @assert $.id == {{ordenDelivery.response.body.$.id}}
+GET {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### B.5 Clave interna incorrecta: 404
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}
+X-Internal-Key: clave-incorrecta
+
+### B.6 Personal (CAJERO) ve la orden
+# Esperado: HTTP 200
+# @assert $.telefonoCliente == {{ordenDelivery.response.body.$.telefonoCliente}}
+GET {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.7 Orden inexistente: 404
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/ordenes/999999999
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.8 Activas por telefono sin clave interna: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/activas-por-telefono?telefono={{ordenDelivery.response.body.$.telefonoCliente}}
+
+### B.9 Activas por telefono con clave interna (bot WhatsApp) incluye la orden
+# Esperado: HTTP 200
+# @assert $[0].id == {{ordenDelivery.response.body.$.id}}
+GET {{ORDERS_URL}}/ordenes/activas-por-telefono?telefono=51{{ordenDelivery.response.body.$.telefonoCliente}}
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### B.10 Activas por telefono con celular invalido: 400
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/ordenes/activas-por-telefono?telefono=12345
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### B.11 COCINA no puede saltarse la llamada: 409
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### B.12 Intento de llamada por REPARTIDOR: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/intento-llamada
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "observaciones": "no contesta" }
+
+### B.13 CAJERO registra 1er intento fallido: sigue PENDIENTE_CONFIRMACION
+# Esperado: HTTP 200
+# @assert $.intentosLlamada == 1
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @assert $.observaciones contains Intento llamada 1
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/intento-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "observaciones": "no contesta" }
+
+### B.14 Confirmar llamada por MOZO: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### B.15 CAJERO confirma la llamada: entra a la cola de cocina (RECIBIDO)
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.16 Confirmar otra vez: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.17 Intento de llamada fuera de PENDIENTE_CONFIRMACION: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/intento-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.18 Reclamo antes de LISTO: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.19 COCINA inicia preparacion
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### B.20 EN_CAMINO sin pasar por LISTO: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### B.21 COCINA marca LISTO (alias nuevoEstado aceptado)
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "nuevoEstado": "LISTO" }
+
+### B.22 Disponibles para entrega (REPARTIDOR) incluye la orden
+# Esperado: HTTP 200
+# @assert $ contains "id":{{ordenDelivery.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes/disponibles
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.23 Disponibles por MOZO: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/disponibles
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### B.24 EN_CAMINO sin repartidor asignado: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### B.25 Reclamo por CAJERO: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.26 REPARTIDOR toma el pedido (sigue LISTO)
+# Esperado: HTTP 200
+# @assert $.repartidorId exists
+# @assert $.estado == LISTO
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.27 Segundo reclamo: 409 (nunca se reparte dos veces)
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### B.28 Disponibles sigue respondiendo (el pedido tomado sale de la lista)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/ordenes/disponibles
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.29 En puerta antes de EN_CAMINO: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/en-puerta
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.30 REPARTIDOR sale a ruta: EN_CAMINO
+# Esperado: HTTP 200
+# @assert $.estado == EN_CAMINO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### B.31 Un pedido en ruta no se cancela: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### B.32 En puerta por CAJERO: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/en-puerta
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### B.33 REPARTIDOR llega a la puerta: EN_PUERTA con hora
+# Esperado: HTTP 200
+# @assert $.estado == EN_PUERTA
+# @assert $.enPuertaAt exists
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/en-puerta
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### B.34 Pedido fantasma antes de 30 min en puerta: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "motivo": "QA" }
+
+### B.35 PATCH a PEDIDO_FANTASMA por el personal: 409 (se declara por su endpoint)
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "PEDIDO_FANTASMA" }
+
+### B.36 ENTREGADO sin registrar el cobro en efectivo: 409
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### B.37 payments-service (clave interna) cierra tras el cobro en efectivo: ENTREGADO
+# Esperado: HTTP 200
+# @assert $.estado == ENTREGADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### B.38 Ya no figura en activas por telefono
+# Esperado: HTTP 200
+# @assert $ == []
+GET {{ORDERS_URL}}/ordenes/activas-por-telefono?telefono={{ordenDelivery.response.body.$.telefonoCliente}}
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### B.39 ENTREGADO -> EN_CAMINO: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### B.40 Pedido fantasma sobre orden terminal: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenDelivery.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+###############################################################################
+# C. CONTRAPAGO CON DOS INTENTOS FALLIDOS
+###############################################################################
+
+### C.1 Invitado crea DELIVERY ContraPago
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @name ordenIntentos
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "estadoInicial": "PENDIENTE_CONFIRMACION", "direccionEntrega": "Av. QA Intentos 200", "nombreCliente": "QA Intentos", "telefonoCliente": "{{TEL_INTENTOS}}", "montoPagaCon": 100, "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### C.2 1er intento fallido (sin cuerpo)
+# Esperado: HTTP 200
+# @assert $.intentosLlamada == 1
+POST {{ORDERS_URL}}/ordenes/{{ordenIntentos.response.body.$.id}}/intento-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### C.3 2do intento fallido: CANCELADO automatico
+# Esperado: HTTP 200
+# @assert $.intentosLlamada == 2
+# @assert $.estado == CANCELADO
+POST {{ORDERS_URL}}/ordenes/{{ordenIntentos.response.body.$.id}}/intento-llamada
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "observaciones": "buzon de voz" }
+
+### C.4 Confirmar llamada de un pedido cancelado: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenIntentos.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### C.5 Orden inexistente en confirmar-llamada: 404
+# Esperado: HTTP 404
+POST {{ORDERS_URL}}/ordenes/999999999/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+###############################################################################
+# D. RECOJO DE CLIENTE REGISTRADO
+###############################################################################
+
+### D.1 CLIENTE crea RECOJO: espera pago (PENDIENTE_PAGO) y queda a su nombre
+# Esperado: HTTP 201
+# @assert $.tipo == RECOJO
+# @assert $.estado == PENDIENTE_PAGO
+# @assert $.clienteId >= 1
+# @assert $.total == 24.5
+# @name ordenRecojo
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "nombreCliente": "Cliente QA", "telefonoCliente": "987654321", "items": [ { "productoId": {{PRODUCTO_POLLO}}, "cantidad": 1 } ] }
+
+### D.2 El dueno ve su orden
+# Esperado: HTTP 200
+# @assert $.id == {{ordenRecojo.response.body.$.id}}
+GET {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### D.3 Mis ordenes (CLIENTE) incluye la orden
+# Esperado: HTTP 200
+# @assert $[0].id == {{ordenRecojo.response.body.$.id}}
+GET {{ORDERS_URL}}/ordenes/mis-ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### D.4 Mis ordenes anonimo: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes/mis-ordenes
+
+### D.5 El CLIENTE no puede mover el flujo (EN_PREPARACION): 403
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### D.6 Anonimo no puede cambiar estado: 404 (no revela existencia)
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### D.7 COCINA no puede preparar un pedido impago: 409
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### D.8 Comprobante de pago sin clave interna: 403
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/comprobante-pago
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "recibido": true }
+
+### D.9 Comprobante de pago sin campo recibido: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/comprobante-pago
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ }
+
+### D.10 Comprobante de pago de orden inexistente: 404
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/ordenes/999999999/comprobante-pago
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "recibido": true }
+
+### D.11 payments-service informa captura recibida (en revision)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/comprobante-pago
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "recibido": true }
+
+### D.12 payments-service informa captura rechazada (nuevo plazo, sigue PENDIENTE_PAGO)
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/comprobante-pago
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "recibido": false }
+
+### D.13 La orden sigue esperando pago
+# Esperado: HTTP 200
+# @assert $.estado == PENDIENTE_PAGO
+GET {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### D.14 payments-service aprueba el pago (clave interna): RECIBIDO
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "estado": "RECIBIDO" }
+
+### D.15 El CLIENTE ya no puede cancelar un pedido pagado en cola: 409
+# Esperado: HTTP 409
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### D.16 COCINA inicia (alias PREPARANDO)
+# Esperado: HTTP 200
+# @assert $.estado == PREPARANDO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "PREPARANDO" }
+
+### D.17 COCINA marca LISTO_PARA_ENTREGAR
+# Esperado: HTTP 200
+# @assert $.estado == LISTO_PARA_ENTREGAR
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO_PARA_ENTREGAR" }
+
+### D.18 Filtro por estado (CAJERO) incluye la orden
+# Esperado: HTTP 200
+# @assert $ contains "id":{{ordenRecojo.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes?estado=LISTO_PARA_ENTREGAR
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### D.19 Un RECOJO no se reclama para delivery: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### D.20 Un RECOJO no pasa a EN_CAMINO: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO", "repartidorId": 1 }
+
+### D.21 Un RECOJO no se marca en puerta: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/en-puerta
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### D.22 Un RECOJO no se marca servido: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/servir
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### D.23 Un RECOJO no acepta segunda ronda: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/items
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### D.24 Pedido fantasma de recojo antes de 1 hora: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### D.25 Pedido fantasma por MOZO: 403
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### D.26 Entregar RECOJO sin ticket: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO" }
+
+### D.27 Entregar RECOJO con ticket ajeno: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO", "codigoTicket": "POL-1" }
+
+### D.28 CAJERO entrega con el ticket del cliente (pol-<id>, sin importar mayusculas)
+# Esperado: HTTP 200
+# @assert $.estado == ENTREGADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenRecojo.response.body.$.id}}/estado
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "ENTREGADO", "codigoTicket": "pol-{{ordenRecojo.response.body.$.id}}" }
+
+###############################################################################
+# E. CANCELACION POR EL CLIENTE DUENO Y VALIDACIONES DEL PATCH
+###############################################################################
+
+### E.1 CLIENTE crea DELIVERY (PENDIENTE_PAGO)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenCancelable
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "direccionEntrega": "Av. QA Cancelar 300", "nombreCliente": "Cliente QA", "telefonoCliente": "987654321", "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 2 } ] }
+
+### E.2 PATCH sin estado: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenCancelable.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ }
+
+### E.3 PATCH con estado desconocido: 400
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/ordenes/{{ordenCancelable.response.body.$.id}}/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "VOLANDO" }
+
+### E.4 PATCH de orden inexistente: 404
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/ordenes/999999999/estado
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### E.5 El dueno cancela antes de pagar
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenCancelable.response.body.$.id}}/estado
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### E.6 Cancelar otra vez es idempotente
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenCancelable.response.body.$.id}}/estado
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### E.7 Comprobante sobre orden ya cancelada se ignora: 200
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ordenCancelable.response.body.$.id}}/comprobante-pago
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "recibido": true }
+
+###############################################################################
+# F. PEDIDO FANTASMA Y SANCION (celular desechable, sin IP ni correo)
+###############################################################################
+
+### F.1 Invitado crea DELIVERY ContraPago con celular desechable
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @name ordenFantasma
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "estadoInicial": "PENDIENTE_CONFIRMACION", "direccionEntrega": "Av. QA Fantasma 400", "nombreCliente": "QA Fantasma", "telefonoCliente": "{{TEL_FANTASMA}}", "montoPagaCon": 100, "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### F.2 CAJERO confirma la llamada
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+POST {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### F.3 COCINA prepara
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### F.4 COCINA marca LISTO
+# Esperado: HTTP 200
+PATCH {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### F.5 REPARTIDOR toma el pedido
+# Esperado: HTTP 200
+POST {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/reclamo
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### F.6 REPARTIDOR sale a ruta
+# Esperado: HTTP 200
+# @assert $.estado == EN_CAMINO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/estado
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### F.7 REPARTIDOR en puerta
+# Esperado: HTTP 200
+# @assert $.estado == EN_PUERTA
+POST {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/en-puerta
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### F.8 Declararlo fantasma antes de los 30 min: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "motivo": "Cliente no sale" }
+
+### F.9 Vence la espera: el proceso interno (scheduler) lo pasa a PEDIDO_FANTASMA
+# Esperado: HTTP 200
+# @assert $.estado == PEDIDO_FANTASMA
+# @assert $.motivoFantasma == NO_ENTREGADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/estado
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "estado": "PEDIDO_FANTASMA" }
+
+### F.10 Un fantasma ya no se vuelve a declarar: 409
+# Esperado: HTTP 409
+POST {{ORDERS_URL}}/ordenes/{{ordenFantasma.response.body.$.id}}/pedido-fantasma
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### F.11 El celular sancionado ya no puede elegir ContraPago: 409
+# Esperado: HTTP 409
+# @sleep 3000
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "DELIVERY", "estadoInicial": "PENDIENTE_CONFIRMACION", "direccionEntrega": "Av. QA Fantasma 400", "nombreCliente": "QA Fantasma", "telefonoCliente": "{{ordenFantasma.response.body.$.telefonoCliente}}", "montoPagaCon": 100, "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+###############################################################################
+# G. SEGUIMIENTO SIN CUENTA (codigo por WhatsApp)
+###############################################################################
+
+### G.1 Invitado crea RECOJO con su celular
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @assert $.canalOrigen == WEB
+# @name ordenSeguimiento
+POST {{ORDERS_URL}}/ordenes
+Content-Type: application/json
+
+{ "tipo": "RECOJO", "nombreCliente": "QA Seguimiento", "telefonoCliente": "{{TEL_SEGUIMIENTO}}", "items": [ { "productoId": {{PRODUCTO_CHICHA}}, "cantidad": 1 } ] }
+
+### G.2 Solicitar codigo con celular invalido: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/seguimiento/codigo
+Content-Type: application/json
+
+{ "telefono": "12345" }
+
+### G.3 Solicitar codigo: 202 (mensaje neutro)
+# Esperado: HTTP 202
+# @assert $.mensaje exists
+POST {{ORDERS_URL}}/ordenes/seguimiento/codigo
+Content-Type: application/json
+
+{ "telefono": "{{ordenSeguimiento.response.body.$.telefonoCliente}}" }
+
+### G.4 Otro codigo antes de un minuto: 429
+# Esperado: HTTP 429
+POST {{ORDERS_URL}}/ordenes/seguimiento/codigo
+Content-Type: application/json
+
+{ "telefono": "{{ordenSeguimiento.response.body.$.telefonoCliente}}" }
+
+### G.5 Verificar con codigo incorrecto: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/seguimiento/verificar
+Content-Type: application/json
+
+{ "telefono": "{{ordenSeguimiento.response.body.$.telefonoCliente}}", "codigo": "abcdef" }
+
+### G.6 Verificar con el codigo recibido por WhatsApp: token de acceso
+# Esperado: HTTP 200
+# @sql COD_SEGUIMIENTO SELECT codigo FROM codigos_seguimiento WHERE telefono = '{{ordenSeguimiento.response.body.$.telefonoCliente}}' AND usado = false ORDER BY creado_en DESC LIMIT 1
+# @assert $.token exists
+# @name accesoSeguimiento
+POST {{ORDERS_URL}}/ordenes/seguimiento/verificar
+Content-Type: application/json
+
+{ "telefono": "{{ordenSeguimiento.response.body.$.telefonoCliente}}", "codigo": "{{COD_SEGUIMIENTO}}" }
+
+### G.7 El codigo usado ya no sirve: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/seguimiento/verificar
+Content-Type: application/json
+
+{ "telefono": "{{ordenSeguimiento.response.body.$.telefonoCliente}}", "codigo": "{{COD_SEGUIMIENTO}}" }
+
+### G.8 Listar pedidos con el acceso temporal
+# Esperado: HTTP 200
+# @assert $[0].id == {{ordenSeguimiento.response.body.$.id}}
+GET {{ORDERS_URL}}/ordenes/seguimiento
+X-Seguimiento-Token: {{accesoSeguimiento.response.body.$.token}}
+
+### G.9 Listar sin header: 400
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/ordenes/seguimiento
+
+### G.10 Listar con token alterado: 400
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/ordenes/seguimiento
+X-Seguimiento-Token: token-falso
+
+### G.11 Un JWT de sesion no sirve como acceso de seguimiento: 400
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/ordenes/seguimiento
+X-Seguimiento-Token: {{loginCliente.response.body.$.token}}
+
+### G.12 Cancelar un pedido de otro celular: 404
+# Esperado: HTTP 404
+POST {{ORDERS_URL}}/ordenes/seguimiento/{{ordenDelivery.response.body.$.id}}/cancelar
+X-Seguimiento-Token: {{accesoSeguimiento.response.body.$.token}}
+
+### G.13 Cancelar sin token: 400
+# Esperado: HTTP 400
+POST {{ORDERS_URL}}/ordenes/seguimiento/{{ordenSeguimiento.response.body.$.id}}/cancelar
+
+### G.14 El invitado cancela su pedido
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+POST {{ORDERS_URL}}/ordenes/seguimiento/{{ordenSeguimiento.response.body.$.id}}/cancelar
+X-Seguimiento-Token: {{accesoSeguimiento.response.body.$.token}}
+
+### G.15 Cancelar otra vez es idempotente
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+POST {{ORDERS_URL}}/ordenes/seguimiento/{{ordenSeguimiento.response.body.$.id}}/cancelar
+X-Seguimiento-Token: {{accesoSeguimiento.response.body.$.token}}
+
+###############################################################################
+# H. LISTADOS DEL PERSONAL
+###############################################################################
+
+### H.1 Listado por defecto (activos + completados hoy) incluye la comanda cerrada
+# Esperado: HTTP 200
+# @assert $ contains "id":{{comandaSalon.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### H.2 Solo activos
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/ordenes?soloActivos=true
+Authorization: Bearer {{loginRepartidor.response.body.$.token}}
+
+### H.3 Filtro por estado CANCELADO incluye la cancelada por el cliente
+# Esperado: HTTP 200
+# @assert $ contains "id":{{ordenCancelable.response.body.$.id}},
+GET {{ORDERS_URL}}/ordenes?estado=CANCELADO
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### H.4 Filtro con estado invalido: 400
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/ordenes?estado=VOLANDO
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### H.5 Listado por CLIENTE: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### H.6 Listado anonimo: 403
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/ordenes
+
+###############################################################################
+# Z. LIMPIEZA
+###############################################################################
+
+### Z.1 ADMIN da de baja la mesa propia (ya LIBRE)
+# Esperado: HTTP 204
+DELETE {{ORDERS_URL}}/mesas/{{mesaQa.response.body.$.id}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}

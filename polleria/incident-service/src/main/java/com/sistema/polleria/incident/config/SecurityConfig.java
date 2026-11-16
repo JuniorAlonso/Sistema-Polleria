@@ -31,6 +31,9 @@ public class SecurityConfig {
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
+    @Value("${app.cors.allow-loopback:false}")
+    private boolean allowLoopback;
+
     /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
     static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
     static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
@@ -44,14 +47,20 @@ public class SecurityConfig {
      * backend. Un origen externo sigue sin habilitarse.
      */
     static List<String> origenesPermitidos(String configurados) {
+        return origenesPermitidos(configurados, true);
+    }
+
+    static List<String> origenesPermitidos(String configurados, boolean incluirLoopback) {
         List<String> origenes = new ArrayList<>(Arrays.stream(configurados.split(","))
                 .map(String::trim)
                 .map(o -> o.replaceAll("/+$", ""))
                 .filter(o -> !o.isEmpty())
                 .toList());
-        origenes.add(LOOPBACK_LOCALHOST);
-        origenes.add(LOOPBACK_IPV4);
-        origenes.add(LOOPBACK_IPV6);
+        if (incluirLoopback) {
+            origenes.add(LOOPBACK_LOCALHOST);
+            origenes.add(LOOPBACK_IPV4);
+            origenes.add(LOOPBACK_IPV6);
+        }
         return origenes;
     }
 
@@ -76,7 +85,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        List<String> origins = origenesPermitidos(allowedOrigins);
+        List<String> origins = origenesPermitidos(allowedOrigins, allowLoopback);
         config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));

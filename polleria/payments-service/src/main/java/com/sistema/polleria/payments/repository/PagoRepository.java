@@ -3,6 +3,7 @@ package com.sistema.polleria.payments.repository;
 import com.sistema.polleria.payments.entity.EstadoPago;
 import com.sistema.polleria.payments.entity.Pago;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -24,7 +25,19 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
 
     List<Pago> findByEstadoOrderByCreadoEnDesc(EstadoPago estado);
 
+    List<Pago> findByEstadoOrderByCreadoEnDesc(EstadoPago estado, Pageable pageable);
+
     List<Pago> findAllByOrderByCreadoEnDesc();
+
+    List<Pago> findAllByOrderByCreadoEnDesc(Pageable pageable);
+
+    List<Pago> findByCreadoEnGreaterThanEqualAndCreadoEnLessThanOrderByCreadoEnDesc(
+            LocalDateTime desde, LocalDateTime hasta);
+
+    List<Pago> findByEstadoAndCreadoEnGreaterThanEqualAndCreadoEnLessThanOrderByCreadoEnDesc(
+            EstadoPago estado, LocalDateTime desde, LocalDateTime hasta);
+
+    Optional<Pago> findByReembolsoIdempotencyKey(String reembolsoIdempotencyKey);
 
     /**
      * Lee el pago tomando un bloqueo pesimista de escritura (SELECT ... FOR UPDATE).
@@ -36,10 +49,12 @@ public interface PagoRepository extends JpaRepository<Pago, Long> {
     @Query("SELECT p FROM Pago p WHERE p.id = :id")
     Optional<Pago> buscarConBloqueo(@Param("id") Long id);
 
-    /** Approved cash-on-delivery payments collected by a courier that no settlement has claimed yet. */
+    /** Cash-on-delivery payments collected by a courier that no settlement has claimed yet, including refunded ones to net correctly. */
     @Query("SELECT p FROM Pago p WHERE p.repartidorId = :repartidorId"
             + " AND p.metodoPago = com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA"
-            + " AND p.estado = com.sistema.polleria.payments.entity.EstadoPago.APROBADO"
+            + " AND p.estado IN (com.sistema.polleria.payments.entity.EstadoPago.APROBADO,"
+            + " com.sistema.polleria.payments.entity.EstadoPago.REEMBOLSADO_PARCIAL,"
+            + " com.sistema.polleria.payments.entity.EstadoPago.REEMBOLSADO)"
             + " AND p.liquidacionId IS NULL AND p.verificadoEn >= :desde ORDER BY p.verificadoEn")
     List<Pago> efectivoPendienteDeRepartidor(@Param("repartidorId") Long repartidorId,
                                              @Param("desde") LocalDateTime desde);

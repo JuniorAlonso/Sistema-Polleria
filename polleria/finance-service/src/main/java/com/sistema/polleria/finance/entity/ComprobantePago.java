@@ -65,4 +65,17 @@ public class ComprobantePago {
 
     @Column(name = "emitido_por")
     private Long emitidoPor;
+
+    @Builder.Default
+    @Column(name = "anulado")
+    private Boolean anulado = Boolean.FALSE;
+
+    @Column(name = "anulado_en")
+    private LocalDateTime anuladoEn;
+
+    @Column(name = "motivo_anulacion", length = 255)
+    private String motivoAnulacion;
+
+    @Version
+    private Long version;
 }

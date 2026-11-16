@@ -27,21 +27,35 @@ const service = new NotificacionService({
     intervaloMs: 0,
     maxIntentos: 1
 });
-const app = crearApp({ service, store, estadoWhatsapp: () => 'CONECTADO' });
+const app = crearApp({ service, store, estadoWhatsapp: () => 'CONECTADO', allowLoopbackCors: true });
+const appEstricto = crearApp({ service, store, estadoWhatsapp: () => 'CONECTADO', allowLoopbackCors: false });
 
 let servidor;
+let servidorEstricto;
 let base;
+let baseEstricto;
 
-test.before(() => new Promise(resolve => {
-    servidor = app.listen(0, () => {
-        base = `http://localhost:${servidor.address().port}/api/notificaciones`;
-        resolve();
-    });
-}));
-test.after(() => servidor.close());
+test.before(() => Promise.all([
+    new Promise(resolve => {
+        servidor = app.listen(0, () => {
+            base = `http://localhost:${servidor.address().port}/api/notificaciones`;
+            resolve();
+        });
+    }),
+    new Promise(resolve => {
+        servidorEstricto = appEstricto.listen(0, () => {
+            baseEstricto = `http://localhost:${servidorEstricto.address().port}/api/notificaciones`;
+            resolve();
+        });
+    })
+]));
+test.after(() => Promise.all([
+    new Promise(resolve => servidor.close(resolve)),
+    new Promise(resolve => servidorEstricto.close(resolve))
+]));
 
-function preflight(origin) {
-    return fetch(`${base}/qr`, {
+function preflight(origin, urlBase = base) {
+    return fetch(`${urlBase}/qr`, {
         method: 'OPTIONS',
         headers: {
             Origin: origin,
@@ -51,14 +65,23 @@ function preflight(origin) {
     });
 }
 
-test('el preflight permite 127.0.0.1:4200 aunque la lista solo nombre localhost', async () => {
-    const res = await preflight('http://127.0.0.1:4200');
-    assert.strictEqual(res.headers.get('access-control-allow-origin'), 'http://127.0.0.1:4200');
+test('con allowLoopbackCors=true permite 127.0.0.1:4200 y otros puertos locales', async () => {
+    const resIp = await preflight('http://127.0.0.1:4200');
+    assert.strictEqual(resIp.headers.get('access-control-allow-origin'), 'http://127.0.0.1:4200');
+
+    const resPuerto = await preflight('http://localhost:4201');
+    assert.strictEqual(resPuerto.headers.get('access-control-allow-origin'), 'http://localhost:4201');
 });
 
-test('el preflight permite el mismo localhost en otro puerto (ng serve ocupado)', async () => {
-    const res = await preflight('http://localhost:4201');
-    assert.strictEqual(res.headers.get('access-control-allow-origin'), 'http://localhost:4201');
+test('sin allowLoopbackCors (default prod) solo habilita origenes explicitos', async () => {
+    const resExplicito = await preflight('http://localhost:4200', baseEstricto);
+    assert.strictEqual(resExplicito.headers.get('access-control-allow-origin'), 'http://localhost:4200');
+
+    const resPuerto = await preflight('http://localhost:4201', baseEstricto);
+    assert.strictEqual(resPuerto.headers.get('access-control-allow-origin'), null);
+
+    const resIp = await preflight('http://127.0.0.1:4200', baseEstricto);
+    assert.strictEqual(resIp.headers.get('access-control-allow-origin'), null);
 });
 
 test('el preflight mantiene permitido el origen de la lista explicita', async () => {

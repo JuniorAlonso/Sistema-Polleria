@@ -134,7 +134,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | `CajaService.cerrar` | Observación obligatoria si `diferencia != 0`, registra `cerrado_por`. | Corregir |
 | `LiquidacionService` | Bloqueo pesimista al cerrar y 409 sin caja abierta. | Corregir |
 | `PagoController` / `PagoService` | Delegar D3.7 en `AutorizacionPago`, retirar `MOZO` de `iniciar` (sin consumidores) y una guarda al inicio de `iniciar` que valida el monto contra la orden con el `OrdenesClient` existente. Sin otros cambios: el archivo es compartido. | Corregir |
-| `FinanzasService` | Ventas en efectivo = `INGRESO` menos fondos; excluir fondos de gastos; contar y sumar con `comprobantes_pago`; quitar `arqueos*35`. | Corregir |
+| `FinanzasService` | Ventas en efectivo = `INGRESO` menos fondos; excluir fondos de gastos; contar órdenes y ticket con `comprobantes_pago`; ventas = efectivo + POS + digital (el efectivo del repartidor no tiene comprobante); quitar `arqueos*35`. | Corregir |
 
 ### Frontend
 
@@ -178,7 +178,7 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 
 ## 7. Contratos con otros planes
 
-- **Recibe de Plan 1:** `mesaEstado` y la guarda de `ENTREGADO`.
+- **Recibe de Plan 1:** la guarda de `ENTREGADO` (llegó en `924104d`). `mesaEstado` en `OrdenResponse` lo agregó el Plan 3 (campo opcional) porque el cajero no puede leer `/mesas`.
 - **Entrega a Plan 2:** `registrarVentaEnCaja`, `cajaAbierta`, `cajero-datos-fiscales`.
 - **Entrega a Plan 2:** `confirmarLlamadaPedido` sigue funcionando sin cambios (D3.15 cubre la emisión sin pago). Se recomienda migrarlo a `registrarVentaEnCaja`.
 - **Entrega a Plan 4:** `POST /finanzas/caja/movimientos` sin cambios, con 409 si la caja está cerrada.
@@ -195,7 +195,8 @@ Con `Inicializador*` donde corresponda (Plan 00, sección 3).
 | :-- | :-- | :-- |
 | 1 | Índices e inicializador; `emitir` con `ingresoCaja` y los componentes de D3.19; `FuenteTotalComprobante` y `OrdenesClient`; D3.5 a D3.7 y D3.18; `registrarVentaEnCaja`, `CobroSalonFacade`, input `cajaAbierta` y `api-error.ts`. | — |
 | 2 | Caja y arqueo ciego, liquidación, reportes de `FinanzasService`, ticket real y desglose de IGV del checkout. | PR 1 |
-| 3 | Filtro tolerante de D3.14 y reintento de D3.17. | PR 1 |
+| 2a | Adelantado de PR 3: filtro tolerante de D3.14 (`mesaEstado` en `OrdenResponse`) y verificación de la mesa en `CobroSalonFacade` antes de cobrar. Evita cobrar una comanda que la guarda de `ENTREGADO` del Plan 1 no deja cerrar. | PR 1 |
+| 3 | Reintento visible de D3.17. | PR 1 |
 
 El PR 1 corresponde a la primera entrega del Plan 00 (sección 6) y destraba a los Planes 2 y 6. El PR 3 no espera al Plan 1 gracias a D3.14.
 

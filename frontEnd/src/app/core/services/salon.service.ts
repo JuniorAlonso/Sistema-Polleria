@@ -6,6 +6,7 @@ import { RestaurantTable, TableStatus, OrdenActivaMesa, SalonZona } from '../mod
 import { environment } from '../../../environments/environment';
 import { NotificationService } from './notification.service';
 import { AuthService } from './auth.service';
+import { mensajeError } from '../utils/api-error';
 
 export interface AlertaPlatoListoEvento {
   tipo: string;
@@ -172,7 +173,7 @@ export class SalonService implements OnDestroy {
         msg || 'No tienes permisos para realizar esta operación en la mesa.'
       );
     } else {
-      this.notify.showError('Error en Operación', msg || 'No se pudo completar la operación en la mesa');
+      this.notify.showError('Error en Operación', mensajeError(err, 'No se pudo completar la operación en la mesa'));
     }
     return throwError(() => err);
   }

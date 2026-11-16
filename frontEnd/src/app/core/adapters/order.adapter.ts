@@ -19,7 +19,7 @@ export class OrderAdapter {
    * Mapea estado del backend al estado visual del frontend
    */
   static toOrderStatus(backendEstado: BackendOrdenEstado | string): OrderStatus {
-    if (!backendEstado) return 'PAGADO';
+    if (!backendEstado) return 'DESCONOCIDO';
     const est = backendEstado.toUpperCase();
 
     switch (est) {
@@ -46,7 +46,7 @@ export class OrderAdapter {
       case 'PEDIDO_FANTASMA':
         return 'PEDIDO_FANTASMA';
       default:
-        return 'PAGADO';
+        return 'DESCONOCIDO';
     }
   }
 
@@ -187,11 +187,12 @@ export class OrderAdapter {
       descuento: 0,
       total: Math.round(total * 100) / 100,
       notasGenerales: dto.observaciones || undefined,
-      createdAt: dto.creadoEn || new Date().toISOString(),
-      updatedAt: dto.actualizadoEn || dto.creadoEn || new Date().toISOString(),
+      createdAt: dto.creadoEn || '',
+      updatedAt: dto.actualizadoEn || dto.creadoEn || '',
       // Solo el id: el nombre del motorizado vive en el roster de auth-service (solo ADMIN),
       // así que aquí no se fabrica un "Repartidor #7".
       repartidorId: dto.repartidorId,
+      mesaEstado: dto.mesaEstado || undefined,
       // Marca persistida de "ya se sirvió en mesa"; el estado sigue siendo LISTO hasta el cobro.
       servidoEn: dto.servidoEn || undefined,
       servidoPor: dto.servidoPor ?? undefined,

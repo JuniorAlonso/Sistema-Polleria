@@ -31,11 +31,17 @@ public class MinioConfig {
 
     @Bean
     public MinioClient minioClient(
-            @Value("${MINIO_ENDPOINT:localhost}") String endpoint,
+            @Value("${MINIO_ENDPOINT:}") String endpoint,
             @Value("${MINIO_PORT:9000}") int port,
             @Value("${MINIO_USE_SSL:false}") boolean useSsl,
-            @Value("${MINIO_ACCESS_KEY:minioadmin}") String accessKey,
-            @Value("${MINIO_SECRET_KEY:minioadmin}") String secretKey) {
+            @Value("${MINIO_ACCESS_KEY:}") String accessKey,
+            @Value("${MINIO_SECRET_KEY:}") String secretKey) {
+        if (endpoint == null || endpoint.isBlank()
+                || accessKey == null || accessKey.isBlank()
+                || secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException(
+                    "Faltan variables obligatorias de MinIO (MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY)");
+        }
         return MinioClient.builder()
                 .endpoint(endpoint, port, useSsl)
                 .credentials(accessKey, secretKey)

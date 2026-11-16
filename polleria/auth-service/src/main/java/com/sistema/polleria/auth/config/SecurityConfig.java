@@ -8,9 +8,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.AuthenticationProvider;
-import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -39,39 +39,47 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final IpBlacklistFilter ipBlacklistFilter;
     private final UserRepository userRepository;
+    private final Environment environment;
 
     public SecurityConfig(@Lazy JwtAuthFilter jwtAuthFilter,
-                          IpBlacklistFilter ipBlacklistFilter,
-                          UserRepository userRepository) {
+            IpBlacklistFilter ipBlacklistFilter,
+            UserRepository userRepository,
+            Environment environment) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.ipBlacklistFilter = ipBlacklistFilter;
         this.userRepository = userRepository;
+        this.environment = environment;
     }
 
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
-    /** Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está ocupado. */
+    @Value("${app.cors.allow-loopback:false}")
+    private boolean allowLoopback;
+
+    /**
+     * Cualquier puerto de loopback: `ng serve` cambia de puerto cuando 4200 está
+     * ocupado.
+     */
     static final String LOOPBACK_LOCALHOST = "http://localhost:[*]";
     static final String LOOPBACK_IPV4 = "http://127.0.0.1:[*]";
     static final String LOOPBACK_IPV6 = "http://[::1]:[*]";
 
-    /**
-     * Orígenes CORS: los configurados más cualquier puerto de loopback. El panel corre en la misma
-     * máquina que el servicio y `ng serve` cambia de puerto cuando 4200 está ocupado (o el usuario abre
-     * la app por 127.0.0.1 / [::1]). Con la lista exacta el preflight respondía 403 sin
-     * `Access-Control-Allow-Origin`, el navegador no enviaba la petición y el login nunca llegaba al
-     * backend. Un origen externo sigue sin habilitarse.
-     */
     static List<String> origenesPermitidos(String configurados) {
+        return origenesPermitidos(configurados, true);
+    }
+
+    static List<String> origenesPermitidos(String configurados, boolean incluirLoopback) {
         List<String> origenes = new ArrayList<>(Arrays.stream(configurados.split(","))
                 .map(String::trim)
                 .map(o -> o.replaceAll("/+$", ""))
                 .filter(o -> !o.isEmpty())
                 .toList());
-        origenes.add(LOOPBACK_LOCALHOST);
-        origenes.add(LOOPBACK_IPV4);
-        origenes.add(LOOPBACK_IPV6);
+        if (incluirLoopback) {
+            origenes.add(LOOPBACK_LOCALHOST);
+            origenes.add(LOOPBACK_IPV4);
+            origenes.add(LOOPBACK_IPV6);
+        }
         return origenes;
     }
 
@@ -93,7 +101,7 @@ public class SecurityConfig {
                         .frameOptions(frame -> frame.deny())
                         .contentTypeOptions(contentType -> {})
                 )
-                .authenticationProvider(authenticationProvider())
+
                 .addFilterBefore(ipBlacklistFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
@@ -102,7 +110,9 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        List<String> origins = origenesPermitidos(allowedOrigins);
+        boolean habilitarLoopback = allowLoopback
+                || (environment != null && environment.acceptsProfiles(Profiles.of("local", "dev", "test")));
+        List<String> origins = origenesPermitidos(allowedOrigins, habilitarLoopback);
         config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
@@ -117,14 +127,6 @@ public class SecurityConfig {
     public UserDetailsService userDetailsService() {
         return username -> userRepository.findByEmail(username)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado: " + username));
-    }
-
-    @Bean
-    public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService());
-        provider.setPasswordEncoder(passwordEncoder());
-        return provider;
     }
 
     @Bean

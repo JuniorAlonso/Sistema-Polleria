@@ -1,6 +1,7 @@
 package com.sistema.polleria.finance.service.comprobante;
 
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -24,7 +25,7 @@ class RegistradorIngresoCajaTest {
     private final RegistradorIngresoCaja registrador = new RegistradorIngresoCaja(arqueos, movimientos);
 
     private void cajaAbierta(long id) {
-        when(arqueos.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
+        when(arqueos.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA))
                 .thenReturn(Optional.of(ArqueoCaja.builder().id(id).montoApertura(BigDecimal.TEN).build()));
     }
 
@@ -43,6 +44,7 @@ class RegistradorIngresoCajaTest {
         assertThat(guardado.getTipo()).isEqualTo(TipoMovimiento.INGRESO);
         assertThat(guardado.getMonto()).isEqualByComparingTo("42.50");
         assertThat(guardado.getRegistradoPor()).isEqualTo(9L);
+        assertThat(guardado.getCategoria()).isEqualTo(CategoriaMovimiento.VENTA);
     }
 
     @Test
@@ -69,7 +71,7 @@ class RegistradorIngresoCajaTest {
 
     @Test
     void sinCajaAbiertaRespondeConflicto() {
-        when(arqueos.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.empty());
+        when(arqueos.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> registrador.registrar(55L, BigDecimal.TEN, "Venta", 9L))
                 .isInstanceOf(IllegalStateException.class)

@@ -141,7 +141,24 @@ import { CajeroTab } from '../models/cajero.models';
             </span>
           </button>
 
-          <button 
+          <button
+            type="button"
+            (click)="tabChange.emit('DEVOLUCIONES')"
+            class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
+            [ngClass]="activeTab() === 'DEVOLUCIONES' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40 shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'"
+          >
+            <div class="flex items-center gap-3">
+              <svg class="w-4 h-4 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+              </svg>
+              <span>Devoluciones</span>
+            </div>
+            <span class="px-2 py-0.5 rounded-full font-bold text-xs" [ngClass]="totalDevoluciones() > 0 ? 'bg-rose-500 text-white animate-pulse' : 'bg-slate-800 text-slate-400'">
+              {{ totalDevoluciones() }}
+            </span>
+          </button>
+
+          <button
             type="button"
             (click)="tabChange.emit('ARQUEO')"
             class="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-xs sm:text-sm font-semibold transition cursor-pointer"
@@ -212,6 +229,7 @@ export class CajeroSidebarComponent {
   readonly totalRecojo = input<number>(0);
   readonly totalLiquidaciones = input<number>(0);
   readonly totalCobros = input<number>(0);
+  readonly totalDevoluciones = input<number>(0);
   readonly usuarioNombre = input<string | undefined>(undefined);
 
   readonly tabChange = output<CajeroTab>();

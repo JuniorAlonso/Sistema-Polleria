@@ -17,7 +17,7 @@ import { ComandaItem } from '../mozo.types';
                       <h3 class="text-base font-extrabold text-white">
                         {{ mesaTitulo() ? 'Comanda Mesa #' + mesaTitulo() : 'Comanda (Seleccioná una mesa)' }}
                       </h3>
-                      <p class="text-xs text-slate-400">Mozo: {{ userName() || 'Yovana M.' }}</p>
+                      <p class="text-xs text-slate-400">Mozo: {{ userName() || '—' }}</p>
                     </div>
                     <span class="px-2.5 py-1 rounded-full bg-polleria-crimson text-white text-xs font-bold">
                       {{ items().length }} items

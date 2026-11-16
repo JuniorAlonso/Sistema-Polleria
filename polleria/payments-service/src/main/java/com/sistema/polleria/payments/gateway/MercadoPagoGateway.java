@@ -1,13 +1,14 @@
 package com.sistema.polleria.payments.gateway;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mercadopago.MercadoPagoConfig;
 import com.mercadopago.client.payment.PaymentClient;
-import com.mercadopago.client.preference.PreferenceBackUrlsRequest;
-import com.mercadopago.client.preference.PreferenceClient;
-import com.mercadopago.client.preference.PreferenceItemRequest;
-import com.mercadopago.client.preference.PreferenceRequest;
+import com.mercadopago.client.paymentmethod.PaymentMethodClient;
 import com.mercadopago.exceptions.MPApiException;
 import com.mercadopago.exceptions.MPException;
-import com.mercadopago.resources.preference.Preference;
+import com.mercadopago.net.MPResourceList;
+import com.mercadopago.resources.paymentmethod.PaymentMethod;
 import com.sistema.polleria.payments.dto.IniciarPagoRequest;
 import com.sistema.polleria.payments.dto.PreferenceResponse;
 import com.sistema.polleria.payments.entity.EstadoPago;
@@ -21,8 +22,16 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -45,6 +54,11 @@ public class MercadoPagoGateway implements PaymentGateway {
 
     @Value("${mercadopago.sandbox:true}")
     private boolean sandbox;
+
+    @Value("${mercadopago.access-token:}")
+    private String accessToken;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public boolean supports(MetodoPago metodoPago) {
@@ -69,7 +83,7 @@ public class MercadoPagoGateway implements PaymentGateway {
 
     @Transactional
     public PreferenceResponse crearPreferencia(IniciarPagoRequest request, Long clienteId) {
-        log.info("Creando preferencia de Mercado Pago para ordenId={}, clienteId={}, monto={}",
+        log.info("Creando orden de Mercado Pago Checkout Pro (Orders API) para ordenId={}, clienteId={}, monto={}",
                 request.ordenId(), clienteId, request.monto());
 
         // 1. Obtener o registrar la entidad Pago
@@ -93,101 +107,135 @@ public class MercadoPagoGateway implements PaymentGateway {
         }
         pago = pagoRepository.save(pago);
 
-        // 2. Construir el Item del pedido
-        PreferenceItemRequest itemRequest = PreferenceItemRequest.builder()
-                .id(String.valueOf(request.ordenId()))
-                .title("Pedido #" + request.ordenId() + " - El San Pollo")
-                .description("Consumo en restaurante / pollería")
-                .quantity(1)
-                .currencyId("PEN")
-                .unitPrice(request.monto())
-                .build();
-
-        // 3. URLs de retorno para redirección del cliente
+        // 2. URLs de retorno para redirección del cliente
         String safeSuccessUrl = (successUrl != null && !successUrl.isBlank()) ? successUrl : "http://localhost:4200/checkout/success";
         String safeFailureUrl = (failureUrl != null && !failureUrl.isBlank()) ? failureUrl : "http://localhost:4200/checkout/failure";
         String safePendingUrl = (pendingUrl != null && !pendingUrl.isBlank()) ? pendingUrl : "http://localhost:4200/checkout/pending";
 
-        log.debug("Back URLs → success={}, failure={}, pending={}", safeSuccessUrl, safeFailureUrl, safePendingUrl);
+        String formattedAmount = String.format(java.util.Locale.US, "%.2f", request.monto());
+        String token = (accessToken != null && !accessToken.isBlank())
+                ? accessToken
+                : MercadoPagoConfig.getAccessToken();
 
-        PreferenceBackUrlsRequest backUrls = PreferenceBackUrlsRequest.builder()
-                .success(safeSuccessUrl)
-                .failure(safeFailureUrl)
-                .pending(safePendingUrl)
-                .build();
-
-        // 4. Armar la solicitud de preferencia
-        PreferenceRequest.PreferenceRequestBuilder preferenceBuilder = PreferenceRequest.builder()
-                .items(List.of(itemRequest))
-                .backUrls(backUrls)
-                .autoReturn("approved")
-                .externalReference(String.valueOf(pago.getId()));
-
-        if (webhookUrl != null && !webhookUrl.isBlank()) {
-            preferenceBuilder.notificationUrl(webhookUrl);
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("Mercado Pago Access Token no configurado en el servidor");
         }
 
-        PreferenceRequest preferenceRequest = preferenceBuilder.build();
+        // 3. Construir el payload JSON para https://api.mercadopago.com/v1/orders
+        Map<String, Object> itemMap = Map.of(
+                "title", "Pedido #" + request.ordenId() + " - El San Pollo",
+                "quantity", 1,
+                "unit_price", formattedAmount
+        );
+
+        Map<String, Object> onlineConfig = Map.of(
+                "success_url", safeSuccessUrl,
+                "failure_url", safeFailureUrl,
+                "pending_url", safePendingUrl,
+                "auto_return", "approved"
+        );
+
+        Map<String, Object> orderPayload = new java.util.HashMap<>();
+        orderPayload.put("type", "online");
+        orderPayload.put("processing_mode", "manual");
+        orderPayload.put("total_amount", formattedAmount);
+        orderPayload.put("description", "Pedido #" + request.ordenId() + " - El San Pollo");
+        orderPayload.put("external_reference", String.valueOf(pago.getId()));
+        orderPayload.put("expiration_time", "PT13M");
+        orderPayload.put("payer", Map.of("email", "cliente" + (clienteId != null ? clienteId : "anonimo") + "@polleria.pe"));
+        orderPayload.put("items", List.of(itemMap));
+        orderPayload.put("config", Map.of("online", onlineConfig));
 
         try {
-            PreferenceClient client = new PreferenceClient();
-            Preference preference = client.create(preferenceRequest);
+            String jsonBody = objectMapper.writeValueAsString(orderPayload);
+            String idempotencyKey = UUID.randomUUID().toString();
 
-            String redirectUrl = sandbox
-                    ? (preference.getSandboxInitPoint() != null ? preference.getSandboxInitPoint() : preference.getInitPoint())
-                    : preference.getInitPoint();
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
 
-            pago.setReferenciaExterna(preference.getId());
-            pago.setDetalle("Preferencia Mercado Pago generada: " + preference.getId());
-            pago.setCheckoutUrl(redirectUrl);
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.mercadopago.com/v1/orders"))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Authorization", "Bearer " + token)
+                    .header("X-Idempotency-Key", idempotencyKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() >= 400) {
+                log.error("Error API Mercado Pago /v1/orders (status={}): {}", response.statusCode(), response.body());
+                throw new RuntimeException("Error en pasarela Mercado Pago (Orders API): " + response.body());
+            }
+
+            JsonNode rootNode = objectMapper.readTree(response.body());
+            String orderId = rootNode.path("id").asText();
+            String checkoutUrl = rootNode.path("checkout_url").asText();
+
+            pago.setReferenciaExterna(orderId);
+            pago.setDetalle("Mercado Pago Order generada: " + orderId);
+            pago.setCheckoutUrl(checkoutUrl);
             pagoRepository.save(pago);
 
-            log.info("Preferencia creada con éxito. ID: {}, initPoint: {}",
-                    preference.getId(), redirectUrl);
+            log.info("Order Mercado Pago creada con éxito. ID: {}, checkoutUrl: {}", orderId, checkoutUrl);
 
             return new PreferenceResponse(
-                    preference.getId(),
-                    preference.getInitPoint(),
-                    preference.getSandboxInitPoint(),
+                    orderId,
+                    checkoutUrl,
+                    checkoutUrl,
                     pago.getId(),
-                    request.ordenId()
+                    request.ordenId(),
+                    checkoutUrl
             );
 
-        } catch (MPApiException apiException) {
-            log.error("Error API Mercado Pago (status={}): {}",
-                    apiException.getStatusCode(), apiException.getApiResponse().getContent());
-            throw new RuntimeException("Error en pasarela Mercado Pago: " + apiException.getApiResponse().getContent(), apiException);
-        } catch (MPException mpException) {
-            log.error("Error SDK Mercado Pago: {}", mpException.getMessage());
-            throw new RuntimeException("Error al conectar con Mercado Pago: " + mpException.getMessage(), mpException);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Llamada a Mercado Pago interrumpida", ie);
+        } catch (Exception e) {
+            log.error("Excepción al crear orden en Mercado Pago: {}", e.getMessage(), e);
+            throw new RuntimeException("Error al conectar con Mercado Pago (Orders API): " + e.getMessage(), e);
         }
     }
 
     public boolean esPagoMercadoPago(Pago pago) {
-        if (pago == null) return false;
+        if (pago == null || pago.getMetodoPago() == com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA) {
+            return false;
+        }
+        String mpPaymentId = pago.getMpPaymentId();
+        if (mpPaymentId != null && mpPaymentId.matches("^\\d+$")) {
+            return true;
+        }
         String ref = pago.getReferenciaExterna();
         String detalle = pago.getDetalle();
-        return (ref != null && (ref.startsWith("MP-") || ref.matches("^\\d+$") || ref.contains("-")))
+        // DIN-11: nunca aceptar referencias numéricas libres escritas por cajero como ID de MP.
+        return (ref != null && (ref.matches("^MP-\\d+$") || ref.startsWith("ORD")))
                 || (detalle != null && detalle.toLowerCase().contains("mercado pago"));
     }
 
     public void procesarReembolso(Pago pago, BigDecimal monto) {
         log.info("Procesando reembolso en Mercado Pago para pagoId={}, ordenId={}", pago.getId(), pago.getOrdenId());
-        String ref = pago.getReferenciaExterna();
-        if (ref == null || ref.isBlank()) {
-            log.warn("El pago ID={} no cuenta con referencia de Mercado Pago", pago.getId());
+        if (pago.getMetodoPago() == com.sistema.polleria.payments.entity.MetodoPago.CONTRAENTREGA) {
             return;
         }
 
         Long mpPaymentId = null;
+        String storedMpId = pago.getMpPaymentId();
+        String ref = pago.getReferenciaExterna();
         try {
-            if (ref.startsWith("MP-")) {
+            if (storedMpId != null && storedMpId.matches("^\\d+$")) {
+                mpPaymentId = Long.parseLong(storedMpId.trim());
+            } else if (ref != null && ref.matches("^MP-\\d+$")) {
                 mpPaymentId = Long.parseLong(ref.substring(3).trim());
-            } else if (ref.matches("^\\d+$")) {
-                mpPaymentId = Long.parseLong(ref.trim());
             }
         } catch (NumberFormatException e) {
             log.warn("No se pudo extraer el ID numérico de Mercado Pago de '{}': {}", ref, e.getMessage());
+        }
+
+        if (mpPaymentId == null && (ref == null || ref.isBlank())) {
+            log.warn("El pago ID={} no cuenta con ID verificado de Mercado Pago", pago.getId());
+            return;
         }
 
         if (mpPaymentId != null) {
@@ -210,6 +258,21 @@ public class MercadoPagoGateway implements PaymentGateway {
             }
         } else {
             log.info("Pago ID={} con referencia '{}' registrado para reembolso", pago.getId(), ref);
+        }
+    }
+
+    public List<PaymentMethod> listarMediosDePago() {
+        try {
+            PaymentMethodClient client = new PaymentMethodClient();
+            MPResourceList<PaymentMethod> response = client.list();
+            return response != null && response.getResults() != null ? response.getResults() : List.of();
+        } catch (MPApiException apiException) {
+            log.error("Error API Mercado Pago al listar medios de pago (status={}): {}",
+                    apiException.getStatusCode(), apiException.getApiResponse().getContent());
+            throw new RuntimeException("Error en pasarela Mercado Pago al consultar medios de pago: " + apiException.getApiResponse().getContent(), apiException);
+        } catch (MPException mpException) {
+            log.error("Error SDK Mercado Pago al listar medios de pago: {}", mpException.getMessage());
+            throw new RuntimeException("Error al conectar con Mercado Pago para consultar medios de pago: " + mpException.getMessage(), mpException);
         }
     }
 }

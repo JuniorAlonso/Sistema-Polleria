@@ -22,15 +22,24 @@ import { FormsModule } from '@angular/forms';
                 <label class="block font-bold text-slate-300 mb-1">Monto Inicial en Efectivo (S/):</label>
                 <input 
                   type="number" 
+                  min="0"
+                  step="0.01"
                   [(ngModel)]="montoApertura"
                   class="w-full p-2.5 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-base focus:outline-none focus:ring-1 focus:ring-emerald-400"
                 />
+                @if (!montoValido()) {
+                  <p class="mt-1 text-[11px] font-bold text-amber-300">Ingresa un monto inicial válido mayor o igual a 0.</p>
+                }
               </div>
             </div>
 
             <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
               <button (click)="closed.emit()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold cursor-pointer">Cancelar</button>
-              <button (click)="confirmed.emit(montoApertura)" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase cursor-pointer">Abrir Caja</button>
+              <button
+                (click)="confirmar()"
+                [disabled]="!montoValido() || procesando()"
+                class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >{{ procesando() ? 'Abriendo...' : 'Abrir Caja' }}</button>
             </div>
           </div>
         </div>
@@ -38,6 +47,7 @@ import { FormsModule } from '@angular/forms';
 })
 export class CashOpenModalComponent implements OnInit {
   readonly initialAmount = input.required<number>();
+  readonly procesando = input<boolean>(false);
 
   readonly closed = output<void>();
   readonly confirmed = output<number>();
@@ -46,5 +56,16 @@ export class CashOpenModalComponent implements OnInit {
 
   ngOnInit(): void {
     this.montoApertura = this.initialAmount();
+  }
+
+  protected montoValido(): boolean {
+    return typeof this.montoApertura === 'number'
+      && Number.isFinite(this.montoApertura)
+      && this.montoApertura >= 0;
+  }
+
+  protected confirmar(): void {
+    if (!this.montoValido() || this.procesando()) return;
+    this.confirmed.emit(this.montoApertura);
   }
 }

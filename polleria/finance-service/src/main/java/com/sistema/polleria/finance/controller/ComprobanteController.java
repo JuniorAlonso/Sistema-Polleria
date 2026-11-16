@@ -50,6 +50,17 @@ public class ComprobanteController {
         return ResponseEntity.ok(comprobanteService.listarTodos());
     }
 
+    @PostMapping("/orden/{ordenId}/anular")
+    @PreAuthorize("hasAnyAuthority('ADMIN','CAJERO','INTERNAL')")
+    public ResponseEntity<ComprobanteResponse> anularPorOrden(
+            @PathVariable Long ordenId,
+            @RequestParam(value = "motivo", required = false) String motivoParam,
+            @RequestBody(required = false) java.util.Map<String, String> body,
+            Authentication authentication) {
+        String motivo = body != null && body.containsKey("motivo") ? body.get("motivo") : motivoParam;
+        return ResponseEntity.ok(comprobanteService.anularPorOrden(ordenId, motivo, usuarioId(authentication)));
+    }
+
     private static Long usuarioId(Authentication authentication) {
         return authentication != null && authentication.getCredentials() instanceof Long id ? id : null;
     }

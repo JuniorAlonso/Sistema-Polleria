@@ -25,6 +25,9 @@ public class PaymentGatewayService {
     @Value("${mercadopago.access-token:}")
     private String mpAccessToken;
 
+    @Value("${payments.mock-gateways.enabled:false}")
+    private boolean mockGatewaysEnabled;
+
     public PaymentGateway seleccionar(MetodoPago metodoPago) {
         boolean mpConfigurado = mpAccessToken != null 
                 && !mpAccessToken.isBlank() 
@@ -39,18 +42,24 @@ public class PaymentGatewayService {
                 if (mpConfigurado) {
                     log.info("Seleccionando pasarela real Mercado Pago para TARJETA");
                     yield mercadoPagoGateway;
-                } else {
+                } else if (mockGatewaysEnabled) {
                     log.info("Mercado Pago no configurado; seleccionando TarjetaGateway mock");
                     yield tarjetaMockGateway;
+                } else {
+                    throw new IllegalStateException(
+                            "Pasarela Mercado Pago no configurada en este entorno");
                 }
             }
             case YAPE_PLIN -> {
                 if (mpConfigurado) {
                     log.info("Seleccionando pasarela real Mercado Pago para YAPE_PLIN");
                     yield mercadoPagoGateway;
-                } else {
+                } else if (mockGatewaysEnabled) {
                     log.info("Mercado Pago no configurado; seleccionando YapePlinGateway mock");
                     yield yapePlinMockGateway;
+                } else {
+                    throw new IllegalStateException(
+                            "Pasarela Yape/Plin no configurada en este entorno");
                 }
             }
         };

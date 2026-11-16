@@ -143,4 +143,32 @@ class MercadoPagoWebhookControllerTest {
         pago.setEstado(EstadoPago.PENDIENTE);
         return pago;
     }
+
+    @Test
+    @DisplayName("Orders API: el estado del cuerpo no se aplica; se delega en la verificación contra Mercado Pago")
+    void ordenApiNoConfiaEnElEstadoDelCuerpo() {
+        Map<String, Object> body = Map.of("type", "order", "data", Map.of(
+                "id", "ORD01", "external_reference", "13", "status", "processed",
+                "transactions", Map.of("payments", java.util.List.of(Map.of("reference", Map.of("id", "555"))))));
+
+        ResponseEntity<Void> res = controller.handleWebhook(null, null, "order", null, null, null, body);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(pagoService).procesarRetornoMercadoPago("555", null, "13");
+        verify(pagoService, never()).confirmar(any(), any(), any());
+        verify(pagoService, never()).actualizarEstadoDesdePasarela(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Orders API sin id de pago numérico no cambia nada")
+    void ordenApiSinPagoVerificableNoCambiaNada() {
+        Map<String, Object> body = Map.of("type", "order", "data", Map.of(
+                "id", "ORD01", "external_reference", "13", "status", "processed"));
+
+        controller.handleWebhook(null, null, "order", null, null, null, body);
+
+        verify(pagoService, never()).confirmar(any(), any(), any());
+        verify(pagoService, never()).actualizarEstadoDesdePasarela(any(), any(), any());
+        verify(pagoService, never()).procesarRetornoMercadoPago(any(), any(), any());
+    }
 }

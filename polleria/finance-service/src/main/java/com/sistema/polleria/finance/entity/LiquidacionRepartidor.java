@@ -71,4 +71,10 @@ public class LiquidacionRepartidor {
 
     @Column(name = "cerrado_por")
     private Long cerradoPor;
+
+    @Column(name = "pagos_pendientes_liquidar", length = 1000)
+    private String pagosPendientesLiquidar;
+
+    @Version
+    private Long version;
 }

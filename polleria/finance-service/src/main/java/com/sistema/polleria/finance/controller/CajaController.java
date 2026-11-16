@@ -1,5 +1,6 @@
 package com.sistema.polleria.finance.controller;
 
+import com.sistema.polleria.finance.config.UsuarioAutenticado;
 import com.sistema.polleria.finance.dto.AperturaCajaRequest;
 import com.sistema.polleria.finance.dto.ArqueoCajaResponse;
 import com.sistema.polleria.finance.dto.CierreCajaRequest;
@@ -11,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
@@ -29,7 +29,7 @@ public class CajaController {
     public ResponseEntity<ArqueoCajaResponse> abrirCaja(
             @Valid @RequestBody AperturaCajaRequest req,
             Principal principal) {
-        Long usuarioId = extractUserId(principal);
+        Long usuarioId = UsuarioAutenticado.id(principal);
         return ResponseEntity.status(HttpStatus.CREATED).body(cajaService.abrirCaja(req, usuarioId));
     }
 
@@ -44,7 +44,7 @@ public class CajaController {
     public ResponseEntity<MovimientoCaja> registrarMovimiento(
             @Valid @RequestBody MovimientoCajaRequest req,
             Principal principal) {
-        Long usuarioId = extractUserId(principal);
+        Long usuarioId = UsuarioAutenticado.id(principal);
         return ResponseEntity.status(HttpStatus.CREATED).body(cajaService.registrarMovimiento(req, usuarioId));
     }
 
@@ -66,7 +66,7 @@ public class CajaController {
             @RequestParam(value = "arqueoId", required = false) Long arqueoId,
             @Valid @RequestBody CierreCajaRequest req,
             Principal principal) {
-        Long usuarioId = extractUserId(principal);
+        Long usuarioId = UsuarioAutenticado.id(principal);
         return ResponseEntity.ok(cajaService.cerrarCaja(arqueoId, req, usuarioId));
     }
 
@@ -74,14 +74,5 @@ public class CajaController {
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<List<ArqueoCajaResponse>> listarHistorial() {
         return ResponseEntity.ok(cajaService.listarHistorial());
-    }
-
-    private Long extractUserId(Principal principal) {
-        if (principal instanceof UsernamePasswordAuthenticationToken token) {
-            Object creds = token.getCredentials();
-            if (creds instanceof Long id) return id;
-            if (creds instanceof Integer id) return id.longValue();
-        }
-        return 1L;
     }
 }

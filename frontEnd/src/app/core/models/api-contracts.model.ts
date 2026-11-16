@@ -152,6 +152,8 @@ export interface BackendOrdenResponse {
   vueltoEstimado?: number | null;
   motivoFantasma?: string | null;
   mesaNumero?: number;
+  /** Table state of a SALON order (LIBRE, OCUPADA, POR_COBRAR, ...). */
+  mesaEstado?: string | null;
   direccionEntrega?: string;
   referencia?: string;
   nombreCliente?: string;
@@ -173,7 +175,14 @@ export interface BackendActualizarEstadoRequest {
 // --- 1.4 Pagos (:8083) ---
 export type BackendMetodoPago = 'CONTRAENTREGA' | 'TARJETA' | 'YAPE_PLIN';
 
-export type BackendEstadoPago = 'PENDIENTE' | 'PENDIENTE_VERIFICACION' | 'APROBADO' | 'RECHAZADO' | 'CANCELADO';
+export type BackendEstadoPago =
+  | 'PENDIENTE'
+  | 'PENDIENTE_VERIFICACION'
+  | 'APROBADO'
+  | 'RECHAZADO'
+  | 'CANCELADO'
+  | 'REEMBOLSADO'
+  | 'REEMBOLSADO_PARCIAL';
 
 export interface BackendYapeOtpPagoRequest {
   ordenId: number;

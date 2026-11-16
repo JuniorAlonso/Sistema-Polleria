@@ -20,6 +20,8 @@ public class OrdenResponse {
     private Long mozoId;
     private Long repartidorId;
     private Integer mesaNumero;
+    /** State of the comanda's table; the POS charges only tables in POR_COBRAR (plan 03, D3.14). */
+    private MesaEstado mesaEstado;
     private String direccionEntrega;
     private String referencia;
     private String nombreCliente;
@@ -76,6 +78,7 @@ public class OrdenResponse {
                 .mozoId(o.getMozoId())
                 .repartidorId(o.getRepartidorId())
                 .mesaNumero(o.getMesa() != null ? o.getMesa().getNumero() : null)
+                .mesaEstado(o.getMesa() != null ? o.getMesa().getEstado() : null)
                 .direccionEntrega(o.getDireccionEntrega())
                 .referencia(o.getReferencia())
                 .nombreCliente(o.getNombreCliente())

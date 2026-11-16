@@ -8,8 +8,8 @@
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "test": "node --test",
-    "test:fast": "node --test --test-isolation=none"
+    "test": "node --test --test-isolation=none",
+    "test:isolated": "node --test"
   },
   "dependencies": {
     "dotenv": "^18.0.7",
@@ -19,7 +19,7 @@
     "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#942d236a11ad68807308b058303ba5256915979c"
   },
   "engines": {
     "node": ">=18"

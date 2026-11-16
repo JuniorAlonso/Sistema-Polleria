@@ -5,7 +5,7 @@ import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
 import { UserRole } from '../models/user.model';
 
-const ROLE_HOME: Partial<Record<UserRole, string>> = {
+export const ROLE_HOME: Partial<Record<UserRole, string>> = {
   ADMIN: '/admin',
   CAJERO: '/cajero',
   CHEF: '/cocina',

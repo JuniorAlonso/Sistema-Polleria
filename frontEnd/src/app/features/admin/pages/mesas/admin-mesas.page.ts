@@ -7,6 +7,7 @@ import { NotificationService } from '../../../../core/services/notification.serv
 import { ProductsService } from '../../../../core/services/products.service';
 import { MesaSalon, MesaEstado, SalonZona } from '../../../../core/models/table.model';
 import { AdminShellStore } from '../../state/admin-shell.store';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { MesasSummaryComponent } from '../../components/mesas/mesas-summary.component';
 import { MesasViewToolbarComponent } from '../../components/mesas/mesas-view-toolbar.component';
 import { MesasCroquisComponent } from '../../components/mesas/mesas-croquis.component';
@@ -225,9 +226,7 @@ export class AdminMesasPage {
         this.notify.showSuccess(`Comanda #${orden.ordenId} cobrada; la mesa quedó libre`);
       },
       error: (err) => {
-        const motivo = err?.error?.error || err?.error?.message || err?.message
-          || 'El backend rechazó el cierre de la comanda';
-        this.notify.showError('No se pudo cobrar la comanda', motivo);
+        this.notify.showError('No se pudo cobrar la comanda', mensajeError(err, 'El backend rechazó el cierre de la comanda'));
       }
     });
   }
@@ -268,7 +267,7 @@ export class AdminMesasPage {
       },
       error: (err) => {
         this.isProcesandoMesa.set(false);
-        this.notify.showError(err?.error?.message || 'Error al crear la mesa');
+        this.notify.showError(mensajeError(err, 'Error al crear la mesa'));
       }
     });
   }
@@ -308,7 +307,7 @@ export class AdminMesasPage {
       },
       error: (err) => {
         this.isProcesandoMesa.set(false);
-        this.notify.showError(err?.error?.message || 'Error al actualizar mesa');
+        this.notify.showError(mensajeError(err, 'Error al actualizar mesa'));
       }
     });
   }
@@ -326,7 +325,7 @@ export class AdminMesasPage {
         },
         error: (err) => {
           this.isProcesandoMesa.set(false);
-          this.notify.showError(err?.error?.message || 'No se pudo dar de baja la mesa');
+          this.notify.showError(mensajeError(err, 'No se pudo dar de baja la mesa'));
         }
       });
     }
@@ -489,7 +488,7 @@ export class AdminMesasPage {
         },
         error: (err) => {
           this.isProcesandoMesa.set(false);
-          this.notify.showError(err?.error?.message || 'Error al reubicar mesa');
+          this.notify.showError(mensajeError(err, 'Error al reubicar mesa'));
         }
       });
       return;
@@ -549,7 +548,7 @@ export class AdminMesasPage {
       },
       error: (err) => {
         this.isProcesandoMesa.set(false);
-        this.notify.showError(err?.error?.message || 'Error al mover mesa');
+        this.notify.showError(mensajeError(err, 'Error al mover mesa'));
       }
     });
   }

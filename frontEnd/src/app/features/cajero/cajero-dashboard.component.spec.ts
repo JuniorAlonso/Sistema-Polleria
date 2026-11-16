@@ -12,6 +12,8 @@ import { NotificationService } from '../../core/services/notification.service';
 import { of, throwError } from 'rxjs';
 import { CobroSalonFacade } from './services/cobro-salon.facade';
 import { consumidorFinal } from './models/datos-fiscales';
+import { ArqueoCaja } from '../../core/models/finance.model';
+import { BackendComprobanteResponse } from '../../core/models/api-contracts.model';
 
 describe('CajeroDashboardComponent', () => {
   let component: CajeroDashboardComponent;
@@ -198,22 +200,28 @@ describe('CajeroDashboardComponent', () => {
       expect(update).toHaveBeenCalledWith('12', 'COMPLETADO', undefined, 'POL-12');
     });
 
-    it('envía el ticket al backend al cobrar un recojo ContraPago', () => {
+    it('envía el ticket al backend al cobrar un recojo ContraPago y registra la venta en caja (DIN-10)', () => {
       const cobro = spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
+      const ventaCaja = spyOn(financeService, 'registrarVentaEnCaja').and.returnValue(of({} as BackendComprobanteResponse));
 
       component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: '12', efectivoRecibido: 50 });
 
       expect(cobro).toHaveBeenCalledWith('12', 30, 50, 20, 'POL-12');
+      expect(ventaCaja).toHaveBeenCalledWith(
+        '12',
+        jasmine.objectContaining({ tipo: 'BOLETA', nombre: 'Juan Perez' }),
+        true
+      );
     });
 
     it('S13: avisa al cajero si el ingreso en caja falla después de cobrar', () => {
       spyOn(paymentService, 'registrarCobroEfectivo').and.returnValue(of({} as PaymentTransaction));
       financeService.cajaActual.set({ estado: 'ABIERTA' } as never);
-      spyOn(financeService, 'registrarMovimiento').and.returnValue(throwError(() => new Error('caja caída')));
+      spyOn(financeService, 'registrarVentaEnCaja').and.returnValue(throwError(() => new Error('caja caída')));
 
       component.entregarRecojo({ orden: recojo({ requiereCobroEfectivo: true }), codigoTicket: 'POL-12', efectivoRecibido: 30 });
 
-      expect(financeService.registrarMovimiento).toHaveBeenCalled();
+      expect(financeService.registrarVentaEnCaja).toHaveBeenCalled();
       expect(notify.showError).toHaveBeenCalledWith(
         'No se registró el ingreso en caja',
         jasmine.stringMatching(/manualmente/));
@@ -336,6 +344,18 @@ describe('CajeroDashboardComponent', () => {
       expect(component.comandasPorCobrar().map(o => o.id)).toEqual(['51']);
     });
 
+    it('POS: con el estado de la mesa publicado, solo lista las mesas que pidieron la cuenta (D3.14)', () => {
+      ordersService.orders.set([
+        orden({ id: '61', tipo: 'SALON', estado: 'LISTO' as never, mesaEstado: 'POR_COBRAR' }),
+        orden({ id: '62', tipo: 'SALON', estado: 'LISTO' as never, mesaEstado: 'OCUPADA' }),
+        orden({ id: '63', tipo: 'SALON', estado: 'LISTO' as never })
+      ]);
+
+      expect(component.comandasPorCobrar().map(o => o.id))
+        .withContext('sin mesaEstado (backend anterior) se conserva el comportamiento actual')
+        .toEqual(['61', '63']);
+    });
+
     it('POS: delega el cobro en la fachada con los datos fiscales y arma el ticket con el comprobante real', () => {
       abrirCaja();
       const comprobante = { serieCorrelativo: 'B001-000007', total: 45 } as never;
@@ -389,6 +409,135 @@ describe('CajeroDashboardComponent', () => {
       const botonAprobar = (Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[])
         .find(b => (b.textContent || '').includes('Confirmar Pago'))!;
       expect(botonAprobar.disabled).toBeTrue();
+    });
+  });
+  describe('S6/S7: cierre de caja ciego y rendición de repartidor', () => {
+    let notify: NotificationService;
+    const MENSAJE_400 =
+      'El efectivo contado no coincide con el esperado. Vuelve a contar o indica el motivo en las observaciones.';
+
+    beforeEach(() => {
+      notify = TestBed.inject(NotificationService);
+      spyOn(notify, 'showError');
+      spyOn(notify, 'showSuccess');
+      financeService.cajaActual.set({ estado: 'ABIERTA', montoApertura: 100 } as never);
+    });
+
+    it('S6: opening the close modal does not pre-fill the counted cash nor the observations', () => {
+      component.abrirModalCierre();
+      fixture.detectChanges();
+
+      expect(component.efectivoCierreInput).toBeNull();
+      expect(component.observacionesCierreInput).toBe('');
+      expect(component.errorCierre()).toBeNull();
+      expect(component.motivoCierreObligatorio()).toBeFalse();
+    });
+
+    it('S6: a 400 keeps the modal open, shows the backend message and requires a reason before retrying', () => {
+      const cerrar = spyOn(financeService, 'cerrarCaja').and.returnValues(
+        throwError(() => ({ status: 400, error: { error: MENSAJE_400 } })),
+        of({ id: 1, estado: 'CERRADA', totalEsperado: 120, diferencia: -20 } as unknown as ArqueoCaja)
+      );
+      component.abrirModalCierre();
+      component.efectivoCierreInput = 100;
+
+      component.ejecutarCierreCaja();
+      fixture.detectChanges();
+
+      expect(component.mostrarModalCierre()).toBeTrue();
+      expect(component.procesandoAccion()).toBeFalse();
+      expect(component.errorCierre()).toBe(MENSAJE_400);
+      expect(component.motivoCierreObligatorio()).toBeTrue();
+      expect(fixture.nativeElement.textContent).toContain(MENSAJE_400);
+
+      component.ejecutarCierreCaja();
+      expect(cerrar).withContext('blocked without a reason').toHaveBeenCalledTimes(1);
+
+      component.observacionesCierreInput = 'Faltan S/ 20 por vuelto mal dado';
+      component.ejecutarCierreCaja();
+
+      expect(cerrar).toHaveBeenCalledTimes(2);
+      expect(cerrar.calls.mostRecent().args[0]).toEqual(jasmine.objectContaining({
+        montoCierreEfectivo: 100,
+        observaciones: 'Faltan S/ 20 por vuelto mal dado'
+      }));
+      expect(component.mostrarModalCierre()).toBeFalse();
+      expect(notify.showSuccess).toHaveBeenCalledWith(jasmine.stringMatching(/120\.00.*-20\.00/));
+    });
+
+    it('S6: cannot close without entering the counted cash', () => {
+      const cerrar = spyOn(financeService, 'cerrarCaja');
+      component.abrirModalCierre();
+
+      component.ejecutarCierreCaja();
+
+      expect(cerrar).not.toHaveBeenCalled();
+      expect(component.mostrarModalCierre()).toBeTrue();
+    });
+
+    const liq = {
+      id: 12, repartidorId: 5, repartidorNombre: 'Carlos', fondoInicial: 50, totalCobradoEfectivo: 0,
+      totalRendido: 0, diferencia: 0, estado: 'ABIERTA', creadoEn: '2026-11-09T10:00:00'
+    } as const;
+
+    it('S7: settlement close pre-loads fondo + cash pending from /pendiente', () => {
+      const pendiente = spyOn(financeService, 'obtenerEfectivoPendienteLiquidacion').and.returnValue(
+        of({ repartidorId: 5, liquidacionId: 12, desde: '', total: 35.5, cantidad: 2, pagos: [] }));
+
+      component.abrirModalCierreLiquidacion({ ...liq });
+      fixture.detectChanges();
+
+      expect(pendiente).toHaveBeenCalledWith(5);
+      expect(component.totalRendidoLiqInput).toBe(85.5);
+      expect(component.pendienteLiq()?.total).toBe(35.5);
+      expect(component.cargandoPendienteLiq()).toBeFalse();
+      expect(fixture.nativeElement.textContent).toContain('85.50');
+    });
+
+    it('S7: if /pendiente fails the amount is not pre-filled and the error is shown', () => {
+      spyOn(financeService, 'obtenerEfectivoPendienteLiquidacion').and.returnValue(
+        throwError(() => ({ status: 503, error: { error: 'finance caído' } })));
+
+      component.abrirModalCierreLiquidacion({ ...liq });
+      fixture.detectChanges();
+
+      expect(component.totalRendidoLiqInput).toBeNull();
+      expect(component.errorPendienteLiq()).toBe('finance caído');
+      expect(fixture.nativeElement.textContent).toContain('finance caído');
+    });
+
+    it('FE-01/CON-12/FE-03: bloquea doble envío, filtra cobrosDelDia en hora de Lima sin inventar campos y consulta comprobante real al reimprimir', () => {
+      component.procesandoAccion.set(true);
+      const devSpy = spyOn(component['feedbackService'], 'marcarDevuelto');
+      component.entregarDevolucion(9);
+      expect(devSpy).not.toHaveBeenCalled();
+      component.procesandoAccion.set(false);
+
+      const hoyLima = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+      const paymentService = TestBed.inject(PaymentService);
+      paymentService.pagos.set([
+        { id: '1', orderId: '888', metodo: 'YAPE', monto: 42, estado: 'APROBADO', fechaTransaccion: `${hoyLima}T15:00:00-05:00` },
+        { id: '2', orderId: '889', metodo: 'TARJETA', monto: 19, estado: 'APROBADO', fechaTransaccion: '2020-01-01T15:00:00-05:00' }
+      ]);
+
+      const cobros = component.cobrosDelDia();
+      expect(cobros.length).toBe(1);
+      expect(cobros[0].ordenId).toBe('888');
+      expect(cobros[0].clienteNombre).toBe('');
+      expect(cobros[0].tipoOrden).toBe('');
+
+      const compSpy = spyOn(financeService, 'obtenerComprobantePorOrden').and.returnValue(of({
+        id: 50, ordenId: 888, tipo: 'BOLETA', serieCorrelativo: 'B001-00000050',
+        clienteNombre: 'Lucía', subtotal: 35.59, igv: 6.41, total: 42, estadoPagoTexto: 'PAGADO', emitidoEn: `${hoyLima}T15:01:00`
+      }));
+      component.reimprimirTicket(cobros[0]);
+      expect(compSpy).toHaveBeenCalledWith('888');
+      expect(component.ticketEmitido()?.comprobante?.serieCorrelativo).toBe('B001-00000050');
     });
   });
 });

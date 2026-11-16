@@ -20,13 +20,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.Date;
+import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Seguimiento de pedidos sin iniciar sesión:
- * 1. El cliente escribe su celular y recibe un código de 4 dígitos por WhatsApp.
+ * 1. El cliente escribe su celular y recibe un código de 6 dígitos por WhatsApp.
  * 2. Con el código obtiene un acceso temporal (token) para ver sus pedidos.
  */
 @Slf4j
@@ -37,6 +41,7 @@ public class SeguimientoService {
 
     private static final Duration VIGENCIA_CODIGO = Duration.ofMinutes(5);
     private static final Duration ESPERA_ENTRE_CODIGOS = Duration.ofSeconds(60);
+    private static final int MAX_CODIGOS_DIARIOS = 5;
     private static final Duration VIGENCIA_ACCESO = Duration.ofMinutes(30);
     private static final int MAX_INTENTOS = 5;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -46,6 +51,7 @@ public class SeguimientoService {
     private final NotificationService notificationService;
     private final OrdenService ordenService;
     private final SecretKey clave;
+    private final Map<String, Deque<LocalDateTime>> solicitudesPorTelefono = new ConcurrentHashMap<>();
 
     public SeguimientoService(CodigoSeguimientoRepository codigoRepository,
                               OrdenRepository ordenRepository,
@@ -61,17 +67,15 @@ public class SeguimientoService {
 
     /**
      * Envía el código por WhatsApp solo si ese celular tiene pedidos.
-     * La respuesta al cliente es la misma en ambos casos, para no revelar qué números son clientes.
+     * La respuesta y los límites temporales al cliente son idénticos en ambos casos
+     * para no revelar qué números pertenecen a clientes.
      */
     @Transactional
     public void solicitarCodigo(String telefono) {
         String numero = normalizarOFallar(telefono);
+        LocalDateTime ahora = LocalDateTime.now();
 
-        codigoRepository.findTopByTelefonoOrderByCreadoEnDesc(numero).ifPresent(anterior -> {
-            if (anterior.getCreadoEn().plus(ESPERA_ENTRE_CODIGOS).isAfter(LocalDateTime.now())) {
-                throw new DemasiadasSolicitudesException("Espera un minuto antes de pedir otro código");
-            }
-        });
+        verificarYRegistrarLimiteSolicitud(numero, ahora);
 
         if (!ordenRepository.existsByTelefonoClienteIn(TelefonoUtil.variantes(numero))) {
             log.info("Código de seguimiento solicitado para un celular sin pedidos");
@@ -79,14 +83,39 @@ public class SeguimientoService {
         }
 
         codigoRepository.invalidarAnteriores(numero);
-        String codigo = String.format("%04d", RANDOM.nextInt(10_000));
+        String codigo = String.format("%06d", RANDOM.nextInt(1_000_000));
         codigoRepository.save(CodigoSeguimiento.builder()
                 .telefono(numero)
                 .codigo(codigo)
-                .expiraEn(LocalDateTime.now().plus(VIGENCIA_CODIGO))
+                .expiraEn(ahora.plus(VIGENCIA_CODIGO))
                 .build());
 
         notificationService.enviarCodigoSeguimiento(numero, codigo);
+    }
+
+    private void verificarYRegistrarLimiteSolicitud(String numero, LocalDateTime ahora) {
+        LocalDateTime hace24Horas = ahora.minusHours(24);
+        codigoRepository.findTopByTelefonoOrderByCreadoEnDesc(numero).ifPresent(anterior -> {
+            if (anterior.getCreadoEn() != null && anterior.getCreadoEn().plus(ESPERA_ENTRE_CODIGOS).isAfter(ahora)) {
+                throw new DemasiadasSolicitudesException("Espera un minuto antes de pedir otro código");
+            }
+        });
+
+        long enviosDb24h = codigoRepository.countByTelefonoAndCreadoEnAfter(numero, hace24Horas);
+        Deque<LocalDateTime> historial = solicitudesPorTelefono.computeIfAbsent(numero, k -> new ArrayDeque<>());
+        synchronized (historial) {
+            while (!historial.isEmpty() && historial.peekFirst().isBefore(hace24Horas)) {
+                historial.pollFirst();
+            }
+            LocalDateTime ultimoEnMemoria = historial.peekLast();
+            if (ultimoEnMemoria != null && ultimoEnMemoria.plus(ESPERA_ENTRE_CODIGOS).isAfter(ahora)) {
+                throw new DemasiadasSolicitudesException("Espera un minuto antes de pedir otro código");
+            }
+            if (Math.max(enviosDb24h, historial.size()) >= MAX_CODIGOS_DIARIOS) {
+                throw new DemasiadasSolicitudesException("Alcanzaste el límite diario de solicitudes de código");
+            }
+            historial.addLast(ahora);
+        }
     }
 
     /** Valida el código y devuelve un acceso temporal para consultar los pedidos de ese celular. */
@@ -94,7 +123,10 @@ public class SeguimientoService {
     public String verificarCodigo(String telefono, String codigo) {
         String numero = normalizarOFallar(telefono);
 
-        CodigoSeguimiento guardado = codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc(numero)
+        CodigoSeguimiento guardado = codigoRepository.findByTelefonoAndUsadoFalseWithLock(numero)
+                .stream()
+                .findFirst()
+                .or(() -> codigoRepository.findTopByTelefonoAndUsadoFalseOrderByCreadoEnDesc(numero))
                 .filter(c -> !c.isExpirado() && c.getIntentos() < MAX_INTENTOS)
                 .orElseThrow(() -> new IllegalArgumentException("El código venció. Solicita uno nuevo."));
 

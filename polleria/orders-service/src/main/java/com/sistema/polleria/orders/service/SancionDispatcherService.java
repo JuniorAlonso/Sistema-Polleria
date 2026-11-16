@@ -4,13 +4,19 @@ import com.sistema.polleria.orders.entity.Orden;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Notifica a auth-service e incident-service cuando una orden cae en PEDIDO_FANTASMA,
@@ -25,19 +31,22 @@ public class SancionDispatcherService {
     private final String authServiceUrl;
     private final String incidentServiceUrl;
     private final String internalApiKey;
+    private final Map<String, Boolean> cacheSanciones = new ConcurrentHashMap<>();
 
     @Autowired
     public SancionDispatcherService(
             @Value("${auth.service.url:http://localhost:8081}") String authServiceUrl,
-            @Value("${incident.service.url:http://localhost:8087}") String incidentServiceUrl,
+            @Value("${incident.service.url:http://localhost:8088}") String incidentServiceUrl,
             @Value("${internal.api-key:}") String internalApiKey) {
         this.authServiceUrl = authServiceUrl;
         this.incidentServiceUrl = incidentServiceUrl;
         this.internalApiKey = internalApiKey;
 
-        var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(java.time.Duration.ofSeconds(3));
-        requestFactory.setReadTimeout(java.time.Duration.ofSeconds(5));
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
         this.restClient = RestClient.builder().requestFactory(requestFactory).build();
     }
 
@@ -51,9 +60,11 @@ public class SancionDispatcherService {
 
     /**
      * Consulta sincrónica a auth-service para verificar si un cliente está sancionado para ContraPago.
-     * auth-service hace coincidir por teléfono normalizado, correo (sin distinguir mayúsculas) e IP.
+     * En caso de falla temporal de auth-service, usa la caché local conocida o falla cerrado
+     * (bloquea ContraPago) cuando no existe historial verificado previo.
      */
     public boolean tieneSancionActiva(String telefono, String email, String ip) {
+        List<String> claves = clavesIdentidad(telefono, email, ip);
         try {
             var uri = UriComponentsBuilder.fromUriString(authServiceUrl).path("/auth/sanciones/verificar");
             // Template variables are encoded strictly, so a '+' in an e-mail is not read as a space.
@@ -70,13 +81,51 @@ public class SancionDispatcherService {
             Map<String, Object> resp = req.retrieve()
                     .body(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {});
 
-            if (resp != null && Boolean.TRUE.equals(resp.get("bloqueadoEfectivo"))) {
-                return true;
-            }
+            boolean bloqueado = resp != null && Boolean.TRUE.equals(resp.get("bloqueadoEfectivo"));
+            registrarEnCache(claves, bloqueado);
+            return bloqueado;
         } catch (Exception e) {
             log.warn("No se pudo verificar sanción con auth-service: {}", e.getMessage());
+            return resolverFallbackCerrado(claves);
         }
-        return false;
+    }
+
+    private boolean resolverFallbackCerrado(List<String> claves) {
+        if (claves.isEmpty()) {
+            return true;
+        }
+        boolean todasLimpias = true;
+        for (String clave : claves) {
+            Boolean estado = cacheSanciones.get(clave);
+            if (estado == null || Boolean.TRUE.equals(estado)) {
+                todasLimpias = false;
+                break;
+            }
+        }
+        return !todasLimpias;
+    }
+
+    private void registrarEnCache(List<String> claves, boolean bloqueado) {
+        if (cacheSanciones.size() > 10_000) {
+            cacheSanciones.clear();
+        }
+        for (String clave : claves) {
+            cacheSanciones.put(clave, bloqueado);
+        }
+    }
+
+    private static List<String> clavesIdentidad(String telefono, String email, String ip) {
+        List<String> claves = new ArrayList<>(3);
+        if (telefono != null && !telefono.isBlank()) {
+            claves.add("tel:" + telefono.trim());
+        }
+        if (email != null && !email.isBlank()) {
+            claves.add("email:" + email.trim().toLowerCase());
+        }
+        if (ip != null && !ip.isBlank()) {
+            claves.add("ip:" + ip.trim());
+        }
+        return claves;
     }
 
     /** E-mail of the registered customer, or null when there is none or the lookup fails (best effort). */
@@ -102,12 +151,14 @@ public class SancionDispatcherService {
     @Async
     public void registrarSancionPorPedidoFantasma(Orden orden, String motivo) {
         log.warn("Disparando sanción por PEDIDO_FANTASMA para orden #{} (motivo: {})", orden.getId(), motivo);
+        String email = resolverEmailCliente(orden);
+        registrarEnCache(clavesIdentidad(orden.getTelefonoCliente(), email, orden.getIpOrigen()), true);
 
         // 1. Notificar a auth-service para registrar bloqueo de teléfono/IP/Email
         try {
             Map<String, Object> sancionPayload = new HashMap<>();
             sancionPayload.put("telefono", orden.getTelefonoCliente());
-            sancionPayload.put("email", resolverEmailCliente(orden));
+            sancionPayload.put("email", email);
             sancionPayload.put("ipAddress", orden.getIpOrigen());
             sancionPayload.put("ordenId", orden.getId());
             sancionPayload.put("motivo", "PEDIDO_FANTASMA: " + (motivo != null ? motivo : "No entregado / Abandonado"));

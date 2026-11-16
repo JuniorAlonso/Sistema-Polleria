@@ -1,27 +1,32 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16.6-alpine
     container_name: polleria-postgres
     restart: unless-stopped
     environment:
       TZ: America/Lima
-      POSTGRES_DB: polleria
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: ${POSTGRES_DB:-polleria}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
     ports:
-      - "5432:5432"
+      # Exponemos 5433 al host para evitar colisión con 127.0.0.1:5432 en Windows
+      # y coincidir con application-test.properties (postgres:5432 sigue disponible en red Docker).
+      - "127.0.0.1:5433:5432"
     volumes:
       - polleria_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
 
   pgadmin:
-    image: dpage/pgadmin4
+    image: dpage/pgadmin4:8.14
     container_name: polleria-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@polleria.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Defina PGADMIN_DEFAULT_PASSWORD en .env}
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
+    depends_on:
+      - postgres
 
 volumes:
   polleria_postgres_data:

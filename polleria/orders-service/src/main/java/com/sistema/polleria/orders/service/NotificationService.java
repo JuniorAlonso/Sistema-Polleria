@@ -5,10 +5,13 @@ import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.entity.OrdenTipo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -43,10 +46,15 @@ public class NotificationService {
             @Value("${notification.service.internal-key:}") String internalKey) {
         this.notificationUrl = notificationUrl;
         this.internalKey = internalKey;
-        this.restClient = RestClient.create();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        this.restClient = RestClient.builder().requestFactory(requestFactory).build();
     }
 
-    @Async
+    @Async("whatsappExecutor")
     public void notificarCambioEstado(Orden orden, OrdenEstado nuevoEstado) {
         boolean esDeliveryNotificable = orden.getTipo() == OrdenTipo.DELIVERY && ESTADOS_NOTIFICABLES_DELIVERY.contains(nuevoEstado);
         boolean esRecojoNotificable = orden.getTipo() == OrdenTipo.RECOJO && ESTADOS_NOTIFICABLES_RECOJO.contains(nuevoEstado);
@@ -97,8 +105,8 @@ public class NotificationService {
                 + "; pasado ese plazo se declarará pedido fantasma. Escribe *ticket* para verlo de nuevo.";
     }
 
-    /** Código de 4 dígitos para ver los pedidos sin iniciar sesión. */
-    @Async
+    /** Código de 6 dígitos para ver los pedidos sin iniciar sesión. */
+    @Async("whatsappExecutor")
     public void enviarCodigoSeguimiento(String telefono, String codigo) {
         try {
             restClient.post()

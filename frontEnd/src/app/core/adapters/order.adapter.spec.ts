@@ -125,6 +125,11 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
     expect(orden.repartidorId == null).toBeTrue();
   });
 
+  it('propaga el estado de la mesa de la comanda (D3.14)', () => {
+    expect(OrderAdapter.toOrder({ ...dto, mesaEstado: 'POR_COBRAR' } as never).mesaEstado).toBe('POR_COBRAR');
+    expect(OrderAdapter.toOrder(dto as never).mesaEstado).toBeUndefined();
+  });
+
   it('propaga la marca persistida de servido en mesa', () => {
     const orden = OrderAdapter.toOrder({
       ...dto,
@@ -136,6 +141,19 @@ describe('OrderAdapter.toOrder — sin nombre de motorizado inventado', () => {
 
     expect(orden.servidoEn).toBe('2026-01-01T00:05:00Z');
     expect(orden.servidoPor).toBe(7);
+  });
+
+  it('mapea un estado backend desconocido a DESCONOCIDO sin fabricar timestamps (FE-15)', () => {
+    const orden = OrderAdapter.toOrder({
+      ...dto,
+      estado: 'ESTADO_FUTURO_RARO',
+      creadoEn: undefined,
+      actualizadoEn: undefined
+    } as never);
+
+    expect(orden.estado).toBe('DESCONOCIDO');
+    expect(orden.createdAt).toBe('');
+    expect(orden.updatedAt).toBe('');
   });
 });
 

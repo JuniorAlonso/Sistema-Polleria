@@ -5,7 +5,8 @@ import {
   BackendPagoResponse
 } from '../models/api-contracts.model';
 import { PaymentMethod } from '../models/order.model';
-import { PaymentStatus, PaymentTransaction, ProcessPaymentRequest } from '../models/payment.model';
+import { PaymentStatus, PaymentTransaction } from '../models/payment.model';
+import { parsePositiveIntId } from '../utils/id';
 
 export class PaymentAdapter {
   /**
@@ -40,6 +41,8 @@ export class PaymentAdapter {
     if (e === 'APROBADO') return 'APROBADO';
     if (e === 'RECHAZADO') return 'RECHAZADO';
     if (e === 'CANCELADO') return 'CANCELADO';
+    if (e === 'REEMBOLSADO') return 'REEMBOLSADO';
+    if (e === 'REEMBOLSADO_PARCIAL') return 'REEMBOLSADO_PARCIAL';
     return 'PENDIENTE';
   }
 
@@ -55,7 +58,7 @@ export class PaymentAdapter {
       estado: this.toPaymentStatus(dto.estado),
       numeroOperacion: dto.referenciaExterna || undefined,
       comprobanteUrl: dto.comprobanteUrl || undefined,
-      fechaTransaccion: dto.creadoEn || new Date().toISOString()
+      fechaTransaccion: dto.creadoEn || ''
     };
   }
 
@@ -68,7 +71,10 @@ export class PaymentAdapter {
     metodo: PaymentMethod,
     telefonoYape?: string
   ): BackendIniciarPagoRequest {
-    const cleanOrderId = typeof ordenId === 'number' ? ordenId : parseInt(String(ordenId).replace('ord-', ''), 10) || 1;
+    const cleanOrderId = parsePositiveIntId(ordenId);
+    if (!cleanOrderId) {
+      throw new Error(`Id de orden inválido para iniciar pago: ${ordenId}`);
+    }
     const backendMetodo = this.toBackendMetodoPago(metodo);
 
     // Sin teléfono no se inventa uno: YapePlinGateway rechaza la operación cuando

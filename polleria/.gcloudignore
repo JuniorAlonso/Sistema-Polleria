@@ -3,9 +3,11 @@
 .gitignore
 .env
 .env.*
-!.env.production.example
-notification-service/
+!**/.env*.example
+**/application-local.properties
 **/.wwebjs_*/**
+**/whatsapp-session/**
+**/uploads/**
 **/node_modules/**
 target/
 target/**

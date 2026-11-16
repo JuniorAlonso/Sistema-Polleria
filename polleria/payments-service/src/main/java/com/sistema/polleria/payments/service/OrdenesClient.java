@@ -33,7 +33,13 @@ public class OrdenesClient {
             String tipo,
             BigDecimal total,
             Long clienteId,
-            LocalDateTime creadoEn) {
+            LocalDateTime creadoEn,
+            Long repartidorId,
+            String nombreCliente) {
+
+        public OrdenInfo(Long id, String estado, String tipo, BigDecimal total, Long clienteId, LocalDateTime creadoEn) {
+            this(id, estado, tipo, total, clienteId, creadoEn, null, null);
+        }
     }
 
     /** Thrown when the order cannot be read (network error, 5xx, unparsable body). */

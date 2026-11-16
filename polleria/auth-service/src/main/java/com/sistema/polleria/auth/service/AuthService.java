@@ -1,15 +1,18 @@
 package com.sistema.polleria.auth.service;
 
 import com.sistema.polleria.auth.dto.AuthResponse;
+import com.sistema.polleria.auth.dto.CreateStaffRequest;
 import com.sistema.polleria.auth.dto.LoginRequest;
 import com.sistema.polleria.auth.dto.RegisterRequest;
 import com.sistema.polleria.auth.dto.TwoFactorRequest;
 import com.sistema.polleria.auth.entity.Role;
 import com.sistema.polleria.auth.entity.User;
 import com.sistema.polleria.auth.repository.UserRepository;
+import com.sistema.polleria.auth.util.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -32,29 +35,26 @@ public class AuthService {
     private final TwoFactorService twoFactorService;
     private final RefreshTokenService refreshTokenService;
 
+    @Value("${auth.trust-forwarded-header:false}")
+    private boolean trustForwardedHeader = false;
+
     // Roles que requieren 2FA obligatorio
-    private static final Set<Role> ROLES_WITH_2FA = Set.of(Role.ADMIN, Role.MOZO, Role.COCINA, Role.REPARTIDOR);
+    private static final Set<Role> ROLES_WITH_2FA = Set.of(Role.ADMIN, Role.MOZO, Role.COCINA, Role.REPARTIDOR, Role.CAJERO);
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("El correo ya está registrado");
-        }
-        if (request.getPhone() != null && !request.getPhone().isBlank()
-                && userRepository.existsByPhone(request.getPhone())) {
-            throw new IllegalArgumentException("El celular ya está registrado");
-        }
+        validarUnicidadUsuario(request.getEmail(), request.getPhone());
 
         User user = User.builder()
                 .name(request.getName())
                 .email(request.getEmail().toLowerCase())
                 .phone(request.getPhone())
                 .password(passwordEncoder.encode(request.getPassword()))
-                .role(request.getRole())
+                .role(Role.CLIENTE)
                 .build();
 
         userRepository.save(user);
-        log.info("Usuario registrado: {} con rol {}", user.getEmail(), user.getRole());
+        log.info("Cliente registrado: {}", user.getEmail());
 
         String token = jwtService.generateToken(user);
         var refreshToken = refreshTokenService.createRefreshToken(user);
@@ -71,6 +71,40 @@ public class AuthService {
                 .requiresTwoFactor(false)
                 .message("Registro exitoso")
                 .build();
+    }
+
+    @Transactional
+    public AuthResponse registerStaff(CreateStaffRequest request) {
+        validarUnicidadUsuario(request.getEmail(), request.getPhone());
+
+        User user = User.builder()
+                .name(request.getName())
+                .email(request.getEmail().toLowerCase())
+                .phone(request.getPhone())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .role(request.getRole())
+                .build();
+
+        userRepository.save(user);
+        log.info("Cuenta administrativa/personal registrada: {} con rol {}", user.getEmail(), user.getRole());
+
+        return AuthResponse.builder()
+                .name(user.getName())
+                .email(user.getEmail())
+                .phone(user.getPhone())
+                .role(user.getRole())
+                .requiresTwoFactor(ROLES_WITH_2FA.contains(user.getRole()))
+                .message("Usuario creado exitosamente")
+                .build();
+    }
+
+    private void validarUnicidadUsuario(String email, String phone) {
+        if (userRepository.existsByEmail(email.toLowerCase()) || userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("El correo ya está registrado");
+        }
+        if (phone != null && !phone.isBlank() && userRepository.existsByPhone(phone)) {
+            throw new IllegalArgumentException("El celular ya está registrado");
+        }
     }
 
     @Transactional
@@ -115,7 +149,7 @@ public class AuthService {
                     .build();
         }
 
-        // Cliente/REPARTIDOR: login directo
+        // Cliente: login directo
         String token = jwtService.generateToken(user);
         var refreshToken = refreshTokenService.createRefreshToken(user);
         log.info("Login exitoso para: {}", user.getEmail());
@@ -176,10 +210,6 @@ public class AuthService {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
-            return xForwardedFor.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request, trustForwardedHeader);
     }
 }

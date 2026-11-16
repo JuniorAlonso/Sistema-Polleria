@@ -116,6 +116,21 @@ public class GlobalExceptionHandler {
                 "Método " + ex.getMethod() + " no permitido en esta ruta");
     }
 
+    @ExceptionHandler({
+            org.springframework.orm.ObjectOptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class,
+            jakarta.persistence.PessimisticLockException.class,
+            org.springframework.dao.CannotAcquireLockException.class,
+            org.springframework.dao.DataIntegrityViolationException.class
+    })
+    public ProblemDetail handleConcurrencyOrIntegrity(Exception ex) {
+        log.warn("Conflicto de concurrencia o integridad en payments-service: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Conflicto de concurrencia");
+        pd.setDetail("El pago fue modificado simultáneamente o ya existe un registro equivalente. Reintenta.");
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneral(Exception ex) {
         log.error("Error inesperado en payments-service", ex);

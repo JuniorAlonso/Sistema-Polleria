@@ -45,9 +45,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(getSigningKey())
+                    .clockSkewSeconds(60)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+
+            // Los tokens de seguimiento son de invitado para /seguimiento; nunca autentican sesión.
+            if ("seguimiento".equals(claims.get("tipo", String.class))) {
+                filterChain.doFilter(request, response);
+                return;
+            }
 
             String email = claims.getSubject();
             String role  = claims.get("role", String.class);

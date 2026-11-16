@@ -101,6 +101,15 @@ public class ProductoService {
     }
 
     @Transactional
+    public ProductoResponse actualizarImagenUrl(Long id, String imagenUrl) {
+        Producto producto = buscarOFallar(id);
+        producto.setImagenUrl(imagenUrl);
+        productoRepository.save(producto);
+        log.info("imagenUrl del producto #{} actualizada a '{}'", id, imagenUrl);
+        return ProductoResponse.from(producto);
+    }
+
+    @Transactional
     public void eliminar(Long id) {
         buscarOFallar(id);
         productoRepository.deleteById(id);

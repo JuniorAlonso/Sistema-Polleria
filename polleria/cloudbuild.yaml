@@ -1,8 +1,8 @@
 steps:
-  # 1. Compilar todo el backend con Maven
+  # 1. Compilar y ejecutar pruebas unitarias del backend Java
   - name: 'maven:3.9.9-eclipse-temurin-21'
     entrypoint: 'mvn'
-    args: ['-B', 'clean', 'package', '-DskipTests']
+    args: ['-B', 'clean', 'test']
     dir: '.'
 
   # 2. Construir imagen de auth-service
@@ -41,6 +41,54 @@ steps:
       - 'payments-service/Dockerfile'
       - '.'
 
+  # 5. Construir imagen de feedback-service
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/feedback-service:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/feedback-service:latest'
+      - '-f'
+      - 'feedback-service/Dockerfile'
+      - '.'
+
+  # 6. Construir imagen de finance-service
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/finance-service:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/finance-service:latest'
+      - '-f'
+      - 'finance-service/Dockerfile'
+      - '.'
+
+  # 7. Construir imagen de incident-service
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/incident-service:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/incident-service:latest'
+      - '-f'
+      - 'incident-service/Dockerfile'
+      - '.'
+
+  # 8. Construir imagen de notification-service
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:latest'
+      - '-f'
+      - 'notification-service/Dockerfile'
+      - 'notification-service'
+
 images:
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:${_TAG}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:latest'
@@ -48,6 +96,14 @@ images:
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/orders-service:latest'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/payments-service:${_TAG}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/payments-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/feedback-service:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/feedback-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/finance-service:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/finance-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/incident-service:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/incident-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:latest'
 
 substitutions:
   _REGION: 'us-central1'

@@ -2,6 +2,7 @@ const { ColaEnvios } = require('./queue');
 const { normalizarTelefono } = require('./phone');
 const { crearAjustes } = require('../outbound/ajustes');
 const { duracionEscribiendo } = require('../outbound/humanizacion');
+const { WhatsappDesconectadoError, esErrorDeDesconexion } = require('./errores');
 
 function esJidDirecto(telefono) {
     if (typeof telefono !== 'string') return false;
@@ -20,13 +21,27 @@ function esJidDirecto(telefono) {
  * y, para la humanización, marcarVisto(chatId) y escribiendo(chatId, duracionMs).
  */
 class NotificacionService {
-    constructor({ store, whatsapp, intervaloMs, maxIntentos, ajustes, gobernador, jitterPct, azar, dormir, ahora }) {
+    constructor({
+        store,
+        whatsapp,
+        intervaloMs,
+        maxIntentos,
+        ajustes,
+        gobernador,
+        jitterPct,
+        azar,
+        dormir,
+        ahora,
+        reintentoDesconexionMs = 30000
+    }) {
         this.store = store;
         this.whatsapp = whatsapp;
         this.maxIntentos = maxIntentos;
-        // Los ajustes viven en memoria (S8) y se leen en cada envío: editarlos en caliente
-        // no exige reconstruir la cola.
-        this.ajustes = ajustes || crearAjustes({ intervaloMs, jitterPct });
+        this.ahora = ahora || (() => Date.now());
+        this.reintentoDesconexionMs = reintentoDesconexionMs;
+        this._desconexionHasta = null;
+        // Se leen en cada envío: editarlos en caliente no exige reconstruir la cola.
+        this.ajustes = ajustes || crearAjustes({ intervaloMs, jitterPct }, { store });
         // El gobernador (T4b) es opcional: cuando no viene, la cola no aplica límites ni
         // circuit breaker. main.js siempre lo inyecta; los tests de cola/humanización no.
         this.gobernador = gobernador || null;
@@ -36,27 +51,79 @@ class NotificacionService {
             procesar: trabajo => this._procesar(trabajo),
             azar,
             dormir,
-            ahora,
-            gobernador: this.gobernador
+            ahora: this.ahora,
+            gobernador: this.gobernador,
+            pausaExterna: () => this._motivoPausaConexion()
         });
+    }
+
+    reanudarPorConexion() {
+        this._desconexionHasta = null;
+        this.cola.despertar();
+    }
+
+    _motivoPausaConexion() {
+        if (this.whatsapp && typeof this.whatsapp.estado === 'function' && this.whatsapp.estado() !== 'CONECTADO') {
+            return {
+                motivo: 'whatsapp-desconectado',
+                esperarMs: this.reintentoDesconexionMs,
+                detalle: `WhatsApp no conectado (${this.whatsapp.estado()})`
+            };
+        }
+        if (this._desconexionHasta !== null) {
+            const restante = this._desconexionHasta - this.ahora();
+            if (restante > 0) {
+                return {
+                    motivo: 'whatsapp-desconectado',
+                    esperarMs: restante,
+                    detalle: 'Esperando reconexión de WhatsApp'
+                };
+            }
+            this._desconexionHasta = null;
+        }
+        return null;
+    }
+
+    estadoConexion() {
+        const pausa = this._motivoPausaConexion();
+        return {
+            pausada: Boolean(pausa),
+            motivo: pausa ? pausa.motivo : null,
+            detalle: pausa ? pausa.detalle : null
+        };
     }
 
     /**
      * @param mensaje          texto que se envía por WhatsApp
      * @param mensajeRegistro  texto que se guarda en el historial (p. ej. con el código oculto); por defecto, el mismo
+     * @param eventoId         identificador opcional para deduplicación idempotente (CON-19)
      */
-    async encolar({ ordenId, telefono, tipo, mensaje, mensajeRegistro }) {
+    async encolar({ ordenId, telefono, tipo, mensaje, mensajeRegistro, eventoId = null }) {
         const textoTelefono = typeof telefono === 'string' ? telefono.trim() : '';
         const jidDirecto = esJidDirecto(textoTelefono) ? textoTelefono : null;
         const numero = normalizarTelefono(telefono);
         const destinatario = numero || jidDirecto;
 
-        const log = await this.store.create({
+        const datos = {
             ordenId,
             destinatario: destinatario || String(telefono),
             tipo,
-            mensaje: mensajeRegistro || mensaje
-        });
+            mensaje: mensajeRegistro || mensaje,
+            eventoId
+        };
+        let log;
+        let creado = true;
+        if (typeof this.store.crearOExistente === 'function') {
+            const res = await this.store.crearOExistente(datos);
+            log = res.log;
+            creado = res.creado;
+        } else {
+            log = await this.store.create(datos);
+        }
+
+        if (!creado) {
+            return log;
+        }
 
         // Un número mal formado no entra a la cola: se registra como ERROR y no bloquea a nadie
         if (!destinatario) {
@@ -144,7 +211,14 @@ class NotificacionService {
 
     async _procesar(trabajo) {
         const { logId, numero, mensaje, chatId: chatIdDirecto, marcarVisto } = trabajo;
-        const intento = (trabajo.intentos || 0) + 1;
+        if (logId && typeof this.store.findById === 'function') {
+            const actual = await this.store.findById(logId);
+            if (actual && actual.estado === 'ENVIADO') {
+                return;
+            }
+        }
+        const intentosPrevios = trabajo.intentos || 0;
+        const intento = intentosPrevios + 1;
 
         try {
             await this.whatsapp.esperarListo();
@@ -175,6 +249,17 @@ class NotificacionService {
             if (this.gobernador) this.gobernador.registrarExito();
             console.log(`✅ ${logId || chatId} enviado a ${numero || chatId}`);
         } catch (error) {
+            if (esErrorDeDesconexion(error, this.whatsapp)) {
+                await this._marcar(logId, {
+                    intentos: intentosPrevios,
+                    errorDetalle: `En espera de reconexión de WhatsApp: ${error.message}`
+                });
+                this._desconexionHasta = this.ahora() + this.reintentoDesconexionMs;
+                this.cola.reencolarAlFrente({ ...trabajo, intentos: intentosPrevios });
+                console.warn(`⏸️ ${logId || numero} pausado por desconexión de WhatsApp (sin consumir intentos): ${error.message}`);
+                return;
+            }
+
             // Señal de rate-overlimit/bloqueo: el gobernador abre el breaker y pausa la cola.
             // El trabajo se reencola tal cual (sin consumir maxIntentos) para no perderlo.
             const bloqueo = this.gobernador ? this.gobernador.registrarFallo(error) : false;
@@ -201,4 +286,4 @@ class NotificacionService {
     }
 }
 
-module.exports = { NotificacionService };
+module.exports = { NotificacionService, WhatsappDesconectadoError, esErrorDeDesconexion };

@@ -1,16 +1,18 @@
 import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, computed, effect, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CartService } from '../../../core/services/cart.service';
 import { OrdersService } from '../../../core/services/orders.service';
+import { ProductsService } from '../../../core/services/products.service';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { NotificationService } from '../../../core/services/notification.service';
 import { Order, OrderType, PaymentMethod } from '../../../core/models/order.model';
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { parsePositiveIntId } from '../../../core/utils/id';
 
 /** sessionStorage key of the checkout form a guest leaves to log in (S1). */
 const CLAVE_BORRADOR = 'polleria_checkout_borrador';
@@ -446,6 +448,7 @@ interface BorradorCheckout {
 export class CheckoutComponent implements OnInit {
   readonly cart = inject(CartService);
   private ordersService = inject(OrdersService);
+  private productsService = inject(ProductsService, { optional: true });
   private paymentService = inject(PaymentService);
   private auth = inject(AuthService);
   private router = inject(Router);
@@ -460,10 +463,21 @@ export class CheckoutComponent implements OnInit {
   readonly sancionNoVerificada = signal<boolean>(false);
   /** S1: a guest pressed pay; they are invited to log in or sign up instead of losing the order. */
   readonly mostrarModalLogin = signal<boolean>(false);
-  /** Order already created for a Yape OTP attempt, kept so a retry pays the SAME order. */
+  /** Order already created for a Yape OTP attempt, kept only while cart/method/type match. */
   private ordenYapePendiente: Order | null = null;
-  /** Order already created for a card attempt, kept so a retry asks Mercado Pago for the SAME order. */
+  /** Order already created for a card attempt, kept only while cart/method/type match. */
   private ordenTarjetaPendiente: Order | null = null;
+
+  constructor() {
+    effect(() => {
+      // Cualquier cambio en carrito, tipo de entrega o método invalida reintentos sobre órdenes viejas (FE-06)
+      this.cart.items();
+      this.tipoPedido();
+      this.metodoPago();
+      this.ordenYapePendiente = null;
+      this.ordenTarjetaPendiente = null;
+    });
+  }
 
   direccion = '';
   celular = '';
@@ -489,6 +503,28 @@ export class CheckoutComponent implements OnInit {
 
     if (this.celular) {
       this.verificarSancionCliente(this.celular);
+    }
+
+    if (this.productsService?.refrescarProductos && !this.cart.isEmpty()) {
+      this.productsService.refrescarProductos().subscribe({
+        next: (productos) => {
+          const sync = this.cart.sincronizarConProductos(productos);
+          if (sync.huboCambios) {
+            const partes = [
+              ...sync.cambiosPrecio,
+              ...sync.cantidadesAjustadas,
+              ...sync.agotadosEliminados.map(n => `Agotado y retirado: ${n}`)
+            ];
+            this.notify.showInfo(
+              'Tu carrito se actualizó con la carta vigente',
+              partes.join(' · ')
+            );
+          }
+        },
+        error: () => {
+          // No bloquea la vista si falla la actualización preventiva; el backend valida igual.
+        }
+      });
     }
 
     this.route.queryParams.subscribe(params => {
@@ -556,12 +592,16 @@ export class CheckoutComponent implements OnInit {
     return paga > total ? Math.round((paga - total) * 100) / 100 : 0;
   }
 
+  /** D3.9: prices include IGV, so base = total / 1.18 rounded HALF_UP to 2 decimals. */
   getSubtotalNeto(): number {
-    return Math.round((this.cart.subtotal() * 0.82) * 100) / 100;
+    const base = this.cart.subtotal() / 1.18;
+    // toFixed(8) removes binary noise (e.g. 8.474999...) before rounding half up.
+    return Math.round(Number((base * 100).toFixed(8))) / 100;
   }
 
+  /** D3.9: igv = total - base, so base + igv equals the total exactly. */
   getIgv(): number {
-    return Math.round((this.cart.subtotal() * 0.18) * 100) / 100;
+    return Math.round((this.cart.subtotal() - this.getSubtotalNeto()) * 100) / 100;
   }
 
   irALogin(): void {
@@ -713,15 +753,16 @@ export class CheckoutComponent implements OnInit {
       updatedAt: new Date().toISOString()
     };
 
-    // Retry after a rejected OTP: pay the SAME order, never create a second one.
-    if (this.ordenYapePendiente) {
-      this.pagarYape(this.ordenYapePendiente, yapeTel, otp, currentUser?.correo);
+    // Retry after a rejected OTP only if the current cart/order matches (FE-06).
+    if (this.ordenPendienteCoincide(this.ordenYapePendiente, orderData)) {
+      this.pagarYape(this.ordenYapePendiente!, yapeTel, otp, currentUser?.correo);
       return;
     }
+    this.ordenYapePendiente = null;
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        this.ordenYapePendiente = createdOrder;
+        this.ordenYapePendiente = { ...createdOrder, items: [...this.cart.items()] };
         this.pagarYape(createdOrder, yapeTel, otp, currentUser?.correo);
       },
       error: (err) => {
@@ -732,9 +773,12 @@ export class CheckoutComponent implements OnInit {
   }
 
   private pagarYape(createdOrder: Order, yapeTel: string, otp: string, correo?: string): void {
-    const realOrderId = typeof createdOrder.id === 'number'
-      ? createdOrder.id
-      : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
+    const realOrderId = parsePositiveIntId(createdOrder.id);
+    if (!realOrderId) {
+      this.isProcessing.set(false);
+      this.notify.showError('Error de orden', 'El identificador de la orden no es válido.');
+      return;
+    }
 
     this.paymentService.pagarConYapeOtp(realOrderId, createdOrder.total, yapeTel, otp, correo).subscribe({
       next: (tx) => {
@@ -790,15 +834,16 @@ export class CheckoutComponent implements OnInit {
       updatedAt: new Date().toISOString()
     };
 
-    // Retry after a preference failure: ask for the SAME order, never create a second one.
-    if (this.ordenTarjetaPendiente) {
-      this.pagarConTarjeta(this.ordenTarjetaPendiente);
+    // Retry after a preference failure only if the current cart/order matches (FE-06).
+    if (this.ordenPendienteCoincide(this.ordenTarjetaPendiente, orderData)) {
+      this.pagarConTarjeta(this.ordenTarjetaPendiente!);
       return;
     }
+    this.ordenTarjetaPendiente = null;
 
     this.ordersService.createOrder(orderData).subscribe({
       next: (createdOrder) => {
-        this.ordenTarjetaPendiente = createdOrder;
+        this.ordenTarjetaPendiente = { ...createdOrder, items: [...this.cart.items()] };
         this.pagarConTarjeta(createdOrder);
       },
       error: (err) => {
@@ -808,21 +853,37 @@ export class CheckoutComponent implements OnInit {
     });
   }
 
+  private ordenPendienteCoincide(pendiente: Order | null, actual: Order): boolean {
+    if (!pendiente) return false;
+    if (Math.abs((pendiente.total ?? 0) - (actual.total ?? 0)) > 0.009) return false;
+    if (pendiente.tipo && pendiente.tipo !== actual.tipo) return false;
+    if (pendiente.items && pendiente.items.length > 0) {
+      const firmaPendiente = pendiente.items.map(i => `${i.product.id}:${i.cantidad}`).sort().join('|');
+      const firmaActual = actual.items.map(i => `${i.product.id}:${i.cantidad}`).sort().join('|');
+      return firmaPendiente === firmaActual;
+    }
+    return true;
+  }
+
   private pagarConTarjeta(createdOrder: Order): void {
-    const realOrderId = typeof createdOrder.id === 'number'
-      ? createdOrder.id
-      : parseInt(String(createdOrder.id).replace('ord-', ''), 10) || 1;
+    const realOrderId = parsePositiveIntId(createdOrder.id);
+    if (!realOrderId) {
+      this.isProcessing.set(false);
+      this.notify.showError('Error de orden', 'El identificador de la orden no es válido.');
+      return;
+    }
 
     this.paymentService.crearPreferenciaMercadoPago(realOrderId, createdOrder.total).subscribe({
       next: (pref) => {
         this.isProcessing.set(false);
-        const redirectUrl = pref.sandboxInitPoint || pref.initPoint;
-        if (redirectUrl) {
+        const checkoutUrl = pref.checkoutUrl || pref.sandboxInitPoint || pref.initPoint;
+        if (checkoutUrl) {
           this.ordenTarjetaPendiente = null;
           try {
             if (typeof window !== 'undefined' && window.localStorage) {
               localStorage.setItem('sanpollo_last_order', JSON.stringify({
-                id: createdOrder.id,
+                ordenId: realOrderId,
+                pagoId: pref.pagoId,
                 code: createdOrder.codigoSeguimiento,
                 codigo: createdOrder.codigoSeguimiento,
                 total: createdOrder.total,
@@ -833,10 +894,11 @@ export class CheckoutComponent implements OnInit {
           } catch (e) {
             console.warn('No se pudo guardar la orden en localStorage', e);
           }
-          this.notify.showSuccess('¡Redirigiendo a Mercado Pago...');
+
+          this.notify.showSuccess('Redirigiendo a Mercado Pago...');
           setTimeout(() => {
-            window.location.href = redirectUrl;
-          }, 800);
+            window.location.href = checkoutUrl;
+          }, 400);
         } else {
           this.notify.showError(
             'Mercado Pago no devolvió el enlace de pago',

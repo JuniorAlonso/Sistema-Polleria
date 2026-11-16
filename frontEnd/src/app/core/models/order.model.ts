@@ -35,7 +35,8 @@ export type OrderStatus =
   | 'COMPLETADO'
   | 'CANCELADO'
   | 'PEDIDO_FANTASMA'
-  | 'PAGADO';
+  | 'PAGADO'
+  | 'DESCONOCIDO';
 
 export type PaymentMethod = 'YAPE' | 'PLIN' | 'TARJETA' | 'EFECTIVO_CONTRAENTREGA' | 'YAPE_OTP';
 
@@ -74,6 +75,8 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
   repartidorId?: number;
+  /** State of the comanda's table (SALON only); absent when the backend does not publish it yet. */
+  mesaEstado?: string;
   /** ISO timestamp de cuando el mozo confirmó que entregó la comanda en mesa. */
   servidoEn?: string;
   servidoPor?: number;

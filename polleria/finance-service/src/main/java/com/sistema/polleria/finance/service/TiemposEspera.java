@@ -1,12 +1,14 @@
 package com.sistema.polleria.finance.service;
 
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 
 /**
- * Timeouts for calls to other services. Receipt emission calls payments and orders inside its
- * database transaction; without a bound a stalled service would hold a pooled connection forever.
+ * Timeouts for calls to other services. Receipt emission calls payments and orders outside database
+ * locks; without a bound a stalled service would block request threads indefinitely.
  */
 final class TiemposEspera {
 
@@ -16,9 +18,11 @@ final class TiemposEspera {
     private TiemposEspera() {
     }
 
-    static SimpleClientHttpRequestFactory fabrica() {
-        SimpleClientHttpRequestFactory fabrica = new SimpleClientHttpRequestFactory();
-        fabrica.setConnectTimeout(CONEXION);
+    static ClientHttpRequestFactory fabrica() {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(CONEXION)
+                .build();
+        JdkClientHttpRequestFactory fabrica = new JdkClientHttpRequestFactory(client);
         fabrica.setReadTimeout(LECTURA);
         return fabrica;
     }

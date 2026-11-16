@@ -5,5 +5,10 @@ public record PreferenceResponse(
     String initPoint,
     String sandboxInitPoint,
     Long pagoId,
-    Long ordenId
-) {}
+    Long ordenId,
+    String checkoutUrl
+) {
+    public PreferenceResponse(String preferenceId, String initPoint, String sandboxInitPoint, Long pagoId, Long ordenId) {
+        this(preferenceId, initPoint, sandboxInitPoint, pagoId, ordenId, initPoint);
+    }
+}

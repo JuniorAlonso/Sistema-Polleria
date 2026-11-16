@@ -9,6 +9,7 @@ import com.sistema.polleria.incident.entity.Severidad;
 import com.sistema.polleria.incident.repository.IncidenteRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,16 +22,18 @@ import java.util.NoSuchElementException;
 @RequiredArgsConstructor
 public class IncidenteService {
 
+    private static final int LIMITE_LISTADO = 500;
+
     private final IncidenteRepository incidenteRepository;
 
     @Transactional
-    public IncidenteResponse registrar(CrearIncidenteRequest req) {
+    public IncidenteResponse registrar(CrearIncidenteRequest req, String reportadoPor) {
         Incidente incidente = Incidente.builder()
                 .titulo(req.getTitulo())
                 .severidad(req.getSeveridad())
                 .tipo(req.getTipo())
                 .descripcion(req.getDescripcion())
-                .responsable(req.getResponsable())
+                .reportadoPor(reportadoPor)
                 .estado(EstadoIncidente.ABIERTO)
                 .ocurridoEn(LocalDateTime.now())
                 .build();
@@ -43,17 +46,18 @@ public class IncidenteService {
     }
 
     public List<IncidenteResponse> listar(Severidad severidad, EstadoIncidente estado) {
+        var pagina = PageRequest.of(0, LIMITE_LISTADO);
         if (severidad != null && estado != null) {
-            return incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(severidad, estado)
+            return incidenteRepository.findBySeveridadAndEstadoOrderByOcurridoEnDesc(severidad, estado, pagina)
                     .stream().map(IncidenteResponse::from).toList();
         } else if (severidad != null) {
-            return incidenteRepository.findBySeveridadOrderByOcurridoEnDesc(severidad)
+            return incidenteRepository.findBySeveridadOrderByOcurridoEnDesc(severidad, pagina)
                     .stream().map(IncidenteResponse::from).toList();
         } else if (estado != null) {
-            return incidenteRepository.findByEstadoOrderByOcurridoEnDesc(estado)
+            return incidenteRepository.findByEstadoOrderByOcurridoEnDesc(estado, pagina)
                     .stream().map(IncidenteResponse::from).toList();
         }
-        return incidenteRepository.findAllByOrderByOcurridoEnDesc()
+        return incidenteRepository.findAllByOrderByOcurridoEnDesc(pagina)
                 .stream().map(IncidenteResponse::from).toList();
     }
 
@@ -61,17 +65,22 @@ public class IncidenteService {
         return IncidenteResponse.from(buscarOFallar(id));
     }
 
+    // D4.11: responsable desde el JWT; re-resolver devuelve 409
     @Transactional
-    public IncidenteResponse resolver(Long id, ResolverIncidenteRequest req) {
-        Incidente incidente = buscarOFallar(id);
+    public IncidenteResponse resolver(Long id, ResolverIncidenteRequest req, String responsableEmail) {
+        Incidente incidente = incidenteRepository.buscarConBloqueo(id)
+                .or(() -> incidenteRepository.findById(id))
+                .orElseThrow(() -> new NoSuchElementException("Incidente no encontrado: " + id));
+
+        if (incidente.getEstado() == EstadoIncidente.RESUELTO) {
+            throw new IllegalStateException("El incidente #" + id + " ya fue resuelto con anterioridad");
+        }
 
         incidente.setEstado(req.getEstado() != null ? req.getEstado() : EstadoIncidente.RESUELTO);
         incidente.setCausaRaiz(req.getCausaRaiz());
         incidente.setSolucionAplicada(req.getSolucionAplicada());
         incidente.setResueltoEn(LocalDateTime.now());
-        if (req.getResponsable() != null) {
-            incidente.setResponsable(req.getResponsable());
-        }
+        incidente.setResponsable(responsableEmail != null ? responsableEmail : req.getResponsable());
 
         incidente = incidenteRepository.save(incidente);
         log.info("Incidente #{} resuelto y documentado: {}", incidente.getId(), incidente.getTitulo());

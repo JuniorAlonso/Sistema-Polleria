@@ -125,6 +125,9 @@ class AlmacenamientoComprobantes {
 
 /** Construye el cliente oficial de MinIO. Solo se llama cuando no se inyecta un doble. */
 function crearClienteMinio({ endpoint, port, useSSL, accessKey, secretKey } = {}) {
+    if (!endpoint || !accessKey || !secretKey) {
+        throw new Error('Configuración de MinIO incompleta: MINIO_ENDPOINT, MINIO_ACCESS_KEY y MINIO_SECRET_KEY son obligatorios');
+    }
     const Minio = require('minio');
     logger.info(`Inicializando cliente oficial MinIO -> ${useSSL ? 'https' : 'http'}://${endpoint}:${port} (accessKey: ${accessKey ? accessKey.slice(0, 3) + '***' : 'no definida'})`);
     return new Minio.Client({

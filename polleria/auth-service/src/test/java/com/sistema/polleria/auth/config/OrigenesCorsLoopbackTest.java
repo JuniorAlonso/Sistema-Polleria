@@ -58,4 +58,15 @@ class OrigenesCorsLoopbackTest {
         assertEquals("http://localhost:4200", configuracion().checkOrigin("http://localhost:4200"),
                 "la lista de cors.allowed-origins debe seguir vigente");
     }
+
+    @Test
+    void enProduccionSinLoopbackNoAgregaPuertosLocalesArbitrarios() {
+        CorsConfiguration prodConfig = new CorsConfiguration();
+        prodConfig.setAllowedOriginPatterns(SecurityConfig.origenesPermitidos("https://polleria.example", false));
+        prodConfig.setAllowCredentials(true);
+        assertEquals("https://polleria.example", prodConfig.checkOrigin("https://polleria.example"));
+        assertNull(prodConfig.checkOrigin("http://localhost:4300"),
+                "fuera del perfil local no debe permitir loopback con credenciales");
+        assertNull(prodConfig.checkOrigin("http://127.0.0.1:4200"));
+    }
 }

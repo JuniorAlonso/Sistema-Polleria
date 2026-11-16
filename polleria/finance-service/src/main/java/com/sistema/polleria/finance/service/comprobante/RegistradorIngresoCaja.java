@@ -1,6 +1,7 @@
 package com.sistema.polleria.finance.service.comprobante;
 
 import com.sistema.polleria.finance.entity.ArqueoCaja;
+import com.sistema.polleria.finance.entity.CategoriaMovimiento;
 import com.sistema.polleria.finance.entity.EstadoCaja;
 import com.sistema.polleria.finance.entity.MovimientoCaja;
 import com.sistema.polleria.finance.entity.TipoMovimiento;
@@ -28,7 +29,7 @@ public class RegistradorIngresoCaja {
     private final MovimientoCajaRepository movimientoRepository;
 
     public void registrar(Long ordenId, BigDecimal monto, String motivo, Long usuarioId) {
-        ArqueoCaja caja = arqueoRepository.findFirstByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
+        ArqueoCaja caja = arqueoRepository.findFirstWithLockByEstadoOrderByFechaAperturaDesc(EstadoCaja.ABIERTA)
                 .orElseThrow(() -> new IllegalStateException(
                         "No hay una caja abierta: abre la caja antes de registrar un cobro en efectivo"));
 
@@ -42,6 +43,7 @@ public class RegistradorIngresoCaja {
                     .arqueoId(caja.getId())
                     .ordenId(ordenId)
                     .tipo(TipoMovimiento.INGRESO)
+                    .categoria(CategoriaMovimiento.VENTA)
                     .monto(monto)
                     .motivo(motivo)
                     .registradoPor(usuarioId)

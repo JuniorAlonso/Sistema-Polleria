@@ -4,6 +4,7 @@ import { AuthService } from '../../../../core/services/auth.service';
 import { FinanceService } from '../../../../core/services/finance.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { TipoMovimiento } from '../../../../core/models/finance.model';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { CashHeaderComponent } from '../../components/finanzas/cash-header.component';
 import { CashSummaryComponent } from '../../components/finanzas/cash-summary.component';
 import { CashMovementsTableComponent } from '../../components/finanzas/cash-movements-table.component';
@@ -61,6 +62,7 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
     @if (showAbrirCajaModal) {
       <app-cash-open-modal
         [initialAmount]="montoApertura"
+        [procesando]="procesando"
         (closed)="showAbrirCajaModal = false"
         (confirmed)="montoApertura = $event; confirmarAperturaCaja()"
       />
@@ -71,6 +73,8 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
       <app-cash-close-modal
         [cajaActual]="financeService.cajaActual()"
         [initial]="{ efectivoReal: cierreEfectivoReal, observaciones: cierreObservaciones }"
+        [errorMessage]="cierreError"
+        [procesando]="procesando"
         (closed)="showCerrarCajaModal = false"
         (confirmed)="cierreEfectivoReal = $event.efectivoReal; cierreObservaciones = $event.observaciones; confirmarCierreCaja()"
       />
@@ -80,6 +84,7 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
     @if (showMovimientoCajaModal) {
       <app-cash-movement-modal
         [initial]="movimientoForm"
+        [procesando]="procesando"
         (closed)="showMovimientoCajaModal = false"
         (confirmed)="movimientoForm = $event; confirmarMovimientoCaja()"
       />
@@ -113,11 +118,15 @@ export class AdminFinanzasPage implements OnInit {
 
   // Modal de Cierre / Arqueo de Caja (Fase 6)
   showCerrarCajaModal = false;
-  cierreEfectivoReal = 0;
+  /** Blind count (D3.12): starts empty, never pre-filled with the expected cash. */
+  cierreEfectivoReal: number | null = null;
   cierreObservaciones = '';
+  /** Backend message of the last failed close, shown inside the modal. */
+  cierreError: string | null = null;
 
   // Modal de Movimiento de Caja Menor (Fase 6)
   showMovimientoCajaModal = false;
+  procesando = false;
   movimientoForm = {
     tipo: 'EGRESO' as TipoMovimiento,
     concepto: '',
@@ -125,28 +134,47 @@ export class AdminFinanzasPage implements OnInit {
   };
 
   confirmarAperturaCaja(): void {
-    this.financeService.abrirCaja(this.montoApertura).subscribe({
+    const monto = Number(this.montoApertura);
+    if (!Number.isFinite(monto) || monto < 0) {
+      this.notify.showWarning('Ingresa un monto inicial válido mayor o igual a 0');
+      return;
+    }
+    if (this.procesando) return;
+    this.procesando = true;
+    this.financeService.abrirCaja(monto).subscribe({
       next: () => {
-        this.notify.showSuccess(`Caja de turno abierta con S/. ${this.montoApertura.toFixed(2)}`);
+        this.procesando = false;
+        this.notify.showSuccess(`Caja de turno abierta con S/. ${monto.toFixed(2)}`);
         this.showAbrirCajaModal = false;
       },
-      error: () => {
-        this.notify.showError('No se pudo abrir la caja del turno');
+      error: (err: unknown) => {
+        this.procesando = false;
+        this.notify.showError(mensajeError(err, 'No se pudo abrir la caja del turno'));
       }
     });
   }
 
   abrirModalCierreCaja(): void {
-    const caja = this.financeService.cajaActual();
-    const esperado = (caja?.montoInicial || 0) + (caja?.ventasEfectivo || 0);
-    this.cierreEfectivoReal = esperado;
-    this.cierreObservaciones = 'Cierre de turno regular sin novedades';
+    this.cierreEfectivoReal = null;
+    this.cierreObservaciones = '';
+    this.cierreError = null;
     this.showCerrarCajaModal = true;
   }
 
   confirmarCierreCaja(): void {
+    if (
+      this.cierreEfectivoReal === null ||
+      !Number.isFinite(this.cierreEfectivoReal) ||
+      this.cierreEfectivoReal < 0 ||
+      this.procesando
+    ) {
+      return;
+    }
+    this.cierreError = null;
+    this.procesando = true;
     this.financeService.cerrarCaja(this.cierreEfectivoReal, this.cierreObservaciones).subscribe({
       next: (cierre) => {
+        this.procesando = false;
         const disc = cierre.discrepancia || 0;
         if (Math.abs(disc) > 0.01) {
           this.notify.showWarning(`Caja cerrada con descuadre de S/. ${disc.toFixed(2)}`);
@@ -154,31 +182,42 @@ export class AdminFinanzasPage implements OnInit {
           this.notify.showSuccess('Arqueo de caja cuadrado a la perfección');
         }
         this.showCerrarCajaModal = false;
+        this.financeService.cargarBalanceDiario();
+        this.financeService.cargarCajaActual();
+        this.financeService.cargarMovimientos();
       },
-      error: () => {
-        this.notify.showError('No se pudo cerrar la caja del turno');
+      error: (err: unknown) => {
+        this.procesando = false;
+        // Keep the modal open so the admin can recount or add the reason (400 without observaciones).
+        this.cierreError = mensajeError(err, 'No se pudo cerrar la caja del turno');
+        this.notify.showError(this.cierreError);
       }
     });
   }
 
   confirmarMovimientoCaja(): void {
-    if (!this.movimientoForm.concepto.trim() || this.movimientoForm.monto <= 0) {
+    const monto = Number(this.movimientoForm.monto);
+    if (!this.movimientoForm.concepto.trim() || !Number.isFinite(monto) || monto <= 0) {
       this.notify.showWarning('Ingresa concepto y monto válido');
       return;
     }
+    if (this.procesando) return;
+    this.procesando = true;
     this.financeService.registrarMovimiento({
       tipo: this.movimientoForm.tipo,
-      concepto: this.movimientoForm.concepto,
-      monto: Number(this.movimientoForm.monto)
+      concepto: this.movimientoForm.concepto.trim(),
+      monto
     }).subscribe({
       next: () => {
-        this.notify.showSuccess(`Movimiento de S/. ${this.movimientoForm.monto.toFixed(2)} registrado en caja menor`);
+        this.procesando = false;
+        this.notify.showSuccess(`Movimiento de S/. ${monto.toFixed(2)} registrado en caja menor`);
         this.showMovimientoCajaModal = false;
         this.movimientoForm.concepto = '';
         this.movimientoForm.monto = 0;
       },
-      error: () => {
-        this.notify.showError('No se pudo registrar el movimiento de caja chica');
+      error: (err: unknown) => {
+        this.procesando = false;
+        this.notify.showError(mensajeError(err, 'No se pudo registrar el movimiento de caja chica'));
       }
     });
   }

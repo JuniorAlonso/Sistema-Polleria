@@ -10,6 +10,8 @@ import { NotificationService } from '../../../core/services/notification.service
 import { Order, OrderStatus } from '../../../core/models/order.model';
 import { AuthService } from '../../../core/services/auth.service';
 import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
+import { parsePositiveIntId } from '../../../core/utils/id';
+import { mensajeError } from '../../../core/utils/api-error';
 import { PaymentService } from '../../../core/services/payment.service';
 import { Subscription, interval } from 'rxjs';
 
@@ -1619,7 +1621,11 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   enviarCalificacion(): void {
     const order = this.currentOrder();
     if (!order || this.reviewComment.trim().length < 10 || this.isSubmittingRating()) return;
-    const orderIdNum = Number(order.id) || 1;
+    const orderIdNum = parsePositiveIntId(order.id);
+    if (orderIdNum === null) {
+      this.notify.showError('No se pudo registrar la calificación', 'Identificador de orden inválido.');
+      return;
+    }
     const estrellas = this.selectedStars();
     const comentario = this.reviewComment.trim();
 
@@ -1642,7 +1648,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
           this.reviewComment = '';
           this.notify.showInfo('Calificación ya registrada', 'Ya habías enviado una calificación para esta orden.');
         } else {
-          this.notify.showError('No se pudo registrar la calificación', err.error?.message || 'Intente nuevamente más tarde.');
+          this.notify.showError('No se pudo registrar la calificación', mensajeError(err, 'Intente nuevamente más tarde.'));
         }
       }
     });
@@ -1652,8 +1658,12 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
     const order = this.currentOrder();
     if (!order || !this.isFormReclamoValido() || this.isSubmittingReport()) return;
 
+    const orderIdNum = parsePositiveIntId(order.id);
+    if (orderIdNum === null) {
+      this.notify.showError('No se pudo registrar el reclamo', 'Identificador de orden inválido.');
+      return;
+    }
     this.isSubmittingReport.set(true);
-    const orderIdNum = Number(order.id) || 1;
     const motivo = this.reportMotivo;
     const desc = this.reportDescripcion.trim();
 
@@ -1688,7 +1698,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
           this.removerEvidencia();
           this.notify.showInfo('Reclamo ya registrado', 'Ya existe un reclamo en proceso para esta orden.');
         } else {
-          this.notify.showError('No se pudo registrar el reclamo', err.error?.message || 'Error al procesar el reclamo.');
+          this.notify.showError('No se pudo registrar el reclamo', mensajeError(err, 'Error al procesar el reclamo.'));
         }
       }
     });

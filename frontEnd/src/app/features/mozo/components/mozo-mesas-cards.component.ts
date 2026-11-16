@@ -75,7 +75,7 @@ import { esMesaParaCobrar, tiempoTranscurridoDesde } from '../mozo.helpers';
 
                           <div class="flex justify-between text-slate-300">
                             <span>Mozo:</span>
-                            <span class="font-bold text-slate-200">{{ m.mozo || 'Yovana M.' }}</span>
+                            <span class="font-bold text-slate-200">{{ m.mozo || '—' }}</span>
                           </div>
                         </div>
                       } @else {

@@ -149,7 +149,7 @@ class PagoServiceTest {
 
         assertThatThrownBy(() -> pagoService.reembolsar(2L, new BigDecimal("45.00"), "Error"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Solo se pueden reembolsar pagos que hayan sido APROBADOS");
+                .hasMessageContaining("Solo se pueden reembolsar pagos APROBADOS");
 
         verify(pagoRepository, never()).save(any());
     }
@@ -490,7 +490,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("S2: aprobar una captura de una orden que ya no esta PENDIENTE_PAGO responde 409 y no avanza")
     void verificar_ordenNoPendienteDePago_rechaza() {
-        when(pagoRepository.buscarConBloqueo(501L)).thenReturn(Optional.of(capturaPendiente(501L, 401L)));
+        when(pagoRepository.findById(501L)).thenReturn(Optional.of(capturaPendiente(501L, 401L)));
         when(ordenesClient.obtener(401L)).thenReturn(orden(401L, "DELIVERY", "CANCELADO", "45.00"));
 
         assertThatThrownBy(() -> pagoService.verificar(
@@ -504,7 +504,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("S2: si orders-service no responde, aprobar la captura falla cerrado")
     void verificar_ordersCaido_fallaCerrado() {
-        when(pagoRepository.buscarConBloqueo(502L)).thenReturn(Optional.of(capturaPendiente(502L, 402L)));
+        when(pagoRepository.findById(502L)).thenReturn(Optional.of(capturaPendiente(502L, 402L)));
         when(ordenesClient.obtener(402L)).thenThrow(new OrdenesClient.OrdenNoDisponibleException("caido", null));
 
         assertThatThrownBy(() -> pagoService.verificar(
@@ -517,6 +517,7 @@ class PagoServiceTest {
     @Test
     @DisplayName("PRESERVE S2: aprobar una captura de una orden PENDIENTE_PAGO sigue funcionando")
     void verificar_ordenPendienteDePago_aprueba() {
+        when(pagoRepository.findById(503L)).thenReturn(Optional.of(capturaPendiente(503L, 403L)));
         when(pagoRepository.buscarConBloqueo(503L)).thenReturn(Optional.of(capturaPendiente(503L, 403L)));
         when(ordenesClient.obtener(403L)).thenReturn(orden(403L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));
         when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));

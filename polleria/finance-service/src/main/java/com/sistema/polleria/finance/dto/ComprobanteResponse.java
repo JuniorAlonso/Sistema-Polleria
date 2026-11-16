@@ -21,8 +21,33 @@ public record ComprobanteResponse(
         String estadoPagoTexto,
         BigDecimal vueltoEntregado,
         LocalDateTime emitidoEn,
-        Long emitidoPor
+        Long emitidoPor,
+        Boolean anulado,
+        LocalDateTime anuladoEn,
+        String motivoAnulacion
 ) {
+    public ComprobanteResponse(
+            Long id,
+            Long ordenId,
+            TipoComprobante tipo,
+            String serieCorrelativo,
+            String clienteTipoDoc,
+            String clienteNumDoc,
+            String clienteNombre,
+            String clienteDireccion,
+            BigDecimal subtotal,
+            BigDecimal igv,
+            BigDecimal total,
+            String estadoPagoTexto,
+            BigDecimal vueltoEntregado,
+            LocalDateTime emitidoEn,
+            Long emitidoPor
+    ) {
+        this(id, ordenId, tipo, serieCorrelativo, clienteTipoDoc, clienteNumDoc, clienteNombre,
+                clienteDireccion, subtotal, igv, total, estadoPagoTexto, vueltoEntregado, emitidoEn,
+                emitidoPor, false, null, null);
+    }
+
     public static ComprobanteResponse from(ComprobantePago c) {
         return new ComprobanteResponse(
                 c.getId(),
@@ -39,7 +64,10 @@ public record ComprobanteResponse(
                 c.getEstadoPagoTexto(),
                 c.getVueltoEntregado(),
                 c.getEmitidoEn(),
-                c.getEmitidoPor()
+                c.getEmitidoPor(),
+                Boolean.TRUE.equals(c.getAnulado()),
+                c.getAnuladoEn(),
+                c.getMotivoAnulacion()
         );
     }
 }

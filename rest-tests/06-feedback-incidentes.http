@@ -1,0 +1,1051 @@
+###############################################################################
+# 06 - FEEDBACK (resenias y reclamos) E INCIDENTES OPERATIVOS
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# Flujo: el CLIENTE crea pedidos de RECOJO ContraPago, el CAJERO confirma la
+# llamada, COCINA los prepara y el CAJERO cobra en efectivo (payments marca la
+# orden ENTREGADO). Sobre esas ordenes entregadas se prueban resenias, reclamos
+# (JSON y multipart con evidencia), resolucion con reembolso en ventanilla y su
+# entrega en caja. Al final se ocultan las resenias creadas y se cierra la caja.
+#
+# 2FA: ADMIN, MOZO, COCINA y CAJERO reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PAYMENTS_URL = http://localhost:8083
+@FEEDBACK_URL = http://localhost:8085
+@FINANCE_URL = http://localhost:8087
+@INCIDENT_URL = http://localhost:8088
+@PASSWORD = Password123!
+@INTERNAL_KEY = {{$dotenv INTERNAL_API_KEY}}
+@TELEFONO = 9{{$randomInt 10000000 99999999}}
+
+@OTP_ADMIN = 000000
+@OTP_MOZO = 000000
+@OTP_COCINA = 000000
+@OTP_CAJERO = 000000
+
+###############################################################################
+# 1. SESIONES
+###############################################################################
+
+### 1.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.2 Login ADMIN - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.3 Login ADMIN - paso 2
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 1.4 Login MOZO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "mozo.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.5 Login MOZO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_MOZO mozo.polleria@yopmail.com
+# @assert $.role == MOZO
+# @name loginMozo
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "mozo.polleria@yopmail.com", "code": "{{OTP_MOZO}}" }
+
+### 1.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+### 1.8 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.9 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+###############################################################################
+# 2. PREPARACION: dos pedidos ENTREGADOS (A y B) y uno sin entregar (C)
+###############################################################################
+
+### 2.1 Catalogo publico (se usa el primer plato disponible)
+# Esperado: HTTP 200
+# @assert $[0].id exists
+# @name productos
+GET {{ORDERS_URL}}/productos
+
+### 2.2 CLIENTE crea pedido A (RECOJO ContraPago)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @assert $.requiereCobroEfectivo == true
+# @name ordenA
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "estadoInicial": "PENDIENTE_CONFIRMACION",
+  "nombreCliente": "Cliente Feedback A",
+  "telefonoCliente": "{{TELEFONO}}",
+  "items": [ { "productoId": {{productos.response.body.$[0].id}}, "cantidad": 1 } ]
+}
+
+### 2.3 CLIENTE crea pedido B (RECOJO ContraPago)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @name ordenB
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "estadoInicial": "PENDIENTE_CONFIRMACION",
+  "nombreCliente": "Cliente Feedback B",
+  "telefonoCliente": "{{TELEFONO}}",
+  "items": [ { "productoId": {{productos.response.body.$[0].id}}, "cantidad": 1 } ]
+}
+
+### 2.4 CLIENTE crea pedido C (RECOJO, queda esperando pago: nunca se entrega)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenC
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Feedback C",
+  "telefonoCliente": "{{TELEFONO}}",
+  "items": [ { "productoId": {{productos.response.body.$[0].id}}, "cantidad": 1 } ]
+}
+
+### 2.5 CAJERO confirma la llamada del pedido A (pasa a RECIBIDO)
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+POST {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 2.6 CAJERO confirma la llamada del pedido B
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+POST {{ORDERS_URL}}/ordenes/{{ordenB.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 2.7 COCINA inicia el pedido A
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+PATCH {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### 2.8 COCINA marca LISTO el pedido A
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### 2.9 COCINA inicia el pedido B
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+PATCH {{ORDERS_URL}}/ordenes/{{ordenB.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### 2.10 COCINA marca LISTO el pedido B
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenB.response.body.$.id}}/estado
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### 2.11 CAJERO cobra en efectivo el pedido A contra su ticket (payments lo entrega)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+# @assert $.metodoPago == CONTRAENTREGA
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenA.response.body.$.id}},
+  "monto": {{ordenA.response.body.$.total}},
+  "montoRecibido": {{ordenA.response.body.$.total}},
+  "codigoTicket": "POL-{{ordenA.response.body.$.id}}"
+}
+
+### 2.12 CAJERO cobra en efectivo el pedido B
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenB.response.body.$.id}},
+  "monto": {{ordenB.response.body.$.total}},
+  "montoRecibido": {{ordenB.response.body.$.total}},
+  "codigoTicket": "POL-{{ordenB.response.body.$.id}}"
+}
+
+### 2.13 El pedido A quedo ENTREGADO
+# Esperado: HTTP 200
+# @sleep 2000
+# @assert $.estado == ENTREGADO
+GET {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 2.14 El pedido B quedo ENTREGADO
+# Esperado: HTTP 200
+# @assert $.estado == ENTREGADO
+GET {{ORDERS_URL}}/ordenes/{{ordenB.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+###############################################################################
+# 3. RESENIAS (/feedback/resenias)
+###############################################################################
+
+### 3.1 Resenia anonima es rechazada (403)
+# Esperado: HTTP 403
+POST {{FEEDBACK_URL}}/feedback/resenias
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "calificacion": 5 }
+
+### 3.2 MOZO no puede crear resenias (403)
+# Esperado: HTTP 403
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "calificacion": 5 }
+
+### 3.3 Calificacion fuera de rango (6) es rechazada (400)
+# Esperado: HTTP 400
+# @assert $.detalles.calificacion exists
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "calificacion": 6 }
+
+### 3.4 Sin ordenId es rechazada (400)
+# Esperado: HTTP 400
+# @assert $.detalles.ordenId exists
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "calificacion": 4 }
+
+### 3.5 Resenia de un pedido no entregado (C) es rechazada (409)
+# Esperado: HTTP 409
+# @assert $.error contains ENTREGADO
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenC.response.body.$.id}}, "calificacion": 5, "comentario": "Aun no llega" }
+
+### 3.6 Resenia de un pedido inexistente (404)
+# Esperado: HTTP 404
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": 999999999, "calificacion": 5 }
+
+### 3.7 ADMIN no puede resenar un pedido ajeno (403)
+# Esperado: HTTP 403
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "calificacion": 5 }
+
+### 3.8 CLIENTE resenia su pedido entregado A
+# Esperado: HTTP 201
+# @assert $.ordenId == {{ordenA.response.body.$.id}}
+# @assert $.calificacion == 5
+# @assert $.visible == true
+# @assert $.clienteId == {{ordenA.response.body.$.clienteId}}
+# @name reseniaA
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenA.response.body.$.id}},
+  "productoId": {{productos.response.body.$[0].id}},
+  "calificacion": 5,
+  "comentario": "Pollo crocante y caliente (prueba automatizada)"
+}
+
+### 3.9 Segunda resenia para el mismo pedido es rechazada (409)
+# Esperado: HTTP 409
+# @assert $.error contains Ya existe
+POST {{FEEDBACK_URL}}/feedback/resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "calificacion": 3 }
+
+### 3.10 Listado publico (anonimo) incluye la resenia y oculta el clienteId
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reseniaA.response.body.$.id}},"ordenId":{{ordenA.response.body.$.id}},"clienteId":null
+GET {{FEEDBACK_URL}}/feedback/resenias
+
+### 3.11 Resumen publico por producto incluye la resenia
+# Esperado: HTTP 200
+# @assert $.productoId == {{productos.response.body.$[0].id}}
+# @assert $.totalResenias >= 1
+# @assert $.resenias contains "id":{{reseniaA.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/resenias/producto/{{productos.response.body.$[0].id}}
+
+### 3.12 Resumen de un producto sin resenias: promedio por defecto 5.0 y lista vacia
+# Esperado: HTTP 200
+# @assert $.totalResenias == 0
+# @assert $.promedioCalificacion == 5
+GET {{FEEDBACK_URL}}/feedback/resenias/producto/999999999
+
+### 3.13 Resenias de una orden: el duenio ve su resenia completa
+# Esperado: HTTP 200
+# @assert $[0].id == {{reseniaA.response.body.$.id}}
+# @assert $[0].clienteId == {{ordenA.response.body.$.clienteId}}
+GET {{FEEDBACK_URL}}/feedback/resenias/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 3.14 Resenias de una orden: otro usuario (MOZO) la ve sin clienteId
+# Esperado: HTTP 200
+# @assert $[0].id == {{reseniaA.response.body.$.id}}
+# @assert $[0].clienteId notExists
+GET {{FEEDBACK_URL}}/feedback/resenias/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 3.15 Resenias de una orden sin token (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/resenias/orden/{{ordenA.response.body.$.id}}
+
+### 3.16 Mis resenias (CLIENTE)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reseniaA.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/resenias/mis-resenias
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 3.17 Mis resenias: MOZO no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/resenias/mis-resenias
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 3.18 Listado admin de todas las resenias (ADMIN)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reseniaA.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/resenias/admin/todas
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 3.19 Listado admin: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/resenias/admin/todas
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 3.20 ADMIN responde la resenia
+# Esperado: HTTP 200
+# @assert $.respuestaAdmin == Gracias por tu visita
+# @assert $.respondidoEn exists
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/{{reseniaA.response.body.$.id}}/responder
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "respuestaAdmin": "Gracias por tu visita" }
+
+### 3.21 Respuesta vacia es rechazada (400)
+# Esperado: HTTP 400
+# @assert $.detalles.respuestaAdmin exists
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/{{reseniaA.response.body.$.id}}/responder
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "respuestaAdmin": "  " }
+
+### 3.22 Responder: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/{{reseniaA.response.body.$.id}}/responder
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "respuestaAdmin": "Intento indebido" }
+
+### 3.23 Responder una resenia inexistente (404)
+# Esperado: HTTP 404
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/999999999/responder
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "respuestaAdmin": "No existe" }
+
+### 3.24 Visibilidad: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/{{reseniaA.response.body.$.id}}/visibilidad?visible=false
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 3.25 Visibilidad de una resenia inexistente (404)
+# Esperado: HTTP 404
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/999999999/visibilidad?visible=false
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 3.26 ADMIN oculta la resenia (limpieza: no contamina el listado publico)
+# Esperado: HTTP 200
+# @assert $.visible == false
+PATCH {{FEEDBACK_URL}}/feedback/resenias/admin/{{reseniaA.response.body.$.id}}/visibilidad?visible=false
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 3.27 Una resenia oculta ya no la ve otro usuario en la orden
+# Esperado: HTTP 200
+# @assert $[0] notExists
+GET {{FEEDBACK_URL}}/feedback/resenias/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 3.28 El duenio sigue viendo su resenia oculta
+# Esperado: HTTP 200
+# @assert $[0].visible == false
+GET {{FEEDBACK_URL}}/feedback/resenias/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+###############################################################################
+# 4. RECLAMOS (/feedback/reportes) Y EVIDENCIAS
+###############################################################################
+
+### 4.1 Reclamo anonimo es rechazado (403)
+# Esperado: HTTP 403
+POST {{FEEDBACK_URL}}/feedback/reportes
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "motivo": "COMIDA_FRIA", "descripcion": "El pollo llego frio a la mesa" }
+
+### 4.2 CAJERO no puede crear reclamos (403)
+# Esperado: HTTP 403
+POST {{FEEDBACK_URL}}/feedback/reportes
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "motivo": "COMIDA_FRIA", "descripcion": "El pollo llego frio a la mesa" }
+
+### 4.3 Descripcion demasiado corta es rechazada (400)
+# Esperado: HTTP 400
+# @assert $.detalles.descripcion exists
+POST {{FEEDBACK_URL}}/feedback/reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "motivo": "COMIDA_FRIA", "descripcion": "frio" }
+
+### 4.4 Reclamo de un pedido no entregado (C) es rechazado (409)
+# Esperado: HTTP 409
+# @assert $.error contains ENTREGADO
+POST {{FEEDBACK_URL}}/feedback/reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenC.response.body.$.id}}, "motivo": "DEMORA_EXCESIVA", "descripcion": "El pedido todavia no esta listo" }
+
+### 4.5 CLIENTE reclama el pedido A por JSON
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTO
+# @assert $.motivo == COMIDA_FRIA
+# @assert $.reembolsoProcedente == false
+# @name reporteA
+POST {{FEEDBACK_URL}}/feedback/reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "motivo": "COMIDA_FRIA", "descripcion": "El pollo llego frio al recogerlo" }
+
+### 4.6 Segundo reclamo para el mismo pedido es rechazado (409)
+# Esperado: HTTP 409
+# @assert $.error contains Ya existe
+POST {{FEEDBACK_URL}}/feedback/reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "motivo": "OTRO", "descripcion": "Otro reclamo para la misma orden" }
+
+### 4.7 Multipart con archivo que no es imagen real (firma invalida) es rechazado (400)
+# Esperado: HTTP 400
+POST {{FEEDBACK_URL}}/feedback/reportes/multipart
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary06
+
+------PolleriaBoundary06
+Content-Disposition: form-data; name="ordenId"
+
+{{ordenB.response.body.$.id}}
+------PolleriaBoundary06
+Content-Disposition: form-data; name="motivo"
+
+PRODUCTO_DANADO
+------PolleriaBoundary06
+Content-Disposition: form-data; name="descripcion"
+
+La caja llego aplastada y abierta
+------PolleriaBoundary06
+Content-Disposition: form-data; name="foto"; filename="falsa.png"
+Content-Type: image/png
+
+esto no es un png de verdad
+------PolleriaBoundary06--
+
+### 4.8 CLIENTE reclama el pedido B por multipart con foto de evidencia
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTO
+# @assert $.motivo == PRODUCTO_DANADO
+# @assert $.fotoEvidenciaUrl contains /feedback/evidencias/
+# @name reporteB
+POST {{FEEDBACK_URL}}/feedback/reportes/multipart
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary06
+
+------PolleriaBoundary06
+Content-Disposition: form-data; name="ordenId"
+
+{{ordenB.response.body.$.id}}
+------PolleriaBoundary06
+Content-Disposition: form-data; name="motivo"
+
+PRODUCTO_DANADO
+------PolleriaBoundary06
+Content-Disposition: form-data; name="descripcion"
+
+La caja llego aplastada y abierta
+------PolleriaBoundary06
+Content-Disposition: form-data; name="foto"; filename="evidencia.png"
+Content-Type: image/png
+
+< ./fixtures/06-evidencia.png
+------PolleriaBoundary06--
+
+### 4.9 El duenio descarga su evidencia
+# Esperado: HTTP 200
+GET {{FEEDBACK_URL}}{{reporteB.response.body.$.fotoEvidenciaUrl}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.10 CAJERO tambien puede ver la evidencia
+# Esperado: HTTP 200
+GET {{FEEDBACK_URL}}{{reporteB.response.body.$.fotoEvidenciaUrl}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 4.11 MOZO no puede ver evidencias (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}{{reporteB.response.body.$.fotoEvidenciaUrl}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 4.12 Evidencia sin token (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}{{reporteB.response.body.$.fotoEvidenciaUrl}}
+
+### 4.13 Evidencia ajena o inexistente responde 404 (no revela existencia)
+# Esperado: HTTP 404
+GET {{FEEDBACK_URL}}/feedback/evidencias/00000000-0000-0000-0000-000000000000.png
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.14 Nombre de evidencia invalido responde 404
+# Esperado: HTTP 404
+GET {{FEEDBACK_URL}}/feedback/evidencias/no-es-uuid.png
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.15 Mis reportes (CLIENTE) incluye A y B
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reporteA.response.body.$.id}},
+# @assert $ contains "id":{{reporteB.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/reportes/mis-reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.16 Mis reportes: COCINA no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/reportes/mis-reportes
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+
+### 4.17 Reclamo por orden (duenio)
+# Esperado: HTTP 200
+# @assert $.id == {{reporteA.response.body.$.id}}
+GET {{FEEDBACK_URL}}/feedback/reportes/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.18 Reclamo por orden (CAJERO)
+# Esperado: HTTP 200
+# @assert $.id == {{reporteA.response.body.$.id}}
+GET {{FEEDBACK_URL}}/feedback/reportes/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 4.19 Orden sin reclamo responde 204
+# Esperado: HTTP 204
+GET {{FEEDBACK_URL}}/feedback/reportes/orden/{{ordenC.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.20 Reclamo por orden: MOZO no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/reportes/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 4.21 Detalle del reclamo (duenio)
+# Esperado: HTTP 200
+# @assert $.id == {{reporteA.response.body.$.id}}
+# @assert $.ordenId == {{ordenA.response.body.$.id}}
+GET {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 4.22 Detalle del reclamo (ADMIN)
+# Esperado: HTTP 200
+# @assert $.id == {{reporteB.response.body.$.id}}
+GET {{FEEDBACK_URL}}/feedback/reportes/{{reporteB.response.body.$.id}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.23 Detalle de un reclamo inexistente (404)
+# Esperado: HTTP 404
+GET {{FEEDBACK_URL}}/feedback/reportes/999999999
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 4.24 Detalle del reclamo: CAJERO no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+###############################################################################
+# 5. GESTION ADMIN DE RECLAMOS, REEMBOLSO EN VENTANILLA Y ENTREGA EN CAJA
+###############################################################################
+
+### 5.1 Dashboard de reclamos (ADMIN, sin filtros)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reporteA.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/admin/reportes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.2 Dashboard filtrado por estado y motivo
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reporteB.response.body.$.id}},
+# @assert $[0].motivo == PRODUCTO_DANADO
+GET {{FEEDBACK_URL}}/feedback/admin/reportes?estado=ABIERTO&motivo=PRODUCTO_DANADO
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.3 Dashboard filtrado solo por motivo
+# Esperado: HTTP 200
+# @assert $[0].motivo == COMIDA_FRIA
+GET {{FEEDBACK_URL}}/feedback/admin/reportes?motivo=COMIDA_FRIA
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.4 [BUG] Filtro con un estado inexistente debe responder 400 (no 500)
+# Esperado: HTTP 400
+GET {{FEEDBACK_URL}}/feedback/admin/reportes?estado=INEXISTENTE
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.5 Dashboard: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/admin/reportes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 5.6 ADMIN pasa el reclamo B a EN_REVISION
+# Esperado: HTTP 200
+# @assert $.estado == EN_REVISION
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteB.response.body.$.id}}/estado?estado=EN_REVISION
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.7 Cambiar estado: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteB.response.body.$.id}}/estado?estado=RESUELTO
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 5.8 Cambiar estado de un reclamo inexistente (404)
+# Esperado: HTTP 404
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/999999999/estado?estado=EN_REVISION
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.9 ADMIN rechaza el reclamo B sin reembolso
+# Esperado: HTTP 200
+# @assert $.estado == RECHAZADO
+# @assert $.reembolsoProcedente == false
+# @assert $.resueltoEn exists
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteB.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RECHAZADO", "respuestaAdmin": "La evidencia no muestra danio del producto" }
+
+### 5.10 Un reclamo en estado terminal no cambia de estado (409)
+# Esperado: HTTP 409
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteB.response.body.$.id}}/estado?estado=ABIERTO
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.11 Un reclamo terminal no se vuelve a resolver (409)
+# Esperado: HTTP 409
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteB.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "respuestaAdmin": "Segundo intento" }
+
+### 5.12 Resolver sin estado es rechazado (400)
+# Esperado: HTTP 400
+# @assert $.detalles.estado exists
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteA.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "respuestaAdmin": "Sin estado" }
+
+### 5.13 Reembolso procedente sin monto es rechazado (400)
+# Esperado: HTTP 400
+# @assert $.detalles.reembolsoValido exists
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteA.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "reembolsoProcedente": true }
+
+### 5.14 Reembolso mayor al total de la orden es rechazado (400)
+# Esperado: HTTP 400
+# @assert $.error contains excede el total
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteA.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "reembolsoProcedente": true, "montoReembolso": 99999.00 }
+
+### 5.15 Resolver: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteA.response.body.$.id}}/resolver
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO" }
+
+### 5.16 Resolver un reclamo inexistente (404)
+# Esperado: HTTP 404
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/999999999/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO" }
+
+### 5.17 ADMIN resuelve A con reembolso parcial: payments lo emite y el canal es VENTANILLA (pago en efectivo)
+# Esperado: HTTP 200
+# @assert $.estado == RESUELTO
+# @assert $.reembolsoProcedente == true
+# @assert $.montoReembolso == 1
+# @assert $.canalDevolucion == VENTANILLA
+# @assert $.devueltoEn notExists
+PATCH {{FEEDBACK_URL}}/feedback/admin/reportes/{{reporteA.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "respuestaAdmin": "Se devuelve S/ 1.00 por el inconveniente", "reembolsoProcedente": true, "montoReembolso": 1.00 }
+
+### 5.18 El pago del pedido A quedo REEMBOLSADO_PARCIAL en payments
+# Esperado: HTTP 200
+# @assert $.estado == REEMBOLSADO_PARCIAL
+GET {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 5.19 Devoluciones en ventanilla pendientes (CAJERO) incluye el reclamo A
+# Esperado: HTTP 200
+# @assert $ contains "id":{{reporteA.response.body.$.id}},
+GET {{FEEDBACK_URL}}/feedback/devoluciones/pendientes
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.20 Devoluciones pendientes: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{FEEDBACK_URL}}/feedback/devoluciones/pendientes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 5.21 Entregar: CLIENTE no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}/entregar
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+
+### 5.22 Entregar un reclamo que no es de ventanilla (B, sin reembolso) es rechazado (409)
+# Esperado: HTTP 409
+PATCH {{FEEDBACK_URL}}/feedback/reportes/{{reporteB.response.body.$.id}}/entregar
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.23 Entregar un reclamo inexistente (404)
+# Esperado: HTTP 404
+PATCH {{FEEDBACK_URL}}/feedback/reportes/999999999/entregar
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.24 Entregar sin caja abierta es rechazado (409) y no sella la entrega
+# Esperado: HTTP 409
+# @assert $.error contains caja
+PATCH {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}/entregar
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.25 CAJERO abre la caja para entregar la devolucion
+# Esperado: HTTP 201
+# @name caja
+POST {{FINANCE_URL}}/finanzas/caja/apertura
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "montoApertura": 100.00, "usuarioNombre": "Cajero pruebas 06", "observaciones": "Apertura para devolucion de reclamo" }
+
+### 5.26 CAJERO entrega el efectivo al cliente: sella devueltoEn
+# Esperado: HTTP 200
+# @assert $.devueltoEn exists
+# @assert $.canalDevolucion == VENTANILLA
+PATCH {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}/entregar
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.27 La devolucion quedo registrada como EGRESO en la caja abierta
+# Esperado: HTTP 200
+# @assert $ contains "tipo":"EGRESO"
+# @assert $ contains DEVOLUCION-RECLAMO #{{reporteA.response.body.$.id}}
+GET {{FINANCE_URL}}/finanzas/caja/movimientos
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.28 Entregar dos veces el mismo reclamo es rechazado (409)
+# Esperado: HTTP 409
+# @assert $.error contains ya fue marcado
+PATCH {{FEEDBACK_URL}}/feedback/reportes/{{reporteA.response.body.$.id}}/entregar
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 5.29 CAJERO cierra la caja abierta en 5.25 (limpieza)
+# Esperado: HTTP 200
+# @assert $.estado == CERRADA
+POST {{FINANCE_URL}}/finanzas/caja/cierre?arqueoId={{caja.response.body.$.id}}
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+Content-Type: application/json
+
+{ "montoCierreEfectivo": 99.00, "montoCierrePos": 0, "observaciones": "Cierre de prueba 06 tras devolucion de S/ 1.00" }
+
+### 5.30 CLIENTE cancela el pedido C que nunca se pago (limpieza)
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenC.response.body.$.id}}/estado
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+###############################################################################
+# 6. INCIDENTES OPERATIVOS (/incidentes)
+###############################################################################
+
+### 6.1 Registro anonimo es rechazado (403)
+# Esperado: HTTP 403
+POST {{INCIDENT_URL}}/incidentes
+Content-Type: application/json
+
+{ "titulo": "Freidora apagada", "severidad": "ALTA", "tipo": "OPERATIVO", "descripcion": "La freidora 2 no enciende" }
+
+### 6.2 CLIENTE no puede registrar incidentes (403)
+# Esperado: HTTP 403
+POST {{INCIDENT_URL}}/incidentes
+Authorization: Bearer {{loginCliente.response.body.$.token}}
+Content-Type: application/json
+
+{ "titulo": "Freidora apagada", "severidad": "ALTA", "tipo": "OPERATIVO", "descripcion": "La freidora 2 no enciende" }
+
+### 6.3 Clave interna incorrecta es rechazada (403)
+# Esperado: HTTP 403
+POST {{INCIDENT_URL}}/incidentes
+X-Internal-Key: clave-incorrecta
+Content-Type: application/json
+
+{ "titulo": "Freidora apagada", "severidad": "ALTA", "tipo": "OPERATIVO", "descripcion": "La freidora 2 no enciende" }
+
+### 6.4 Incidente sin titulo ni severidad es rechazado (400)
+# Esperado: HTTP 400
+POST {{INCIDENT_URL}}/incidentes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "tipo": "OPERATIVO", "descripcion": "Falta el titulo" }
+
+### 6.5 MOZO registra un incidente (reportadoPor sale del JWT)
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTO
+# @assert $.severidad == ALTA
+# @assert $.reportadoPor == mozo.polleria@yopmail.com
+# @name incidenteMozo
+POST {{INCIDENT_URL}}/incidentes
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+Content-Type: application/json
+
+{ "titulo": "Freidora 2 apagada (prueba 06)", "severidad": "ALTA", "tipo": "OPERATIVO", "descripcion": "La freidora 2 no enciende al inicio del turno" }
+
+### 6.6 Un microservicio registra un incidente con la clave interna
+# Esperado: HTTP 201
+# @assert $.estado == ABIERTO
+# @assert $.tipo == TECNICO
+# @name incidenteInterno
+POST {{INCIDENT_URL}}/incidentes
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "titulo": "Timeout con pasarela (prueba 06)", "severidad": "BAJA", "tipo": "TECNICO", "descripcion": "La pasarela tardo mas de 5 s en responder" }
+
+### 6.7 Listado sin token (403)
+# Esperado: HTTP 403
+GET {{INCIDENT_URL}}/incidentes
+
+### 6.8 Listado: CAJERO no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{INCIDENT_URL}}/incidentes
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 6.9 Listado completo (ADMIN)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{incidenteMozo.response.body.$.id}},
+GET {{INCIDENT_URL}}/incidentes
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 6.10 Listado filtrado por severidad y estado (COCINA)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{incidenteMozo.response.body.$.id}},
+# @assert $[0].severidad == ALTA
+# @assert $[0].estado == ABIERTO
+GET {{INCIDENT_URL}}/incidentes?severidad=ALTA&estado=ABIERTO
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+
+### 6.11 Listado filtrado solo por severidad
+# Esperado: HTTP 200
+# @assert $[0].severidad == BAJA
+GET {{INCIDENT_URL}}/incidentes?severidad=BAJA
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 6.12 Detalle del incidente (COCINA)
+# Esperado: HTTP 200
+# @assert $.id == {{incidenteMozo.response.body.$.id}}
+# @assert $.titulo == Freidora 2 apagada (prueba 06)
+GET {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+
+### 6.13 Detalle de un incidente inexistente (404)
+# Esperado: HTTP 404
+GET {{INCIDENT_URL}}/incidentes/999999999
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+
+### 6.14 Detalle: MOZO no tiene acceso (403)
+# Esperado: HTTP 403
+GET {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}
+Authorization: Bearer {{loginMozo.response.body.$.token}}
+
+### 6.15 Resolver sin causa raiz es rechazado (400)
+# Esperado: HTTP 400
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "solucionAplicada": "Se cambio el termostato" }
+
+### 6.16 Resolver: COCINA no tiene acceso (403)
+# Esperado: HTTP 403
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}/resolver
+Authorization: Bearer {{loginCocina.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "causaRaiz": "Termostato danado", "solucionAplicada": "Se cambio el termostato" }
+
+### 6.17 Resolver un incidente inexistente (404)
+# Esperado: HTTP 404
+PATCH {{INCIDENT_URL}}/incidentes/999999999/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "causaRaiz": "N/A", "solucionAplicada": "N/A" }
+
+### 6.18 ADMIN pasa el incidente interno a EN_INVESTIGACION
+# Esperado: HTTP 200
+# @assert $.estado == EN_INVESTIGACION
+# @assert $.responsable == admin.polleria@yopmail.com
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteInterno.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "EN_INVESTIGACION", "causaRaiz": "Latencia de red en la pasarela", "solucionAplicada": "Se monitorea la pasarela" }
+
+### 6.19 ADMIN resuelve el incidente del MOZO (responsable sale del JWT)
+# Esperado: HTTP 200
+# @assert $.estado == RESUELTO
+# @assert $.causaRaiz == Termostato danado
+# @assert $.responsable == admin.polleria@yopmail.com
+# @assert $.resueltoEn exists
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "causaRaiz": "Termostato danado", "solucionAplicada": "Se cambio el termostato", "responsable": "ignorado" }
+
+### 6.20 Un incidente RESUELTO no se vuelve a resolver (409)
+# Esperado: HTTP 409
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteMozo.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "causaRaiz": "Otra causa", "solucionAplicada": "Otra solucion" }
+
+### 6.21 ADMIN cierra el incidente interno (limpieza)
+# Esperado: HTTP 200
+# @assert $.estado == RESUELTO
+PATCH {{INCIDENT_URL}}/incidentes/{{incidenteInterno.response.body.$.id}}/resolver
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "estado": "RESUELTO", "causaRaiz": "Latencia de red en la pasarela", "solucionAplicada": "La pasarela se estabilizo" }

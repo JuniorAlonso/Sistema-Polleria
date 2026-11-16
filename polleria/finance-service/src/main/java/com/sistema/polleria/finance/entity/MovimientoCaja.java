@@ -41,6 +41,15 @@ public class MovimientoCaja {
     @Column(name = "orden_id")
     private Long ordenId;
 
+    /** Null for movements stored before the column existed. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private CategoriaMovimiento categoria;
+
+    /** Claim refunded by a DEVOLUCION egress; unique for that category. */
+    @Column(name = "reclamo_id")
+    private Long reclamoId;
+
     @Builder.Default
     @Column(nullable = false)
     private LocalDateTime fecha = LocalDateTime.now();

@@ -1,5 +1,6 @@
 package com.sistema.polleria.finance.controller;
 
+import com.sistema.polleria.finance.config.UsuarioAutenticado;
 import com.sistema.polleria.finance.dto.*;
 import com.sistema.polleria.finance.service.LiquidacionService;
 import jakarta.validation.Valid;
@@ -24,7 +25,7 @@ public class LiquidacionController {
     public ResponseEntity<LiquidacionResponse> abrir(
             @Valid @RequestBody AperturaLiquidacionRequest req,
             Authentication authentication) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.status(HttpStatus.CREATED).body(liquidacionService.abrir(req, usuarioId));
     }
 
@@ -34,7 +35,7 @@ public class LiquidacionController {
             @PathVariable Long id,
             @Valid @RequestBody RecargaFondoRequest req,
             Authentication authentication) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.recargarFondo(id, req, usuarioId));
     }
 
@@ -45,7 +46,7 @@ public class LiquidacionController {
             @Valid @RequestBody CierreLiquidacionRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.cerrar(id, req, usuarioId, authorization));
     }
 
@@ -59,13 +60,16 @@ public class LiquidacionController {
             @Valid @RequestBody RegistrarCobroRepartidorRequest req,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        Long usuarioId = extraerUserId(authentication);
+        Long usuarioId = UsuarioAutenticado.id(authentication);
         return ResponseEntity.ok(liquidacionService.registrarCobro(req, usuarioId, authorization));
     }
 
     @GetMapping("/repartidor/{repartidorId}")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'CAJERO', 'REPARTIDOR')")
-    public ResponseEntity<List<LiquidacionResponse>> listarPorRepartidor(@PathVariable Long repartidorId) {
+    public ResponseEntity<List<LiquidacionResponse>> listarPorRepartidor(
+            @PathVariable Long repartidorId,
+            Authentication authentication) {
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar sus propias liquidaciones");
         return ResponseEntity.ok(liquidacionService.listarPorRepartidor(repartidorId));
     }
 
@@ -75,12 +79,7 @@ public class LiquidacionController {
     public ResponseEntity<List<CobroRepartidorResponse>> listarCobrosPorRepartidor(
             @PathVariable Long repartidorId,
             Authentication authentication) {
-        boolean staff = authentication.getAuthorities().stream()
-                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
-        if (!staff && !repartidorId.equals(extraerUserId(authentication))) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Un repartidor solo puede consultar sus propios cobros");
-        }
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar sus propios cobros");
         return ResponseEntity.ok(liquidacionService.listarCobrosPorRepartidor(repartidorId));
     }
 
@@ -91,13 +90,16 @@ public class LiquidacionController {
             @PathVariable Long repartidorId,
             Authentication authentication,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        boolean staff = authentication.getAuthorities().stream()
-                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
-        if (!staff && !repartidorId.equals(extraerUserId(authentication))) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Un repartidor solo puede consultar su propio efectivo");
-        }
+        validarAccesoRepartidor(repartidorId, authentication, "Un repartidor solo puede consultar su propio efectivo");
         return ResponseEntity.ok(liquidacionService.efectivoPendiente(repartidorId, authorization));
+    }
+
+    private static void validarAccesoRepartidor(Long repartidorId, Authentication authentication, String mensaje) {
+        boolean staff = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN".equals(a.getAuthority()) || "CAJERO".equals(a.getAuthority()));
+        if (!staff && !repartidorId.equals(UsuarioAutenticado.id(authentication))) {
+            throw new org.springframework.security.access.AccessDeniedException(mensaje);
+        }
     }
 
     @GetMapping("/abiertas")
@@ -111,19 +113,5 @@ public class LiquidacionController {
     public ResponseEntity<List<RepartidorPendienteCobroResponse>> listarRepartidoresConPendiente(
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         return ResponseEntity.ok(liquidacionService.listarRepartidoresConPendiente(authorization));
-    }
-
-    private Long extraerUserId(Authentication authentication) {
-        if (authentication instanceof org.springframework.security.authentication.UsernamePasswordAuthenticationToken token) {
-            Object creds = token.getCredentials();
-            if (creds instanceof Long id) return id;
-            if (creds instanceof Integer id) return id.longValue();
-            if (creds instanceof String s) {
-                try {
-                    return Long.parseLong(s);
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        return 1L;
     }
 }

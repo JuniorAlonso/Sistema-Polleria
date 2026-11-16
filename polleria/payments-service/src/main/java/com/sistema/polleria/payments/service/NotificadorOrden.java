@@ -58,28 +58,49 @@ public class NotificadorOrden {
         if (ordersRestClient == null) {
             return;
         }
-        try {
-            Map<String, Object> cuerpo = new HashMap<>();
-            cuerpo.put("estado", nuevoEstado);
-            cuerpo.put("nuevoEstado", nuevoEstado);
-            if (codigoTicket != null) {
-                cuerpo.put("codigoTicket", codigoTicket);
+        Map<String, Object> cuerpo = new HashMap<>();
+        cuerpo.put("estado", nuevoEstado);
+        cuerpo.put("nuevoEstado", nuevoEstado);
+        if (codigoTicket != null) {
+            cuerpo.put("codigoTicket", codigoTicket);
+        }
+        int maxIntentos = 3;
+        for (int intento = 1; intento <= maxIntentos; intento++) {
+            try {
+                var spec = ordersRestClient.patch()
+                        .uri("/ordenes/{id}/estado", ordenId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(cuerpo);
+                if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
+                    spec.header("X-Internal-Key", ordersInternalKey);
+                }
+                if (bearerToken != null && !bearerToken.isBlank()) {
+                    spec.header("Authorization",
+                            bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
+                }
+                spec.retrieve().toBodilessEntity();
+                log.info("Orden {} actualizada automáticamente a {} en orders-service", ordenId, nuevoEstado);
+                return;
+            } catch (org.springframework.web.client.HttpClientErrorException e) {
+                log.warn("orders-service rechazó actualización ({}) para orden {}: {}",
+                        e.getStatusCode(), ordenId, e.getMessage());
+                return;
+            } catch (Exception e) {
+                if (intento == maxIntentos) {
+                    log.warn("No se pudo notificar a orders-service para orden {} tras {} intentos: {}",
+                            ordenId, maxIntentos, e.getMessage());
+                    return;
+                }
+                log.debug("Reintentando notificación a orders-service para orden {} (intento {}/{}): {}",
+                        ordenId, intento, maxIntentos, e.getMessage());
+                try {
+                    Thread.sleep(150L * intento);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Reintento de notificación interrumpido para orden {}", ordenId);
+                    return;
+                }
             }
-            var spec = ordersRestClient.patch()
-                    .uri("/ordenes/{id}/estado", ordenId)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(cuerpo);
-            if (ordersInternalKey != null && !ordersInternalKey.isBlank()) {
-                spec.header("X-Internal-Key", ordersInternalKey);
-            }
-            if (bearerToken != null && !bearerToken.isBlank()) {
-                spec.header("Authorization",
-                        bearerToken.startsWith("Bearer ") ? bearerToken : "Bearer " + bearerToken);
-            }
-            spec.retrieve().toBodilessEntity();
-            log.info("Orden {} actualizada automáticamente a {} en orders-service", ordenId, nuevoEstado);
-        } catch (Exception e) {
-            log.warn("No se pudo notificar a orders-service para orden {}: {}", ordenId, e.getMessage());
         }
     }
 }

@@ -4,7 +4,9 @@ import { Product, ProductCategory } from '../models/product.model';
 import { BackendProductoResponse } from '../models/api-contracts.model';
 import { ProductAdapter } from '../adapters/product.adapter';
 import { environment } from '../../../environments/environment';
-import { Observable, catchError, map, of, tap } from 'rxjs';
+import { Observable, catchError, map, of, tap, throwError } from 'rxjs';
+import { mensajeError } from '../utils/api-error';
+import { parsePositiveIntId } from '../utils/id';
 
 @Injectable({
   providedIn: 'root'
@@ -71,34 +73,33 @@ export class ProductsService {
    * Protegido contra sobreescritura de mutaciones en vuelo y GETs antiguos desordenados (H-03).
    */
   loadProducts(): void {
+    this.refrescarProductos().pipe(catchError(() => of([]))).subscribe();
+  }
+
+  refrescarProductos(): Observable<Product[]> {
     if (this.cargandoProductos) {
-      return;
+      return of(this._products());
     }
     this.cargandoProductos = true;
     this.isLoading.set(true);
     const tiempoInicioGet = Date.now();
 
-    this.http.get<BackendProductoResponse[]>(`${this.API_URL}/productos?soloDisponibles=false`).pipe(
-      tap(backendList => {
-        this.isLoading.set(false);
-        this.cargandoProductos = false;
+    return this.http.get<BackendProductoResponse[]>(`${this.API_URL}/productos?soloDisponibles=false`).pipe(
+      map(backendList => {
         if (!Array.isArray(backendList)) {
-          this._products.set([]);
-          return;
+          return [];
         }
-
         const productosDesdeBackend = ProductAdapter.toProductList(backendList);
 
         // Si no hay mutaciones en vuelo ni recientes, actualiza la lista completa
         if (this.mutacionesEnVuelo.size === 0 && this.ultimasMutacionesPorProducto.size === 0) {
-          this._products.set(productosDesdeBackend);
-          return;
+          return productosDesdeBackend;
         }
 
         // H-03: Preservar el estado local de productos con mutaciones en vuelo o
         // con mutación confirmada después de haber iniciado este GET.
         const productosActuales = new Map(this._products().map(p => [p.id, p]));
-        const fusionados = productosDesdeBackend.map(prodBackend => {
+        return productosDesdeBackend.map(prodBackend => {
           const enVuelo = this.mutacionesEnVuelo.has(prodBackend.id);
           const timestampMutacion = this.ultimasMutacionesPorProducto.get(prodBackend.id) ?? 0;
           const mutacionMasRecienteQueGet = timestampMutacion >= tiempoInicioGet;
@@ -111,19 +112,22 @@ export class ProductsService {
           }
           return prodBackend;
         });
-
+      }),
+      tap(fusionados => {
+        this.isLoading.set(false);
+        this.cargandoProductos = false;
         this._products.set(fusionados);
       }),
-      catchError(() => {
+      catchError(err => {
         this.isLoading.set(false);
         this.cargandoProductos = false;
         // Solo vacía la carta si no hay mutaciones en curso
         if (this.mutacionesEnVuelo.size === 0) {
           this._products.set([]);
         }
-        return of(null);
+        return throwError(() => err);
       })
-    ).subscribe();
+    );
   }
 
   setCategory(cat: ProductCategory | 'TODOS'): void {
@@ -178,8 +182,7 @@ export class ProductsService {
           this._products.update(products =>
             products.map(p => p.id === productId ? { ...p, agotado: estadoAgotadoOriginal } : p)
           );
-          const mensaje = err?.error?.error || err?.error?.message;
-          alTerminar?.(typeof mensaje === 'string' ? mensaje : 'No se pudo actualizar la disponibilidad.');
+          alTerminar?.(mensajeError(err, 'No se pudo actualizar la disponibilidad.'));
           return of(null);
         })
       ).subscribe();
@@ -195,6 +198,9 @@ export class ProductsService {
    */
   updateStock(productId: string, stock: number | null): Observable<Product> {
     const cleanId = this.extractNumericId(productId);
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de producto inválido: ${productId}`));
+    }
     return this.http.patch<BackendProductoResponse>(`${this.API_URL}/productos/${cleanId}/stock`, { stock }).pipe(
       map(res => ProductAdapter.toProduct(res)),
       tap(updated => this._products.update(products =>
@@ -206,21 +212,30 @@ export class ProductsService {
   /**
    * RF08: Crear Producto (Admin)
    */
-  createProduct(product: Omit<Product, 'id'>): void {
+  createProduct(product: Omit<Product, 'id'>): Observable<Product> {
     const backendReq = ProductAdapter.toBackendRequest(product);
+    return this.http.post<BackendProductoResponse>(`${this.API_URL}/productos`, backendReq).pipe(
+      map(res => ProductAdapter.toProduct(res)),
+      tap(created => this._products.update(prev => [created, ...prev]))
+    );
+  }
 
-    this.http.post<BackendProductoResponse>(`${this.API_URL}/productos`, backendReq).pipe(
-      tap(res => {
-        if (res && res.id) {
-          const created = ProductAdapter.toProduct(res);
-          this._products.update(prev => [created, ...prev]);
-        }
-      }),
-      catchError(() => {
-        // Un alta rechazada por el backend no se muestra en la carta.
-        return of(null);
-      })
-    ).subscribe();
+  /**
+   * Sube o reemplaza la imagen de un producto (POST /productos/{id}/imagen).
+   */
+  uploadProductImage(productId: string, file: File): Observable<Product> {
+    const cleanId = this.extractNumericId(productId);
+    if (cleanId <= 0) {
+      return throwError(() => new Error(`Id de producto inválido: ${productId}`));
+    }
+    const formData = new FormData();
+    formData.append('imagen', file, file.name);
+    return this.http.post<BackendProductoResponse>(`${this.API_URL}/productos/${cleanId}/imagen`, formData).pipe(
+      map(res => ProductAdapter.toProduct(res)),
+      tap(updated => this._products.update(products =>
+        products.map(p => p.id === productId ? updated : p)
+      ))
+    );
   }
 
   /**
@@ -243,7 +258,7 @@ export class ProductsService {
   }
 
   private extractNumericId(id: string): number {
-    const clean = id.replace('prod-', '');
-    return parseInt(clean, 10) || 0;
+    const raw = String(id ?? '').trim().replace(/^prod-/i, '');
+    return parsePositiveIntId(raw) ?? 0;
   }
 }

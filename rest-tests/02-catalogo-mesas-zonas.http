@@ -1,0 +1,962 @@
+###############################################################################
+# 02 - CATALOGO, MESAS Y ZONAS DEL SALON (orders-service)
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# Cubre ProductoController (/productos), ZonaSalonController (/zonas) y
+# MesaController (/mesas): camino feliz, reglas de negocio, RBAC y errores.
+# Crea su propio producto y su propia mesa y los elimina al final; las
+# dimensiones de la zona que modifica se restauran a los valores leidos.
+#
+# 2FA: ADMIN, MOZO y COCINA reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PASSWORD = Password123!
+
+@OTP_ADMIN = 000000
+@OTP_MOZO = 000000
+@OTP_COCINA = 000000
+
+# Zona cuyas dimensiones se prueban (TERRAZA en la semilla)
+@ZONA_ID = 2
+# Producto semilla sin control de stock usado en la comanda de prueba
+@PRODUCTO_COMANDA_ID = 9
+# Numero de mesa unico por corrida (solo se referencia una vez; luego se usa el capturado)
+@NUMERO_MESA = {{$randomInt 100000 999999999}}
+
+@TOKEN_ADMIN = {{loginAdmin.response.body.$.token}}
+@TOKEN_MOZO = {{loginMozo.response.body.$.token}}
+@TOKEN_COCINA = {{loginCocina.response.body.$.token}}
+@TOKEN_CLIENTE = {{loginCliente.response.body.$.token}}
+
+@PRODUCTO_ID = {{crearProducto.response.body.$.id}}
+@MESA_ID = {{crearMesa.response.body.$.id}}
+@MESA_NUMERO = {{crearMesa.response.body.$.numero}}
+@COMANDA_ID = {{crearComanda.response.body.$.id}}
+
+# ==============================================================================
+# 1. SESIONES
+# ==============================================================================
+
+### 1.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.2 Login ADMIN - paso 1 (pide 2FA)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.3 Login ADMIN - paso 2 (verify-2fa)
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 1.4 Login MOZO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "mozo.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.5 Login MOZO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_MOZO mozo.polleria@yopmail.com
+# @assert $.role == MOZO
+# @name loginMozo
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "mozo.polleria@yopmail.com", "code": "{{OTP_MOZO}}" }
+
+### 1.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+# ==============================================================================
+# 2. CATALOGO PUBLICO (/productos)
+# ==============================================================================
+
+### 2.1 Listar carta publica (solo disponibles, anonimo)
+# Esperado: HTTP 200
+# @assert $[0].id exists
+GET {{ORDERS_URL}}/productos
+
+### 2.2 Listar carta por categoria BEBIDA
+# Esperado: HTTP 200
+# @assert $[0].categoria == BEBIDA
+GET {{ORDERS_URL}}/productos?categoria=BEBIDA
+
+### 2.3 Listar todos incluyendo no disponibles
+# Esperado: HTTP 200
+# @assert $[0].id exists
+GET {{ORDERS_URL}}/productos?soloDisponibles=false
+
+### 2.4 Categoria inexistente en el filtro
+# Esperado: HTTP 400
+GET {{ORDERS_URL}}/productos?categoria=SUSHI
+
+### 2.5 Obtener producto inexistente
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/productos/999999999
+
+# ==============================================================================
+# 3. ALTA Y MANTENIMIENTO DE PRODUCTO (ADMIN)
+# ==============================================================================
+
+### 3.1 Crear producto - anonimo (rechazado)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/productos
+Content-Type: application/json
+
+{ "nombre": "Producto anonimo", "precio": 10.00, "categoria": "POSTRE" }
+
+### 3.2 Crear producto - CLIENTE (rechazado)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/productos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "nombre": "Producto cliente", "precio": 10.00, "categoria": "POSTRE" }
+
+### 3.3 Crear producto - MOZO (rechazado)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/productos
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "nombre": "Producto mozo", "precio": 10.00, "categoria": "POSTRE" }
+
+### 3.4 Crear producto - validacion (sin nombre y precio 0)
+# Esperado: HTTP 400
+# @assert $.errors.nombre exists
+# @assert $.errors.precio exists
+POST {{ORDERS_URL}}/productos
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "", "precio": 0, "categoria": "POSTRE" }
+
+### 3.5 Crear producto - categoria invalida
+# Esperado: HTTP 400
+# @assert $.error contains Categor
+POST {{ORDERS_URL}}/productos
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "Producto invalido", "precio": 10.00, "categoria": "SUSHI" }
+
+### 3.6 Crear producto - ADMIN (camino feliz)
+# Esperado: HTTP 201
+# @assert $.id exists
+# @assert $.disponible == true
+# @assert $.categoria == POSTRE
+# @assert $.precio == 12.5
+# @name crearProducto
+POST {{ORDERS_URL}}/productos
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "Postre de prueba REST 02", "descripcion": "Creado por 02-catalogo-mesas-zonas.http", "precio": 12.50, "categoria": "POSTRE", "disponible": true }
+
+### 3.7 Obtener el producto creado (publico)
+# Esperado: HTTP 200
+# @assert $.id == {{PRODUCTO_ID}}
+# @assert $.nombre == Postre de prueba REST 02
+GET {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+
+### 3.8 El producto aparece en la categoria POSTRE
+# Esperado: HTTP 200
+# @assert $ contains "id":{{PRODUCTO_ID}},
+GET {{ORDERS_URL}}/productos?categoria=POSTRE
+
+### 3.9 Actualizar producto - CLIENTE (rechazado)
+# Esperado: HTTP 403
+PUT {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "nombre": "Hackeado", "precio": 1.00, "categoria": "POSTRE" }
+
+### 3.10 Actualizar producto - validacion (sin categoria)
+# Esperado: HTTP 400
+# @assert $.errors.categoria exists
+PUT {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "Postre de prueba REST 02", "precio": 13.00 }
+
+### 3.11 Actualizar producto inexistente
+# Esperado: HTTP 404
+PUT {{ORDERS_URL}}/productos/999999999
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "No existe", "precio": 13.00, "categoria": "POSTRE" }
+
+### 3.12 Actualizar producto - ADMIN (camino feliz)
+# Esperado: HTTP 200
+# @assert $.nombre == Postre de prueba REST 02 (editado)
+# @assert $.precio == 14.9
+# @assert $.disponible == true
+PUT {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "nombre": "Postre de prueba REST 02 (editado)", "descripcion": "Editado", "precio": 14.90, "categoria": "POSTRE", "disponible": true }
+
+# ==============================================================================
+# 4. DISPONIBILIDAD Y STOCK
+# ==============================================================================
+
+### 4.1 Toggle disponibilidad - anonimo (rechazado)
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+
+### 4.2 Toggle disponibilidad - MOZO (rechazado)
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 4.3 Toggle disponibilidad - COCINA marca agotado
+# Esperado: HTTP 200
+# @assert $.disponible == false
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+Authorization: Bearer {{TOKEN_COCINA}}
+
+### 4.4 El producto agotado sigue visible en el listado completo (soloDisponibles=false)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{PRODUCTO_ID}},
+GET {{ORDERS_URL}}/productos?categoria=POSTRE&soloDisponibles=false
+
+### 4.5 Toggle disponibilidad - ADMIN lo reactiva
+# Esperado: HTTP 200
+# @assert $.disponible == true
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 4.6 Toggle disponibilidad de producto inexistente
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/productos/999999999/disponibilidad
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 4.7 Stock - COCINA (rechazado, solo ADMIN)
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/stock
+Authorization: Bearer {{TOKEN_COCINA}}
+Content-Type: application/json
+
+{ "stock": 5 }
+
+### 4.8 Stock negativo (validacion)
+# Esperado: HTTP 400
+# @assert $.errors.stock exists
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/stock
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "stock": -1 }
+
+### 4.9 Stock en 0 agota el producto
+# Esperado: HTTP 200
+# @assert $.stock == 0
+# @assert $.disponible == false
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/stock
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "stock": 0 }
+
+### 4.10 No se puede activar un producto sin stock
+# Esperado: HTTP 400
+# @assert $.error contains no tiene stock
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/disponibilidad
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 4.11 Reponer stock vuelve a mostrar el producto
+# Esperado: HTTP 200
+# @assert $.stock == 5
+# @assert $.disponible == true
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/stock
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "stock": 5 }
+
+### 4.12 Stock null quita el control de stock
+# Esperado: HTTP 200
+# @assert $.stock notExists
+# @assert $.disponible == true
+PATCH {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/stock
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "stock": null }
+
+### 4.13 Stock de producto inexistente
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/productos/999999999/stock
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "stock": 3 }
+
+# ==============================================================================
+# 5. IMAGEN DEL PRODUCTO (MinIO)
+# ==============================================================================
+
+### 5.1 Ver imagen de un producto sin imagen
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+
+### 5.2 Subir imagen - CLIENTE (rechazado)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary02
+
+------PolleriaBoundary02
+Content-Disposition: form-data; name="imagen"; filename="producto.png"
+Content-Type: image/png
+
+< ./fixtures/02-producto.png
+------PolleriaBoundary02--
+
+### 5.3 Subir imagen - tipo de archivo no permitido
+# Esperado: HTTP 400
+# @assert $.error contains JPEG, PNG o WEBP
+POST {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary02
+
+------PolleriaBoundary02
+Content-Disposition: form-data; name="imagen"; filename="producto.txt"
+Content-Type: text/plain
+
+< ./fixtures/02-no-imagen.txt
+------PolleriaBoundary02--
+
+### 5.4 Subir imagen - contenido no coincide con el tipo declarado
+# Esperado: HTTP 400
+# @assert $.error contains no coincide
+POST {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary02
+
+------PolleriaBoundary02
+Content-Disposition: form-data; name="imagen"; filename="falso.png"
+Content-Type: image/png
+
+< ./fixtures/02-no-imagen.txt
+------PolleriaBoundary02--
+
+### 5.5 Subir imagen PNG - ADMIN (camino feliz)
+# Esperado: HTTP 200
+# @assert $.imagenUrl == /productos/{{PRODUCTO_ID}}/imagen
+POST {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: multipart/form-data; boundary=----PolleriaBoundary02
+
+------PolleriaBoundary02
+Content-Disposition: form-data; name="imagen"; filename="producto.png"
+Content-Type: image/png
+
+< ./fixtures/02-producto.png
+------PolleriaBoundary02--
+
+### 5.6 Ver imagen subida (publico)
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}/imagen
+
+# ==============================================================================
+# 6. ZONAS DEL SALON (/zonas)
+# ==============================================================================
+
+### 6.1 Listar zonas activas (publico)
+# Esperado: HTTP 200
+# @assert $[0].slug exists
+GET {{ORDERS_URL}}/zonas
+
+### 6.2 Obtener zona (guarda las dimensiones originales)
+# Esperado: HTTP 200
+# @assert $.id == {{ZONA_ID}}
+# @assert $.filas exists
+# @assert $.columnas exists
+# @name zonaOriginal
+GET {{ORDERS_URL}}/zonas/{{ZONA_ID}}
+
+### 6.3 Obtener zona inexistente
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/zonas/999999
+
+### 6.4 Cambiar dimensiones - anonimo (rechazado)
+# Esperado: HTTP 403
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Content-Type: application/json
+
+{ "filas": 9, "columnas": 9 }
+
+### 6.5 Cambiar dimensiones - CLIENTE (rechazado)
+# Esperado: HTTP 403
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "filas": 9, "columnas": 9 }
+
+### 6.6 Cambiar dimensiones - COCINA (rechazado)
+# Esperado: HTTP 403
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Authorization: Bearer {{TOKEN_COCINA}}
+Content-Type: application/json
+
+{ "filas": 9, "columnas": 9 }
+
+### 6.7 Cambiar dimensiones de zona inexistente
+# Esperado: HTTP 404
+PUT {{ORDERS_URL}}/zonas/999999/dimensiones
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "filas": 9, "columnas": 9 }
+
+### 6.8 Cambiar dimensiones - ADMIN (hasAnyRole con autoridad ROLE_ADMIN)
+# Esperado: HTTP 200
+# @assert $.filas == 7
+# @assert $.columnas == 8
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "filas": 7, "columnas": 8 }
+
+### 6.9 Dimensiones menores a 1 se ignoran (sin cambios)
+# Esperado: HTTP 200
+# @assert $.filas == 7
+# @assert $.columnas == 8
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "filas": 0, "columnas": -3 }
+
+### 6.10 Restaurar dimensiones originales - MOZO (hasAnyRole con autoridad ROLE_MOZO)
+# Esperado: HTTP 200
+# @assert $.filas == {{zonaOriginal.response.body.$.filas}}
+# @assert $.columnas == {{zonaOriginal.response.body.$.columnas}}
+PUT {{ORDERS_URL}}/zonas/{{ZONA_ID}}/dimensiones
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "filas": {{zonaOriginal.response.body.$.filas}}, "columnas": {{zonaOriginal.response.body.$.columnas}} }
+
+# ==============================================================================
+# 7. MESAS - ALTA Y CONSULTA (/mesas)
+# ==============================================================================
+
+### 7.1 Listar mesas - anonimo (rechazado)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/mesas
+
+### 7.2 Listar mesas - CLIENTE (rechazado)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 7.3 Listar mesas - COCINA (rechazado)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_COCINA}}
+
+### 7.4 Crear mesa - MOZO (rechazado, solo ADMIN)
+# Esperado: HTTP 403
+POST {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "numero": 999999998, "capacidad": 4 }
+
+### 7.5 Crear mesa - validacion (sin numero ni capacidad)
+# Esperado: HTTP 400
+# @assert $.errors.numero exists
+# @assert $.errors.capacidad exists
+POST {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "zona": "TERRAZA" }
+
+### 7.6 Crear mesa - numero duplicado (mesa semilla 1)
+# Esperado: HTTP 400
+# @assert $.error contains Ya existe la mesa
+POST {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "numero": 1, "capacidad": 4 }
+
+### 7.7 Crear mesa - ADMIN (camino feliz)
+# Esperado: HTTP 201
+# @assert $.id exists
+# @assert $.estado == LIBRE
+# @assert $.zona == TERRAZA
+# @assert $.activo == true
+# @assert $.posicionX == 1
+# @name crearMesa
+POST {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "numero": {{NUMERO_MESA}}, "capacidad": 4, "posicionX": 1, "posicionY": 1, "zona": "TERRAZA" }
+
+### 7.8 Listar mesas activas - MOZO (incluye la nueva)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{MESA_ID}},
+GET {{ORDERS_URL}}/mesas
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 7.9 Listar mesas incluyendo inactivas - ADMIN
+# Esperado: HTTP 200
+# @assert $ contains "id":{{MESA_ID}},
+GET {{ORDERS_URL}}/mesas?incluirInactivas=true
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 7.10 Listar mesas libres - MOZO (incluye la nueva)
+# Esperado: HTTP 200
+# @assert $ contains "id":{{MESA_ID}},
+GET {{ORDERS_URL}}/mesas/libres
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 7.11 Listar mesas libres - CLIENTE (rechazado)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/mesas/libres
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 7.12 Obtener mesa - MOZO
+# Esperado: HTTP 200
+# @assert $.numero == {{MESA_NUMERO}}
+# @assert $.capacidad == 4
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 7.13 Obtener mesa inexistente
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/mesas/999999999
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 7.14 Orden activa de una mesa libre (sin contenido)
+# Esperado: HTTP 204
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}/orden-activa
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 7.15 Orden activa - mesa inexistente
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/mesas/999999999/orden-activa
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 7.16 Orden activa - CLIENTE (rechazado)
+# Esperado: HTTP 403
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}/orden-activa
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+# ==============================================================================
+# 8. MESAS - EDICION Y POSICION
+# ==============================================================================
+
+### 8.1 Actualizar mesa - MOZO (rechazado, solo ADMIN)
+# Esperado: HTTP 403
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "capacidad": 6 }
+
+### 8.2 Actualizar mesa - numero ya usado por otra mesa
+# Esperado: HTTP 400
+# @assert $.error contains Ya existe otra mesa
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "numero": 1 }
+
+### 8.3 Actualizar mesa - capacidad 0
+# Esperado: HTTP 400
+# @assert $.error contains capacidad
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "capacidad": 0 }
+
+### 8.4 Actualizar mesa inexistente
+# Esperado: HTTP 404
+PUT {{ORDERS_URL}}/mesas/999999999
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "capacidad": 6 }
+
+### 8.5 Actualizar mesa - ADMIN (capacidad y zona)
+# Esperado: HTTP 200
+# @assert $.capacidad == 6
+# @assert $.zona == ZONA_VIP
+# @assert $.numero == {{MESA_NUMERO}}
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "capacidad": 6, "zona": "ZONA_VIP" }
+
+### 8.6 Mover mesa (PATCH posicion) - MOZO
+# Esperado: HTTP 200
+# @assert $.posicionX == 3
+# @assert $.posicionY == 2
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/posicion
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "posicionX": 3, "posicionY": 2 }
+
+### 8.7 Mover mesa (PUT posicion) - ADMIN
+# Esperado: HTTP 200
+# @assert $.posicionX == 0
+# @assert $.posicionY == 4
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}/posicion
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "posicionX": 0, "posicionY": 4 }
+
+### 8.8 Mover mesa - validacion (sin posicionY)
+# Esperado: HTTP 400
+# @assert $.errors.posicionY exists
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/posicion
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "posicionX": 1 }
+
+### 8.9 Mover mesa - CLIENTE (rechazado)
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/posicion
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "posicionX": 1, "posicionY": 1 }
+
+### 8.10 Mover mesa inexistente
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/mesas/999999999/posicion
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "posicionX": 1, "posicionY": 1 }
+
+# ==============================================================================
+# 9. MESAS - MAQUINA DE ESTADOS
+# ==============================================================================
+
+### 9.1 Estado - validacion (sin estado)
+# Esperado: HTTP 400
+# @assert $.errors.estado exists
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ }
+
+### 9.2 Estado - valor de enum invalido
+# Esperado: HTTP 400
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "ROTA" }
+
+### 9.3 Estado - CLIENTE (rechazado)
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "estado": "OCUPADA" }
+
+### 9.4 Estado - mesa inexistente
+# Esperado: HTTP 404
+PATCH {{ORDERS_URL}}/mesas/999999999/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "OCUPADA" }
+
+### 9.5 Transicion invalida LIBRE -> EN_LIMPIEZA
+# Esperado: HTTP 409
+# @assert $.error contains Transici
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "EN_LIMPIEZA" }
+
+### 9.6 MOZO no puede forzar un cambio de estado
+# Esperado: HTTP 403
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "EN_LIMPIEZA", "forzar": true }
+
+### 9.7 LIBRE -> RESERVADA (MOZO, PATCH)
+# Esperado: HTTP 200
+# @assert $.estado == RESERVADA
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "RESERVADA" }
+
+### 9.8 Repetir el mismo estado es idempotente
+# Esperado: HTTP 200
+# @assert $.estado == RESERVADA
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "RESERVADA" }
+
+### 9.9 RESERVADA -> LIBRE (MOZO, PUT)
+# Esperado: HTTP 200
+# @assert $.estado == LIBRE
+PUT {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "LIBRE" }
+
+### 9.10 LIBRE -> OCUPADA (MOZO)
+# Esperado: HTTP 200
+# @assert $.estado == OCUPADA
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "OCUPADA" }
+
+### 9.11 OCUPADA -> POR_COBRAR sin comanda activa
+# Esperado: HTTP 409
+# @assert $.error contains no tiene una comanda activa
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "POR_COBRAR" }
+
+### 9.12 OCUPADA -> EN_LIMPIEZA sin comanda (MOZO)
+# Esperado: HTTP 200
+# @assert $.estado == EN_LIMPIEZA
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "EN_LIMPIEZA" }
+
+### 9.13 ADMIN fuerza EN_LIMPIEZA -> RESERVADA (transicion no permitida sin forzar)
+# Esperado: HTTP 200
+# @assert $.estado == RESERVADA
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "RESERVADA", "forzar": true }
+
+### 9.14 RESERVADA -> LIBRE (ADMIN)
+# Esperado: HTTP 200
+# @assert $.estado == LIBRE
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "LIBRE" }
+
+# ==============================================================================
+# 10. GUARDA: MESA CON COMANDA ACTIVA (una comanda pequena, se cancela al final)
+# ==============================================================================
+
+### 10.1 MOZO abre una comanda de salon en la mesa (la mesa pasa a OCUPADA)
+# Esperado: HTTP 201
+# @assert $.id exists
+# @name crearComanda
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{MESA_ID}}, "items": [ { "productoId": {{PRODUCTO_COMANDA_ID}}, "cantidad": 1 } ] }
+
+### 10.2 La mesa queda OCUPADA y expone su comanda activa
+# Esperado: HTTP 200
+# @assert $.estado == OCUPADA
+# @assert $.ordenActiva.ordenId == {{COMANDA_ID}}
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 10.3 Orden activa de la mesa
+# Esperado: HTTP 200
+# @assert $.ordenId == {{COMANDA_ID}}
+# @assert $.total exists
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}/orden-activa
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 10.4 No se puede liberar la mesa con comanda activa
+# Esperado: HTTP 409
+# @assert $.error contains comanda
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "LIBRE" }
+
+### 10.5 No se puede pasar a limpieza con comanda activa
+# Esperado: HTTP 409
+# @assert $.error contains comanda
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "EN_LIMPIEZA" }
+
+### 10.6 No se puede pedir la cuenta si la comanda no esta lista
+# Esperado: HTTP 409
+# @assert $.error contains no est
+PATCH {{ORDERS_URL}}/mesas/{{MESA_ID}}/estado
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "estado": "POR_COBRAR" }
+
+### 10.7 No se puede dar de baja la mesa con comanda activa
+# Esperado: HTTP 409
+# @assert $.error contains comanda activa
+DELETE {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 10.8 No se puede abrir una segunda comanda en la misma mesa
+# Esperado: HTTP 409
+# @assert $.error contains ya tiene una comanda activa
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{MESA_ID}}, "items": [ { "productoId": {{PRODUCTO_COMANDA_ID}}, "cantidad": 1 } ] }
+
+### 10.9 ADMIN cancela la comanda (libera la mesa)
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{COMANDA_ID}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### 10.10 La mesa vuelve a LIBRE sin comanda activa
+# Esperado: HTTP 200
+# @assert $.estado == LIBRE
+# @assert $.ordenActiva notExists
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 10.11 Orden activa tras cancelar (sin contenido)
+# Esperado: HTTP 204
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}/orden-activa
+Authorization: Bearer {{TOKEN_MOZO}}
+
+# ==============================================================================
+# 11. LIMPIEZA: BAJA DE MESA Y BORRADO DE PRODUCTO
+# ==============================================================================
+
+### 11.1 Dar de baja mesa - MOZO (rechazado)
+# Esperado: HTTP 403
+DELETE {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 11.2 Dar de baja mesa inexistente
+# Esperado: HTTP 404
+DELETE {{ORDERS_URL}}/mesas/999999999
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.3 Dar de baja la mesa de prueba - ADMIN (baja logica)
+# Esperado: HTTP 204
+DELETE {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.4 La mesa queda inactiva (se conserva para el historico)
+# Esperado: HTTP 200
+# @assert $.activo == false
+GET {{ORDERS_URL}}/mesas/{{MESA_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.5 La mesa dada de baja sigue en el listado con inactivas
+# Esperado: HTTP 200
+# @assert $ contains "id":{{MESA_ID}},
+GET {{ORDERS_URL}}/mesas?incluirInactivas=true
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.6 Una mesa dada de baja no recibe comandas
+# Esperado: HTTP 409
+# @assert $.error contains dada de baja
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "tipo": "SALON", "mesaId": {{MESA_ID}}, "items": [ { "productoId": {{PRODUCTO_COMANDA_ID}}, "cantidad": 1 } ] }
+
+### 11.7 Eliminar producto - COCINA (rechazado)
+# Esperado: HTTP 403
+DELETE {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+Authorization: Bearer {{TOKEN_COCINA}}
+
+### 11.8 Eliminar producto inexistente
+# Esperado: HTTP 404
+DELETE {{ORDERS_URL}}/productos/999999999
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.9 Eliminar el producto de prueba - ADMIN
+# Esperado: HTTP 204
+DELETE {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 11.10 El producto eliminado ya no existe
+# Esperado: HTTP 404
+GET {{ORDERS_URL}}/productos/{{PRODUCTO_ID}}

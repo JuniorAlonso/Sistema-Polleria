@@ -23,6 +23,9 @@ export const authTokenInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown
                          req.url.includes('/auth/refresh');
 
   if (token && !isAuthEndpoint && !req.headers.has('Authorization')) {
+    if (authService.hasExpiredJwt(token)) {
+      return handle401Error(req, next, authService);
+    }
     authReq = req.clone({
       setHeaders: {
         Authorization: `Bearer ${token}`
@@ -44,8 +47,8 @@ export const authTokenInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown
         return throwError(() => error);
       }
 
-      // Capturar 401 para renovación silenciosa mediante Refresh Token
-      if (error.status === 401 && !isAuthEndpoint) {
+      // Capturar 401 (o 403 cuando el JWT expiró en vuelo) para renovación silenciosa mediante Refresh Token
+      if ((error.status === 401 || (error.status === 403 && salioIdentificada && authService.hasExpiredJwt(token))) && !isAuthEndpoint) {
         return handle401Error(authReq, next, authService);
       }
       return throwError(() => error);

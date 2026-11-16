@@ -1,0 +1,1360 @@
+###############################################################################
+# 04 - PAGOS (payments-service :8083) de punta a punta
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# Cubre PagoController (/pagos) y MercadoPagoWebhookController (/pagos/webhook).
+# Cada flujo crea su propia orden en orders-service (POST /ordenes como CLIENTE)
+# y la deja cerrada al final (CANCELADO / ENTREGADO), sin tocar datos ajenos.
+#
+# Pasarelas externas en local (docker-compose.local.yml):
+#   - MERCADOPAGO_ACCESS_TOKEN de sandbox configurado: medios de pago, preferencia
+#     y TARJETA/YAPE_PLIN via POST /pagos llaman a la API sandbox de Mercado Pago.
+#   - PAYMENTS_YAPE_OTP_MOCK_ENABLED no definido: /pagos/yape-otp responde 409.
+#   - MERCADOPAGO_WEBHOOK_SECRET vacio con MERCADOPAGO_SANDBOX=true: el webhook
+#     acepta notificaciones sin firma (esFirmaValida devuelve true). El rechazo
+#     401 por firma invalida solo ocurre con secret configurado o sandbox=false.
+#
+# 2FA: ADMIN, MOZO, COCINA, REPARTIDOR y CAJERO reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PAYMENTS_URL = http://localhost:8083
+@PASSWORD = Password123!
+@INTERNAL_KEY = {{$dotenv INTERNAL_API_KEY}}
+
+@OTP_ADMIN = 000000
+@OTP_MOZO = 000000
+@OTP_COCINA = 000000
+@OTP_REPARTIDOR = 000000
+@OTP_CAJERO = 000000
+
+# Producto sembrado sin control de stock (stock NULL): no agota el catalogo.
+@PRODUCTO_ID = 1
+@ORDEN_INEXISTENTE = 999999999
+@PAGO_INEXISTENTE = 999999999
+@TEL_A = 9{{$randomInt 10000000 99999999}}
+@TEL_H = 9{{$randomInt 10000000 99999999}}
+@IDEM_A = pagos-04-{{$guid}}
+@LIQ_ID = {{$timestamp}}
+@LIQ_OTRA = 7{{$timestamp}}
+
+@TOKEN_CLIENTE = {{loginCliente.response.body.$.token}}
+@TOKEN_ADMIN = {{loginAdmin.response.body.$.token}}
+@TOKEN_MOZO = {{loginMozo.response.body.$.token}}
+@TOKEN_COCINA = {{loginCocina.response.body.$.token}}
+@TOKEN_REPARTIDOR = {{loginRepartidor.response.body.$.token}}
+@TOKEN_CAJERO = {{loginCajero.response.body.$.token}}
+
+###############################################################################
+# 0. SESIONES
+###############################################################################
+
+### 0.1 Login CLIENTE (sin 2FA)
+# Esperado: HTTP 200
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.2 Login ADMIN - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.3 Login ADMIN - paso 2
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 0.4 Login MOZO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "mozo.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.5 Login MOZO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_MOZO mozo.polleria@yopmail.com
+# @assert $.role == MOZO
+# @name loginMozo
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "mozo.polleria@yopmail.com", "code": "{{OTP_MOZO}}" }
+
+### 0.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+### 0.8 Login REPARTIDOR - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "repartidor.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.9 Login REPARTIDOR - paso 2
+# Esperado: HTTP 200
+# @otp OTP_REPARTIDOR repartidor.polleria@yopmail.com
+# @assert $.role == REPARTIDOR
+# @name loginRepartidor
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "repartidor.polleria@yopmail.com", "code": "{{OTP_REPARTIDOR}}" }
+
+### 0.10 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 0.11 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+###############################################################################
+# 1. MEDIOS DE PAGO (publico, consulta real a Mercado Pago sandbox)
+###############################################################################
+
+### 1.1 Medios de pago - ruta corta publica
+# Esperado: HTTP 200
+# @assert $[0].id exists
+GET {{PAYMENTS_URL}}/pagos/medios-pago
+
+### 1.2 Medios de pago - ruta /mercadopago publica
+# Esperado: HTTP 200
+# @assert $[0].id exists
+GET {{PAYMENTS_URL}}/pagos/mercadopago/medios-pago
+
+###############################################################################
+# 2. FLUJO A - CONTRAENTREGA: iniciar -> confirmar -> reembolso parcial y total
+###############################################################################
+
+### 2.1 CLIENTE crea orden DELIVERY (queda PENDIENTE_PAGO)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @assert $.total exists
+# @name ordenA
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "direccionEntrega": "Av. Pruebas 404, Lima",
+  "nombreCliente": "Cliente Pagos A",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 2.2 Iniciar pago sin token es rechazado (anonimo = 403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}}, "metodoPago": "CONTRAENTREGA" }
+
+### 2.3 MOZO no inicia pagos (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}}, "metodoPago": "CONTRAENTREGA" }
+
+### 2.4 Iniciar pago sin metodoPago (400 validacion)
+# Esperado: HTTP 400
+# @assert $.detail contains metodoPago requerido
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}} }
+
+### 2.5 Iniciar pago con monto distinto al total de la orden (409)
+# Esperado: HTTP 409
+# @assert $.detail contains no coincide con el total
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": 0.50, "metodoPago": "CONTRAENTREGA" }
+
+### 2.6 Iniciar pago de una orden inexistente (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_INEXISTENTE}}, "monto": 10.00, "metodoPago": "CONTRAENTREGA" }
+
+### 2.7 CLIENTE inicia pago CONTRAENTREGA (PENDIENTE, referencia COD-)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE
+# @assert $.metodoPago == CONTRAENTREGA
+# @assert $.referenciaExterna contains COD-
+# @name pagoA
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}}, "metodoPago": "CONTRAENTREGA" }
+
+### 2.8 Un segundo pago para la misma orden es rechazado (409)
+# Esperado: HTTP 409
+# @assert $.detail contains Ya existe un pago
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}}, "metodoPago": "CONTRAENTREGA" }
+
+### 2.9 CLIENTE consulta su pago por id
+# Esperado: HTTP 200
+# @assert $.id == {{pagoA.response.body.$.id}}
+# @assert $.ordenId == {{ordenA.response.body.$.id}}
+GET {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.10 Detalle de pago sin token (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}
+
+### 2.11 Detalle de pago inexistente (404)
+# Esperado: HTTP 404
+GET {{PAYMENTS_URL}}/pagos/{{PAGO_INEXISTENTE}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 2.12 MOZO consulta el pago por orden
+# Esperado: HTTP 200
+# @assert $.id == {{pagoA.response.body.$.id}}
+GET {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 2.13 Pago por orden con clave interna (notification/orders)
+# Esperado: HTTP 200
+# @assert $.id == {{pagoA.response.body.$.id}}
+GET {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### 2.14 Pago por orden inexistente (404)
+# Esperado: HTTP 404
+GET {{PAYMENTS_URL}}/pagos/orden/{{ORDEN_INEXISTENTE}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 2.15 CLIENTE ve el pago en mis-pagos
+# Esperado: HTTP 200
+# @assert $ contains "id":{{pagoA.response.body.$.id}},
+GET {{PAYMENTS_URL}}/pagos/mis-pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.16 MOZO tambien puede consultar mis-pagos (lista propia)
+# Esperado: HTTP 200
+GET {{PAYMENTS_URL}}/pagos/mis-pagos
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 2.17 ADMIN no tiene mis-pagos (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos/mis-pagos
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 2.18 CLIENTE no confirma pagos (403)
+# Esperado: HTTP 403
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/confirmar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "referenciaExterna": "CAJA-04-A" }
+
+### 2.19 Confirmar sin referenciaExterna (400)
+# Esperado: HTTP 400
+# @assert $.detail contains referenciaExterna requerida
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/confirmar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "detalle": "sin referencia" }
+
+### 2.20 CAJERO confirma el pago (APROBADO)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+# @assert $.referenciaExterna == CAJA-04-A
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/confirmar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "referenciaExterna": "CAJA-04-A", "detalle": "Cobro en caja (prueba 04)" }
+
+### 2.21 Confirmar dos veces es idempotente (sigue APROBADO)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/confirmar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "referenciaExterna": "CAJA-04-A" }
+
+### 2.22 El pago aprobado mueve la orden a RECIBIDO (cola de cocina)
+# Esperado: HTTP 200
+# @sleep 2000
+# @assert $.estado == RECIBIDO
+GET {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.23 Cancelar un pago APROBADO no esta permitido (409)
+# Esperado: HTTP 409
+# @assert $.detail contains No se puede cancelar un pago en estado APROBADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 2.24 CAJERO no reembolsa (solo ADMIN, 403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "monto": 1.00, "motivo": "prueba" }
+
+### 2.25 Reembolso mayor al saldo disponible (409)
+# Esperado: HTTP 409
+# @assert $.detail contains supera el saldo disponible
+POST {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "monto": 99999.00, "motivo": "prueba" }
+
+### 2.26 Reembolso con monto negativo (400)
+# Esperado: HTTP 400
+POST {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "monto": -1.00, "motivo": "prueba" }
+
+### 2.27 ADMIN reembolsa S/ 1.00 (REEMBOLSADO_PARCIAL) con Idempotency-Key
+# Esperado: HTTP 200
+# @assert $.estado == REEMBOLSADO_PARCIAL
+# @assert $.montoReembolsado == 1
+POST {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Idempotency-Key: {{IDEM_A}}
+Content-Type: application/json
+
+{ "monto": 1.00, "motivo": "Reclamo procedente (prueba 04)" }
+
+### 2.28 Repetir la misma Idempotency-Key no reembolsa otra vez
+# Esperado: HTTP 200
+# @assert $.estado == REEMBOLSADO_PARCIAL
+# @assert $.montoReembolsado == 1
+POST {{PAYMENTS_URL}}/pagos/{{pagoA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Idempotency-Key: {{IDEM_A}}
+Content-Type: application/json
+
+{ "monto": 1.00, "motivo": "Reclamo procedente (prueba 04)" }
+
+### 2.29 Reembolso por orden del saldo restante (REEMBOLSADO)
+# Esperado: HTTP 200
+# @assert $.estado == REEMBOLSADO
+# @assert $.montoReembolsado == {{ordenA.response.body.$.total}}
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "motivo": "Saldo restante (prueba 04)" }
+
+### 2.30 Reembolsar un pago ya REEMBOLSADO con monto (409)
+# Esperado: HTTP 409
+# @assert $.detail contains Solo se pueden reembolsar pagos APROBADOS
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "monto": 1.00 }
+
+### 2.31 Reembolso por orden sin pago (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos/orden/{{ORDEN_INEXISTENTE}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "motivo": "no existe" }
+
+### 2.32 Reembolso por orden como CLIENTE (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenA.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "motivo": "no" }
+
+### 2.33 Limpieza: ADMIN cancela la orden A reembolsada
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenA.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+###############################################################################
+# 3. FLUJO B - cancelar un pago PENDIENTE
+###############################################################################
+
+### 3.1 CLIENTE crea orden RECOJO (PENDIENTE_PAGO)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenB
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Pagos B",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 3.2 CAJERO inicia el pago CONTRAENTREGA por el cliente (personal puede)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE
+# @name pagoB
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenB.response.body.$.id}}, "monto": {{ordenB.response.body.$.total}}, "metodoPago": "CONTRAENTREGA" }
+
+### 3.3 MOZO no cancela pagos (403)
+# Esperado: HTTP 403
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoB.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_MOZO}}
+
+### 3.4 CLIENTE duenio de la orden cancela el pago PENDIENTE
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoB.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 3.5 Cancelar de nuevo es idempotente
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoB.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 3.6 Confirmar un pago CANCELADO (409)
+# Esperado: HTTP 409
+# @assert $.detail contains Solo se puede confirmar un pago PENDIENTE
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoB.response.body.$.id}}/confirmar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "referenciaExterna": "CAJA-04-B" }
+
+### 3.7 Reembolsar un pago no aprobado (409)
+# Esperado: HTTP 409
+# @assert $.detail contains Solo se pueden reembolsar pagos APROBADOS
+POST {{PAYMENTS_URL}}/pagos/{{pagoB.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "monto": 1.00 }
+
+### 3.8 Cancelar el pago cancela tambien la orden en orders-service
+# Esperado: HTTP 200
+# @sleep 2000
+# @assert $.estado == CANCELADO
+GET {{ORDERS_URL}}/ordenes/{{ordenB.response.body.$.id}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+###############################################################################
+# 4. FLUJO C - captura Yape subida por la web y verificada por el personal
+###############################################################################
+
+### 4.1 CLIENTE crea orden RECOJO (PENDIENTE_PAGO)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenC
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Pagos C",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 4.2 MOZO no sube comprobantes (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+### 4.3 Comprobante que no es imagen (400)
+# Esperado: HTTP 400
+# @assert $.detail contains JPG, PNG o WEBP
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-no-imagen.txt"
+Content-Type: text/plain
+
+< ./fixtures/04-no-imagen.txt
+------Pagos04Boundary--
+
+### 4.4 Comprobante sin la parte "file" (400)
+# Esperado: HTTP 400
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="otro"
+
+nada
+------Pagos04Boundary--
+
+### 4.5 Comprobante para una orden inexistente (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos/orden/{{ORDEN_INEXISTENTE}}/comprobante
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+### 4.6 CLIENTE sube la captura PNG (PENDIENTE_VERIFICACION, sin clave visible)
+# Esperado: HTTP 200
+# @assert $.estado == PENDIENTE_VERIFICACION
+# @assert $.metodoPago == YAPE_PLIN
+# @assert $.comprobanteClave notExists
+# @name pagoC
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+### 4.7 Bandeja del cajero: pagos PENDIENTE_VERIFICACION
+# Esperado: HTTP 200
+# @assert $ contains "id":{{pagoC.response.body.$.id}},
+GET {{PAYMENTS_URL}}/pagos?estado=PENDIENTE_VERIFICACION
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 4.8 CAJERO ve la URL firmada del comprobante
+# Esperado: HTTP 200
+# @assert $.comprobanteClave exists
+# @assert $.comprobanteUrl exists
+GET {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 4.9 CLIENTE no ve la clave ni la URL del comprobante
+# Esperado: HTTP 200
+# @assert $.comprobanteClave notExists
+# @assert $.comprobanteUrl notExists
+GET {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 4.10 MOZO no verifica comprobantes (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "aprobado": true }
+
+### 4.11 Verificar sin "aprobado" (400)
+# Esperado: HTTP 400
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "motivoRechazo": "x" }
+
+### 4.12 Rechazar sin motivo (400)
+# Esperado: HTTP 400
+# @assert $.detail contains motivo de rechazo es obligatorio
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "aprobado": false }
+
+### 4.13 Verificar un pago inexistente (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos/{{PAGO_INEXISTENTE}}/verificar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "aprobado": true }
+
+### 4.14 CAJERO rechaza la captura con motivo (RECHAZADO)
+# Esperado: HTTP 200
+# @assert $.estado == RECHAZADO
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "aprobado": false, "motivoRechazo": "La captura no muestra el monto (prueba 04)" }
+
+### 4.15 Verificar otra vez un pago ya RECHAZADO (409)
+# Esperado: HTTP 409
+# @assert $.detail contains PENDIENTE_VERIFICACION
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "aprobado": true }
+
+### 4.16 CLIENTE reenvia la captura: el mismo pago vuelve a PENDIENTE_VERIFICACION
+# Esperado: HTTP 200
+# @assert $.id == {{pagoC.response.body.$.id}}
+# @assert $.estado == PENDIENTE_VERIFICACION
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+### 4.17 ADMIN aprueba la captura (APROBADO)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "aprobado": true }
+
+### 4.18 La captura aprobada mueve la orden a RECIBIDO
+# Esperado: HTTP 200
+# @sleep 2000
+# @assert $.estado == RECIBIDO
+GET {{ORDERS_URL}}/ordenes/{{ordenC.response.body.$.id}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 4.19 Limpieza: ADMIN reembolsa el pago Yape completo
+# Esperado: HTTP 200
+# @assert $.estado == REEMBOLSADO
+POST {{PAYMENTS_URL}}/pagos/{{pagoC.response.body.$.id}}/reembolso
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "motivo": "Limpieza de prueba 04" }
+
+### 4.20 Limpieza: ADMIN cancela la orden C
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenC.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### 4.21 Subir captura a una orden cerrada (409)
+# Esperado: HTTP 409
+# @assert $.detail contains ya no admite comprobantes
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenC.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+###############################################################################
+# 5. FLUJO D - comprobante interno (notification-service, X-Internal-Key)
+###############################################################################
+
+### 5.1 CLIENTE crea orden RECOJO (PENDIENTE_PAGO)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenD
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Pagos D",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 5.2 Registrar comprobante sin clave interna (401)
+# Esperado: HTTP 401
+POST {{PAYMENTS_URL}}/pagos/comprobante
+Content-Type: application/json
+
+{ "ordenId": {{ordenD.response.body.$.id}}, "comprobanteClave": "comprobantes/yape/prueba-04.png" }
+
+### 5.3 Un JWT de ADMIN no sirve en el endpoint interno (401)
+# Esperado: HTTP 401
+POST {{PAYMENTS_URL}}/pagos/comprobante
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenD.response.body.$.id}}, "comprobanteClave": "comprobantes/yape/prueba-04.png" }
+
+### 5.4 Clave interna incorrecta (401)
+# Esperado: HTTP 401
+POST {{PAYMENTS_URL}}/pagos/comprobante
+X-Internal-Key: clave-incorrecta-04
+Content-Type: application/json
+
+{ "ordenId": {{ordenD.response.body.$.id}}, "comprobanteClave": "comprobantes/yape/prueba-04.png" }
+
+### 5.5 Registrar comprobante sin comprobanteClave (400)
+# Esperado: HTTP 400
+# @assert $.detail contains comprobanteClave requerida
+POST {{PAYMENTS_URL}}/pagos/comprobante
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenD.response.body.$.id}} }
+
+### 5.6 Registrar comprobante de orden inexistente (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos/comprobante
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "ordenId": {{ORDEN_INEXISTENTE}}, "comprobanteClave": "comprobantes/yape/prueba-04.png" }
+
+### 5.7 notification-service registra el comprobante de WhatsApp (PENDIENTE_VERIFICACION)
+# Esperado: HTTP 200
+# @assert $.estado == PENDIENTE_VERIFICACION
+# @assert $.metodoPago == YAPE_PLIN
+# @assert $.clienteId == {{ordenD.response.body.$.clienteId}}
+# @name pagoD
+POST {{PAYMENTS_URL}}/pagos/comprobante
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{
+  "ordenId": {{ordenD.response.body.$.id}},
+  "telefono": "{{TEL_A}}",
+  "monto": {{ordenD.response.body.$.total}},
+  "comprobanteClave": "comprobantes/yape/{{ordenD.response.body.$.id}}/prueba-04.png"
+}
+
+### 5.8 ADMIN rechaza el comprobante de WhatsApp
+# Esperado: HTTP 200
+# @assert $.estado == RECHAZADO
+POST {{PAYMENTS_URL}}/pagos/{{pagoD.response.body.$.id}}/verificar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "aprobado": false, "motivoRechazo": "Comprobante ilegible (prueba 04)" }
+
+### 5.9 Limpieza: CLIENTE cancela el pago RECHAZADO (CANCELADO)
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoD.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 5.10 Limpieza: ADMIN deja la orden D CANCELADO
+# Esperado: HTTP 200
+# @sleep 1000
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenD.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### 5.11 Comprobante para una orden cerrada (409)
+# Esperado: HTTP 409
+# @assert $.detail contains ya no está activo
+POST {{PAYMENTS_URL}}/pagos/comprobante
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenD.response.body.$.id}}, "comprobanteClave": "comprobantes/yape/prueba-04.png" }
+
+###############################################################################
+# 6. FLUJO E/F/G - Mercado Pago (sandbox) y Yape OTP
+###############################################################################
+
+### 6.1 CLIENTE crea orden DELIVERY para Checkout Pro
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenE
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "direccionEntrega": "Av. Pruebas 404, Lima",
+  "nombreCliente": "Cliente Pagos E",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 6.2 Preferencia con monto distinto al total (400)
+# Esperado: HTTP 400
+# @assert $.detail contains no coincide con el total
+POST {{PAYMENTS_URL}}/pagos/mercadopago/preferencia
+Content-Type: application/json
+
+{ "ordenId": {{ordenE.response.body.$.id}}, "monto": 0.50, "metodoPago": "TARJETA" }
+
+### 6.3 Preferencia sin ordenId (400)
+# Esperado: HTTP 400
+POST {{PAYMENTS_URL}}/pagos/mercadopago/preferencia
+Content-Type: application/json
+
+{ "monto": 10.00, "metodoPago": "TARJETA" }
+
+### 6.4 Preferencia de una orden que ya no espera pago (409)
+# Esperado: HTTP 409
+# @assert $.detail contains ya no está pendiente de pago
+POST {{PAYMENTS_URL}}/pagos/mercadopago/preferencia
+Content-Type: application/json
+
+{ "ordenId": {{ordenA.response.body.$.id}}, "monto": {{ordenA.response.body.$.total}}, "metodoPago": "TARJETA" }
+
+### 6.5 Invitado crea la preferencia de Checkout Pro (publico, Mercado Pago sandbox)
+# Esperado: HTTP 201
+# @assert $.preferenceId exists
+# @assert $.pagoId exists
+# @assert $.ordenId == {{ordenE.response.body.$.id}}
+# @name prefE
+POST {{PAYMENTS_URL}}/pagos/mercadopago/preferencia
+Content-Type: application/json
+
+{ "ordenId": {{ordenE.response.body.$.id}}, "monto": {{ordenE.response.body.$.total}}, "metodoPago": "TARJETA" }
+
+### 6.6 El pago de Checkout Pro queda PENDIENTE con metodo TARJETA
+# Esperado: HTTP 200
+# @assert $.id == {{prefE.response.body.$.pagoId}}
+# @assert $.estado == PENDIENTE
+# @assert $.metodoPago == TARJETA
+GET {{PAYMENTS_URL}}/pagos/orden/{{ordenE.response.body.$.id}}
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+### 6.7 Retorno de Mercado Pago sin external_reference (400)
+# Esperado: HTTP 400
+# @assert $.detail contains external_reference es obligatorio
+GET {{PAYMENTS_URL}}/pagos/mercadopago/retorno?status=approved
+
+### 6.8 Retorno con external_reference no numerico (400)
+# Esperado: HTTP 400
+# @assert $.detail contains external_reference inválido
+GET {{PAYMENTS_URL}}/pagos/mercadopago/retorno?status=approved&external_reference=abc
+
+### 6.9 Retorno con external_reference de un pago inexistente (404)
+# Esperado: HTTP 404
+GET {{PAYMENTS_URL}}/pagos/mercadopago/retorno?status=approved&external_reference={{PAGO_INEXISTENTE}}
+
+### 6.10 Retorno con status=approved pero sin payment_id verificable: no aprueba nada
+# Esperado: HTTP 200
+# @assert $.id == {{prefE.response.body.$.pagoId}}
+# @assert $.estado == PENDIENTE
+GET {{PAYMENTS_URL}}/pagos/mercadopago/retorno?status=approved&collection_status=approved&external_reference={{prefE.response.body.$.pagoId}}
+
+### 6.11 Webhook sin firma en sandbox local (sin MERCADOPAGO_WEBHOOK_SECRET se acepta y no cambia nada)
+# Esperado: HTTP 200
+POST {{PAYMENTS_URL}}/pagos/webhook/mercadopago?type=payment&data.id=no-numerico
+Content-Type: application/json
+
+{ "action": "payment.updated", "data": { "id": "no-numerico" } }
+
+### 6.12 Webhook con x-signature invalida y paymentId inexistente en Mercado Pago: se ignora (200)
+# Esperado: HTTP 200
+POST {{PAYMENTS_URL}}/pagos/webhook/mercadopago?type=payment&data.id=1
+x-signature: ts=1,v1=firma-invalida
+x-request-id: prueba-04
+Content-Type: application/json
+
+{ "action": "payment.updated", "data": { "id": "1" } }
+
+### 6.13 Webhook GET (topic merchant_order, sin paymentId) responde 200
+# Esperado: HTTP 200
+GET {{PAYMENTS_URL}}/pagos/webhook/mercadopago?topic=merchant_order&id=123
+
+### 6.14 El webhook no altero el pago de Checkout Pro
+# Esperado: HTTP 200
+# @assert $.estado == PENDIENTE
+GET {{PAYMENTS_URL}}/pagos/{{prefE.response.body.$.pagoId}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 6.15 Cobro en efectivo de una orden que no esta en reparto (409)
+# Esperado: HTTP 409
+# @assert $.detail contains No se puede cobrar en efectivo
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenE.response.body.$.id}}, "monto": {{ordenE.response.body.$.total}} }
+
+### 6.16 Limpieza: CLIENTE cancela el pago de Checkout Pro
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{prefE.response.body.$.pagoId}}/cancelar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 6.17 Limpieza: ADMIN deja la orden E CANCELADO
+# Esperado: HTTP 200
+# @sleep 1000
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenE.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### 6.18 CLIENTE crea orden RECOJO para pago con TARJETA
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenF
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Pagos F",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 6.19 Yape OTP con celular invalido (400)
+# Esperado: HTTP 400
+# @assert $.detail contains celular debe ser peruano
+POST {{PAYMENTS_URL}}/pagos/yape-otp
+Content-Type: application/json
+
+{ "ordenId": {{ordenF.response.body.$.id}}, "monto": {{ordenF.response.body.$.total}}, "telefono": "12345", "otp": "123456" }
+
+### 6.20 Yape OTP simulado deshabilitado en local (409)
+# Esperado: HTTP 409
+# @assert $.detail contains Yape OTP está deshabilitado
+POST {{PAYMENTS_URL}}/pagos/yape-otp
+Content-Type: application/json
+
+{ "ordenId": {{ordenF.response.body.$.id}}, "monto": {{ordenF.response.body.$.total}}, "telefono": "{{TEL_A}}", "otp": "123456" }
+
+### 6.21 CLIENTE inicia pago TARJETA: Mercado Pago sandbox genera el checkout (PENDIENTE)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE
+# @assert $.metodoPago == TARJETA
+# @assert $.checkoutUrl exists
+# @name pagoF
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenF.response.body.$.id}}, "monto": {{ordenF.response.body.$.total}}, "metodoPago": "TARJETA" }
+
+### 6.22 Limpieza: CLIENTE cancela el pago TARJETA
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoF.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 6.23 Limpieza: ADMIN deja la orden F CANCELADO
+# Esperado: HTTP 200
+# @sleep 1000
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenF.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+### 6.24 CLIENTE crea orden RECOJO para pago YAPE_PLIN
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_PAGO
+# @name ordenG
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "RECOJO",
+  "nombreCliente": "Cliente Pagos G",
+  "telefonoCliente": "{{TEL_A}}",
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 6.25 CAJERO inicia pago YAPE_PLIN (via Mercado Pago sandbox, PENDIENTE)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE
+# @assert $.metodoPago == YAPE_PLIN
+# @name pagoG
+POST {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenG.response.body.$.id}}, "monto": {{ordenG.response.body.$.total}}, "metodoPago": "YAPE_PLIN", "telefonoYape": "{{TEL_A}}" }
+
+### 6.26 Limpieza: CAJERO cancela el pago YAPE_PLIN
+# Esperado: HTTP 200
+# @assert $.estado == CANCELADO
+PATCH {{PAYMENTS_URL}}/pagos/{{pagoG.response.body.$.id}}/cancelar
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 6.27 Limpieza: ADMIN deja la orden G CANCELADO
+# Esperado: HTTP 200
+# @sleep 1000
+# @assert $.estado == CANCELADO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenG.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "estado": "CANCELADO" }
+
+###############################################################################
+# 7. FLUJO H - ContraPago en efectivo: cobro del repartidor -> pendiente -> liquidar
+###############################################################################
+
+### 7.1 CLIENTE crea orden DELIVERY ContraPago (PENDIENTE_CONFIRMACION)
+# Esperado: HTTP 201
+# @assert $.estado == PENDIENTE_CONFIRMACION
+# @name ordenH
+POST {{ORDERS_URL}}/ordenes
+Authorization: Bearer {{TOKEN_CLIENTE}}
+Content-Type: application/json
+
+{
+  "tipo": "DELIVERY",
+  "direccionEntrega": "Jr. Efectivo 404, Lima",
+  "nombreCliente": "Cliente Pagos H",
+  "telefonoCliente": "{{TEL_H}}",
+  "estadoInicial": "PENDIENTE_CONFIRMACION",
+  "requiereCobroEfectivo": true,
+  "items": [ { "productoId": {{PRODUCTO_ID}}, "cantidad": 1 } ]
+}
+
+### 7.2 CAJERO confirma la llamada (RECIBIDO)
+# Esperado: HTTP 200
+# @assert $.estado == RECIBIDO
+POST {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}/confirmar-llamada
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 7.3 COCINA pasa a EN_PREPARACION
+# Esperado: HTTP 200
+# @assert $.estado == EN_PREPARACION
+PATCH {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_COCINA}}
+Content-Type: application/json
+
+{ "estado": "EN_PREPARACION" }
+
+### 7.4 COCINA marca LISTO
+# Esperado: HTTP 200
+# @assert $.estado == LISTO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_COCINA}}
+Content-Type: application/json
+
+{ "estado": "LISTO" }
+
+### 7.5 REPARTIDOR toma el pedido
+# Esperado: HTTP 200
+# @assert $.repartidorId exists
+# @name reclamoH
+POST {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}/reclamo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+### 7.6 REPARTIDOR sale a reparto (EN_CAMINO)
+# Esperado: HTTP 200
+# @assert $.estado == EN_CAMINO
+PATCH {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}/estado
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "estado": "EN_CAMINO" }
+
+### 7.7 Cobro en efectivo sin token (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": {{ordenH.response.body.$.total}} }
+
+### 7.8 MOZO no cobra en efectivo (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_MOZO}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": {{ordenH.response.body.$.total}} }
+
+### 7.9 Cobro sin monto (400)
+# Esperado: HTTP 400
+# @assert $.detail contains El monto es obligatorio
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}} }
+
+### 7.10 Cobro con monto distinto al total (400)
+# Esperado: HTTP 400
+# @assert $.detail contains debe ser el total del pedido
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": 0.50 }
+
+### 7.11 Monto recibido menor al total (400)
+# Esperado: HTTP 400
+# @assert $.detail contains no puede ser menor al total
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": {{ordenH.response.body.$.total}}, "montoRecibido": 0.50 }
+
+### 7.12 REPARTIDOR asignado cobra el efectivo (APROBADO, CONTRAENTREGA)
+# Esperado: HTTP 200
+# @assert $.estado == APROBADO
+# @assert $.metodoPago == CONTRAENTREGA
+# @assert $.referenciaExterna == EFECTIVO-ORD-{{ordenH.response.body.$.id}}
+# @name cobroH
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": {{ordenH.response.body.$.total}}, "montoRecibido": 200.00, "vueltoEntregado": 0 }
+
+### 7.13 Repetir el cobro es idempotente (mismo pago APROBADO)
+# Esperado: HTTP 200
+# @assert $.id == {{cobroH.response.body.$.id}}
+# @assert $.estado == APROBADO
+POST {{PAYMENTS_URL}}/pagos/cobro-efectivo
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "ordenId": {{ordenH.response.body.$.id}}, "monto": {{ordenH.response.body.$.total}} }
+
+### 7.14 El cobro en efectivo entrega la orden (ENTREGADO)
+# Esperado: HTTP 200
+# @sleep 2000
+# @assert $.estado == ENTREGADO
+GET {{ORDERS_URL}}/ordenes/{{ordenH.response.body.$.id}}
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 7.15 REPARTIDOR consulta su efectivo pendiente (incluye el cobro)
+# Esperado: HTTP 200
+# @assert $.repartidorId == {{reclamoH.response.body.$.repartidorId}}
+# @assert $.cantidad >= 1
+# @assert $.pagos contains "pagoId":{{cobroH.response.body.$.id}},
+GET {{PAYMENTS_URL}}/pagos/efectivo/repartidor/{{reclamoH.response.body.$.repartidorId}}
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+### 7.16 Filtro "desde" en el futuro no devuelve cobros
+# Esperado: HTTP 200
+# @assert $.cantidad == 0
+# @assert $.total == 0
+GET {{PAYMENTS_URL}}/pagos/efectivo/repartidor/{{reclamoH.response.body.$.repartidorId}}?desde=2099-01-01T00:00:00
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 7.17 REPARTIDOR no ve el efectivo de otro repartidor (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos/efectivo/repartidor/{{PAGO_INEXISTENTE}}
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+
+### 7.18 Efectivo pendiente con clave interna (finance-service)
+# Esperado: HTTP 200
+# @assert $.repartidorId == {{reclamoH.response.body.$.repartidorId}}
+GET {{PAYMENTS_URL}}/pagos/efectivo/repartidor/{{reclamoH.response.body.$.repartidorId}}
+X-Internal-Key: {{INTERNAL_KEY}}
+
+### 7.19 CLIENTE no consulta efectivo de repartidores (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos/efectivo/repartidor/{{reclamoH.response.body.$.repartidorId}}
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 7.20 REPARTIDOR no liquida efectivo (403)
+# Esperado: HTTP 403
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_REPARTIDOR}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{cobroH.response.body.$.id}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.21 Liquidar sin pagoIds (400)
+# Esperado: HTTP 400
+# @assert $.detail contains pagoIds es obligatorio
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "pagoIds": [], "liquidacionId": {{LIQ_ID}} }
+
+### 7.22 Liquidar un pago inexistente (404)
+# Esperado: HTTP 404
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{PAGO_INEXISTENTE}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.23 Liquidar un pago que no es efectivo aprobado (409)
+# Esperado: HTTP 409
+# @assert $.detail contains no es un cobro en efectivo aprobado
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{pagoC.response.body.$.id}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.24 CAJERO liquida el efectivo del repartidor
+# Esperado: HTTP 200
+# @assert $.liquidados == 1
+# @assert $.liquidacionId == {{LIQ_ID}}
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_CAJERO}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{cobroH.response.body.$.id}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.25 Liquidar de nuevo en la misma liquidacion es idempotente
+# Esperado: HTTP 200
+# @assert $.liquidados == 1
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{cobroH.response.body.$.id}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.26 El mismo pago no se liquida en otra liquidacion (409)
+# Esperado: HTTP 409
+# @assert $.detail contains ya fue liquidado
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{cobroH.response.body.$.id}} ], "liquidacionId": {{LIQ_OTRA}} }
+
+### 7.27 Liquidar con clave interna (finance-service), idempotente
+# Esperado: HTTP 200
+# @assert $.liquidados == 1
+POST {{PAYMENTS_URL}}/pagos/efectivo/liquidar
+X-Internal-Key: {{INTERNAL_KEY}}
+Content-Type: application/json
+
+{ "pagoIds": [ {{cobroH.response.body.$.id}} ], "liquidacionId": {{LIQ_ID}} }
+
+### 7.28 Subir comprobante a una orden ENTREGADA (409)
+# Esperado: HTTP 409
+# @assert $.detail contains ya no admite comprobantes
+POST {{PAYMENTS_URL}}/pagos/orden/{{ordenH.response.body.$.id}}/comprobante
+Authorization: Bearer {{TOKEN_ADMIN}}
+Content-Type: multipart/form-data; boundary=----Pagos04Boundary
+
+------Pagos04Boundary
+Content-Disposition: form-data; name="file"; filename="04-comprobante.png"
+Content-Type: image/png
+
+< ./fixtures/04-comprobante.png
+------Pagos04Boundary--
+
+###############################################################################
+# 8. LISTADO GENERAL (ADMIN / CAJERO)
+###############################################################################
+
+### 8.1 ADMIN lista todos los pagos
+# Esperado: HTTP 200
+# @assert $ contains "id":{{cobroH.response.body.$.id}},
+GET {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 8.2 CAJERO filtra por estado y limite
+# Esperado: HTTP 200
+# @assert $[0].estado == APROBADO
+GET {{PAYMENTS_URL}}/pagos?estado=APROBADO&limit=5
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 8.3 CAJERO filtra por fecha de hoy
+# Esperado: HTTP 200
+# @assert $ contains "id":{{cobroH.response.body.$.id}},
+GET {{PAYMENTS_URL}}/pagos?fecha={{$localDatetime 'YYYY-MM-DD'}}
+Authorization: Bearer {{TOKEN_CAJERO}}
+
+### 8.4 Estado invalido en el filtro (400)
+# Esperado: HTTP 400
+GET {{PAYMENTS_URL}}/pagos?estado=NO_EXISTE
+Authorization: Bearer {{TOKEN_ADMIN}}
+
+### 8.5 CLIENTE no lista todos los pagos (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos
+Authorization: Bearer {{TOKEN_CLIENTE}}
+
+### 8.6 Sin token no se listan pagos (403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos

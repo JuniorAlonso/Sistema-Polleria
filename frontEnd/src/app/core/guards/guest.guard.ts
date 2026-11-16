@@ -2,6 +2,7 @@ import { inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { CanActivateFn, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { ROLE_HOME } from './role.guard';
 
 export const guestGuard: CanActivateFn = () => {
   const platformId = inject(PLATFORM_ID);
@@ -16,15 +17,7 @@ export const guestGuard: CanActivateFn = () => {
   const token = auth.token();
 
   if (token && user) {
-    if (user.rol === 'ADMIN' || user.rol === 'MOZO' || user.rol === 'REPARTIDOR') {
-      router.navigate(['/admin']);
-      return false;
-    }
-    if (user.rol === 'CHEF') {
-      router.navigate(['/cocina']);
-      return false;
-    }
-    router.navigate(['/menu']);
+    router.navigate([ROLE_HOME[user.rol] ?? '/menu']);
     return false;
   }
 

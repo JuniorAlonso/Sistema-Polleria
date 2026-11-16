@@ -1,0 +1,161 @@
+###############################################################################
+# 00 - SMOKE Y SESIONES (todos los servicios + login de los 6 roles sembrados)
+# Extension: REST Client (humao.rest-client). Runner: node runner/run-http.mjs
+#
+# 2FA: ADMIN, MOZO, COCINA, REPARTIDOR y CAJERO reciben un codigo por correo.
+# En REST Client: copia el codigo (correo o tabla two_factor_tokens) en @OTP_*.
+# El runner lo lee solo de Postgres con la directiva "# @otp".
+###############################################################################
+
+@AUTH_URL = http://localhost:8081
+@ORDERS_URL = http://localhost:8082
+@PAYMENTS_URL = http://localhost:8083
+@FEEDBACK_URL = http://localhost:8085
+@FINANCE_URL = http://localhost:8087
+@INCIDENT_URL = http://localhost:8088
+@NOTIF_URL = http://localhost:3001/api/notificaciones
+@PASSWORD = Password123!
+
+@OTP_ADMIN = 000000
+@OTP_MOZO = 000000
+@OTP_COCINA = 000000
+@OTP_REPARTIDOR = 000000
+@OTP_CAJERO = 000000
+
+### 0.1 auth-service arriba: validate sin token es rechazado
+# Esperado: HTTP 401|403
+GET {{AUTH_URL}}/auth/validate
+
+### 0.2 orders-service arriba: catalogo publico
+# Esperado: HTTP 200
+GET {{ORDERS_URL}}/productos
+
+### 0.3 payments-service arriba: medios de pago publicos
+# Esperado: HTTP 200
+GET {{PAYMENTS_URL}}/pagos/medios-pago
+
+### 0.4 feedback-service arriba: resenias publicas
+# Esperado: HTTP 200
+GET {{FEEDBACK_URL}}/feedback/resenias
+
+### 0.5 finance-service arriba: endpoint protegido rechaza anonimo (403)
+# Esperado: HTTP 403
+GET {{FINANCE_URL}}/finanzas/caja/actual
+
+### 0.6 incident-service arriba: endpoint protegido rechaza anonimo (403)
+# Esperado: HTTP 403
+GET {{INCIDENT_URL}}/incidentes
+
+### 0.7 Estado - notification-service
+# Esperado: HTTP 200
+GET {{NOTIF_URL}}/status
+
+### 1.1 Login CLIENTE (sin 2FA, devuelve token directo)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == false
+# @assert $.token exists
+# @name loginCliente
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cliente.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.2 Login ADMIN - paso 1 (pide 2FA)
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.3 Login ADMIN - paso 2 (verify-2fa)
+# Esperado: HTTP 200
+# @otp OTP_ADMIN admin.polleria@yopmail.com
+# @assert $.token exists
+# @assert $.role == ADMIN
+# @name loginAdmin
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "admin.polleria@yopmail.com", "code": "{{OTP_ADMIN}}" }
+
+### 1.4 Login MOZO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "mozo.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.5 Login MOZO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_MOZO mozo.polleria@yopmail.com
+# @assert $.role == MOZO
+# @name loginMozo
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "mozo.polleria@yopmail.com", "code": "{{OTP_MOZO}}" }
+
+### 1.6 Login COCINA - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cocina.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.7 Login COCINA - paso 2
+# Esperado: HTTP 200
+# @otp OTP_COCINA cocina.polleria@yopmail.com
+# @assert $.role == COCINA
+# @name loginCocina
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cocina.polleria@yopmail.com", "code": "{{OTP_COCINA}}" }
+
+### 1.8 Login REPARTIDOR - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "repartidor.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.9 Login REPARTIDOR - paso 2
+# Esperado: HTTP 200
+# @otp OTP_REPARTIDOR repartidor.polleria@yopmail.com
+# @assert $.role == REPARTIDOR
+# @name loginRepartidor
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "repartidor.polleria@yopmail.com", "code": "{{OTP_REPARTIDOR}}" }
+
+### 1.10 Login CAJERO - paso 1
+# Esperado: HTTP 200
+# @assert $.requiresTwoFactor == true
+POST {{AUTH_URL}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "cajero.polleria@yopmail.com", "password": "{{PASSWORD}}" }
+
+### 1.11 Login CAJERO - paso 2
+# Esperado: HTTP 200
+# @otp OTP_CAJERO cajero.polleria@yopmail.com
+# @assert $.role == CAJERO
+# @name loginCajero
+POST {{AUTH_URL}}/auth/verify-2fa
+Content-Type: application/json
+
+{ "email": "cajero.polleria@yopmail.com", "code": "{{OTP_CAJERO}}" }
+
+### 1.12 Cada token se valida contra auth-service
+# Esperado: HTTP 200
+GET {{AUTH_URL}}/auth/validate
+Authorization: Bearer {{loginCajero.response.body.$.token}}
+
+### 1.13 Sin token, un endpoint protegido responde 403 (contrato del frontend: anonimo = 403)
+# Esperado: HTTP 403
+GET {{PAYMENTS_URL}}/pagos

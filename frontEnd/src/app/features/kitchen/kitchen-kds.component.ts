@@ -14,6 +14,7 @@ import {
   codigoNumerico,
   esTransicionCocinaPermitida
 } from './kitchen.types';
+import { mensajeError } from '../../core/utils/api-error';
 import { KitchenSidebarComponent } from './components/kitchen-sidebar.component';
 import { KitchenHeaderComponent } from './components/kitchen-header.component';
 import { KitchenFilterBarComponent } from './components/kitchen-filter-bar.component';
@@ -324,14 +325,9 @@ export class KitchenKdsComponent implements OnInit, OnDestroy {
       },
       error: err => {
         this.marcarProcesando(order.id, false);
-        const motivo =
-          err?.error?.error ||
-          err?.error?.mensaje ||
-          err?.error?.message ||
-          err?.error?.detail ||
-          err?.message ||
-          `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`;
-        this.notify.showError(motivo);
+        this.notify.showError(
+          mensajeError(err, `Error al actualizar la orden #${this.getCodeNum(order.codigoSeguimiento)}`)
+        );
       }
     });
   }

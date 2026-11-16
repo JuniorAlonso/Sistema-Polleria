@@ -9,6 +9,7 @@ import { Order, OrderType, PaymentMethod } from '../../../core/models/order.mode
 import { MesaSalon } from '../../../core/models/table.model';
 import { ManualOrderForm } from '../models/admin-forms';
 import { getCodeNum } from '../shared/admin-format.util';
+import { mensajeError } from '../../../core/utils/api-error';
 
 /**
  * Estado compartido entre las rutas hijas del panel admin: lo que más de una pestaña (o el shell)
@@ -123,7 +124,7 @@ export class AdminShellStore {
         // El backend rechaza la transición (p. ej. EN_PREPARACION -> EN_CAMINO): se muestra su motivo.
         this.isDispatchingDelivery.set(false);
         this.notify.showError(
-          err?.error?.error || `No se pudo despachar la orden #${this.getCodeNum(order.codigoSeguimiento)}`
+          mensajeError(err, `No se pudo despachar la orden #${this.getCodeNum(order.codigoSeguimiento)}`)
         );
       }
     });

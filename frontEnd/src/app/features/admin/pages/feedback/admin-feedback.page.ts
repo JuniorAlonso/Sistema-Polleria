@@ -5,6 +5,7 @@ import { FeedbackService } from '../../../../core/services/feedback.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { ReporteIncidencia, EstadoReclamo } from '../../../../core/models/feedback.model';
 import { ResolverReclamoValues } from '../../models/admin-forms';
+import { mensajeError } from '../../../../core/utils/api-error';
 import { FeedbackSummaryComponent } from '../../components/feedback/feedback-summary.component';
 import { ClaimsListComponent } from '../../components/feedback/claims-list.component';
 import { ReviewsListComponent } from '../../components/feedback/reviews-list.component';
@@ -30,7 +31,7 @@ import { PhotoViewerModalComponent } from '../../components/feedback/photo-viewe
             <div>
               <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                 <span>Feedback, Reseñas & Reclamos</span>
-                
+
               </h2>
               <p class="text-xs text-slate-400">Calificaciones (1-5 estrellas) y Libro de Reclamaciones con reembolso automático (:8085).</p>
             </div>
@@ -56,7 +57,7 @@ import { PhotoViewerModalComponent } from '../../components/feedback/photo-viewe
       <app-claim-resolution-modal
         [reclamo]="reclamo"
         [ordenes]="ordersService.orders()"
-        [fotoSrc]="feedbackService.getFotoUrl(reclamo.fotoEvidenciaUrl || reclamo.fotoUrl)"
+        [fotoSrc]="reclamoBlobFotoUrl() ?? ''"
         [isResolviendoReclamo]="isResolviendoReclamo()"
         (closed)="cerrarModalResolverReclamo()"
         (photoRequested)="abrirVisorFoto($event)"
@@ -86,6 +87,10 @@ export class AdminFeedbackPage implements OnInit {
   readonly reclamoSeleccionado = signal<ReporteIncidencia | null>(null);
   readonly isResolviendoReclamo = signal<boolean>(false);
   readonly visorFotoUrl = signal<string | null>(null);
+  readonly reclamoBlobFotoUrl = signal<string | null>(null);
+
+  private visorPrevBlobUrl: string | null = null;
+  private reclamoPrevBlobUrl: string | null = null;
 
   private readonly sincronizarReclamosEffect = effect(() => {
     const list = this.feedbackService.reportes();
@@ -94,26 +99,70 @@ export class AdminFeedbackPage implements OnInit {
 
   abrirVisorFoto(url?: string): void {
     if (!url) return;
-    this.visorFotoUrl.set(this.feedbackService.getFotoUrl(url));
+    if (this.visorPrevBlobUrl) {
+      URL.revokeObjectURL(this.visorPrevBlobUrl);
+      this.visorPrevBlobUrl = null;
+    }
+    if (!url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+      this.feedbackService.getEvidenciaBlobUrl(url).subscribe(blobUrl => {
+        if (blobUrl) {
+          this.visorPrevBlobUrl = blobUrl;
+          this.visorFotoUrl.set(blobUrl);
+        }
+      });
+    } else {
+      this.visorFotoUrl.set(this.feedbackService.getFotoUrl(url));
+    }
   }
 
   cerrarVisorFoto(): void {
+    if (this.visorPrevBlobUrl) {
+      URL.revokeObjectURL(this.visorPrevBlobUrl);
+      this.visorPrevBlobUrl = null;
+    }
     this.visorFotoUrl.set(null);
   }
 
   abrirModalResolverReclamo(rec: ReporteIncidencia): void {
+    if (this.reclamoPrevBlobUrl) {
+      URL.revokeObjectURL(this.reclamoPrevBlobUrl);
+      this.reclamoPrevBlobUrl = null;
+    }
     this.reclamoSeleccionado.set(rec);
     this.showResolverReclamoModal.set(true);
+    this.reclamoBlobFotoUrl.set(null);
+
+    const fotoRaw = rec.fotoEvidenciaUrl || rec.fotoUrl;
+    if (!fotoRaw) return;
+    if (!fotoRaw.startsWith('http') && !fotoRaw.startsWith('blob:') && !fotoRaw.startsWith('data:')) {
+      this.feedbackService.getEvidenciaBlobUrl(fotoRaw).subscribe(blobUrl => {
+        if (blobUrl) {
+          this.reclamoPrevBlobUrl = blobUrl;
+          this.reclamoBlobFotoUrl.set(blobUrl);
+        }
+      });
+    } else {
+      this.reclamoBlobFotoUrl.set(this.feedbackService.getFotoUrl(fotoRaw));
+    }
   }
 
   cerrarModalResolverReclamo(): void {
     this.showResolverReclamoModal.set(false);
     this.reclamoSeleccionado.set(null);
+    if (this.reclamoPrevBlobUrl) {
+      URL.revokeObjectURL(this.reclamoPrevBlobUrl);
+      this.reclamoPrevBlobUrl = null;
+    }
+    this.reclamoBlobFotoUrl.set(null);
   }
 
   confirmarResolverReclamo(valores: ResolverReclamoValues): void {
     const rec = this.reclamoSeleccionado();
     if (!rec || this.isResolviendoReclamo()) return;
+    if (rec.estado === 'RESUELTO' || rec.estado === 'RECHAZADO') {
+      this.notify.showWarning('Reclamo ya atendido', `El reclamo #${rec.id} ya figura como ${rec.estado}.`);
+      return;
+    }
 
     const { estadoFinal, respuestaAdmin, emitirReembolso, montoReembolso } = valores;
     this.isResolviendoReclamo.set(true);
@@ -133,7 +182,7 @@ export class AdminFeedbackPage implements OnInit {
       },
       error: (err) => {
         this.isResolviendoReclamo.set(false);
-        this.notify.showError('No se pudo resolver el reclamo', err?.error?.message || 'Error en pasarela de pagos.');
+        this.notify.showError('No se pudo resolver el reclamo', mensajeError(err, 'Error en pasarela de pagos.'));
       }
     });
   }

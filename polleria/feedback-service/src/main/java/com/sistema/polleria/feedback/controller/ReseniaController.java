@@ -50,8 +50,12 @@ public class ReseniaController {
     }
 
     @GetMapping("/orden/{ordenId}")
-    public ResponseEntity<List<ReseniaResponse>> porOrden(@PathVariable Long ordenId) {
-        return ResponseEntity.ok(reseniaService.listarPorOrden(ordenId));
+    public ResponseEntity<List<ReseniaResponse>> porOrden(
+            @PathVariable Long ordenId,
+            Principal principal) {
+        Long usuarioId = SecurityUtils.obtenerUsuarioIdSiExiste(principal);
+        boolean esAdmin = SecurityUtils.esAdmin(principal);
+        return ResponseEntity.ok(reseniaService.listarPorOrden(ordenId, usuarioId, esAdmin));
     }
 
     @GetMapping("/mis-resenias")

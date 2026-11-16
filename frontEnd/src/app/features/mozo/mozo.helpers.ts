@@ -85,6 +85,7 @@ export function etiquetaEstadoComanda(estado: OrderStatus): string {
     case 'EN_REPARTO': return 'En reparto';
     case 'COMPLETADO': return 'Entregado';
     case 'CANCELADO': return 'Cancelado';
+    case 'DESCONOCIDO': return 'Estado desconocido';
     default: return 'Pendiente de pago';
   }
 }
