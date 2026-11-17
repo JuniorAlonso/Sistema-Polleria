@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 
@@ -80,30 +80,9 @@ import { RouterModule } from '@angular/router';
           </ul>
         </div>
 
-        <!-- Col 4: Libro de Reclamaciones INDECOPI (Obligatorio Ley N° 29571) -->
+        <!-- Col 4: Atención al Cliente -->
         <div class="space-y-4">
           <h4 class="font-bold text-sm text-white uppercase tracking-wider">Atención al Cliente</h4>
-
-          <!-- Libro de Reclamaciones Virtual Badge -->
-          <button 
-            type="button"
-            (click)="openLibroModal()"
-            class="w-full p-3.5 rounded-2xl bg-[#1c1f24] hover:bg-[#252930] border border-white/15 transition duration-200 text-left flex items-center gap-3 cursor-pointer shadow-lg group"
-          >
-            <div class="w-10 h-10 rounded-xl bg-white text-slate-900 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-              <svg class="w-5 h-5 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-              </svg>
-            </div>
-            <div>
-              <span class="block font-bold text-white text-xs leading-snug">
-                Libro de Reclamaciones
-              </span>
-              <span class="text-[10px] text-slate-400">
-                Conforme al Código de INDECOPI
-              </span>
-            </div>
-          </button>
 
           <!-- Contact info with SVG icons -->
           <div class="space-y-2 text-[11px] text-slate-300">
@@ -145,123 +124,11 @@ import { RouterModule } from '@angular/router';
       </div>
 
 
-      <!-- ================= MODAL LIBRO DE RECLAMACIONES VIRTUAL (INDECOPI) ================= -->
-      @if (showLibroModal()) {
-        <div class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in text-slate-900">
-          <div class="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl space-y-5 animate-slide-up max-h-[90vh] overflow-y-auto">
-            
-            <div class="flex items-center justify-between pb-4 border-b border-slate-200">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-                  </svg>
-                </div>
-                <div>
-                  <h3 class="font-bold text-lg text-slate-900 leading-tight">
-                    Libro de Reclamaciones Virtual
-                  </h3>
-                  <p class="text-xs text-slate-500">
-                    SAN POLLO GASTRONOMÍA S.A.C. • RUC: 20608945123
-                  </p>
-                </div>
-              </div>
-
-              <button 
-                (click)="showLibroModal.set(false)"
-                class="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
-                aria-label="Cerrar"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
-
-            <form (submit)="enviarReclamo($event)" class="space-y-4 text-xs">
-              
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label class="block font-bold text-slate-700 mb-1">Nombre Completo *</label>
-                  <input type="text" required placeholder="Nombres y Apellidos" class="w-full px-3 py-2 border rounded-xl bg-slate-50 text-xs" />
-                </div>
-                <div>
-                  <label class="block font-bold text-slate-700 mb-1">Tipo y N° Documento (DNI/CE) *</label>
-                  <input type="text" required placeholder="DNI o Carnet de Extranjería" class="w-full px-3 py-2 border rounded-xl bg-slate-50 text-xs" />
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label class="block font-bold text-slate-700 mb-1">Correo Electrónico *</label>
-                  <input type="email" required placeholder="tu@email.com" class="w-full px-3 py-2 border rounded-xl bg-slate-50 text-xs" />
-                </div>
-                <div>
-                  <label class="block font-bold text-slate-700 mb-1">Teléfono / Celular *</label>
-                  <input type="tel" required placeholder="Ej. 987654321" class="w-full px-3 py-2 border rounded-xl bg-slate-50 text-xs" />
-                </div>
-              </div>
-
-              <div>
-                <label class="block font-bold text-slate-700 mb-1">Tipo de Solicitud *</label>
-                <div class="flex gap-4 pt-1">
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="tipo" value="QUEJA" checked />
-                    <span><strong>Queja</strong> (Malestar respecto a la atención)</span>
-                  </label>
-                  <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="tipo" value="RECLAMO" />
-                    <span><strong>Reclamo</strong> (Disconformidad relacionada a los productos/comida)</span>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label class="block font-bold text-slate-700 mb-1">Detalle y Motivo de la Queja o Reclamo *</label>
-                <textarea rows="4" required placeholder="Describe los hechos ocurridos, número de pedido o fecha..." class="w-full px-3 py-2 border rounded-xl bg-slate-50 text-xs"></textarea>
-              </div>
-
-              <p class="text-[11px] text-slate-500 leading-relaxed">
-                * Conforme a lo establecido en el Código de Protección y Defensa del Consumidor, la empresa dará respuesta en un plazo no mayor a quince (15) días hábiles improrrogables.
-              </p>
-
-              <div class="pt-2 flex justify-end gap-2">
-                <button 
-                  type="button" 
-                  (click)="showLibroModal.set(false)"
-                  class="px-4 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit" 
-                  class="px-6 py-2.5 rounded-xl bg-polleria-crimson text-white font-bold cursor-pointer hover:bg-[#a81125]"
-                >
-                  Enviar Reclamación
-                </button>
-              </div>
-
-            </form>
-
-          </div>
-        </div>
-      }
-
     </footer>
   `
 })
 export class FooterComponent {
-  readonly showLibroModal = signal<boolean>(false);
-
-  openLibroModal(): void {
-    this.showLibroModal.set(true);
-  }
-
   openLegalModal(type: string): void {
     alert(`Políticas y Términos de San Pollo (${type.toUpperCase()}):\n\nConforme a las leyes peruanas Ley N° 29571 y Ley N° 29733, todos los datos personales son procesados para fines de facturación y despacho.`);
-  }
-
-  enviarReclamo(event: Event): void {
-    event.preventDefault();
-    alert('Hoja de reclamación registrada exitosamente. Se ha enviado una copia con número de reclamo a tu correo conforme a ley.');
-    this.showLibroModal.set(false);
   }
 }
