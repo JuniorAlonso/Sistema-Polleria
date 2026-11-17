@@ -161,4 +161,68 @@ describe('authTokenInterceptor', () => {
     expect(logoutSpy).not.toHaveBeenCalled();
     expect(secondError?.status).toBe(403);
   });
+
+  it('notifica el error a todas las peticiones en cola si el refresh falla y no deja el estado bloqueado', () => {
+    const expiredJwt = createJwt(Math.floor((nowMs - 60_000) / 1000));
+    const freshJwt = createJwt(Math.floor((nowMs + 900_000) / 1000));
+    authService.token.set(expiredJwt);
+    authService.refreshToken.set('refresh-expired');
+    const logoutSpy = spyOn(authService, 'forceLogout').and.callThrough();
+
+    let err1: HttpErrorResponse | undefined;
+    let err2: HttpErrorResponse | undefined;
+    httpClient.get('http://localhost:8082/ordenes').subscribe({ error: e => (err1 = e) });
+    httpClient.get('http://localhost:8083/pagos').subscribe({ error: e => (err2 = e) });
+
+    const refreshReqs = http.match(r => r.url.includes('/auth/refresh'));
+    expect(refreshReqs.length).toBe(1);
+    refreshReqs[0].flush({ message: 'Refresh expirado' }, { status: 401, statusText: 'Unauthorized' });
+
+    expect(logoutSpy).toHaveBeenCalledTimes(1);
+    expect(err1?.status).toBe(401);
+    expect(err2?.status).toBe(401);
+
+    // After re-login, interceptor must not be stuck
+    authService.token.set(expiredJwt);
+    authService.refreshToken.set('refresh-new-login');
+    let recovered: unknown;
+    httpClient.get('http://localhost:8082/ordenes').subscribe(res => (recovered = res));
+
+    const nextRefresh = http.expectOne(r => r.url.includes('/auth/refresh'));
+    nextRefresh.flush({
+      token: freshJwt,
+      refreshToken: 'refresh-new-login-2',
+      email: 'admin@polleria.com',
+      name: 'Admin',
+      role: 'ADMIN'
+    });
+    http.expectOne(r => r.url === 'http://localhost:8082/ordenes').flush({ ok: true });
+    expect(recovered).toEqual({ ok: true });
+  });
+
+  it('no deja el refresh colgado si la petición que lo inició se cancela antes de responder', () => {
+    const expiredJwt = createJwt(Math.floor((nowMs - 60_000) / 1000));
+    const freshJwt = createJwt(Math.floor((nowMs + 900_000) / 1000));
+    authService.token.set(expiredJwt);
+    authService.refreshToken.set('refresh-abort-1');
+
+    const sub = httpClient.get('http://localhost:8082/ordenes').subscribe();
+    const firstRefresh = http.expectOne(r => r.url.includes('/auth/refresh'));
+    sub.unsubscribe();
+    expect(firstRefresh.cancelled).toBeTrue();
+
+    let recovered: unknown;
+    httpClient.get('http://localhost:8083/pagos').subscribe(res => (recovered = res));
+
+    const secondRefresh = http.expectOne(r => r.url.includes('/auth/refresh'));
+    secondRefresh.flush({
+      token: freshJwt,
+      refreshToken: 'refresh-abort-2',
+      email: 'admin@polleria.com',
+      name: 'Admin',
+      role: 'ADMIN'
+    });
+    http.expectOne(r => r.url === 'http://localhost:8083/pagos').flush([{ id: 1 }]);
+    expect(recovered).toEqual([{ id: 1 }]);
+  });
 });

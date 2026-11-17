@@ -1,12 +1,11 @@
 import { HttpInterceptorFn, HttpRequest, HttpHandlerFn, HttpErrorResponse } from '@angular/common/http';
 import { inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { BehaviorSubject, Observable, throwError } from 'rxjs';
-import { catchError, filter, switchMap, take } from 'rxjs/operators';
+import { Observable, throwError } from 'rxjs';
+import { catchError, finalize, map, shareReplay, switchMap } from 'rxjs/operators';
 import { AuthService } from '../services/auth.service';
 
-let isRefreshing = false;
-const refreshTokenSubject = new BehaviorSubject<string | null>(null);
+let refreshRequest$: Observable<string> | null = null;
 
 export const authTokenInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandlerFn) => {
   const platformId = inject(PLATFORM_ID);
@@ -20,7 +19,8 @@ export const authTokenInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown
   let authReq = req;
   const isAuthEndpoint = req.url.includes('/auth/login') ||
                          req.url.includes('/auth/register') ||
-                         req.url.includes('/auth/refresh');
+                         req.url.includes('/auth/refresh') ||
+                         req.url.includes('/auth/logout');
 
   if (token && !isAuthEndpoint && !req.headers.has('Authorization')) {
     if (authService.hasExpiredJwt(token)) {
@@ -61,50 +61,34 @@ function handle401Error(
   next: HttpHandlerFn,
   authService: AuthService
 ): Observable<any> {
-  if (!isRefreshing) {
-    isRefreshing = true;
-    refreshTokenSubject.next(null);
-
+  if (!refreshRequest$) {
     const currentRefreshToken = authService.getRefreshToken();
     if (!currentRefreshToken) {
-      isRefreshing = false;
       authService.forceLogout();
       return throwError(() => new Error('Sesión expirada. No hay refresh token disponible.'));
     }
 
-    return authService.refreshTokens(currentRefreshToken).pipe(
-      switchMap((authResponse) => {
-        isRefreshing = false;
-        const newToken = authResponse.token;
-        refreshTokenSubject.next(newToken);
-
-        // Reintentar la petición que originalmente falló con el nuevo token
-        return next(req.clone({
-          setHeaders: {
-            Authorization: `Bearer ${newToken}`
-          }
-        }));
-      }),
+    refreshRequest$ = authService.refreshTokens(currentRefreshToken).pipe(
+      map((authResponse) => authResponse.token),
       catchError((refreshErr) => {
-        isRefreshing = false;
-        refreshTokenSubject.next(null);
         // Si la renovación falla (expirado o reuso detectado), forzar salida del usuario
         authService.forceLogout();
         return throwError(() => refreshErr);
-      })
-    );
-  } else {
-    // Si ya hay un refresh en curso, las demás peticiones esperan en cola sin disparar más llamadas a /auth/refresh
-    return refreshTokenSubject.pipe(
-      filter(token => token !== null),
-      take(1),
-      switchMap(token => {
-        return next(req.clone({
-          setHeaders: {
-            Authorization: `Bearer ${token}`
-          }
-        }));
-      })
+      }),
+      finalize(() => {
+        refreshRequest$ = null;
+      }),
+      shareReplay({ bufferSize: 1, refCount: true })
     );
   }
+
+  return refreshRequest$.pipe(
+    switchMap((newToken) =>
+      next(req.clone({
+        setHeaders: {
+          Authorization: `Bearer ${newToken}`
+        }
+      }))
+    )
+  );
 }

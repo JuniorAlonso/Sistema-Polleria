@@ -1,8 +1,8 @@
-import { Injectable, signal, computed, inject, PLATFORM_ID } from '@angular/core';
+import { Injectable, signal, computed, inject, PLATFORM_ID, DestroyRef } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError, map } from 'rxjs';
+import { Observable, tap, catchError, throwError, map, finalize, shareReplay } from 'rxjs';
 import { User, LoginRequest, RegisterRequest, AuthResponse, UserRole } from '../models/user.model';
 import { BackendAuthResponse, BackendVerificarSancionResponse } from '../models/api-contracts.model';
 import { AuthAdapter } from '../adapters/auth.adapter';
@@ -15,7 +15,10 @@ export class AuthService {
   private http = inject(HttpClient);
   private platformId = inject(PLATFORM_ID);
   private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
   private readonly API_URL = environment.authApiUrl || 'http://localhost:8081';
+  private refreshInFlight$: Observable<AuthResponse> | null = null;
+  private sessionEpoch = 0;
 
   // Reactive State Signals
   readonly currentUser = signal<User | null>(null);
@@ -38,6 +41,7 @@ export class AuthService {
 
   constructor() {
     this.restoreSession();
+    this.registerStorageSync();
   }
 
   getAccessToken(): string | null {
@@ -45,6 +49,12 @@ export class AuthService {
   }
 
   getRefreshToken(): string | null {
+    if (isPlatformBrowser(this.platformId)) {
+      const stored = localStorage.getItem('polleria_refresh_token');
+      if (stored) {
+        return stored;
+      }
+    }
     return this.refreshToken();
   }
 
@@ -79,14 +89,9 @@ export class AuthService {
       const savedRefreshToken = localStorage.getItem('polleria_refresh_token');
 
       if (savedUser && savedToken) {
-        if (this.isTokenExpired(savedToken)) {
-          if (savedRefreshToken) {
-            this.refreshTokens(savedRefreshToken).subscribe({
-              error: () => this.limpiarSesion()
-            });
-          } else {
-            this.limpiarSesion();
-          }
+        const expired = this.isTokenExpired(savedToken);
+        if (expired && !savedRefreshToken) {
+          this.limpiarSesion();
           return;
         }
 
@@ -96,9 +101,55 @@ export class AuthService {
           this.refreshToken.set(savedRefreshToken || null);
         } catch {
           this.limpiarSesion();
+          return;
+        }
+
+        if (expired && savedRefreshToken) {
+          this.refreshTokens(savedRefreshToken).subscribe({
+            error: () => this.limpiarSesion()
+          });
         }
       }
     }
+  }
+
+  private registerStorageSync(): void {
+    if (!isPlatformBrowser(this.platformId) || typeof window === 'undefined') {
+      return;
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key !== null &&
+        event.key !== 'polleria_token' &&
+        event.key !== 'polleria_refresh_token' &&
+        event.key !== 'polleria_user'
+      ) {
+        return;
+      }
+
+      const storedToken = localStorage.getItem('polleria_token');
+      const storedRefresh = localStorage.getItem('polleria_refresh_token');
+      const storedUser = localStorage.getItem('polleria_user');
+
+      if (!storedToken || !storedUser) {
+        this.currentUser.set(null);
+        this.token.set(null);
+        this.refreshToken.set(null);
+        return;
+      }
+
+      try {
+        this.currentUser.set(JSON.parse(storedUser));
+        this.token.set(storedToken);
+        this.refreshToken.set(storedRefresh);
+      } catch {
+        this.limpiarSesion();
+      }
+    };
+
+    window.addEventListener('storage', onStorage);
+    this.destroyRef.onDestroy(() => window.removeEventListener('storage', onStorage));
   }
 
   /**
@@ -175,34 +226,45 @@ export class AuthService {
    * Renovación de tokens (Refresh Token Rotation - RTR)
    */
   refreshTokens(tokenToRefresh?: string): Observable<AuthResponse> {
-    const currentRefresh = tokenToRefresh || this.refreshToken();
+    if (this.refreshInFlight$) {
+      return this.refreshInFlight$;
+    }
+
+    const currentRefresh = tokenToRefresh || this.getRefreshToken();
     if (!currentRefresh) {
       return throwError(() => new Error('No refresh token disponible'));
     }
 
-    return this.http.post<BackendAuthResponse>(`${this.API_URL}/auth/refresh`, {
+    const epoch = this.sessionEpoch;
+    this.refreshInFlight$ = this.http.post<BackendAuthResponse>(`${this.API_URL}/auth/refresh`, {
       refreshToken: currentRefresh
     }).pipe(
       map(dto => AuthAdapter.toAuthResponse(dto)),
       tap(authResp => {
-        if (authResp.token) {
+        if (authResp.token && this.sessionEpoch === epoch) {
           this.setSession(authResp);
         }
-      })
+      }),
+      finalize(() => {
+        this.refreshInFlight$ = null;
+      }),
+      shareReplay({ bufferSize: 1, refCount: true })
     );
+
+    return this.refreshInFlight$;
   }
 
   /**
    * RF03: Cerrar Sesión con revocación en backend
    */
   logout(): void {
-    const currentRefresh = this.refreshToken();
+    const currentRefresh = this.getRefreshToken();
+    this.forceLogout();
     if (currentRefresh) {
       // Intento de revocación en backend (fire and forget)
       this.http.post(`${this.API_URL}/auth/logout`, { refreshToken: currentRefresh })
         .subscribe({ error: () => {} });
     }
-    this.forceLogout();
   }
 
   /**
@@ -219,6 +281,7 @@ export class AuthService {
 
   /** Limpia las credenciales sin navegar. */
   private limpiarSesion(): void {
+    this.sessionEpoch++;
     this.currentUser.set(null);
     this.token.set(null);
     this.refreshToken.set(null);
