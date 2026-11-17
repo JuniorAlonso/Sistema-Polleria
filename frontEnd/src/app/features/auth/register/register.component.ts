@@ -42,7 +42,7 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
             
             <!-- Campo: Nombre Completo (RF01) -->
             <div class="space-y-1.5">
-              <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <label for="register-nombre" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 NOMBRE COMPLETO
               </label>
               <div class="relative flex items-center">
@@ -52,19 +52,29 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
                   </svg>
                 </span>
                 <input 
+                  id="register-nombre"
                   type="text" 
                   [(ngModel)]="nombre" 
+                  #nombreCtrl="ngModel"
                   name="nombre"
+                  maxlength="100"
+                  autocomplete="name"
                   placeholder="Tu nombre y apellido"
-                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition rounded-xs"
+                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 transition rounded-xs"
+                  [ngClass]="mostrarErrorNombre(nombreCtrl.touched) ? 'ring-2 ring-rose-500 focus:ring-rose-500' : 'focus:ring-polleria-gold'"
                   required
                 />
               </div>
+              @if (mostrarErrorNombre(nombreCtrl.touched)) {
+                <p class="text-[11px] text-rose-400">
+                  Ingresa tu nombre completo (entre 2 y 100 caracteres).
+                </p>
+              }
             </div>
 
             <!-- Campo: Celular (RF01) -->
             <div class="space-y-1.5">
-              <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <label for="register-celular" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 NÚMERO DE CELULAR (WHATSAPP)
               </label>
               <div class="relative flex items-center">
@@ -74,19 +84,42 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
                   </svg>
                 </span>
                 <input 
+                  id="register-celular"
                   type="tel" 
                   [(ngModel)]="celular" 
+                  #celularCtrl="ngModel"
+                  (input)="onCelularInput($event)"
                   name="celular"
+                  inputmode="numeric"
+                  maxlength="9"
+                  pattern="^9[0-9]{8}$"
+                  autocomplete="tel-national"
                   placeholder="Ej. 987654321"
-                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition rounded-xs"
+                  class="w-full pl-10 pr-14 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 transition rounded-xs"
+                  [ngClass]="mostrarErrorCelular(celularCtrl.touched) ? 'ring-2 ring-rose-500 focus:ring-rose-500' : 'focus:ring-polleria-gold'"
                   required
                 />
+                <span
+                  class="absolute right-3 text-[11px] font-semibold tabular-nums"
+                  [ngClass]="esCelularValido(celular) ? 'text-emerald-600' : 'text-slate-400'"
+                >
+                  {{ celular.length }}/9
+                </span>
               </div>
+              @if (mostrarErrorCelular(celularCtrl.touched)) {
+                <p class="text-[11px] text-rose-400">
+                  {{ mensajeErrorCelular() }}
+                </p>
+              } @else {
+                <p class="text-[11px] text-slate-500">
+                  Solo números: 9 dígitos empezando con 9.
+                </p>
+              }
             </div>
 
             <!-- Campo: Correo Electrónico (RF01) -->
             <div class="space-y-1.5">
-              <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <label for="register-correo" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 CORREO ELECTRÓNICO
               </label>
               <div class="relative flex items-center">
@@ -96,14 +129,24 @@ import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-her
                   </svg>
                 </span>
                 <input 
+                  id="register-correo"
                   type="email" 
                   [(ngModel)]="correo" 
+                  #correoCtrl="ngModel"
                   name="correo"
+                  maxlength="150"
+                  autocomplete="email"
                   placeholder="tu@email.com"
-                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition rounded-xs"
+                  class="w-full pl-10 pr-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 text-sm font-medium focus:outline-none focus:ring-2 transition rounded-xs"
+                  [ngClass]="mostrarErrorCorreo(correoCtrl.touched) ? 'ring-2 ring-rose-500 focus:ring-rose-500' : 'focus:ring-polleria-gold'"
                   required
                 />
               </div>
+              @if (mostrarErrorCorreo(correoCtrl.touched)) {
+                <p class="text-[11px] text-rose-400">
+                  Ingresa un correo electrónico válido (ej. tu&#64;email.com).
+                </p>
+              }
             </div>
 
             <!-- Campo: Contraseña (RF01) -->
@@ -222,6 +265,10 @@ export class RegisterComponent {
   correo = '';
   password = '';
   mostrarPassword = false;
+  intentoEnvio = false;
+
+  private readonly celularRegex = /^9\d{8}$/;
+  private readonly emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   // Deben coincidir con las validaciones de RegisterRequest en auth-service
   readonly reglasPassword = [
@@ -230,9 +277,88 @@ export class RegisterComponent {
     { texto: 'Al menos un número (0-9)', cumple: (p: string) => /\d/.test(p) }
   ];
 
+  normalizarCelular(valor: string): string {
+    const soloDigitos = (valor || '').replace(/\D/g, '').replace(/^51(?=9\d{8}$)/, '');
+    return soloDigitos.slice(0, 9);
+  }
+
+  onCelularInput(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const limpio = this.normalizarCelular(input.value);
+    this.celular = limpio;
+    if (input.value !== limpio) {
+      input.value = limpio;
+    }
+  }
+
+  esNombreValido(valor: string): boolean {
+    const limpio = (valor || '').trim();
+    return limpio.length >= 2 && limpio.length <= 100;
+  }
+
+  esCelularValido(valor: string): boolean {
+    return this.celularRegex.test(this.normalizarCelular(valor));
+  }
+
+  esCorreoValido(valor: string): boolean {
+    return this.emailRegex.test((valor || '').trim());
+  }
+
+  mostrarErrorNombre(touched: boolean | null): boolean {
+    return (!!touched || this.intentoEnvio) && !this.esNombreValido(this.nombre);
+  }
+
+  mostrarErrorCelular(touched: boolean | null): boolean {
+    return (!!touched || this.intentoEnvio) && !this.esCelularValido(this.celular);
+  }
+
+  mostrarErrorCorreo(touched: boolean | null): boolean {
+    return (!!touched || this.intentoEnvio) && !this.esCorreoValido(this.correo);
+  }
+
+  mensajeErrorCelular(): string {
+    const limpio = this.normalizarCelular(this.celular);
+    if (!limpio) {
+      return 'El número de celular es obligatorio.';
+    }
+    if (!limpio.startsWith('9')) {
+      return 'El celular debe empezar con el dígito 9.';
+    }
+    return 'El celular debe tener exactamente 9 dígitos.';
+  }
+
   handleRegister(): void {
-    if (!this.nombre || !this.celular || !this.correo || !this.password) {
+    this.intentoEnvio = true;
+
+    const nombreLimpio = this.nombre.trim();
+    const celularLimpio = this.normalizarCelular(this.celular);
+    const correoLimpio = this.correo.trim();
+
+    this.celular = celularLimpio;
+
+    if (!nombreLimpio || !celularLimpio || !correoLimpio || !this.password) {
       this.notify.showError('Por favor completa todos los campos para tu registro');
+      return;
+    }
+
+    if (!this.esNombreValido(nombreLimpio)) {
+      this.notify.showError('Nombre inválido', 'Debe tener entre 2 y 100 caracteres.');
+      return;
+    }
+
+    if (!this.esCelularValido(celularLimpio)) {
+      this.notify.showError(
+        'Número de celular inválido',
+        'Debe tener 9 dígitos numéricos y empezar con 9 (ej. 987654321).'
+      );
+      return;
+    }
+
+    if (!this.esCorreoValido(correoLimpio)) {
+      this.notify.showError(
+        'Correo electrónico inválido',
+        'Ingresa un correo con formato válido (ej. tu@email.com).'
+      );
       return;
     }
 
@@ -246,13 +372,13 @@ export class RegisterComponent {
     }
 
     this.auth.register({
-      nombre: this.nombre,
-      celular: this.celular,
-      correo: this.correo,
+      nombre: nombreLimpio,
+      celular: celularLimpio,
+      correo: correoLimpio,
       password: this.password
     }).subscribe({
       next: () => {
-        this.notify.showSuccess(`¡Bienvenido/a, ${this.nombre}!`, 'Tu cuenta ha sido creada exitosamente.');
+        this.notify.showSuccess(`¡Bienvenido/a, ${nombreLimpio}!`, 'Tu cuenta ha sido creada exitosamente.');
         if (this.returnUrl) {
           this.router.navigateByUrl(this.returnUrl);
         } else {
