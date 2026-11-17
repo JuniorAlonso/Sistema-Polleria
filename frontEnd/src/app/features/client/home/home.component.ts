@@ -43,16 +43,16 @@ import { NotificationService } from '../../../core/services/notification.service
 
           <!-- CTA Button -->
           <div class="pt-2">
-            <button 
-              type="button"
-              (click)="scrollToSection('combos-section')"
+            
+            <a 
+              routerLink="/menu"
               class="px-8 sm:px-10 py-3.5 sm:py-4 bg-polleria-gold hover:bg-amber-500 active:scale-95 text-slate-950 font-display text-lg sm:text-xl tracking-wider uppercase font-extrabold transition duration-200 shadow-xl shadow-black/60 rounded-xs cursor-pointer inline-flex items-center gap-2"
             >
               <span>VER PROMOCIONES</span>
               <svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
               </svg>
-            </button>
+            </a>
           </div>
 
         </div>

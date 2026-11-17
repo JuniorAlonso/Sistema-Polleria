@@ -764,6 +764,19 @@ class PagoServiceTest {
     }
 
     @Test
+    @DisplayName("Cajero POS: preferencia MP para orden SALON por cobrar delega al gateway")
+    void crearPreferenciaMercadoPago_ordenSalonPorCobrar_delega() {
+        when(ordenesClient.obtener(617L)).thenReturn(orden(617L, "SALON", "LISTO", "45.00"));
+        when(pagoRepository.findByOrdenId(617L)).thenReturn(Optional.empty());
+        PreferenceResponse pref = new PreferenceResponse("PREF-SALON", "https://mp/init", null, 10L, 617L);
+        when(mercadoPagoGateway.crearPreferencia(any(IniciarPagoRequest.class), eq(7L))).thenReturn(pref);
+
+        PreferenceResponse res = pagoService.crearPreferenciaMercadoPago(preferencia(617L, "45.00"), 7L);
+
+        assertThat(res).isSameAs(pref);
+    }
+
+    @Test
     @DisplayName("T3: preferencia MP con monto distinto al total responde 400")
     void crearPreferenciaMercadoPago_montoDistinto_rechaza() {
         when(ordenesClient.obtener(614L)).thenReturn(orden(614L, "DELIVERY", "PENDIENTE_PAGO", "45.00"));

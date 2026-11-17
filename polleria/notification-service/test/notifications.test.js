@@ -229,3 +229,12 @@ test('CANCELADO avisa al cliente que su pedido se canceló y lo acepta el endpoi
     assert.ok(ESTADOS_DELIVERY.includes('CANCELADO'), 'el endpoint de estado acepta CANCELADO');
     assert.ok(ESTADOS_DELIVERY.includes('LISTO'), 'el endpoint de estado acepta LISTO (recojo)');
 });
+
+test('EN_PREPARACION de RECOJO indica recoger en local y no menciona reparto', () => {
+    const recojo = mensajeEstado({ ordenId: 12, numeroPedido: 5, nombreCliente: 'Ana', estadoNuevo: 'EN_PREPARACION', tipo: 'RECOJO' });
+    assert.match(recojo, /recogerlo en nuestro local/i);
+    assert.doesNotMatch(recojo, /reparto/i);
+
+    const delivery = mensajeEstado({ ordenId: 13, numeroPedido: 6, nombreCliente: 'Ana', estadoNuevo: 'EN_PREPARACION', tipo: 'DELIVERY' });
+    assert.match(delivery, /salga a reparto/i);
+});

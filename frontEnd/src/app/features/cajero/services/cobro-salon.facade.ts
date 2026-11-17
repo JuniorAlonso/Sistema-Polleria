@@ -28,6 +28,12 @@ export interface ResultadoCobro {
   comprobante: BackendComprobanteResponse;
 }
 
+export interface ResultadoInicioMercadoPago {
+  yaAprobado: boolean;
+  checkoutUrl: string | null;
+  pagoId?: number;
+}
+
 const ESTADOS_CERRADOS = ['COMPLETADO', 'ENTREGADO', 'CANCELADO'];
 
 /**
@@ -66,7 +72,39 @@ export class CobroSalonFacade {
   }
 
   /**
-   * Fresh read of the table state before taking any money: orders-service only closes a SALON
+   * Starts a Mercado Pago Checkout Pro flow for a dine-in order (same gateway preference as web
+   * checkout). If the payment is already APPROVED, skips redirecting so the cashier only completes
+   * receipt emission and order closing.
+   */
+  iniciarMercadoPago(orden: Order): Observable<ResultadoInicioMercadoPago> {
+    return this.pagos.obtenerPorOrden(orden.id).pipe(
+      switchMap(existente => {
+        if (existente?.estado === 'APROBADO') {
+          return of({ yaAprobado: true, checkoutUrl: null, pagoId: Number(existente.id) });
+        }
+        if (existente?.estado === 'CANCELADO') {
+          return throwError(() => ({
+            paso: 'PAGO',
+            mensaje: 'El pago de esta orden fue cancelado; no se puede cobrar.',
+            pagoAprobado: false
+          } satisfies ErrorCobro));
+        }
+        return this.verificarMesa(orden).pipe(
+          switchMap(() => this.pagos.crearPreferenciaMercadoPago(orden.id, orden.total)),
+          map(pref => ({
+            yaAprobado: false,
+            checkoutUrl: pref.checkoutUrl || pref.sandboxInitPoint || pref.initPoint || null,
+            pagoId: pref.pagoId
+          })),
+          catchError(err => throwError(() => this.esErrorCobro(err)
+            ? err
+            : this.error('PAGO', err, 'No se pudo generar el enlace de Mercado Pago', false)))
+        );
+      })
+    );
+  }
+
+  /** Fresh read of the table state before taking any money: orders-service only closes a SALON
    * comanda whose table is in POR_COBRAR (plan 01, D1.2), so charging any other one would leave
    * money taken and the comanda open. Without mesaEstado (older backend) the charge goes on.
    */
@@ -91,7 +129,7 @@ export class CobroSalonFacade {
             paso: 'CAJA',
             mensaje: pagoAprobado
               ? 'El cobro en efectivo ya está aprobado, pero no hay una caja abierta para registrar el ingreso. Abre la caja y vuelve a confirmar.'
-              : 'No hay una caja abierta. Abre la caja para cobrar en efectivo; tarjeta y Yape siguen disponibles.',
+              : 'No hay una caja abierta. Abre la caja para cobrar en efectivo; Mercado Pago sigue disponible.',
             pagoAprobado
           } satisfies ErrorCobro)))
     );

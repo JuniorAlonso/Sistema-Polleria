@@ -122,6 +122,20 @@ describe('KitchenKdsComponent — comanda de salón', () => {
     expect(texto).not.toContain('servirla en mesa');
   });
 
+  it('el recojo en tienda muestra "Listo para recoger" en botón y aviso sin mencionar motorizado ni reparto', () => {
+    orders.orders.set([
+      ordenDe('RECOJO_EN_TIENDA', 'EN_PREPARACION', { id: '20', codigoSeguimiento: 'POL-20' }),
+      ordenDe('RECOJO_EN_TIENDA', 'LISTO_COCINA', { id: '21', codigoSeguimiento: 'POL-21' })
+    ]);
+    fixture.detectChanges();
+
+    const texto = fixture.nativeElement.textContent as string;
+    expect(texto).toContain('Listo para recoger');
+    expect(texto).toContain('Esperando que el cliente retire el pedido en tienda');
+    expect(texto).not.toContain('motorizado');
+    expect(texto).not.toContain('Listos para Reparto');
+  });
+
   it('ordena las comandas por antigüedad: la más vieja primero (S3.4)', () => {
     orders.orders.set([
       ordenDe('DELIVERY', 'EN_PREPARACION', { createdAt: '2026-01-01T00:10:00Z' }),

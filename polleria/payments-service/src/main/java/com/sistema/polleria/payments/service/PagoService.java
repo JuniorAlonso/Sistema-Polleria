@@ -537,11 +537,14 @@ public class PagoService {
         pago = pagoRepository.save(pago);
 
         final Pago pagoConfirmado = pago;
-        ejecutarTrasCommit(() -> {
-            notificarOrdenAsync(pagoConfirmado.getOrdenId(), bearerToken);
-            encolarAvisoAprobacion(pagoConfirmado.getOrdenId(), pagoConfirmado.getMonto(), pagoConfirmado.getMetodoPago());
-            emitirBoletaDigital(pagoConfirmado);
-        });
+        final boolean esSalon = orden != null && "SALON".equalsIgnoreCase(orden.tipo());
+        if (!esSalon) {
+            ejecutarTrasCommit(() -> {
+                notificarOrdenAsync(pagoConfirmado.getOrdenId(), bearerToken);
+                encolarAvisoAprobacion(pagoConfirmado.getOrdenId(), pagoConfirmado.getMonto(), pagoConfirmado.getMetodoPago());
+                emitirBoletaDigital(pagoConfirmado);
+            });
+        }
         log.info("Pago confirmado — id={} orden={}", pago.getId(), pago.getOrdenId());
         return PagoResponse.from(pago);
     }
@@ -821,7 +824,13 @@ public class PagoService {
     public com.sistema.polleria.payments.dto.PreferenceResponse crearPreferenciaMercadoPago(
             IniciarPagoRequest request, Long clienteId) {
         OrdenesClient.OrdenInfo orden = obtenerOrden(request.ordenId());
-        exigirPendienteDePago(request.ordenId(), orden);
+        if ("SALON".equalsIgnoreCase(orden.tipo())) {
+            if ("CANCELADO".equals(orden.estado()) || "COMPLETADO".equals(orden.estado())) {
+                throw new IllegalStateException("La comanda #" + request.ordenId() + " ya está " + orden.estado());
+            }
+        } else {
+            exigirPendienteDePago(request.ordenId(), orden);
+        }
         if (orden.total() == null || orden.total().compareTo(request.monto()) != 0) {
             throw new IllegalArgumentException(
                     "El monto no coincide con el total del pedido (S/ " + orden.total() + ")");

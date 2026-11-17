@@ -66,9 +66,10 @@ function mensajePago({ ordenId, numeroPedido, nombreCliente, montoTotal, tiempoE
     return lineas.join('\n');
 }
 
-// RF31: cambio de estado de delivery
-function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repartidorNombre, repartidorTelefono, mensaje }) {
+// RF31: cambio de estado de delivery o recojo en tienda
+function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, tipo, repartidorNombre, repartidorTelefono, mensaje }) {
     const numero = numeroVisible({ numeroPedido, ordenId });
+    const esRecojo = tipo === 'RECOJO' || tipo === 'RECOJO_EN_TIENDA';
     let cuerpo;
 
     switch (estadoNuevo) {
@@ -79,12 +80,16 @@ function mensajeEstado({ ordenId, numeroPedido, nombreCliente, estadoNuevo, repa
 
         case 'EN_PREPARACION':
         case 'PREPARANDO':
-            cuerpo = `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto o esté listo.`;
+            cuerpo = esRecojo
+                ? `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando esté listo para que puedas recogerlo en nuestro local.`
+                : `Tu pedido N.° ${numero} ya está en preparación. Te avisaremos cuando salga a reparto o esté listo.`;
             break;
 
         case 'LISTO':
         case 'LISTO_PARA_ENTREGAR':
-            cuerpo = `¡Tu pedido N.° ${numero} ya está listo! Si elegiste Recojo en Tienda, ya puedes acercarte a recogerlo a nuestro local. Recuerda que tienes hasta 1 hora para retirarlo.`;
+            cuerpo = esRecojo
+                ? `¡Tu pedido N.° ${numero} ya está listo! Ya puedes acercarte a recogerlo a nuestro local. Recuerda que tienes hasta 1 hora para retirarlo.`
+                : `¡Tu pedido N.° ${numero} ya está listo! Si elegiste Recojo en Tienda, ya puedes acercarte a recogerlo a nuestro local. Recuerda que tienes hasta 1 hora para retirarlo.`;
             break;
 
         case 'EN_CAMINO':

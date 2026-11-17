@@ -144,13 +144,13 @@ import {
                         (click)="solicitarCambioEstado('LISTO_COCINA')"
                         class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-lg cursor-pointer animate-pulse"
                       >
-                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>{{ order().tipo === 'SALON' ? 'Listo para servir en mesa' : 'Listo para Reparto / Empacado' }}</span></span>
+                        <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>{{ textoBotonListo() }}</span></span>
                       </button>
                     } @else if (order().estado === 'LISTO_COCINA') {
                       <div class="flex items-center justify-center p-3 rounded-xl bg-purple-500/10 border border-purple-500/30">
                         <span class="text-xs text-purple-300 font-bold flex items-center gap-2">
                           <span class="w-2.5 h-2.5 rounded-full bg-purple-400 animate-ping"></span>
-                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>{{ order().tipo === 'SALON' ? 'Comanda lista — el mozo ya puede servirla en mesa' : 'Empacado y listo — Esperando que el motorizado retire el pedido' }}</span>
+                          <span class="flex items-center justify-center gap-1.5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>{{ textoAvisoListo() }}</span>
                         </span>
                       </div>
                     }
@@ -172,6 +172,28 @@ export class KitchenOrderCardComponent {
   readonly etiquetaTipo = computed(() => obtenerEtiquetaTipoKds(this.order()));
 
   readonly esMostrador = computed(() => this.etiquetaTipo() === 'MOSTRADOR');
+
+  readonly textoBotonListo = computed(() => {
+    switch (this.order().tipo) {
+      case 'SALON':
+        return 'Listo para servir en mesa';
+      case 'RECOJO_EN_TIENDA':
+        return 'Listo para recoger';
+      default:
+        return 'Listo para Reparto / Empacado';
+    }
+  });
+
+  readonly textoAvisoListo = computed(() => {
+    switch (this.order().tipo) {
+      case 'SALON':
+        return 'Comanda lista — el mozo ya puede servirla en mesa';
+      case 'RECOJO_EN_TIENDA':
+        return 'Listo para recoger — Esperando que el cliente retire el pedido en tienda';
+      default:
+        return 'Empacado y listo — Esperando que el motorizado retire el pedido';
+    }
+  });
 
   readonly gruposRonda = computed<GrupoRondaKds[]>(() =>
     agruparItemsPorRondaKds(this.order().items)

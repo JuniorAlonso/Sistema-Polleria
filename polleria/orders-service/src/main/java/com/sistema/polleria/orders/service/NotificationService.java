@@ -76,6 +76,9 @@ public class NotificationService {
             body.put("telefono", telefono);
             body.put("nombreCliente", orden.getNombreCliente() != null ? orden.getNombreCliente() : "Cliente");
             body.put("estadoNuevo", nuevoEstado.name());
+            if (orden.getTipo() != null) {
+                body.put("tipo", orden.getTipo().name());
+            }
             if (esRecojoNotificable && nuevoEstado.esListo()) {
                 body.put("mensaje", mensajeRecojoListo(orden));
                 body.put("plazoRecojoMinutos", PLAZO_RECOJO_MINUTOS);

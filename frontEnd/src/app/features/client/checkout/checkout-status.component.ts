@@ -87,20 +87,34 @@ const MAX_INTENTOS_POLLING = 20;
 
             <!-- Action Buttons -->
             <div class="space-y-2.5 pt-2">
-              <a 
-                [routerLink]="['/tracking']" 
-                [queryParams]="trackingCode() ? { code: trackingCode() } : null"
-                class="w-full py-3.5 px-4 rounded-xl bg-polleria-gold hover:bg-amber-400 active:scale-98 text-slate-950 font-display text-sm tracking-wider uppercase font-black transition duration-200 shadow-xl shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>VER SEGUIMIENTO EN VIVO</span>
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
-                </svg>
-              </a>
+              @if (cajeroOrdenId()) {
+                <a 
+                  [routerLink]="['/cajero']" 
+                  [queryParams]="{ mpOrdenId: cajeroOrdenId() }"
+                  class="w-full py-3.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-98 text-slate-950 font-display text-sm tracking-wider uppercase font-black transition duration-200 shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>VOLVER A CAJA Y EMITIR TICKET</span>
+                </a>
 
-              <p class="text-[11px] text-slate-400">
-                Redirigiendo al seguimiento en <span class="font-bold text-polleria-gold">{{ countdown() }}s</span>...
-              </p>
+                <p class="text-[11px] text-slate-400">
+                  Redirigiendo a caja en <span class="font-bold text-emerald-400">{{ countdown() }}s</span>...
+                </p>
+              } @else {
+                <a 
+                  [routerLink]="['/tracking']" 
+                  [queryParams]="trackingCode() ? { code: trackingCode() } : null"
+                  class="w-full py-3.5 px-4 rounded-xl bg-polleria-gold hover:bg-amber-400 active:scale-98 text-slate-950 font-display text-sm tracking-wider uppercase font-black transition duration-200 shadow-xl shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>VER SEGUIMIENTO EN VIVO</span>
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                  </svg>
+                </a>
+
+                <p class="text-[11px] text-slate-400">
+                  Redirigiendo al seguimiento en <span class="font-bold text-polleria-gold">{{ countdown() }}s</span>...
+                </p>
+              }
             </div>
           </div>
         }
@@ -248,6 +262,7 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
   readonly paymentId = signal<string>('');
   readonly orderTotal = signal<number>(0);
   readonly countdown = signal<number>(6);
+  readonly cajeroOrdenId = signal<string | null>(null);
 
   private pollingSub?: Subscription;
   private countdownSub?: Subscription;
@@ -265,6 +280,20 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
 
       if (pId) {
         this.paymentId.set(String(pId));
+      }
+
+      if (isPlatformBrowser(this.platformId) && window.localStorage) {
+        try {
+          const cajeroRaw = localStorage.getItem('sanpollo_cajero_cobro');
+          if (cajeroRaw) {
+            const cajeroParsed = JSON.parse(cajeroRaw);
+            if (cajeroParsed?.ordenId) {
+              this.cajeroOrdenId.set(String(cajeroParsed.ordenId));
+            }
+          }
+        } catch {
+          // Ignore invalid cajero storage
+        }
       }
 
       this.resolverDatosPedido();
@@ -446,9 +475,14 @@ export class CheckoutStatusComponent implements OnInit, OnDestroy {
       const actual = this.countdown();
       if (actual <= 1) {
         this.countdownSub?.unsubscribe();
-        this.router.navigate(['/tracking'], {
-          queryParams: this.trackingCode() ? { code: this.trackingCode() } : undefined
-        });
+        const mpOrdenId = this.cajeroOrdenId();
+        if (mpOrdenId) {
+          this.router.navigate(['/cajero'], { queryParams: { mpOrdenId } });
+        } else {
+          this.router.navigate(['/tracking'], {
+            queryParams: this.trackingCode() ? { code: this.trackingCode() } : undefined
+          });
+        }
       } else {
         this.countdown.set(actual - 1);
       }

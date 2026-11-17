@@ -110,22 +110,19 @@ describe('CajeroDashboardComponent', () => {
     expect(component.esCobroValido()).toBeFalse();
   });
 
-  it('debe requerir referencia cuando el método es TARJETA', () => {
+  it('Mercado Pago es válido sin referencia manual (redirige a Checkout Pro)', () => {
     component.seleccionarOrdenParaCobro(mockOrder);
-    component.metodoCobroSeleccionado.set('TARJETA');
+    component.metodoCobroSeleccionado.set('MERCADO_PAGO');
     component.referenciaPagoInput = '';
 
-    expect(component.esCobroValido()).toBeFalse();
-
-    component.referenciaPagoInput = 'POS-123456';
     expect(component.esCobroValido()).toBeTrue();
   });
 
-  it('R3.7: sin caja abierta el efectivo queda bloqueado y el cobro arranca en tarjeta', () => {
+  it('R3.7: sin caja abierta el efectivo queda bloqueado y el cobro arranca en Mercado Pago', () => {
     financeService.cajaActual.set(null);
     component.seleccionarOrdenParaCobro(mockOrder);
 
-    expect(component.metodoCobroSeleccionado()).toBe('TARJETA');
+    expect(component.metodoCobroSeleccionado()).toBe('MERCADO_PAGO');
     component.metodoCobroSeleccionado.set('EFECTIVO');
     component.efectivoRecibidoInput = 50;
     expect(component.esCobroValido()).toBeFalse();
@@ -387,11 +384,11 @@ describe('CajeroDashboardComponent', () => {
     });
 
     it('POS: si el cobro no llegó a aprobarse, muestra el motivo del backend', () => {
+      abrirCaja();
       spyOn(TestBed.inject(CobroSalonFacade), 'cobrar').and.returnValue(throwError(() => ({
         paso: 'PAGO', mensaje: 'El monto S/ 45 no coincide', pagoAprobado: false
       })));
       component.seleccionarOrdenParaCobro(mockOrder);
-      component.referenciaPagoInput = 'POS-1';
 
       component.confirmarCobroComanda();
 

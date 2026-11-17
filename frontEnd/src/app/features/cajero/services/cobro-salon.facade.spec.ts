@@ -24,7 +24,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
   const pago = (estado: string) => ({ id: '9', estado } as PaymentTransaction);
 
   beforeEach(() => {
-    pagos = jasmine.createSpyObj('PaymentService', ['obtenerPorOrden', 'iniciarPago', 'confirmarPago']);
+    pagos = jasmine.createSpyObj('PaymentService', ['obtenerPorOrden', 'iniciarPago', 'confirmarPago', 'crearPreferenciaMercadoPago']);
     finanzas = jasmine.createSpyObj('FinanceService', ['registrarVentaEnCaja']);
     finanzasApi = jasmine.createSpyObj('FinanceApiService', ['obtenerCajaActual']);
     ordenes = jasmine.createSpyObj('OrdersService', ['completarOrdenSalon', 'obtenerOrden']);
@@ -44,7 +44,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     ordenes.obtenerOrden.and.returnValue(of({ ...orden, mesaEstado: 'POR_COBRAR' } as Order));
   });
 
-  function cobrar(metodo: 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN' = 'EFECTIVO') {
+  function cobrar(metodo: 'EFECTIVO' | 'MERCADO_PAGO' = 'EFECTIVO') {
     let resultado: unknown;
     let error: ErrorCobro | undefined;
     facade.cobrar(orden, metodo, 'ref', consumidorFinal()).subscribe({
@@ -68,19 +68,38 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     expect(resultado?.comprobante).toBe(comprobante);
   });
 
-  it('tarjeta y Yape no registran ingreso en caja ni consultan la caja', () => {
+  it('Mercado Pago no registra ingreso en caja ni consulta la caja', () => {
     pagos.obtenerPorOrden.and.returnValue(of(pago('PENDIENTE')));
     pagos.confirmarPago.and.returnValue(of(pago('APROBADO')));
 
-    cobrar('TARJETA');
+    cobrar('MERCADO_PAGO');
 
     expect(pagos.confirmarPago).toHaveBeenCalledWith(9, 'ref', 'TARJETA');
     expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), false);
     expect(finanzasApi.obtenerCajaActual).not.toHaveBeenCalled();
+  });
 
-    pagos.confirmarPago.calls.reset();
-    cobrar('YAPE_PLIN');
-    expect(pagos.confirmarPago).toHaveBeenCalledWith(9, 'ref', 'YAPE_PLIN');
+  it('iniciarMercadoPago genera preferencia con checkoutUrl cuando el pago no está aprobado', () => {
+    pagos.obtenerPorOrden.and.returnValue(of(null));
+    pagos.crearPreferenciaMercadoPago.and.returnValue(of({
+      preferenceId: 'pref-1',
+      initPoint: 'https://www.mercadopago.com.pe/checkout/v1/redirect?pref_id=pref-1',
+      sandboxInitPoint: 'https://sandbox.mercadopago.com.pe/checkout/v1/redirect?pref_id=pref-1',
+      checkoutUrl: 'https://www.mercadopago.com.pe/checkout/v1/redirect?pref_id=pref-1',
+      pagoId: 77,
+      ordenId: 101,
+      estado: 'PENDIENTE'
+    }));
+
+    let res: { yaAprobado: boolean; checkoutUrl: string | null; pagoId?: number } | undefined;
+    facade.iniciarMercadoPago(orden).subscribe(r => (res = r));
+
+    expect(pagos.crearPreferenciaMercadoPago).toHaveBeenCalledWith('101', 45);
+    expect(res).toEqual({
+      yaAprobado: false,
+      checkoutUrl: 'https://www.mercadopago.com.pe/checkout/v1/redirect?pref_id=pref-1',
+      pagoId: 77
+    });
   });
 
   it('con el pago ya APROBADO no vuelve a cobrar: solo completa comprobante y cierre (reintento)', () => {
@@ -107,7 +126,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
   it('reintento: un pago aprobado en efectivo registra el ingreso aunque la pantalla diga tarjeta', () => {
     pagos.obtenerPorOrden.and.returnValue(of({ id: '9', estado: 'APROBADO', metodo: 'EFECTIVO_CONTRAENTREGA' } as PaymentTransaction));
 
-    cobrar('TARJETA');
+    cobrar('MERCADO_PAGO');
 
     expect(finanzas.registrarVentaEnCaja).toHaveBeenCalledWith('101', consumidorFinal(), true);
   });
@@ -116,7 +135,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos.obtenerPorOrden.and.returnValue(of({ id: '9', estado: 'APROBADO', metodo: 'EFECTIVO_CONTRAENTREGA' } as PaymentTransaction));
     finanzasApi.obtenerCajaActual.and.returnValue(throwError(() => ({ status: 404 })));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('CAJA');
     expect(error?.pagoAprobado).toBeTrue();
@@ -152,7 +171,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos.obtenerPorOrden.and.returnValue(of(pago('APROBADO')));
     ordenes.completarOrdenSalon.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'Mesa no está POR_COBRAR' } })));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('CIERRE');
     expect(error?.pagoAprobado).toBeTrue();
@@ -162,7 +181,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
   it('un pago CANCELADO no se cobra', () => {
     pagos.obtenerPorOrden.and.returnValue(of(pago('CANCELADO')));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('PAGO');
     expect(pagos.confirmarPago).not.toHaveBeenCalled();
@@ -172,7 +191,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos.obtenerPorOrden.and.returnValue(of(pago('PENDIENTE')));
     pagos.confirmarPago.and.returnValue(of(null));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('PAGO');
     expect(error?.pagoAprobado).toBeFalse();
@@ -183,7 +202,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos.obtenerPorOrden.and.returnValue(of(pago('PENDIENTE')));
     pagos.confirmarPago.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'El monto S/ 40 no coincide con el total' } })));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('PAGO');
     expect(error?.pagoAprobado).toBeFalse();
@@ -195,7 +214,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     pagos.obtenerPorOrden.and.returnValue(of(null));
     pagos.iniciarPago.and.returnValue(throwError(() => ({ status: 409, error: { detail: 'El monto S/ 45 no coincide' } })));
 
-    const { error } = cobrar('TARJETA');
+    const { error } = cobrar('MERCADO_PAGO');
 
     expect(error?.paso).toBe('PAGO');
     expect(error?.mensaje).toContain('no coincide');
@@ -207,7 +226,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     it('no cobra nada si la mesa todavía no está en POR_COBRAR: el cierre sería rechazado', () => {
       ordenes.obtenerOrden.and.returnValue(of({ ...orden, mesaEstado: 'OCUPADA' } as Order));
 
-      const { error } = cobrar('TARJETA');
+      const { error } = cobrar('MERCADO_PAGO');
 
       expect(error?.paso).toBe('MESA');
       expect(error?.pagoAprobado).toBeFalse();
@@ -219,7 +238,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     it('si no puede leer la orden, no cobra', () => {
       ordenes.obtenerOrden.and.returnValue(throwError(() => new Error('orders caído')));
 
-      const { error } = cobrar('TARJETA');
+      const { error } = cobrar('MERCADO_PAGO');
 
       expect(error?.paso).toBe('MESA');
       expect(pagos.iniciarPago).not.toHaveBeenCalled();
@@ -230,7 +249,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
       pagos.iniciarPago.and.returnValue(of(pago('PENDIENTE')));
       pagos.confirmarPago.and.returnValue(of(pago('APROBADO')));
 
-      const { resultado } = cobrar('TARJETA');
+      const { resultado } = cobrar('MERCADO_PAGO');
 
       expect(resultado?.comprobante).toBe(comprobante);
     });
@@ -238,7 +257,7 @@ describe('CobroSalonFacade (plan 03, 4.1 y D3.17)', () => {
     it('con el pago ya APROBADO no vuelve a consultar la mesa: solo completa lo pendiente', () => {
       pagos.obtenerPorOrden.and.returnValue(of(pago('APROBADO')));
 
-      cobrar('TARJETA');
+      cobrar('MERCADO_PAGO');
 
       expect(ordenes.obtenerOrden).not.toHaveBeenCalled();
     });

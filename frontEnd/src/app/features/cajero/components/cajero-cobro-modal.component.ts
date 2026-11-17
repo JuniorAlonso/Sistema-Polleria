@@ -76,7 +76,7 @@ import { CajeroDatosFiscalesComponent } from './cajero-datos-fiscales.component'
                 <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
                   Método de Pago *
                 </label>
-                <div class="grid grid-cols-3 gap-2.5">
+                <div class="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     data-testid="metodo-efectivo"
@@ -92,22 +92,13 @@ import { CajeroDatosFiscalesComponent } from './cajero-datos-fiscales.component'
 
                   <button
                     type="button"
-                    (click)="metodo.set('TARJETA')"
+                    data-testid="metodo-mercadopago"
+                    (click)="metodo.set('MERCADO_PAGO')"
                     class="p-3 rounded-xl border text-center transition cursor-pointer flex flex-col items-center gap-1.5"
-                    [ngClass]="metodo() === 'TARJETA' ? 'bg-sky-500/20 border-sky-500 text-sky-300 shadow-md' : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'"
+                    [ngClass]="metodo() === 'MERCADO_PAGO' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 shadow-md' : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'"
                   >
-                    <span class="text-xl">💳</span>
-                    <span class="text-xs font-bold">Tarjeta POS</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    (click)="metodo.set('YAPE_PLIN')"
-                    class="p-3 rounded-xl border text-center transition cursor-pointer flex flex-col items-center gap-1.5"
-                    [ngClass]="metodo() === 'YAPE_PLIN' ? 'bg-purple-500/20 border-purple-500 text-purple-300 shadow-md' : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'"
-                  >
-                    <span class="text-xl">📱</span>
-                    <span class="text-xs font-bold">Yape / Plin</span>
+                    <span class="text-xl">🤝</span>
+                    <span class="text-xs font-bold">Mercado Pago</span>
                   </button>
                 </div>
               </div>
@@ -186,34 +177,15 @@ import { CajeroDatosFiscalesComponent } from './cajero-datos-fiscales.component'
                     </span>
                   </div>
                 </div>
-              } @else if (metodo() === 'TARJETA') {
-                <div class="space-y-3 p-4 rounded-2xl bg-black/40 border border-white/10">
-                  <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Nº de Operación / Voucher POS *
-                  </label>
-                  <input
-                    type="text"
-                    [(ngModel)]="referencia"
-                    placeholder="Ej: POS-0049281"
-                    class="w-full px-4 py-3 bg-black/60 border border-white/15 rounded-xl text-sm font-mono text-white focus:outline-none focus:border-sky-500"
-                  />
-                  <p class="text-[11px] text-slate-400">
-                    Ingresa el número de referencia impreso en el comprobante del terminal POS.
-                  </p>
-                </div>
               } @else {
-                <div class="space-y-3 p-4 rounded-2xl bg-black/40 border border-white/10">
-                  <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Código de Aprobación Yape / Plin *
-                  </label>
-                  <input
-                    type="text"
-                    [(ngModel)]="referencia"
-                    placeholder="Ej: YAP-94821 o Celular"
-                    class="w-full px-4 py-3 bg-black/60 border border-white/15 rounded-xl text-sm font-mono text-white focus:outline-none focus:border-purple-500"
-                  />
-                  <p class="text-[11px] text-slate-400">
-                    Verifica que el cliente haya transferido el monto exacto de {{ (orden().total || 0) | currencyPEN }}.
+                <div class="space-y-2.5 p-4 rounded-2xl bg-cyan-950/20 border border-cyan-500/30">
+                  <div class="flex items-center gap-2 text-xs font-bold text-cyan-300 uppercase tracking-wider">
+                    <span>Pasarela Mercado Pago</span>
+                  </div>
+                  <p class="text-[11px] text-slate-300 leading-relaxed">
+                    Al confirmar, se generará el enlace de pago por
+                    <span class="font-bold text-white">{{ (orden().total || 0) | currencyPEN }}</span>
+                    y te redirigiremos a la pantalla oficial de Mercado Pago para completar el cobro.
                   </p>
                 </div>
               }
@@ -248,9 +220,9 @@ import { CajeroDatosFiscalesComponent } from './cajero-datos-fiscales.component'
                   class="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-display text-lg font-black uppercase tracking-wider transition duration-150 shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
                 >
                   @if (procesando()) {
-                    <span>PROCESANDO COBRO…</span>
+                    <span>{{ metodo() === 'MERCADO_PAGO' ? 'REDIRIGIENDO A MERCADO PAGO…' : 'PROCESANDO COBRO…' }}</span>
                   } @else {
-                    <span>CONFIRMAR COBRO & EMITIR TICKET</span>
+                    <span>{{ metodo() === 'MERCADO_PAGO' ? 'PAGAR CON MERCADO PAGO' : 'CONFIRMAR COBRO & EMITIR TICKET' }}</span>
                   }
                 </button>
               </div>
@@ -265,7 +237,7 @@ export class CajeroCobroModalComponent {
   readonly vuelto = input<number>(0);
   readonly cobroValido = input<boolean>(false);
   readonly procesando = input<boolean>(false);
-  /** Without an open register cash is blocked; card and Yape stay available (R3.7). */
+  /** Without an open register cash is blocked; card and Mercado Pago stay available (R3.7). */
   readonly cajaAbierta = input<boolean>(true);
 
   readonly metodo = model<MetodoCobro>('EFECTIVO');
@@ -286,7 +258,7 @@ export class CajeroCobroModalComponent {
 
   protected get motivoBloqueo(): string | null {
     if (this.metodo() === 'EFECTIVO' && !this.cajaAbierta()) {
-      return 'No hay una caja abierta: abre la caja para cobrar en efectivo, o cobra con tarjeta o Yape.';
+      return 'No hay una caja abierta: abre la caja para cobrar en efectivo, o cobra con Mercado Pago.';
     }
     const motivoFiscal = motivoDatosFiscalesInvalidos(this.datosFiscales(), this.orden()?.total || 0);
     if (motivoFiscal) {
@@ -299,12 +271,6 @@ export class CajeroCobroModalComponent {
         return `El efectivo recibido (S/ ${recibido.toFixed(2)}) no cubre el total (S/ ${(this.orden()?.total || 0).toFixed(2)}). Falta S/ ${falta.toFixed(2)}.`;
       }
       return null;
-    }
-    if (this.metodo() === 'TARJETA' && !this.referencia().trim()) {
-      return 'Ingresa el Nº de operación o voucher POS para confirmar el cobro.';
-    }
-    if (this.metodo() === 'YAPE_PLIN' && !this.referencia().trim()) {
-      return 'Ingresa el código de aprobación o celular de Yape / Plin.';
     }
     return null;
   }

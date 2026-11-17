@@ -1,6 +1,6 @@
 import { Component, inject, signal, computed, OnInit, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { Subscription, interval } from 'rxjs';
 import { OrdersService } from '../../core/services/orders.service';
 import { PaymentService } from '../../core/services/payment.service';
@@ -332,6 +332,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly feedbackService = inject(FeedbackService);
   readonly securityAuditService = inject(SecurityAuditService);
   readonly auth = inject(AuthService);
+  private readonly route = inject(ActivatedRoute);
   private notify = inject(NotificationService);
   private readonly cobroSalon = inject(CobroSalonFacade);
   private router = inject(Router);
@@ -545,6 +546,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       this.actualizarReloj();
       this.timerSub = interval(1000).subscribe(() => this.actualizarReloj());
       this.autoRefreshSub = interval(15000).subscribe(() => this.refrescarTodo());
+      this.completarRetornoMercadoPagoSiAplica();
     }
 
     this.refrescarTodo();
@@ -596,8 +598,8 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   seleccionarOrdenParaCobro(orden: Order): void {
     this.ordenSeleccionada.set(orden);
-    // Without an open register cash is blocked (R3.7): start on card so the cashier is not stuck.
-    this.metodoCobroSeleccionado.set(this.cajaAbierta() ? 'EFECTIVO' : 'TARJETA');
+    // Without an open register cash is blocked (R3.7): start on Mercado Pago so the cashier is not stuck.
+    this.metodoCobroSeleccionado.set(this.cajaAbierta() ? 'EFECTIVO' : 'MERCADO_PAGO');
     this.datosFiscalesCobro.set(consumidorFinal());
     this.efectivoRecibidoInput = orden.total;
     this.referenciaPagoInput = '';
@@ -620,7 +622,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       if (!this.cajaAbierta()) return false;
       return (Number(this.efectivoRecibidoInput) || 0) >= orden.total;
     }
-    return !!this.referenciaPagoInput.trim();
+    return true;
   }
 
   confirmarCobroComanda(): void {
@@ -629,15 +631,65 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
     this.procesandoAccion.set(true);
     const metodo = this.metodoCobroSeleccionado();
+    const datosFiscales = this.datosFiscalesCobro();
+
+    if (metodo === 'MERCADO_PAGO') {
+      const codigo = orden.codigoSeguimiento || orden.id;
+      this.cobroSalon.iniciarMercadoPago(orden).subscribe({
+        next: (res) => {
+          if (res.yaAprobado) {
+            this.ejecutarCobroSalon(orden, 'MERCADO_PAGO', 'Mercado Pago', datosFiscales, 0, 0);
+            return;
+          }
+          if (res.checkoutUrl && isPlatformBrowser(this.platformId)) {
+            try {
+              localStorage.setItem('sanpollo_cajero_cobro', JSON.stringify({ ordenId: orden.id, datosFiscales }));
+              localStorage.setItem('sanpollo_last_order', JSON.stringify({
+                ordenId: orden.id,
+                pagoId: res.pagoId,
+                code: codigo,
+                codigo,
+                total: orden.total,
+                estado: orden.estado
+              }));
+            } catch {
+              // Storage unavailable; webhook/return still verifies payment on backend.
+            }
+            this.notify.showSuccess('Redirigiendo a Mercado Pago...');
+            setTimeout(() => {
+              window.location.href = res.checkoutUrl!;
+            }, 300);
+            return;
+          }
+          this.procesandoAccion.set(false);
+          this.notify.showError('Mercado Pago no devolvió el enlace de pago', 'Intenta nuevamente o cobra en efectivo.');
+        },
+        error: (err: ErrorCobro) => {
+          this.procesandoAccion.set(false);
+          this.notify.showError(err?.mensaje || 'No se pudo iniciar el pago con Mercado Pago');
+        }
+      });
+      return;
+    }
+
     const efectivoRecibido = this.efectivoRecibidoInput;
     const vuelto = this.vueltoCalculado();
-    const referencia = metodo === 'EFECTIVO'
-      ? `Efectivo en caja (Recibido S/ ${efectivoRecibido.toFixed(2)}, Vuelto S/ ${vuelto.toFixed(2)})`
-      : this.referenciaPagoInput.trim();
+    const referencia = `Efectivo en caja (Recibido S/ ${efectivoRecibido.toFixed(2)}, Vuelto S/ ${vuelto.toFixed(2)})`;
+    this.ejecutarCobroSalon(orden, metodo, referencia, datosFiscales, efectivoRecibido, vuelto);
+  }
+
+  private ejecutarCobroSalon(
+    orden: Order,
+    metodo: MetodoCobro,
+    referencia: string,
+    datosFiscales: DatosFiscales,
+    efectivoRecibido: number,
+    vuelto: number
+  ): void {
     const codigo = orden.codigoSeguimiento || orden.id;
 
     // Plan 03, 4.1: payment, then receipt + cash income, then closing; retry-safe (D3.17).
-    this.cobroSalon.cobrar(orden, metodo, referencia, this.datosFiscalesCobro()).subscribe({
+    this.cobroSalon.cobrar(orden, metodo, referencia, datosFiscales).subscribe({
       next: ({ comprobante }) => {
         this.ticketEmitido.set({
           id: Date.now(),
@@ -674,6 +726,43 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
           this.notify.showError(err?.mensaje || 'No se pudo registrar el cobro');
         }
         this.refrescarTodo();
+      }
+    });
+  }
+
+  private completarRetornoMercadoPagoSiAplica(): void {
+    const mpOrdenId = this.route.snapshot?.queryParamMap?.get('mpOrdenId');
+    let savedRaw: string | null = null;
+    try {
+      savedRaw = window.localStorage?.getItem('sanpollo_cajero_cobro') ?? null;
+    } catch {
+      return;
+    }
+    if (!mpOrdenId && !savedRaw) return;
+
+    let ordenId = mpOrdenId || '';
+    let datosFiscales = consumidorFinal();
+    if (savedRaw) {
+      try {
+        const parsed = JSON.parse(savedRaw);
+        if (!ordenId && parsed?.ordenId) ordenId = String(parsed.ordenId);
+        if (parsed?.datosFiscales) datosFiscales = parsed.datosFiscales;
+        window.localStorage.removeItem('sanpollo_cajero_cobro');
+      } catch {
+        window.localStorage.removeItem('sanpollo_cajero_cobro');
+      }
+    }
+    if (!ordenId) return;
+
+    this.router.navigate([], { relativeTo: this.route, queryParams: {}, replaceUrl: true });
+    this.procesandoAccion.set(true);
+    this.ordersService.obtenerOrden(ordenId).subscribe({
+      next: (orden) => {
+        this.ejecutarCobroSalon(orden, 'MERCADO_PAGO', 'Mercado Pago', datosFiscales, 0, 0);
+      },
+      error: () => {
+        this.procesandoAccion.set(false);
+        this.notify.showError('No se pudo cargar la comanda tras el pago en Mercado Pago');
       }
     });
   }

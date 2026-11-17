@@ -67,7 +67,6 @@ describe('CheckoutComponent', () => {
     component = fixture.componentInstance;
     component.tipoPedido.set('RECOJO_EN_TIENDA');
     component.celular = '912345678';
-    component.celularYape = '912345678';
     fixture.detectChanges();
   });
 
@@ -78,10 +77,9 @@ describe('CheckoutComponent', () => {
     });
     afterEach(() => sessionStorage.removeItem('polleria_checkout_borrador'));
 
-    for (const metodo of ['TARJETA', 'YAPE_OTP', 'EFECTIVO_CONTRAENTREGA'] as const) {
+    for (const metodo of ['TARJETA', 'EFECTIVO_CONTRAENTREGA'] as const) {
       it(`asks a guest to log in instead of creating the order (${metodo})`, () => {
         component.metodoPago.set(metodo);
-        component.otpYape = '123456';
 
         component.confirmOrder();
         fixture.detectChanges();
@@ -139,79 +137,6 @@ describe('CheckoutComponent', () => {
 
       expect(fixture.nativeElement.querySelector('[data-testid="checkout-login-modal"]')).toBeNull();
       expect(cart.isEmpty()).toBeFalse();
-    });
-  });
-
-  describe('Yape OTP', () => {
-    beforeEach(() => {
-      component.metodoPago.set('YAPE_OTP');
-      component.otpYape = '123456';
-    });
-
-    it('keeps the cart and does not navigate when the OTP is rejected, then retries the SAME order', () => {
-      payments.pagarConYapeOtp.and.returnValues(of(tx('RECHAZADO', 'Código vencido')), of(tx('APROBADO')));
-
-      component.confirmOrder();
-      expect(cart.isEmpty()).toBeFalse();
-      expect(navigate).not.toHaveBeenCalled();
-      expect(notify.showError).toHaveBeenCalledWith('Código Yape no válido', 'Código vencido');
-      expect(component.isProcessing()).toBeFalse();
-
-      component.otpYape = '654321';
-      component.confirmOrder();
-
-      expect(orders.createOrder).toHaveBeenCalledTimes(1);
-      expect(payments.pagarConYapeOtp).toHaveBeenCalledTimes(2);
-      expect(payments.pagarConYapeOtp.calls.mostRecent().args[0]).toBe(55);
-      expect(cart.isEmpty()).toBeTrue();
-      expect(navigate).toHaveBeenCalledWith(['/tracking'], { queryParams: { code: 'POL-55' } });
-    });
-
-    it('S1: creates the Yape OTP order waiting for payment, never RECIBIDO', () => {
-      payments.pagarConYapeOtp.and.returnValue(of(tx('APROBADO')));
-
-      component.confirmOrder();
-
-      expect((orders.createOrder.calls.mostRecent().args[0] as Order).estado).toBe('PENDIENTE_PAGO');
-    });
-
-    it('shows the backend message of an HTTP error and keeps the cart', () => {
-      payments.pagarConYapeOtp.and.returnValue(throwError(() => http400({ error: 'OTP vencido, genera otro' })));
-
-      component.confirmOrder();
-
-      expect(notify.showError).toHaveBeenCalledWith('Pago Yape rechazado', 'OTP vencido, genera otro');
-      expect(cart.isEmpty()).toBeFalse();
-      expect(navigate).not.toHaveBeenCalled();
-    });
-
-    it('shows the ProblemDetail detail sent by payments-service', () => {
-      payments.pagarConYapeOtp.and.returnValue(throwError(() => http400({
-        type: 'about:blank', title: 'Bad Request', status: 400, detail: 'La orden ya no espera pago'
-      })));
-
-      component.confirmOrder();
-
-      expect(notify.showError).toHaveBeenCalledWith('Pago Yape rechazado', 'La orden ya no espera pago');
-    });
-
-    it('marks the locally registered order as paid (kitchen queue) once Yape approves, before navigating', () => {
-      payments.pagarConYapeOtp.and.returnValue(of(tx('APROBADO')));
-      navigate.and.callFake(() => {
-        // The backend puts a paid order in the kitchen queue (RECIBIDO = PAGADO): the kitchen starts it.
-        expect(orders.registerClientOrder).toHaveBeenCalledWith(jasmine.objectContaining({ id: '55', estado: 'PAGADO' }));
-        return Promise.resolve(true);
-      });
-
-      component.confirmOrder();
-
-      expect(navigate).toHaveBeenCalled();
-    });
-
-    it('does not touch the registered order when the OTP is rejected', () => {
-      payments.pagarConYapeOtp.and.returnValue(of(tx('RECHAZADO')));
-      component.confirmOrder();
-      expect(orders.registerClientOrder).not.toHaveBeenCalled();
     });
   });
 
@@ -359,29 +284,6 @@ describe('CheckoutComponent', () => {
   });
 
   describe('FE-06: invalidate pending orders when cart or delivery changes', () => {
-    it('creates a new order on retry when cart items change after a Yape OTP rejection', () => {
-      component.metodoPago.set('YAPE_OTP');
-      component.otpYape = '111111';
-      payments.pagarConYapeOtp.and.returnValue(of(tx('RECHAZADO')));
-
-      component.confirmOrder();
-      expect(orders.createOrder).toHaveBeenCalledTimes(1);
-
-      cart.items.set([
-        ...cart.items(),
-        {
-          product: { id: 'p2', nombre: 'Inca Kola', descripcion: '', precio: 8, categoria: 'BEBIDAS', imagenUrl: '', agotado: false } as never,
-          cantidad: 1,
-          subtotal: 8
-        }
-      ]);
-      orders.createOrder.and.returnValue(of({ id: '56', codigoSeguimiento: 'POL-56', total: 28 } as Order));
-      component.otpYape = '222222';
-      component.confirmOrder();
-
-      expect(orders.createOrder).toHaveBeenCalledTimes(2);
-    });
-
     it('creates a new order when delivery type changes before retrying card preference', () => {
       component.metodoPago.set('TARJETA');
       payments.crearPreferenciaMercadoPago.and.returnValue(of({

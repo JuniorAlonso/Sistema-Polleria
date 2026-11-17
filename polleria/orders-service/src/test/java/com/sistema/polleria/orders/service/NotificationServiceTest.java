@@ -73,6 +73,7 @@ class NotificationServiceTest {
 
         assertEquals(1, cuerpos.size());
         assertTrue(cuerpos.get(0).contains("\"estadoNuevo\":\"EN_PREPARACION\""), cuerpos.get(0));
+        assertTrue(cuerpos.get(0).contains("\"tipo\":\"RECOJO\""), cuerpos.get(0));
     }
 
     @Test

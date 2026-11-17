@@ -51,7 +51,7 @@ import { FormsModule } from '@angular/forms';
                 </div>
                 <div>
                   <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Ventas Yape / Plin (S/)
+                    Ventas Mercado Pago (S/)
                   </label>
                   <input
                     type="number"

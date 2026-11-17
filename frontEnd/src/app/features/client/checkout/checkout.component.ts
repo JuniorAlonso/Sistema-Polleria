@@ -264,8 +264,8 @@ interface BorradorCheckout {
               <span>MÉTODO DE PAGO</span>
             </div>
 
-            <!-- Selector Tabs: Tarjeta vs Yape OTP vs Efectivo -->
-            <div class="grid grid-cols-3 gap-2">
+            <!-- Selector Tabs: Tarjeta vs Efectivo -->
+            <div class="grid grid-cols-2 gap-2">
               <button 
                 type="button"
                 (click)="metodoPago.set('TARJETA')"
@@ -276,18 +276,6 @@ interface BorradorCheckout {
               >
                 <span>TARJETA</span>
                 <span class="text-[9px] text-white/50">Mercado Pago</span>
-              </button>
-
-              <button 
-                type="button"
-                (click)="metodoPago.set('YAPE_OTP')"
-                class="py-2 px-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-1 transition cursor-pointer"
-                [ngClass]="metodoPago() === 'YAPE_OTP' ? 
-                  'border-2 border-purple-400 bg-purple-950/40 text-purple-200 shadow-md' : 
-                  'border-white/15 bg-black/20 text-white/70 hover:bg-black/30'"
-              >
-                <span>YAPE OTP</span>
-                <span class="text-[9px] text-purple-300/60">Pase a Cocina</span>
               </button>
 
               <button 
@@ -305,44 +293,7 @@ interface BorradorCheckout {
             </div>
 
             <!-- CONTENIDO ESPECÍFICO SEGÚN MÉTODO -->
-            @if (metodoPago() === 'YAPE_OTP') {
-              <div class="p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/30 space-y-2.5">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-bold text-purple-300 uppercase">Pago Inmediato con Yape</span>
-                  <span class="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-md font-mono">Sin comisiones</span>
-                </div>
-
-                <div class="space-y-1">
-                  <label class="text-[11px] font-medium text-purple-200 block">Celular Yape:</label>
-                  <input 
-                    type="tel" 
-                    [(ngModel)]="celularYape" 
-                    maxlength="9"
-                    placeholder="912345678"
-                    class="w-full px-3 py-2 rounded-lg bg-black/40 border border-purple-400/30 text-white font-mono text-xs focus:ring-1 focus:ring-purple-400 outline-none"
-                  />
-                </div>
-
-                <div class="space-y-1">
-                  <div class="flex justify-between items-center text-[11px] text-purple-200">
-                    <label class="font-medium">Código de Aprobación (6 dígitos):</label>
-                    <span class="text-[10px] text-white/50">App Yape ➔ Menú ➔ Código</span>
-                  </div>
-                  <input 
-                    type="text" 
-                    [(ngModel)]="otpYape" 
-                    maxlength="6"
-                    inputmode="numeric"
-                    placeholder="123456"
-                    class="w-full px-3 py-2 rounded-lg bg-black/40 border border-purple-400/30 text-white font-mono text-center text-lg tracking-widest font-black focus:ring-1 focus:ring-purple-400 outline-none"
-                  />
-                </div>
-                <p class="text-[10px] text-purple-200/70 leading-tight">
-                  Al confirmar, tu pago se procesará en tiempo real con Mercado Pago y pasará <strong>DIRECTO a cocina</strong> sin esperas de validación.
-                </p>
-              </div>
-
-            } @else if (metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
+            @if (metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
               <div class="p-3.5 rounded-xl bg-black/30 border border-emerald-500/30 space-y-2.5">
                 <span class="text-xs font-bold text-emerald-300 uppercase block">Cobro en Efectivo</span>
                 
@@ -463,8 +414,6 @@ export class CheckoutComponent implements OnInit {
   readonly sancionNoVerificada = signal<boolean>(false);
   /** S1: a guest pressed pay; they are invited to log in or sign up instead of losing the order. */
   readonly mostrarModalLogin = signal<boolean>(false);
-  /** Order already created for a Yape OTP attempt, kept only while cart/method/type match. */
-  private ordenYapePendiente: Order | null = null;
   /** Order already created for a card attempt, kept only while cart/method/type match. */
   private ordenTarjetaPendiente: Order | null = null;
 
@@ -474,7 +423,6 @@ export class CheckoutComponent implements OnInit {
       this.cart.items();
       this.tipoPedido();
       this.metodoPago();
-      this.ordenYapePendiente = null;
       this.ordenTarjetaPendiente = null;
     });
   }
@@ -482,10 +430,6 @@ export class CheckoutComponent implements OnInit {
   direccion = '';
   celular = '';
   instrucciones = '';
-
-  // Específico Yape OTP
-  celularYape = '';
-  otpYape = '';
 
   // Específico Efectivo
   montoPagaCon: number | null = null;
@@ -498,7 +442,6 @@ export class CheckoutComponent implements OnInit {
   ngOnInit(): void {
     const user = this.auth.currentUser();
     this.celular = user?.celular || '';
-    this.celularYape = this.celular;
     this.restaurarBorrador();
 
     if (this.celular) {
@@ -548,7 +491,6 @@ export class CheckoutComponent implements OnInit {
       limpio = limpio.substring(2);
     }
     if (limpio.length === 9) {
-      this.celularYape = limpio;
       this.verificarSancionCliente(limpio);
     }
   }
@@ -562,7 +504,7 @@ export class CheckoutComponent implements OnInit {
         if (resp.sancionado || resp.bloqueadoEfectivo || resp.bloqueadoTotal) {
           this.sancionActiva.set(true);
           if (this.metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
-            this.metodoPago.set('YAPE_OTP');
+            this.metodoPago.set('TARJETA');
           }
         } else {
           this.sancionActiva.set(false);
@@ -643,11 +585,12 @@ export class CheckoutComponent implements OnInit {
     }
     if (!borrador) return;
     if (borrador.tipoPedido) this.tipoPedido.set(borrador.tipoPedido);
-    if (borrador.metodoPago) this.metodoPago.set(borrador.metodoPago);
+    if (borrador.metodoPago) {
+      this.metodoPago.set(borrador.metodoPago === 'YAPE_OTP' ? 'TARJETA' : borrador.metodoPago);
+    }
     if (borrador.direccion) this.direccion = borrador.direccion;
     if (borrador.celular) {
       this.celular = borrador.celular;
-      this.celularYape = borrador.celular;
     }
     if (borrador.instrucciones) this.instrucciones = borrador.instrucciones;
     if (borrador.montoPagaCon != null) this.montoPagaCon = borrador.montoPagaCon;
@@ -698,11 +641,6 @@ export class CheckoutComponent implements OnInit {
       return;
     }
 
-    if (this.metodoPago() === 'YAPE_OTP') {
-      this.procesarYapeOtp(celularLimpio);
-      return;
-    }
-
     if (this.metodoPago() === 'TARJETA') {
       this.procesarMercadoPagoTarjeta(celularLimpio);
       return;
@@ -711,99 +649,6 @@ export class CheckoutComponent implements OnInit {
     if (this.metodoPago() === 'EFECTIVO_CONTRAENTREGA') {
       this.procesarContraPago(celularLimpio);
     }
-  }
-
-  private procesarYapeOtp(celularCliente: string): void {
-    const yapeTel = this.celularYape.replace(/\D/g, '');
-    if (!/^9\d{8}$/.test(yapeTel)) {
-      this.notify.showError('Celular Yape inválido', 'Debe ser un número de 9 dígitos');
-      return;
-    }
-
-    const otp = (this.otpYape || '').trim();
-    if (!/^\d{6}$/.test(otp)) {
-      this.notify.showError('Código OTP inválido', 'El código de aprobación de Yape debe tener exactamente 6 dígitos');
-      return;
-    }
-
-    this.isProcessing.set(true);
-    const currentUser = this.auth.currentUser();
-
-    const orderData: Order = {
-      id: '0',
-      codigoSeguimiento: '',
-      cliente: {
-        nombre: currentUser?.nombre || 'Cliente San Pollo',
-        celular: celularCliente,
-        correo: currentUser?.correo,
-        direccion: this.tipoPedido() === 'DELIVERY' ? this.direccion : 'Recojo en Tienda San Pollo Principal',
-        referencia: this.instrucciones
-      },
-      items: [...this.cart.items()],
-      tipo: this.tipoPedido(),
-      // Opens waiting for payment; the backend expires it after 15 min if never paid.
-      estado: 'PENDIENTE_PAGO',
-      metodoPago: 'YAPE_OTP',
-      subtotal: this.cart.subtotal(),
-      costoEnvio: this.tipoPedido() === 'DELIVERY' ? this.cart.costoEnvio() : 0,
-      descuento: 0,
-      total: this.totalPagar(),
-      notasGenerales: this.instrucciones,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    // Retry after a rejected OTP only if the current cart/order matches (FE-06).
-    if (this.ordenPendienteCoincide(this.ordenYapePendiente, orderData)) {
-      this.pagarYape(this.ordenYapePendiente!, yapeTel, otp, currentUser?.correo);
-      return;
-    }
-    this.ordenYapePendiente = null;
-
-    this.ordersService.createOrder(orderData).subscribe({
-      next: (createdOrder) => {
-        this.ordenYapePendiente = { ...createdOrder, items: [...this.cart.items()] };
-        this.pagarYape(createdOrder, yapeTel, otp, currentUser?.correo);
-      },
-      error: (err) => {
-        this.isProcessing.set(false);
-        this.notify.showError('No se pudo registrar la orden', this.mensajeError(err, 'Intenta nuevamente.'));
-      }
-    });
-  }
-
-  private pagarYape(createdOrder: Order, yapeTel: string, otp: string, correo?: string): void {
-    const realOrderId = parsePositiveIntId(createdOrder.id);
-    if (!realOrderId) {
-      this.isProcessing.set(false);
-      this.notify.showError('Error de orden', 'El identificador de la orden no es válido.');
-      return;
-    }
-
-    this.paymentService.pagarConYapeOtp(realOrderId, createdOrder.total, yapeTel, otp, correo).subscribe({
-      next: (tx) => {
-        this.isProcessing.set(false);
-        if (tx.estado === 'APROBADO') {
-          this.ordenYapePendiente = null;
-          this.cart.clearCart();
-          // A guest cannot read GET /ordenes/{id}: tracking falls back to this local copy, which
-          // must not keep saying the payment is pending.
-          // A paid order enters the kitchen queue (backend RECIBIDO = PAGADO); the kitchen starts it.
-          this.ordersService.registerClientOrder({ ...createdOrder, estado: 'PAGADO', updatedAt: new Date().toISOString() });
-          this.notify.showSuccess('¡Pago Yape aprobado!', this.conTicket(createdOrder, 'Tu pedido ya está en la cola de cocina.'));
-          this.router.navigate(['/tracking'], { queryParams: { code: createdOrder.codigoSeguimiento } });
-        } else {
-          // Not approved: keep the cart and the created order so the OTP can be retried.
-          this.otpYape = '';
-          this.notify.showError('Código Yape no válido', tx.numeroOperacion || 'Verifica el código en tu app e intenta de nuevo.');
-        }
-      },
-      error: (err) => {
-        this.isProcessing.set(false);
-        this.otpYape = '';
-        this.notify.showError('Pago Yape rechazado', this.mensajeError(err, 'Verifica el código e intenta nuevamente.'));
-      }
-    });
   }
 
   private procesarMercadoPagoTarjeta(celularCliente: string): void {

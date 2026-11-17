@@ -2,7 +2,7 @@ import { Order } from '../../../core/models/order.model';
 import { PagoOrdenAdmin } from '../../../core/models/payment.model';
 
 export type CajeroTab = 'POS' | 'CAPTURAS_PAGO' | 'LLAMADAS_CONTRAPAGO' | 'RECOJO_TIENDA' | 'LIQUIDACIONES' | 'ARQUEO' | 'HISTORIAL' | 'DEVOLUCIONES';
-export type MetodoCobro = 'EFECTIVO' | 'TARJETA' | 'YAPE_PLIN';
+export type MetodoCobro = 'EFECTIVO' | 'MERCADO_PAGO';
 
 /** Fila del historial de cobros aprobados (vista "Cobros del Día"). */
 export interface CobroDelDia {
