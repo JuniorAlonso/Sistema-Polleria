@@ -84,7 +84,7 @@ const RESPUESTAS_RECOJO = ['2', 'recojo', 'recoger', 'recojo en tienda', 'tienda
 const RESPUESTAS_YAPE = ['1', 'yape', 'plin', 'yape o plin'];
 const RESPUESTAS_EFECTIVO = ['2', 'efectivo', 'contrapago', 'contra pago', 'contra entrega', 'contraentrega', 'cash'];
 
-// Asking for the ticket again works in any state (menu option 5 only from the main menu).
+// Asking for the ticket again works in any state.
 const PALABRAS_TICKET = ['ticket', 'mi ticket', 'ver ticket', 'ver mi ticket', 'reenviar ticket',
     'enviame mi ticket', 'envia mi ticket', 'mandame mi ticket', 'codigo de ticket', 'mi codigo de ticket'];
 
@@ -117,7 +117,7 @@ function tieneTextoUtil(texto) {
 const MINUTOS_RECUPERAR_PEDIDO = 3;
 
 /** Final states whose ticket can no longer be used at the counter. */
-const ESTADOS_TICKET_NO_VALIDO = ['CANCELADO', 'PEDIDO_FANTASMA'];
+const ESTADOS_TICKET_NO_VALIDO = ['CANCELADO', 'PEDIDO_FANTASMA', 'ENTREGADO'];
 
 /** Highest cash amount accepted for "paga con": a typo like 5000 should not become the change. */
 const MONTO_EFECTIVO_MAXIMO = 1000;
@@ -317,7 +317,7 @@ class BotPedidos {
             return this._resolverComprobante(msg, clave, guardado);
         }
 
-        if (PALABRAS_TICKET.includes(texto) || esConsultaDeTicket(texto) || (texto === '5' && estado === ESTADO_MENU)) {
+        if (PALABRAS_TICKET.includes(texto) || esConsultaDeTicket(texto)) {
             return this._enviarTicket(clave, guardado);
         }
 

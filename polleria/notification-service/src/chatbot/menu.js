@@ -18,9 +18,8 @@ function getMainMenu() {
         '1️⃣.- Hacer un Pedido\n' +
         '2️⃣.- Consultar estado de mi Pedido\n' +
         '3️⃣.- Horarios de Atención y Ubicación\n' +
-        '4️⃣.- Hablar con un Asesor\n' +
-        '5️⃣.- Ver mi ticket de pedido\n\n' +
-        '_Escribe un número del 1 al 5_'
+        '4️⃣.- Hablar con un Asesor\n\n' +
+        '_Escribe un número del 1 al 4_'
     );
 }
 
@@ -268,7 +267,11 @@ function mensajeTicket(pedido, estado) {
 }
 
 function mensajeTicketNoValido(pedido, estado) {
-    const motivo = estado === 'CANCELADO' ? 'fue cancelado' : 'se cerró como no recibido';
+    const motivo = estado === 'CANCELADO'
+        ? 'fue cancelado'
+        : estado === 'ENTREGADO'
+            ? 'ya fue entregado'
+            : 'se cerró como no recibido';
     return (
         `Tu último pedido (*${codigoTicket(pedido)}*) ${motivo}, así que su ticket ya no es válido.\n` +
         'Escribe *1* para hacer un nuevo pedido.'

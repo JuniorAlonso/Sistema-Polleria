@@ -101,7 +101,7 @@ test('"ticket" lo reenvía con el estado actual que devuelve orders-service', as
     assert.match(porId[0], /\/ordenes\/95$/);
 });
 
-test('tras liberar la conversación (pago aprobado) el ticket sigue disponible con la opción 5 del menú', async () => {
+test('tras liberar la conversación (pago aprobado) el menú ya no tiene opción 5 pero "ticket" sigue disponible si está activo', async () => {
     const { bot, store } = montar();
     await pedidoRecojoYape(bot);
 
@@ -111,9 +111,14 @@ test('tras liberar la conversación (pago aprobado) el ticket sigue disponible c
     assert.strictEqual(guardado.ultimoPedido.id, 95, 'pero conserva el último pedido');
 
     const menu = await bot.procesar(mensaje('hola'));
-    assert.match(menu, /Ver mi ticket/i, 'el menú ofrece la opción del ticket');
+    assert.doesNotMatch(menu, /Ver mi ticket/i, 'el menú ya no ofrece la opción 5');
+    assert.match(menu, /1 al 4/);
 
-    const ticket = await bot.procesar(mensaje('5'));
+    const opcion5 = await bot.procesar(mensaje('5'));
+    assert.match(opcion5, /No entend[ií]/i, '5 ya no devuelve el ticket viejo');
+    assert.doesNotMatch(opcion5, /POL-95/);
+
+    const ticket = await bot.procesar(mensaje('ticket'));
     assert.match(ticket, /POL-95/);
 });
 
@@ -141,6 +146,16 @@ test('un pedido cancelado no se presenta como ticket válido', async () => {
     const respuesta = await bot.procesar(mensaje('ticket'));
     assert.match(respuesta, /cancelado/i);
     assert.match(respuesta, /no es v[aá]lido/i);
+});
+
+test('un pedido ya entregado no muestra el ticket viejo como válido', async () => {
+    const { bot } = montar({ estado: 'ENTREGADO' });
+    await pedidoRecojoYape(bot);
+
+    const respuesta = await bot.procesar(mensaje('ticket'));
+    assert.match(respuesta, /ya fue entregado/i);
+    assert.match(respuesta, /no es v[aá]lido/i);
+    assert.doesNotMatch(respuesta, /TU TICKET DE PEDIDO/i);
 });
 
 test('si orders-service no responde muestra el ticket guardado sin inventar el estado', async () => {
