@@ -57,6 +57,9 @@ class PagoServiceTest {
     @Mock
     private AlmacenComprobantes almacenComprobantes;
 
+    @Mock
+    private FinanceComprobanteClient financeComprobanteClient;
+
     @InjectMocks
     private PagoService pagoService;
 
@@ -834,5 +837,110 @@ class PagoServiceTest {
         assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
         verify(notificadorOrden, never()).notificarEstado(any(), any(), any());
         verify(notificadorOrden, never()).notificarEstado(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("D2.3 Caso A: Pago APROBADO + orden PENDIENTE_PAGO reenvía notificación sin duplicar efectos financieros")
+    void confirmar_pagoYaAprobadoConOrdenPendientePago_reenviaNotificacionSinDuplicarEfectos() {
+        Pago pago = pagoAprobado(701L, MetodoPago.TARJETA);
+        pago.setId(71L);
+
+        when(pagoRepository.buscarConBloqueo(71L)).thenReturn(Optional.of(pago));
+        when(ordenesClient.obtener(701L)).thenReturn(orden(701L, "RECOJO", "PENDIENTE_PAGO", "45.00"));
+
+        PagoResponse res = pagoService.confirmar(
+                71L, new ConfirmarPagoRequest("MP-RETRY-701", "Reintento webhook"), "Bearer token-701");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden, times(1)).notificarPagoAprobado(eq(701L), eq("Bearer token-701"));
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(whatsappNotificationClient, never()).notificarPagoConfirmado(any(), any(), any());
+        verify(financeComprobanteClient, never()).emitirBoletaDigitalAsync(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("D2.3 Caso B: Pago APROBADO + orden que ya avanzó (RECIBIDO/EN_PREPARACION) no vuelve a notificar")
+    void confirmar_pagoYaAprobadoConOrdenAvanzada_noVuelveANotificar() {
+        Pago pago = pagoAprobado(702L, MetodoPago.YAPE_PLIN);
+        pago.setId(72L);
+
+        when(pagoRepository.buscarConBloqueo(72L)).thenReturn(Optional.of(pago));
+        when(ordenesClient.obtener(702L)).thenReturn(orden(702L, "RECOJO", "RECIBIDO", "45.00"));
+
+        PagoResponse resRecibido = pagoService.confirmar(
+                72L, new ConfirmarPagoRequest("MP-DUP-702", "Reintento"), "Bearer token-702");
+
+        when(ordenesClient.obtener(702L)).thenReturn(orden(702L, "RECOJO", "EN_PREPARACION", "45.00"));
+
+        PagoResponse resEnPreparacion = pagoService.confirmar(
+                72L, new ConfirmarPagoRequest("MP-DUP-702", "Reintento 2"), "Bearer token-702");
+
+        assertThat(resRecibido.estado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(resEnPreparacion.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(whatsappNotificationClient, never()).notificarPagoConfirmado(any(), any(), any());
+        verify(financeComprobanteClient, never()).emitirBoletaDigitalAsync(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("D2.3 Caso C: Pago APROBADO + reenvío fallido mantiene estado APROBADO sin efectos duplicados y permite reintentar")
+    void confirmar_pagoYaAprobadoConReenvioFallido_mantieneAprobadoYPermiteNuevoReintento() {
+        Pago pago = pagoAprobado(703L, MetodoPago.TARJETA);
+        pago.setId(73L);
+
+        when(pagoRepository.buscarConBloqueo(73L)).thenReturn(Optional.of(pago));
+        when(ordenesClient.obtener(703L))
+                .thenThrow(new OrdenesClient.OrdenNoDisponibleException(
+                        "orders-service temporalmente caído", new RuntimeException("timeout")))
+                .thenReturn(orden(703L, "RECOJO", "PENDIENTE_PAGO", "45.00"));
+
+        // Primer reintento: falla la lectura en orders-service, pero el pago permanece APROBADO sin excepción
+        PagoResponse resIntentoFallido = pagoService.confirmar(
+                73L, new ConfirmarPagoRequest("MP-RETRY-1", "Reintento 1"), "Bearer token-703");
+
+        assertThat(resIntentoFallido.estado()).isEqualTo(EstadoPago.APROBADO);
+        assertThat(pago.getEstado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden, never()).notificarPagoAprobado(any(), any());
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(whatsappNotificationClient, never()).notificarPagoConfirmado(any(), any(), any());
+        verify(financeComprobanteClient, never()).emitirBoletaDigitalAsync(any(Pago.class));
+
+        // Segundo reintento posterior: orders-service responde que sigue en PENDIENTE_PAGO y se reenvía la notificación
+        PagoResponse resReintentoExitoso = pagoService.confirmar(
+                73L, new ConfirmarPagoRequest("MP-RETRY-2", "Reintento 2"), "Bearer token-703");
+
+        assertThat(resReintentoExitoso.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(notificadorOrden, times(1)).notificarPagoAprobado(eq(703L), eq("Bearer token-703"));
+        verify(pagoRepository, never()).save(any(Pago.class));
+        verify(whatsappNotificationClient, never()).notificarPagoConfirmado(any(), any(), any());
+        verify(financeComprobanteClient, never()).emitirBoletaDigitalAsync(any(Pago.class));
+    }
+
+    @Test
+    @DisplayName("D2.3 Caso D: Primera confirmación de pago PENDIENTE aprueba, guarda, notifica a orders-service, WhatsApp y comprobante")
+    void confirmar_primeraConfirmacion_apruebaYEjecutaEfectosNormales() {
+        Pago pago = new Pago();
+        pago.setId(74L);
+        pago.setOrdenId(704L);
+        pago.setClienteId(10L);
+        pago.setMonto(new BigDecimal("55.00"));
+        pago.setMetodoPago(MetodoPago.YAPE_PLIN);
+        pago.setEstado(EstadoPago.PENDIENTE);
+        pago.setCreadoEn(LocalDateTime.now());
+
+        when(pagoRepository.buscarConBloqueo(74L)).thenReturn(Optional.of(pago));
+        when(ordenesClient.obtener(704L)).thenReturn(orden(704L, "RECOJO", "PENDIENTE_PAGO", "55.00"));
+        when(pagoRepository.save(any(Pago.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PagoResponse res = pagoService.confirmar(
+                74L, new ConfirmarPagoRequest("YP-704", "Primer pago confirmado"), "Bearer token-704");
+
+        assertThat(res.estado()).isEqualTo(EstadoPago.APROBADO);
+        verify(pagoRepository, times(1)).save(pago);
+        verify(notificadorOrden, times(1)).notificarPagoAprobado(eq(704L), eq("Bearer token-704"));
+        verify(whatsappNotificationClient, times(1))
+                .notificarPagoConfirmado(704L, new BigDecimal("55.00"), MetodoPago.YAPE_PLIN);
+        verify(financeComprobanteClient, times(1)).emitirBoletaDigitalAsync(pago);
     }
 }

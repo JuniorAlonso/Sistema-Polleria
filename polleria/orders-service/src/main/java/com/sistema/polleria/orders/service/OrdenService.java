@@ -36,29 +36,40 @@ public class OrdenService {
     @Autowired(required = false)
     private PagosConsultaClient pagosConsultaClient;
 
+    private java.time.Clock clock = java.time.Clock.systemDefaultZone();
+
+    void setClock(java.time.Clock clock) {
+        this.clock = clock != null ? clock : java.time.Clock.systemDefaultZone();
+    }
+
     private static final List<OrdenEstado> ESTADOS_INICIALES_PERMITIDOS = List.of(
             OrdenEstado.RECIBIDO,
             OrdenEstado.PENDIENTE_PAGO,
-            OrdenEstado.PENDIENTE_CONFIRMACION
-    );
+            OrdenEstado.PENDIENTE_CONFIRMACION);
 
     private static final List<OrdenEstado> ESTADOS_TERMINALES = List.of(
             OrdenEstado.ENTREGADO,
             OrdenEstado.CANCELADO,
-            OrdenEstado.PEDIDO_FANTASMA
-    );
+            OrdenEstado.PEDIDO_FANTASMA);
 
-    /** Trusted creation (staff, internal callers): equivalent to {@code checkoutPublico = false}. */
+    /**
+     * Trusted creation (staff, internal callers): equivalent to
+     * {@code checkoutPublico = false}.
+     */
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId) {
         return crear(request, usuarioId, false);
     }
 
     /**
-     * @param checkoutPublico true when the caller is neither staff nor an internal service. A public
-     *                        DELIVERY/RECOJO order cannot open in RECIBIDO: without an explicit state
-     *                        it waits for its payment (PENDIENTE_PAGO), so an abandoned payment
-     *                        expires and the kitchen never sees it before it is paid.
+     * @param checkoutPublico true when the caller is neither staff nor an internal
+     *                        service. A public
+     *                        DELIVERY/RECOJO order cannot open in RECIBIDO: without
+     *                        an explicit state
+     *                        it waits for its payment (PENDIENTE_PAGO), so an
+     *                        abandoned payment
+     *                        expires and the kitchen never sees it before it is
+     *                        paid.
      */
     @Transactional
     public OrdenResponse crear(CrearOrdenRequest request, Long usuarioId, boolean checkoutPublico) {
@@ -71,19 +82,28 @@ public class OrdenService {
                     request.getTelefonoCliente(), null, request.getIpOrigen())) {
                 throw new ConflictoDeEstadoException(
                         "El cliente con teléfono " + request.getTelefonoCliente()
-                        + " registra una sanción por Pedido Fantasma y no puede elegir ContraPago en efectivo.");
+                                + " registra una sanción por Pedido Fantasma y no puede elegir ContraPago en efectivo.");
             }
         }
 
+        CanalOrigen canalOrigen = resolverCanalOrigen(request);
+        // D2.2: la venta en mostrador (RECOJO creado por personal con
+        // canalOrigen=SALON) se guarda con
+        // clienteId=0L para que no quede asociada a la cuenta del cajero.
+        Long clienteId = (!checkoutPublico && request.getTipo() == OrdenTipo.RECOJO && canalOrigen == CanalOrigen.SALON)
+                ? 0L
+                : usuarioId;
+
         Orden orden = Orden.builder()
                 .tipo(request.getTipo())
-                .canalOrigen(resolverCanalOrigen(request))
+                .canalOrigen(canalOrigen)
                 .estado(estadoInicial)
-                .clienteId(usuarioId)
+                .clienteId(clienteId)
                 // En salón el usuario autenticado es el mozo que toma la comanda: se registra
                 // también en mozoId para que la ventana del mozo y el admin lo muestren.
                 .mozoId(usuarioId != null && usuarioId > 0 && request.getTipo() == OrdenTipo.SALON
-                        ? usuarioId : null)
+                        ? usuarioId
+                        : null)
                 .direccionEntrega(request.getDireccionEntrega())
                 .referencia(request.getReferencia())
                 .nombreCliente(request.getNombreCliente())
@@ -96,31 +116,33 @@ public class OrdenService {
                 .build();
 
         if (request.getTipo() == OrdenTipo.SALON && request.getMesaId() != null) {
-            // Bloqueo pesimista: sin él, dos mozos podían abrir una comanda en la misma mesa
+            // Bloqueo pesimista: sin él, dos mozos podían abrir una comanda en la misma
+            // mesa
             // a la vez porque ambos veían la mesa sin comanda activa.
             Mesa mesa = mesaService.buscarOFallarConBloqueo(request.getMesaId());
             if (!Boolean.TRUE.equals(mesa.getActivo())) {
                 throw new ConflictoDeEstadoException(
                         "La mesa " + mesa.getNumero() + " está dada de baja y no puede recibir comandas. "
-                        + "Reactívala en el panel para volver a usarla.");
+                                + "Reactívala en el panel para volver a usarla.");
             }
             // Una mesa en limpieza no está operativa: primero se termina la limpieza.
             if (mesa.getEstado() == MesaEstado.EN_LIMPIEZA) {
                 throw new ConflictoDeEstadoException(
                         "La mesa " + mesa.getNumero() + " está en limpieza. "
-                        + "Terminá la limpieza antes de abrir una comanda.");
+                                + "Terminá la limpieza antes de abrir una comanda.");
             }
             List<Orden> comandasActivas = ordenRepository.findByMesaIdAndEstadoNotIn(mesa.getId(), ESTADOS_TERMINALES);
             if (!comandasActivas.isEmpty()) {
                 throw new ConflictoDeEstadoException(
                         "La mesa " + mesa.getNumero() + " ya tiene una comanda activa. "
-                        + "Agrega los productos a esa comanda en lugar de abrir una nueva.");
+                                + "Agrega los productos a esa comanda en lugar de abrir una nueva.");
             }
             orden.setMesa(mesa);
             mesa.setEstado(MesaEstado.OCUPADA);
         }
 
-        // Construir items (bloqueando los platos en orden de id para no provocar deadlocks).
+        // Construir items (bloqueando los platos en orden de id para no provocar
+        // deadlocks).
         // Los ítems de la comanda inicial corresponden a la ronda 1 (D1.5).
         bloquearProductos(request.getItems().stream().map(OrdenItemRequest::getProductoId).toList());
         List<OrdenItem> items = request.getItems().stream()
@@ -129,7 +151,8 @@ public class OrdenService {
 
         orden.getItems().addAll(items);
         orden.recalcularTotal();
-        // ContraPago: the courier/cashier must be able to give change. An amount below the total
+        // ContraPago: the courier/cashier must be able to give change. An amount below
+        // the total
         // (delivery fee included) would leave the order unpayable at the door.
         if (estadoInicial == OrdenEstado.PENDIENTE_CONFIRMACION && orden.getMontoPagaCon() != null
                 && orden.getMontoPagaCon().compareTo(orden.getTotal()) < 0) {
@@ -147,7 +170,8 @@ public class OrdenService {
         log.info("Orden #{} creada — tipo: {}, total: S/.{}, N.° {} del cliente",
                 orden.getId(), orden.getTipo(), orden.getTotal(), orden.getNumeroCliente());
         OrdenResponse respuesta = OrdenResponse.from(orden);
-        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa())
+                : null;
         ejecutarTrasCommit(() -> {
             salonEventPublisher.notificarNuevaComanda(orden);
             if (mesaActualizada != null) {
@@ -158,9 +182,12 @@ public class OrdenService {
     }
 
     /**
-     * Segunda ronda sobre una comanda de salón: los platos nuevos se suman a la MISMA orden
-     * (no se abre otra comanda para la mesa), se recalcula el total y se vuelve a publicar el
-     * evento de cocina. Una comanda {@code LISTO} regresa a {@code EN_PREPARACION} porque la
+     * Segunda ronda sobre una comanda de salón: los platos nuevos se suman a la
+     * MISMA orden
+     * (no se abre otra comanda para la mesa), se recalcula el total y se vuelve a
+     * publicar el
+     * evento de cocina. Una comanda {@code LISTO} regresa a {@code EN_PREPARACION}
+     * porque la
      * ronda nueva tiene que pasar por cocina.
      */
     @Transactional
@@ -170,13 +197,13 @@ public class OrdenService {
         if (orden.getTipo() != OrdenTipo.SALON) {
             throw new IllegalArgumentException(
                     "Solo las comandas de salón aceptan productos adicionales; el pedido #" + id
-                    + " es de tipo " + orden.getTipo() + ".");
+                            + " es de tipo " + orden.getTipo() + ".");
         }
 
         if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " ya está " + orden.getEstado()
-                    + " y no admite productos nuevos.");
+                            + " y no admite productos nuevos.");
         }
 
         if (pagosConsultaClient != null && pagosConsultaClient.tienePagoAprobado(id)) {
@@ -208,7 +235,8 @@ public class OrdenService {
         log.info("Comanda #{} ampliada con {} ítem(s) en ronda {} por usuario {} — nuevo total: S/.{}",
                 id, nuevos.size(), siguienteRonda, usuarioId, orden.getTotal());
         OrdenResponse respuesta = OrdenResponse.from(orden);
-        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa())
+                : null;
         ejecutarTrasCommit(() -> {
             salonEventPublisher.notificarNuevaComanda(orden);
             if (mesaActualizada != null) {
@@ -221,10 +249,12 @@ public class OrdenService {
     /**
      * D1.8: quita un producto individual de una comanda de salón.
      * <ul>
-     *   <li>{@code MOZO}: solo cuando la orden está en {@link OrdenEstado#RECIBIDO}.</li>
-     *   <li>{@code ADMIN}: en cualquier estado activo (no terminal).</li>
-     *   <li>No permite dejar la comanda sin productos (409).</li>
-     *   <li>Repone stock únicamente si la orden sigue sin cocinarse ({@code RECIBIDO}).</li>
+     * <li>{@code MOZO}: solo cuando la orden está en
+     * {@link OrdenEstado#RECIBIDO}.</li>
+     * <li>{@code ADMIN}: en cualquier estado activo (no terminal).</li>
+     * <li>No permite dejar la comanda sin productos (409).</li>
+     * <li>Repone stock únicamente si la orden sigue sin cocinarse
+     * ({@code RECIBIDO}).</li>
      * </ul>
      */
     @Transactional
@@ -234,19 +264,19 @@ public class OrdenService {
         if (orden.getTipo() != OrdenTipo.SALON) {
             throw new IllegalArgumentException(
                     "Solo las comandas de salón permiten quitar productos individuales; el pedido #" + id
-                    + " es de tipo " + orden.getTipo() + ".");
+                            + " es de tipo " + orden.getTipo() + ".");
         }
 
         if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " ya está " + orden.getEstado()
-                    + " y no permite quitar productos.");
+                            + " y no permite quitar productos.");
         }
 
         if (!esAdmin && orden.getEstado() != OrdenEstado.RECIBIDO) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "El mozo solo puede quitar productos mientras la comanda está en estado RECIBIDO (estado actual: "
-                    + orden.getEstado() + ").");
+                            + orden.getEstado() + ").");
         }
 
         OrdenItem itemAEliminar = orden.getItems().stream()
@@ -285,7 +315,8 @@ public class OrdenService {
         log.info("Comanda #{}: ítem #{} ({}) eliminado por usuario {} (admin={}) — nuevo total: S/.{}",
                 id, itemId, notaEliminacion, usuarioId, esAdmin, orden.getTotal());
         OrdenResponse respuesta = OrdenResponse.from(orden);
-        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa())
+                : null;
         ejecutarTrasCommit(() -> {
             salonEventPublisher.notificarNuevaComanda(orden);
             if (mesaActualizada != null) {
@@ -296,7 +327,8 @@ public class OrdenService {
     }
 
     /**
-     * D1.5: calcula la siguiente ronda disponible sobre una comanda existente (max + 1).
+     * D1.5: calcula la siguiente ronda disponible sobre una comanda existente (max
+     * + 1).
      * Los ítems legados con {@code ronda == null} se interpretan como ronda 1.
      */
     private int calcularSiguienteRonda(Orden orden) {
@@ -311,10 +343,14 @@ public class OrdenService {
     }
 
     /**
-     * Resuelve el canal del pedido (S1, decisión de L5). Si el request lo trae explícito se
-     * respeta; si no, se deriva del tipo: {@code SALON} para las comandas de salón y {@code WEB}
-     * para todo lo demás. Ese default es lo que mantiene compatible al checkout web actual, que
-     * no manda el campo, y quien toma pedidos por WhatsApp manda {@code WHATSAPP} explícito.
+     * Resuelve el canal del pedido (S1, decisión de L5). Si el request lo trae
+     * explícito se
+     * respeta; si no, se deriva del tipo: {@code SALON} para las comandas de salón
+     * y {@code WEB}
+     * para todo lo demás. Ese default es lo que mantiene compatible al checkout web
+     * actual, que
+     * no manda el campo, y quien toma pedidos por WhatsApp manda {@code WHATSAPP}
+     * explícito.
      */
     private CanalOrigen resolverCanalOrigen(CrearOrdenRequest request) {
         if (request.getCanalOrigen() != null) {
@@ -347,8 +383,10 @@ public class OrdenService {
     }
 
     /**
-     * Ítem de comanda validando que el producto exista, esté disponible y tenga stock. El stock se
-     * descuenta aquí mismo, dentro de la transacción del pedido: si otro ítem falla, se revierte.
+     * Ítem de comanda validando que el producto exista, esté disponible y tenga
+     * stock. El stock se
+     * descuenta aquí mismo, dentro de la transacción del pedido: si otro ítem
+     * falla, se revierte.
      */
     private OrdenItem construirItem(Orden orden, OrdenItemRequest itemReq, int ronda) {
         Producto producto = productoService.buscarConBloqueo(itemReq.getProductoId());
@@ -376,7 +414,7 @@ public class OrdenService {
             throw new IllegalArgumentException(stock == 0
                     ? "El producto '" + producto.getNombre() + "' está agotado"
                     : "No hay stock suficiente de '" + producto.getNombre() + "': pediste " + cantidad
-                      + " y solo quedan " + stock + ".");
+                            + " y solo quedan " + stock + ".");
         }
         producto.setStock(stock - cantidad);
         if (producto.getStock() == 0) {
@@ -385,8 +423,10 @@ public class OrdenService {
     }
 
     /**
-     * Un pedido cancelado antes de que cocina lo empiece devuelve sus unidades al stock. Solo
-     * reactiva el plato que se había agotado por stock: uno que el admin desactivó a mano sigue
+     * Un pedido cancelado antes de que cocina lo empiece devuelve sus unidades al
+     * stock. Solo
+     * reactiva el plato que se había agotado por stock: uno que el admin desactivó
+     * a mano sigue
      * desactivado.
      */
     private void devolverStock(Orden orden) {
@@ -411,8 +451,10 @@ public class OrdenService {
     }
 
     /**
-     * Toma el bloqueo de cada plato en orden ascendente de id antes de tocar su stock. Sin esto,
-     * dos pedidos con los mismos platos en distinto orden ([A, B] y [B, A]) pueden bloquearse
+     * Toma el bloqueo de cada plato en orden ascendente de id antes de tocar su
+     * stock. Sin esto,
+     * dos pedidos con los mismos platos en distinto orden ([A, B] y [B, A]) pueden
+     * bloquearse
      * mutuamente y Postgres aborta uno de ellos (deadlock).
      */
     private void bloquearProductos(List<Long> productoIds) {
@@ -420,8 +462,10 @@ public class OrdenService {
                 .forEach(productoService::buscarConBloqueo);
     }
 
-    // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre. Fuera de una
-    // transacción esto revienta con LazyInitializationException en cuanto el despliegue apaga
+    // Transaccional a propósito: `Orden.items` es LAZY y OrdenResponse lo recorre.
+    // Fuera de una
+    // transacción esto revienta con LazyInitializationException en cuanto el
+    // despliegue apaga
     // spring.jpa.open-in-view (el perfil de pruebas ya lo hace).
     @Transactional(readOnly = true)
     public OrdenResponse obtener(Long id) {
@@ -449,7 +493,8 @@ public class OrdenService {
     }
 
     /**
-     * S10: pedidos de delivery listos que todavía no tomó ningún repartidor, del más viejo al más
+     * S10: pedidos de delivery listos que todavía no tomó ningún repartidor, del
+     * más viejo al más
      * nuevo. Un pedido ya tomado no aparece aunque siga en LISTO.
      */
     @Transactional(readOnly = true)
@@ -470,8 +515,10 @@ public class OrdenService {
     }
 
     /**
-     * Ruta de confianza: la usan el scheduler y los métodos internos de este servicio, que ya
-     * validaron sus propias precondiciones. Equivale a {@code llamadaInterna = true}.
+     * Ruta de confianza: la usan el scheduler y los métodos internos de este
+     * servicio, que ya
+     * validaron sus propias precondiciones. Equivale a
+     * {@code llamadaInterna = true}.
      */
     @Transactional
     public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId) {
@@ -479,13 +526,16 @@ public class OrdenService {
     }
 
     /**
-     * @param llamadaInterna true si la llamada es de confianza (clave interna de otro microservicio,
-     *                       scheduler o método interno); false para el PATCH genérico del personal,
-     *                       que no puede saltarse el pago, la llamada de confirmación ni el cobro.
+     * @param llamadaInterna true si la llamada es de confianza (clave interna de
+     *                       otro microservicio,
+     *                       scheduler o método interno); false para el PATCH
+     *                       genérico del personal,
+     *                       que no puede saltarse el pago, la llamada de
+     *                       confirmación ni el cobro.
      */
     @Transactional
     public OrdenResponse actualizarEstado(Long id, ActualizarEstadoRequest request, Long usuarioId,
-                                          boolean llamadaInterna) {
+            boolean llamadaInterna) {
         Orden orden = buscarOFallarConBloqueo(id);
         validarMesaPorCobrarEnSalon(orden, request.getEstado());
         validarTransicionEstado(orden.getEstado(), request.getEstado(), orden.getTipo());
@@ -493,6 +543,12 @@ public class OrdenService {
             validarCompuertasDeNegocio(orden, request.getEstado());
         }
         validarTicketDeRecojo(orden, request);
+
+        if (orden.getEstado() == request.getEstado()) {
+            log.info("Orden #{} ya se encuentra en {}: transición idempotente sin efectos secundarios (usuario: {})",
+                    id, request.getEstado(), usuarioId);
+            return OrdenResponse.from(orden);
+        }
 
         boolean esDelivery = orden.getTipo() == OrdenTipo.DELIVERY;
         if (request.getEstado() == OrdenEstado.EN_CAMINO) {
@@ -532,7 +588,8 @@ public class OrdenService {
 
         // Liberar mesa cuando la orden termina en salón
         if (orden.getMesa() != null &&
-                (request.getEstado() == OrdenEstado.ENTREGADO || request.getEstado() == OrdenEstado.CANCELADO || request.getEstado() == OrdenEstado.PEDIDO_FANTASMA)) {
+                (request.getEstado() == OrdenEstado.ENTREGADO || request.getEstado() == OrdenEstado.CANCELADO
+                        || request.getEstado() == OrdenEstado.PEDIDO_FANTASMA)) {
             orden.getMesa().setEstado(MesaEstado.LIBRE);
         }
 
@@ -540,14 +597,18 @@ public class OrdenService {
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
 
         OrdenResponse respuesta = OrdenResponse.from(orden);
-        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa())
+                : null;
         OrdenEstado estadoNuevo = request.getEstado();
         boolean esFantasma = estadoNuevo == OrdenEstado.PEDIDO_FANTASMA;
+        // D2.7: solo se sanciona el abandono si requiereCobroEfectivo=true (no se
+        // penaliza prepago ni mostrador).
+        boolean sancionarFantasma = esFantasma && Boolean.TRUE.equals(orden.getRequiereCobroEfectivo());
         boolean esListo = estadoNuevo.esListo();
         String motivoFantasma = orden.getMotivoFantasma();
         ejecutarTrasCommit(() -> {
             notificationService.notificarCambioEstado(orden, estadoNuevo);
-            if (esFantasma && sancionDispatcherService != null) {
+            if (sancionarFantasma && sancionDispatcherService != null) {
                 sancionDispatcherService.registrarSancionPorPedidoFantasma(orden, motivoFantasma);
             }
             if (esListo) {
@@ -562,8 +623,10 @@ public class OrdenService {
     }
 
     /**
-     * Active (non-terminal) orders of a phone, newest first, whatever format it was stored in. The
-     * WhatsApp bot uses it so a customer who lost the ticket message can get it back.
+     * Active (non-terminal) orders of a phone, newest first, whatever format it was
+     * stored in. The
+     * WhatsApp bot uses it so a customer who lost the ticket message can get it
+     * back.
      */
     @Transactional(readOnly = true)
     public List<OrdenResponse> listarActivosPorTelefono(String telefono) {
@@ -577,13 +640,18 @@ public class OrdenService {
                 .toList();
     }
 
-    /** Minutes the customer gets to resend a capture after the cashier rejects one. */
+    /**
+     * Minutes the customer gets to resend a capture after the cashier rejects one.
+     */
     static final long MINUTOS_REENVIO_COMPROBANTE = 15;
 
     /**
-     * payments-service reports the Yape/Plin capture of an unpaid order. {@code recibido=true}
-     * stops the expiry clock while the cashier reviews it; {@code false} (rejected) restarts it with
-     * a fresh window to resend. An order that is no longer PENDIENTE_PAGO is left untouched.
+     * payments-service reports the Yape/Plin capture of an unpaid order.
+     * {@code recibido=true}
+     * stops the expiry clock while the cashier reviews it; {@code false} (rejected)
+     * restarts it with
+     * a fresh window to resend. An order that is no longer PENDIENTE_PAGO is left
+     * untouched.
      */
     @Transactional
     public void registrarEstadoComprobante(Long id, boolean recibido) {
@@ -597,30 +665,36 @@ public class OrdenService {
             orden.setPlazoPagoHasta(LocalDateTime.now().plusMinutes(MINUTOS_REENVIO_COMPROBANTE));
         }
         ordenRepository.save(orden);
-        log.info("Orden #{}: captura {}", id, recibido ? "en revisión" : "rechazada, nuevo plazo " + orden.getPlazoPagoHasta());
+        log.info("Orden #{}: captura {}", id,
+                recibido ? "en revisión" : "rechazada, nuevo plazo " + orden.getPlazoPagoHasta());
     }
 
-    /** States where nothing was cooked yet: cancelling returns the units to stock. */
+    /**
+     * States where nothing was cooked yet: cancelling returns the units to stock.
+     */
     private static final List<OrdenEstado> ESTADOS_SIN_COCINAR = List.of(
             OrdenEstado.RECIBIDO,
             OrdenEstado.PENDIENTE_PAGO,
-            OrdenEstado.PENDIENTE_CONFIRMACION
-    );
+            OrdenEstado.PENDIENTE_CONFIRMACION);
 
     /**
-     * States from which the customer (guest or owner) may still cancel on their own. Not RECIBIDO:
-     * there the order is already paid or confirmed by phone and waits in the kitchen queue, so a
+     * States from which the customer (guest or owner) may still cancel on their
+     * own. Not RECIBIDO:
+     * there the order is already paid or confirmed by phone and waits in the
+     * kitchen queue, so a
      * cancellation goes through the restaurant.
      */
     private static final List<OrdenEstado> ESTADOS_CANCELABLES_POR_CLIENTE = List.of(
             OrdenEstado.PENDIENTE_PAGO,
-            OrdenEstado.PENDIENTE_CONFIRMACION
-    );
+            OrdenEstado.PENDIENTE_CONFIRMACION);
 
     /**
-     * Cancellation requested by the customer (guest tracking access or the authenticated owner).
-     * The state machine runs first, so a delivered or on-the-way order still answers 400; an order
-     * the kitchen already started answers 409. Cancelling an already CANCELADO order stays a no-op.
+     * Cancellation requested by the customer (guest tracking access or the
+     * authenticated owner).
+     * The state machine runs first, so a delivered or on-the-way order still
+     * answers 400; an order
+     * the kitchen already started answers 409. Cancelling an already CANCELADO
+     * order stays a no-op.
      */
     @Transactional
     public OrdenResponse cancelarComoCliente(Long id, Long usuarioId) {
@@ -630,7 +704,7 @@ public class OrdenService {
             if (!ESTADOS_CANCELABLES_POR_CLIENTE.contains(orden.getEstado())) {
                 throw new ConflictoDeEstadoException(
                         "El pedido #" + id + " ya está " + orden.getEstado()
-                        + " y no puede cancelarse; comunícate con la pollería.");
+                                + " y no puede cancelarse; comunícate con la pollería.");
             }
         }
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
@@ -639,8 +713,10 @@ public class OrdenService {
     }
 
     /**
-     * D1.2: una comanda de salón solo puede marcarse como ENTREGADO cuando su mesa está en
-     * POR_COBRAR. Evita cerrar comandas en salón sin haber pasado por la solicitud de cobro.
+     * D1.2: una comanda de salón solo puede marcarse como ENTREGADO cuando su mesa
+     * está en
+     * POR_COBRAR. Evita cerrar comandas en salón sin haber pasado por la solicitud
+     * de cobro.
      */
     private void validarMesaPorCobrarEnSalon(Orden orden, OrdenEstado nuevo) {
         if (orden.getTipo() != OrdenTipo.SALON
@@ -652,14 +728,16 @@ public class OrdenService {
             String estadoMesa = orden.getMesa() != null ? orden.getMesa().getEstado().name() : "SIN_MESA";
             throw new ConflictoDeEstadoException(
                     "La comanda #" + orden.getId()
-                    + " no puede marcarse como ENTREGADO porque la mesa no está en POR_COBRAR (estado actual: "
-                    + estadoMesa + ").");
+                            + " no puede marcarse como ENTREGADO porque la mesa no está en POR_COBRAR (estado actual: "
+                            + estadoMesa + ").");
         }
     }
 
     /**
-     * A RECOJO order is handed over only against its ticket (POL-&lt;order id&gt;), compared ignoring
-     * case, spaces and dashes. The customer number is not accepted: it is short and guessable.
+     * A RECOJO order is handed over only against its ticket (POL-&lt;order id&gt;),
+     * compared ignoring
+     * case, spaces and dashes. The customer number is not accepted: it is short and
+     * guessable.
      */
     private void validarTicketDeRecojo(Orden orden, ActualizarEstadoRequest request) {
         if (orden.getTipo() != OrdenTipo.RECOJO || request.getEstado() != OrdenEstado.ENTREGADO
@@ -678,8 +756,10 @@ public class OrdenService {
     }
 
     /**
-     * S3.1: el mozo marca que ya entregó el pedido en mesa. Es una marca persistida, no un estado:
-     * la orden sigue en LISTO y la mesa se libera recién al cobrar (LISTO → ENTREGADO).
+     * S3.1: el mozo marca que ya entregó el pedido en mesa. Es una marca
+     * persistida, no un estado:
+     * la orden sigue en LISTO y la mesa se libera recién al cobrar (LISTO →
+     * ENTREGADO).
      * Idempotente: si ya estaba servida devuelve la misma marca sin reescribirla.
      */
     @Transactional
@@ -689,19 +769,19 @@ public class OrdenService {
         if (orden.getTipo() != OrdenTipo.SALON) {
             throw new IllegalArgumentException(
                     "Solo las comandas de salón se marcan como servidas; el pedido #" + id
-                    + " es de tipo " + orden.getTipo() + ".");
+                            + " es de tipo " + orden.getTipo() + ".");
         }
 
         if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " ya está " + orden.getEstado()
-                    + " y no puede marcarse como servida.");
+                            + " y no puede marcarse como servida.");
         }
 
         if (!orden.getEstado().esListo()) {
             throw new ConflictoDeEstadoException(
                     "La comanda #" + id + " todavía no está lista (estado actual: "
-                    + orden.getEstado() + ").");
+                            + orden.getEstado() + ").");
         }
 
         if (orden.getServidoEn() != null) {
@@ -714,7 +794,8 @@ public class OrdenService {
         ordenRepository.save(orden);
         log.info("Comanda #{} marcada como servida en mesa (usuario: {})", id, usuarioId);
         OrdenResponse respuesta = OrdenResponse.from(orden);
-        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa()) : null;
+        MesaResponse mesaActualizada = orden.getMesa() != null ? mesaService.mapearMesaConOrdenActiva(orden.getMesa())
+                : null;
         ejecutarTrasCommit(() -> {
             if (mesaActualizada != null) {
                 salonEventPublisher.notificarMesaActualizada(mesaActualizada);
@@ -726,13 +807,19 @@ public class OrdenService {
     /**
      * S10 — reclamo atómico del pedido por parte del repartidor.
      *
-     * El bloqueo pesimista sobre la fila es lo que garantiza que un pedido no se reparta dos
-     * veces: si dos repartidores reclaman a la vez, el segundo espera a que el primero confirme y
-     * después ve el {@code repartidorId} ya asignado, así que recibe 409 en vez de pisarlo (el
-     * {@code @Version} de la entidad es la segunda red por si la escritura no pasara por el lock).
+     * El bloqueo pesimista sobre la fila es lo que garantiza que un pedido no se
+     * reparta dos
+     * veces: si dos repartidores reclaman a la vez, el segundo espera a que el
+     * primero confirme y
+     * después ve el {@code repartidorId} ya asignado, así que recibe 409 en vez de
+     * pisarlo (el
+     * {@code @Version} de la entidad es la segunda red por si la escritura no
+     * pasara por el lock).
      *
-     * No cambia el estado: pasar a {@code EN_CAMINO} sigue siendo la acción explícita y separada
-     * del repartidor, y esa transición ya exige que haya {@code repartidorId} — justo lo que este
+     * No cambia el estado: pasar a {@code EN_CAMINO} sigue siendo la acción
+     * explícita y separada
+     * del repartidor, y esa transición ya exige que haya {@code repartidorId} —
+     * justo lo que este
      * reclamo provee.
      */
     @Transactional
@@ -746,13 +833,13 @@ public class OrdenService {
         if (orden.getTipo() != OrdenTipo.DELIVERY) {
             throw new ConflictoDeEstadoException(
                     "Solo los pedidos de delivery se pueden tomar para entrega; el pedido #" + id
-                    + " es de tipo " + orden.getTipo() + ".");
+                            + " es de tipo " + orden.getTipo() + ".");
         }
 
         if (!orden.getEstado().esListo()) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + id + " todavía no está listo para entregar (estado actual: "
-                    + orden.getEstado() + ").");
+                            + orden.getEstado() + ").");
         }
 
         if (orden.getRepartidorId() != null && orden.getRepartidorId() > 0) {
@@ -768,18 +855,22 @@ public class OrdenService {
     }
 
     /**
-     * Confirma la llamada de validación para un pedido en PENDIENTE_CONFIRMACION (ContraPago).
+     * Confirma la llamada de validación para un pedido en PENDIENTE_CONFIRMACION
+     * (ContraPago).
      * Pasa la orden a PREPARANDO para que cocina comience a elaborar.
      *
-     * After the 15 min window the order is cancelled (as the scheduler would) and the call answers
-     * 409. {@code noRollbackFor} keeps that cancellation even though the method throws.
+     * After the 15 min window the order is cancelled (as the scheduler would) and
+     * the call answers
+     * 409. {@code noRollbackFor} keeps that cancellation even though the method
+     * throws.
      */
     @Transactional(noRollbackFor = ConflictoDeEstadoException.class)
     public OrdenResponse confirmarLlamada(Long id, Long cajeroId) {
         Orden orden = buscarOFallarConBloqueo(id);
         if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
             throw new ConflictoDeEstadoException(
-                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado()
+                            + ")");
         }
         if (orden.getCreadoEn() != null
                 && LocalDateTime.now().isAfter(orden.getCreadoEn().plusMinutes(MINUTOS_PLAZO_CONFIRMACION))) {
@@ -791,7 +882,8 @@ public class OrdenService {
             throw new ConflictoDeEstadoException("El plazo de 15 minutos para confirmar la llamada venció");
         }
         orden.setLlamadaConfirmacionAt(LocalDateTime.now());
-        // The confirmed order enters the kitchen queue (RECIBIDO, "por preparar"): the kitchen
+        // The confirmed order enters the kitchen queue (RECIBIDO, "por preparar"): the
+        // kitchen
         // starts it. Jumping to PREPARANDO left the cook with only a "Listo" button.
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
         req.setEstado(OrdenEstado.RECIBIDO);
@@ -800,17 +892,34 @@ public class OrdenService {
 
     /**
      * Registra un intento fallido de llamada para ContraPago.
-     * Si alcanza 2 intentos fallidos, el pedido se cancela automáticamente.
+     * D2.9: entre intentos de llamada deben pasar al menos 5 minutos (calculado con
+     * {@code actualizadoEn}).
+     * Si alcanza 2 intentos fallidos válidos, el pedido se cancela automáticamente
+     * y repone stock.
      */
     @Transactional
     public OrdenResponse registrarIntentoLlamada(Long id, Long cajeroId, String observaciones) {
         Orden orden = buscarOFallarConBloqueo(id);
         if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
             throw new ConflictoDeEstadoException(
-                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+                    "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado()
+                            + ")");
         }
-        int intentos = (orden.getIntentosLlamada() != null ? orden.getIntentosLlamada() : 0) + 1;
+        int intentosPrevios = orden.getIntentosLlamada() != null ? orden.getIntentosLlamada() : 0;
+        LocalDateTime ahora = LocalDateTime.now(clock);
+        if (intentosPrevios >= 1 && orden.getActualizadoEn() != null) {
+            LocalDateTime habilitadoDesde = orden.getActualizadoEn().plusMinutes(MINUTOS_ENTRE_INTENTOS_LLAMADA);
+            if (ahora.isBefore(habilitadoDesde)) {
+                long faltan = java.time.Duration.between(ahora, habilitadoDesde).toMinutes() + 1;
+                throw new ConflictoDeEstadoException(
+                        "Debes esperar al menos " + MINUTOS_ENTRE_INTENTOS_LLAMADA
+                                + " minutos entre intentos de llamada para el pedido #" + id
+                                + " (faltan " + faltan + " min).");
+            }
+        }
+        int intentos = intentosPrevios + 1;
         orden.setIntentosLlamada(intentos);
+        orden.setActualizadoEn(ahora);
         if (observaciones != null && !observaciones.isBlank()) {
             String obsPrevia = orden.getObservaciones() != null ? orden.getObservaciones() + " | " : "";
             orden.setObservaciones(obsPrevia + "Intento llamada " + intentos + ": " + observaciones);
@@ -826,7 +935,8 @@ public class OrdenService {
     }
 
     /**
-     * El repartidor notifica que llegó al domicilio del cliente e inicia el cronómetro de 30 min.
+     * El repartidor notifica que llegó al domicilio del cliente e inicia el
+     * cronómetro de 30 min.
      */
     @Transactional
     public OrdenResponse marcarEnPuerta(Long id, Long repartidorId) {
@@ -836,13 +946,14 @@ public class OrdenService {
         }
         if (orden.getEstado() != OrdenEstado.EN_CAMINO) {
             throw new ConflictoDeEstadoException(
-                    "El pedido #" + id + " debe estar EN_CAMINO para marcar EN_PUERTA (actual: " + orden.getEstado() + ")");
+                    "El pedido #" + id + " debe estar EN_CAMINO para marcar EN_PUERTA (actual: " + orden.getEstado()
+                            + ")");
         }
         if (orden.getRepartidorId() != null && repartidorId != null && repartidorId > 0
                 && !orden.getRepartidorId().equals(repartidorId)) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + id + " está asignado al motorizado #" + orden.getRepartidorId()
-                    + "; el motorizado #" + repartidorId + " no puede marcarlo en puerta.");
+                            + "; el motorizado #" + repartidorId + " no puede marcarlo en puerta.");
         }
         ActualizarEstadoRequest req = new ActualizarEstadoRequest();
         req.setEstado(OrdenEstado.EN_PUERTA);
@@ -851,14 +962,16 @@ public class OrdenService {
     }
 
     /**
-     * Declara un pedido como fantasma y dispara el protocolo de sanción. Las unidades del
+     * Declara un pedido como fantasma y dispara el protocolo de sanción. Las
+     * unidades del
      * pedido no vuelven al stock: la comida ya salió de cocina.
      */
     @Transactional
     public OrdenResponse declararPedidoFantasma(Long id, String motivo, Long usuarioId) {
         Orden orden = buscarOFallarConBloqueo(id);
         if (ESTADOS_TERMINALES.contains(orden.getEstado())) {
-            throw new ConflictoDeEstadoException("El pedido #" + id + " ya está en estado terminal: " + orden.getEstado());
+            throw new ConflictoDeEstadoException(
+                    "El pedido #" + id + " ya está en estado terminal: " + orden.getEstado());
         }
         if (usuarioId != null && usuarioId > 0) {
             validarPlazoPedidoFantasma(orden);
@@ -873,37 +986,46 @@ public class OrdenService {
         return actualizarEstado(id, req, usuarioId);
     }
 
-    /** Window to confirm a ContraPago call, counted from the order creation (same SLA as the scheduler). */
+    /**
+     * Window to confirm a ContraPago call, counted from the order creation (same
+     * SLA as the scheduler).
+     */
     static final long MINUTOS_PLAZO_CONFIRMACION = 15;
+    /** D2.9: intervalo mínimo entre intentos de llamada fallidos. */
+    static final long MINUTOS_ENTRE_INTENTOS_LLAMADA = 5;
     /** Plazo en puerta (delivery) antes de poder declarar el pedido fantasma. */
     static final long MINUTOS_ESPERA_PUERTA = 30;
     /** Plazo en tienda (recojo) antes de poder declarar el pedido fantasma. */
     static final long MINUTOS_ESPERA_RECOJO = 60;
 
     /**
-     * Compuertas del PATCH genérico del personal: el pago verificado, la llamada de confirmación y
-     * el cobro en efectivo se registran por sus flujos propios y no se pueden saltar con un estado.
+     * Compuertas del PATCH genérico del personal: el pago verificado, la llamada de
+     * confirmación y
+     * el cobro en efectivo se registran por sus flujos propios y no se pueden
+     * saltar con un estado.
      */
     private void validarCompuertasDeNegocio(Orden orden, OrdenEstado nuevo) {
         OrdenEstado actual = orden.getEstado();
-        if (actual == nuevo) return;
+        if (actual == nuevo)
+            return;
 
         if (nuevo == OrdenEstado.PEDIDO_FANTASMA) {
             throw new ConflictoDeEstadoException(
                     "El pedido fantasma se declara con POST /ordenes/" + orden.getId()
-                    + "/pedido-fantasma, no cambiando el estado.");
+                            + "/pedido-fantasma, no cambiando el estado.");
         }
-        // Entering the kitchen queue (RECIBIDO) or preparation from an unpaid / unconfirmed order.
+        // Entering the kitchen queue (RECIBIDO) or preparation from an unpaid /
+        // unconfirmed order.
         if (nuevo.esPreparacion() || nuevo == OrdenEstado.RECIBIDO) {
             if (actual == OrdenEstado.PENDIENTE_PAGO) {
                 throw new ConflictoDeEstadoException(
                         "El pedido #" + orden.getId() + " espera pago: el pago debe verificarse "
-                        + "a través del flujo de pagos (payments-service) antes de pasar a preparación.");
+                                + "a través del flujo de pagos (payments-service) antes de pasar a preparación.");
             }
             if (actual == OrdenEstado.PENDIENTE_CONFIRMACION && orden.getLlamadaConfirmacionAt() == null) {
                 throw new ConflictoDeEstadoException(
                         "El pedido #" + orden.getId() + " requiere confirmar la llamada al cliente: "
-                        + "usa POST /ordenes/" + orden.getId() + "/confirmar-llamada.");
+                                + "usa POST /ordenes/" + orden.getId() + "/confirmar-llamada.");
             }
         }
         if (nuevo == OrdenEstado.ENTREGADO
@@ -911,11 +1033,14 @@ public class OrdenService {
                 && Boolean.TRUE.equals(orden.getRequiereCobroEfectivo())) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + orden.getId() + " se paga en efectivo: registra el cobro "
-                    + "(payments cobro-efectivo) antes de marcarlo como ENTREGADO.");
+                            + "(payments cobro-efectivo) antes de marcarlo como ENTREGADO.");
         }
     }
 
-    /** Un actor humano solo puede declarar fantasma cuando ya venció la espera del tipo de pedido. */
+    /**
+     * Un actor humano solo puede declarar fantasma cuando ya venció la espera del
+     * tipo de pedido.
+     */
     private void validarPlazoPedidoFantasma(Orden orden) {
         LocalDateTime ahora = LocalDateTime.now();
         if (orden.getTipo() == OrdenTipo.DELIVERY) {
@@ -938,7 +1063,7 @@ public class OrdenService {
             long faltan = java.time.Duration.between(ahora, venceEn).toMinutes() + 1;
             throw new ConflictoDeEstadoException(
                     "Aún no se cumple la espera " + lugar + " del pedido #" + orden.getId()
-                    + ": faltan " + faltan + " min para declararlo fantasma.");
+                            + ": faltan " + faltan + " min para declararlo fantasma.");
         }
     }
 
@@ -951,24 +1076,40 @@ public class OrdenService {
                 throw new IllegalArgumentException("La dirección de entrega es obligatoria para delivery");
             }
         }
-        // POST /ordenes is public: an order may only start waiting for its payment (capture or
-        // call). Any later state would send it to the kitchen without the cashier's validation.
+        // POST /ordenes is public: an order may only start waiting for its payment
+        // (capture or
+        // call). Any later state would send it to the kitchen without the cashier's
+        // validation.
         if (request.getEstadoInicial() != null && !ESTADOS_INICIALES_PERMITIDOS.contains(request.getEstadoInicial())) {
             throw new IllegalArgumentException("El estado inicial " + request.getEstadoInicial()
                     + " no está permitido: use RECIBIDO, PENDIENTE_PAGO o PENDIENTE_CONFIRMACION");
         }
+        if (request.getEstadoInicial() == OrdenEstado.PENDIENTE_CONFIRMACION) {
+            if (request.getTelefonoCliente() == null || request.getTelefonoCliente().isBlank()) {
+                throw new IllegalArgumentException(
+                        "El teléfono del cliente es obligatorio para pedidos en PENDIENTE_CONFIRMACION");
+            }
+            if (com.sistema.polleria.orders.util.TelefonoUtil.normalizar(request.getTelefonoCliente()) == null) {
+                throw new IllegalArgumentException(
+                        "El teléfono del cliente no es válido: debe ser un celular peruano de 9 dígitos para confirmar por llamada");
+            }
+        }
     }
 
     private void validarTransicionEstado(OrdenEstado actual, OrdenEstado nuevo, OrdenTipo tipo) {
-        if (actual == nuevo) return;
+        if (actual == nuevo)
+            return;
 
         // Terminal states cannot be changed
-        if (actual == OrdenEstado.ENTREGADO || actual == OrdenEstado.CANCELADO || actual == OrdenEstado.PEDIDO_FANTASMA) {
+        if (actual == OrdenEstado.ENTREGADO || actual == OrdenEstado.CANCELADO
+                || actual == OrdenEstado.PEDIDO_FANTASMA) {
             throw new IllegalArgumentException("Transición de estado inválida: " + actual + " → " + nuevo);
         }
 
-        // An order on its way or at the door has left the store: it ends as ENTREGADO or
-        // PEDIDO_FANTASMA, never cancelled (the food and the courier trip are already spent).
+        // An order on its way or at the door has left the store: it ends as ENTREGADO
+        // or
+        // PEDIDO_FANTASMA, never cancelled (the food and the courier trip are already
+        // spent).
         if (nuevo == OrdenEstado.CANCELADO
                 && (actual == OrdenEstado.EN_CAMINO || actual == OrdenEstado.EN_PUERTA)) {
             throw new IllegalArgumentException("El pedido ya salió a reparto (" + actual
@@ -976,17 +1117,22 @@ public class OrdenService {
         }
 
         // Any other active order can be cancelled
-        if (nuevo == OrdenEstado.CANCELADO) return;
+        if (nuevo == OrdenEstado.CANCELADO)
+            return;
 
         // Transitions to PEDIDO_FANTASMA
         if (nuevo == OrdenEstado.PEDIDO_FANTASMA) {
-            if (tipo == OrdenTipo.DELIVERY && (actual == OrdenEstado.EN_PUERTA || actual == OrdenEstado.EN_CAMINO)) return;
-            if (tipo == OrdenTipo.RECOJO && actual.esListo()) return;
-            throw new IllegalArgumentException("Transición a PEDIDO_FANTASMA no permitida desde " + actual + " para tipo " + tipo);
+            if (tipo == OrdenTipo.DELIVERY && (actual == OrdenEstado.EN_PUERTA || actual == OrdenEstado.EN_CAMINO))
+                return;
+            if (tipo == OrdenTipo.RECOJO && actual.esListo())
+                return;
+            throw new IllegalArgumentException(
+                    "Transición a PEDIDO_FANTASMA no permitida desde " + actual + " para tipo " + tipo);
         }
 
         boolean valido = switch (actual) {
-            case RECIBIDO -> nuevo.esPreparacion() || nuevo == OrdenEstado.PENDIENTE_CONFIRMACION || nuevo == OrdenEstado.PENDIENTE_PAGO;
+            case RECIBIDO -> nuevo.esPreparacion() || nuevo == OrdenEstado.PENDIENTE_CONFIRMACION
+                    || nuevo == OrdenEstado.PENDIENTE_PAGO;
             // A confirmed call or an approved payment enters the kitchen queue (RECIBIDO).
             case PENDIENTE_CONFIRMACION, PENDIENTE_PAGO -> nuevo == OrdenEstado.RECIBIDO || nuevo.esPreparacion();
             case EN_PREPARACION, PREPARANDO -> nuevo.esListo();
@@ -1010,8 +1156,10 @@ public class OrdenService {
     }
 
     /**
-     * Igual que {@link #buscarOFallar(Long)} pero con bloqueo pesimista sobre la fila de la orden.
-     * Se usa en mutaciones idempotentes/acumulativas para que dos peticiones simultáneas no se
+     * Igual que {@link #buscarOFallar(Long)} pero con bloqueo pesimista sobre la
+     * fila de la orden.
+     * Se usa en mutaciones idempotentes/acumulativas para que dos peticiones
+     * simultáneas no se
      * pisen (servir dos veces, agregar ítems en paralelo).
      */
     private static void ejecutarTrasCommit(Runnable accion) {

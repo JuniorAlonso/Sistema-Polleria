@@ -368,16 +368,114 @@ class OrdenFlujoBordesTest {
 
     @Test
     void d2DosIntentosDeLlamadaFallidosCancelanElPedido() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-11-16T15:00:00Z");
+        java.time.ZoneId zona = java.time.ZoneId.of("America/Lima");
+        ordenService.setClock(java.time.Clock.fixed(t0, zona));
+
         Orden o = orden(OrdenTipo.DELIVERY, OrdenEstado.PENDIENTE_CONFIRMACION);
         cargar(o);
 
         ordenService.registrarIntentoLlamada(1L, 3L, "no contesta");
         assertEquals(OrdenEstado.PENDIENTE_CONFIRMACION, o.getEstado());
         assertEquals(1, o.getIntentosLlamada());
+        assertNotNull(o.getActualizadoEn());
 
+        ordenService.setClock(java.time.Clock.fixed(t0.plus(java.time.Duration.ofMinutes(5)), zona));
         ordenService.registrarIntentoLlamada(1L, 3L, "apagado");
         assertEquals(OrdenEstado.CANCELADO, o.getEstado());
         assertEquals(2, o.getIntentosLlamada());
+    }
+
+    @Test
+    void d29SegundoIntentoAntesDeCincoMinutosResponde409YNoIncrementaContador() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-11-16T15:00:00Z");
+        java.time.ZoneId zona = java.time.ZoneId.of("America/Lima");
+        ordenService.setClock(java.time.Clock.fixed(t0, zona));
+
+        Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_CONFIRMACION);
+        cargar(o);
+
+        ordenService.registrarIntentoLlamada(1L, 3L, "timbra y no contesta");
+        assertEquals(1, o.getIntentosLlamada());
+        assertEquals(OrdenEstado.PENDIENTE_CONFIRMACION, o.getEstado());
+
+        // A los 4 minutos: aún no se cumplen los 5 minutos mínimos
+        ordenService.setClock(java.time.Clock.fixed(t0.plus(java.time.Duration.ofMinutes(4)), zona));
+        ConflictoDeEstadoException ex = assertThrows(ConflictoDeEstadoException.class,
+                () -> ordenService.registrarIntentoLlamada(1L, 3L, "segundo intento prematuro"));
+        assertTrue(ex.getMessage().contains("5 minutos"), ex.getMessage());
+        assertEquals(1, o.getIntentosLlamada(), "el rechazo por tiempo no debe incrementar intentosLlamada");
+        assertEquals(OrdenEstado.PENDIENTE_CONFIRMACION, o.getEstado(), "el pedido sigue pendiente de confirmación");
+    }
+
+    @Test
+    void d29SegundoIntentoDespuesDeCincoMinutosCancelaYReponeStock() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-11-16T15:00:00Z");
+        java.time.ZoneId zona = java.time.ZoneId.of("America/Lima");
+        ordenService.setClock(java.time.Clock.fixed(t0, zona));
+
+        Producto pollo = Producto.builder()
+                .id(10L).nombre("Pollo Entero").precio(new BigDecimal("65.00"))
+                .stock(0).disponible(false).build();
+        when(productoService.buscarConBloqueo(10L)).thenReturn(pollo);
+
+        Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_CONFIRMACION);
+        o.getItems().add(OrdenItem.builder()
+                .id(100L).orden(o).producto(pollo).cantidad(2)
+                .precioUnitario(pollo.getPrecio()).subtotal(new BigDecimal("130.00")).ronda(1).build());
+        cargar(o);
+
+        // Primer intento
+        ordenService.registrarIntentoLlamada(1L, 3L, "primer intento");
+        assertEquals(1, o.getIntentosLlamada());
+        assertEquals(0, pollo.getStock());
+
+        // Segundo intento a los 6 minutos (> 5 min): cancela y repone las 2 unidades al stock
+        ordenService.setClock(java.time.Clock.fixed(t0.plus(java.time.Duration.ofMinutes(6)), zona));
+        ordenService.registrarIntentoLlamada(1L, 3L, "segundo intento sin respuesta");
+
+        assertEquals(OrdenEstado.CANCELADO, o.getEstado());
+        assertEquals(2, o.getIntentosLlamada());
+        assertEquals(2, pollo.getStock(), "el stock descontado debe reponerse al cancelar en el 2.° intento");
+        assertTrue(pollo.isDisponible(), "el plato agotado por stock 0 se reactiva al devolver unidades");
+    }
+
+    @Test
+    void r21PendienteConfirmacionExigeTelefonoValidoYNoVacio() {
+        // 1) Teléfono ausente (null)
+        CrearOrdenRequest sinTelefono = crearRequest(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_CONFIRMACION);
+        sinTelefono.setTelefonoCliente(null);
+        IllegalArgumentException exNull = assertThrows(IllegalArgumentException.class,
+                () -> ordenService.crear(sinTelefono, 0L, true));
+        assertTrue(exNull.getMessage().toLowerCase().contains("teléfono"), exNull.getMessage());
+
+        // 2) Teléfono vacío o solo espacios
+        for (String vacio : List.of("", "   ")) {
+            CrearOrdenRequest enBlanco = crearRequest(OrdenTipo.DELIVERY, OrdenEstado.PENDIENTE_CONFIRMACION);
+            enBlanco.setTelefonoCliente(vacio);
+            IllegalArgumentException exVacio = assertThrows(IllegalArgumentException.class,
+                    () -> ordenService.crear(enBlanco, 0L, true));
+            assertTrue(exVacio.getMessage().toLowerCase().contains("teléfono"), exVacio.getMessage());
+        }
+
+        // 3) Teléfono con formato inválido
+        CrearOrdenRequest invalido = crearRequest(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_CONFIRMACION);
+        invalido.setTelefonoCliente("12345");
+        IllegalArgumentException exInvalido = assertThrows(IllegalArgumentException.class,
+                () -> ordenService.crear(invalido, 0L, true));
+        assertTrue(exInvalido.getMessage().toLowerCase().contains("teléfono"), exInvalido.getMessage());
+        verify(ordenRepository, never()).save(any(Orden.class));
+
+        // 4) Teléfono válido es aceptado
+        when(sancionDispatcherService.tieneSancionActiva(any(), any(), any())).thenReturn(false);
+        ArgumentCaptor<Orden> guardada = guardar();
+        CrearOrdenRequest valido = crearRequest(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_CONFIRMACION);
+        valido.setTelefonoCliente("+51 987 654 321");
+
+        OrdenResponse resp = ordenService.crear(valido, 0L, true);
+
+        assertEquals(OrdenEstado.PENDIENTE_CONFIRMACION, resp.getEstado());
+        assertEquals("+51 987 654 321", guardada.getValue().getTelefonoCliente());
     }
 
     @Test
@@ -410,6 +508,64 @@ class OrdenFlujoBordesTest {
                 () -> ordenService.actualizarEstado(1L, req(OrdenEstado.EN_PUERTA), 7L, false));
         assertEquals(OrdenEstado.LISTO, o.getEstado());
         assertNull(o.getEnPuertaAt());
+    }
+
+    // ---------------------------------------------------------------- Fase A2.1 idempotencia de actualizarEstado
+
+    @Test
+    void a21PendientePagoARecibidoActualizaEstadoYNotificaUnaSolaVez() {
+        Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.PENDIENTE_PAGO);
+        cargar(o);
+
+        var res = ordenService.actualizarEstado(1L, req(OrdenEstado.RECIBIDO), 0L, true);
+
+        assertEquals(OrdenEstado.RECIBIDO, res.getEstado());
+        assertEquals(OrdenEstado.RECIBIDO, o.getEstado());
+        verify(ordenRepository, times(1)).save(o);
+        verify(notificationService, times(1)).notificarCambioEstado(o, OrdenEstado.RECIBIDO);
+    }
+
+    @Test
+    void a21RecibidoARecibidoEsIdempotenteSinRepetirNotificacionStockNiTimestamps() {
+        Producto pollo = Producto.builder().id(10L).nombre("Pollo").precio(new BigDecimal("22.00"))
+                .disponible(true).stock(15).build();
+        LocalDateTime actualizadoInicial = LocalDateTime.of(2026, 11, 16, 12, 0, 0);
+        Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.RECIBIDO);
+        o.setActualizadoEn(actualizadoInicial);
+        o.getItems().add(OrdenItem.builder().orden(o).producto(pollo).cantidad(2)
+                .precioUnitario(pollo.getPrecio()).subtotal(new BigDecimal("44.00")).build());
+        cargar(o);
+
+        var res = ordenService.actualizarEstado(1L, req(OrdenEstado.RECIBIDO), 0L, true);
+
+        assertEquals(OrdenEstado.RECIBIDO, res.getEstado());
+        assertEquals(OrdenEstado.RECIBIDO, o.getEstado());
+        assertEquals(15, pollo.getStock(), "el stock no debe alterarse");
+        assertEquals(actualizadoInicial, o.getActualizadoEn(), "actualizadoEn no debe alterarse");
+        assertNull(o.getListoAt());
+        assertNull(o.getEnPuertaAt());
+        verify(ordenRepository, never()).save(any(Orden.class));
+        verify(notificationService, never()).notificarCambioEstado(any(), any());
+        verify(productoService, never()).buscarConBloqueo(any());
+        verifyNoInteractions(sancionDispatcherService);
+    }
+
+    @Test
+    void a21RecibidoAEnPreparacionContinuaPermitiendoTransicionYEjecutaEfectosNormales() {
+        Orden o = orden(OrdenTipo.RECOJO, OrdenEstado.RECIBIDO);
+        cargar(o);
+
+        // Llamada idempotente previa RECIBIDO -> RECIBIDO
+        ordenService.actualizarEstado(1L, req(OrdenEstado.RECIBIDO), 0L, true);
+        verify(notificationService, never()).notificarCambioEstado(any(), any());
+
+        // Transición real posterior RECIBIDO -> EN_PREPARACION
+        var res = ordenService.actualizarEstado(1L, req(OrdenEstado.EN_PREPARACION), 4L, false);
+
+        assertEquals(OrdenEstado.EN_PREPARACION, res.getEstado());
+        assertEquals(OrdenEstado.EN_PREPARACION, o.getEstado());
+        verify(ordenRepository, times(1)).save(o);
+        verify(notificationService, times(1)).notificarCambioEstado(o, OrdenEstado.EN_PREPARACION);
     }
 
     // ---------------------------------------------------------------- helpers

@@ -1,5 +1,6 @@
 package com.sistema.polleria.orders.service;
 
+import com.sistema.polleria.orders.dto.ActualizarEstadoRequest;
 import com.sistema.polleria.orders.entity.Orden;
 import com.sistema.polleria.orders.entity.OrdenEstado;
 import com.sistema.polleria.orders.entity.OrdenTipo;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -27,6 +29,10 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * D2 — Dos cambios de estado simultáneos sobre la MISMA orden no deben pisarse.
@@ -47,7 +53,13 @@ class OrdenVersionOptimistaTest {
     private OrdenRepository ordenRepository;
 
     @Autowired
+    private OrdenService ordenService;
+
+    @Autowired
     private PlatformTransactionManager txManager;
+
+    @MockBean
+    private NotificationService notificationService;
 
     private Long ordenId;
 
@@ -107,6 +119,51 @@ class OrdenVersionOptimistaTest {
                 "exactamente una transacción debe confirmar. Resultados: " + resultados);
         assertEquals(1, Collections.frequency(resultados, "CONFLICTO"),
                 "la otra debe recibir conflicto de versión en lugar de sobrescribir. Resultados: " + resultados);
+    }
+
+    @Test
+    void dosSolicitudesConcurrentesARecibidoTerminanEnRecibidoSinDuplicarEfectos() throws Exception {
+        Assumptions.assumeTrue(postgresDisponible(),
+                "PostgreSQL de pruebas no disponible en localhost:5433 (levanta el stack Docker)");
+
+        ordenId = ordenRepository.saveAndFlush(Orden.builder()
+                .tipo(OrdenTipo.RECOJO)
+                .estado(OrdenEstado.PENDIENTE_PAGO)
+                .build()).getId();
+
+        CountDownLatch listos = new CountDownLatch(2);
+        CountDownLatch salida = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<OrdenEstado> estadosRespuesta = Collections.synchronizedList(new ArrayList<>());
+        List<Throwable> errores = Collections.synchronizedList(new ArrayList<>());
+
+        for (int i = 0; i < 2; i++) {
+            pool.submit(() -> {
+                listos.countDown();
+                try {
+                    esperar(salida);
+                    ActualizarEstadoRequest req = new ActualizarEstadoRequest();
+                    req.setEstado(OrdenEstado.RECIBIDO);
+                    var res = ordenService.actualizarEstado(ordenId, req, 0L, true);
+                    estadosRespuesta.add(res.getEstado());
+                } catch (Throwable t) {
+                    errores.add(t);
+                }
+            });
+        }
+
+        assertTrue(listos.await(15, TimeUnit.SECONDS), "los hilos no arrancaron");
+        salida.countDown();
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(60, TimeUnit.SECONDS), "los hilos no terminaron");
+
+        assertEquals(List.of(), errores, "ninguna solicitud concurrente a RECIBIDO debe fallar");
+        assertEquals(List.of(OrdenEstado.RECIBIDO, OrdenEstado.RECIBIDO), estadosRespuesta);
+
+        Orden persistida = ordenRepository.findById(ordenId).orElseThrow();
+        assertEquals(OrdenEstado.RECIBIDO, persistida.getEstado());
+        assertEquals(1L, persistida.getVersion(), "solo la primera transición debe escribir en base de datos");
+        verify(notificationService, times(1)).notificarCambioEstado(any(Orden.class), eq(OrdenEstado.RECIBIDO));
     }
 
     private static void esperar(CountDownLatch pestillo) {

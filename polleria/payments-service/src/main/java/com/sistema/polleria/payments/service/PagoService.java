@@ -492,9 +492,11 @@ public class PagoService {
                 .orElseThrow(() -> new NoSuchElementException("Pago no encontrado: " + id));
 
         // Idempotencia: Mercado Pago reintenta los webhooks. Si el pago ya está aprobado se
-        // devuelve el estado actual sin volver a notificar la orden ni reenviar el WhatsApp.
+        // devuelve el estado actual sin reprocesar el cobro, sin reenviar WhatsApp ni reemitir
+        // comprobante; únicamente se reenvía la notificación a orders-service si la orden
+        // todavía permanece en PENDIENTE_PAGO porque la notificación previa falló (D2.3).
         if (pago.getEstado() == EstadoPago.APROBADO) {
-            log.info("Pago id={} ya estaba APROBADO: confirmación idempotente sin notificaciones", id);
+            reenviarNotificacionSiOrdenSiguePendiente(id, pago.getOrdenId(), bearerToken);
             return PagoResponse.from(pago);
         }
 
@@ -770,6 +772,18 @@ public class PagoService {
             log.warn("No se pudo verificar estado de orden {} durante confirmación: {}", ordenId, e.getMessage());
             return null;
         }
+    }
+
+    private void reenviarNotificacionSiOrdenSiguePendiente(Long pagoId, Long ordenId, String bearerToken) {
+        OrdenesClient.OrdenInfo orden = leerOrdenSilencioso(ordenId);
+        if (orden != null && "PENDIENTE_PAGO".equals(orden.estado())) {
+            log.info("Pago id={} ya estaba APROBADO pero la orden #{} sigue en PENDIENTE_PAGO: reenviando notificación a orders-service",
+                    pagoId, ordenId);
+            final Long idOrden = ordenId;
+            ejecutarTrasCommit(() -> notificarOrdenAsync(idOrden, bearerToken));
+            return;
+        }
+        log.info("Pago id={} ya estaba APROBADO: confirmación idempotente sin notificaciones", pagoId);
     }
 
     private void validarTransicion(EstadoPago actual, EstadoPago nuevo) {

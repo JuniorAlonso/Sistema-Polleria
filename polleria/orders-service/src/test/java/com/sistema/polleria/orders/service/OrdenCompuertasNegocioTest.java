@@ -270,6 +270,100 @@ class OrdenCompuertasNegocioTest {
         assertEquals(OrdenEstado.PEDIDO_FANTASMA, o.getEstado());
     }
 
+    // D2.7 — Sanción por pedido fantasma únicamente cuando requiereCobroEfectivo == true
+    @Test
+    void fantasmaConRequiereCobroEfectivoTrueDisparaSancionEnTiendaYEnPuertaSinReponerStock() {
+        Producto p = Producto.builder().id(10L).nombre("Pollo").precio(new BigDecimal("50.00")).stock(5).disponible(true).build();
+
+        // 1) Recojo en tienda con requiereCobroEfectivo = true
+        Orden recojo = orden(OrdenTipo.RECOJO, OrdenEstado.LISTO);
+        recojo.setListoAt(LocalDateTime.now().minusMinutes(61));
+        recojo.setRequiereCobroEfectivo(true);
+        recojo.getItems().add(OrdenItem.builder().id(1L).orden(recojo).producto(p).cantidad(2).subtotal(new BigDecimal("100.00")).build());
+        cargar(recojo);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(recojo);
+
+        ordenService.declararPedidoFantasma(1L, null, 7L);
+
+        assertEquals(OrdenEstado.PEDIDO_FANTASMA, recojo.getEstado());
+        assertEquals(5, p.getStock(), "el pedido fantasma nunca repone stock");
+        verify(sancionDispatcherService, times(1)).registrarSancionPorPedidoFantasma(recojo, "ABANDONADO");
+
+        // 2) Delivery en puerta con requiereCobroEfectivo = true
+        Orden delivery = orden(OrdenTipo.DELIVERY, OrdenEstado.EN_PUERTA);
+        delivery.setEnPuertaAt(LocalDateTime.now().minusMinutes(31));
+        delivery.setRequiereCobroEfectivo(true);
+        cargar(delivery);
+        when(ordenRepository.save(any(Orden.class))).thenReturn(delivery);
+
+        ordenService.declararPedidoFantasma(1L, null, 7L);
+
+        assertEquals(OrdenEstado.PEDIDO_FANTASMA, delivery.getEstado());
+        verify(sancionDispatcherService, times(1)).registrarSancionPorPedidoFantasma(delivery, "NO_ENTREGADO");
+    }
+
+    @Test
+    void fantasmaConRequiereCobroEfectivoFalseNoDisparaSancion() {
+        for (OrdenTipo tipo : List.of(OrdenTipo.RECOJO, OrdenTipo.DELIVERY)) {
+            Orden o = orden(tipo, tipo == OrdenTipo.RECOJO ? OrdenEstado.LISTO : OrdenEstado.EN_PUERTA);
+            o.setListoAt(LocalDateTime.now().minusMinutes(65));
+            o.setEnPuertaAt(LocalDateTime.now().minusMinutes(35));
+            o.setRequiereCobroEfectivo(false);
+            cargar(o);
+            when(ordenRepository.save(any(Orden.class))).thenReturn(o);
+
+            ordenService.declararPedidoFantasma(1L, null, 7L);
+
+            assertEquals(OrdenEstado.PEDIDO_FANTASMA, o.getEstado());
+        }
+        verify(sancionDispatcherService, never()).registrarSancionPorPedidoFantasma(any(), any());
+    }
+
+    @Test
+    void fantasmaConRequiereCobroEfectivoNullNoDisparaSancion() {
+        for (OrdenTipo tipo : List.of(OrdenTipo.RECOJO, OrdenTipo.DELIVERY)) {
+            Orden o = orden(tipo, tipo == OrdenTipo.RECOJO ? OrdenEstado.LISTO : OrdenEstado.EN_PUERTA);
+            o.setListoAt(LocalDateTime.now().minusMinutes(65));
+            o.setEnPuertaAt(LocalDateTime.now().minusMinutes(35));
+            o.setRequiereCobroEfectivo(null);
+            cargar(o);
+            when(ordenRepository.save(any(Orden.class))).thenReturn(o);
+
+            ordenService.declararPedidoFantasma(1L, null, 7L);
+
+            assertEquals(OrdenEstado.PEDIDO_FANTASMA, o.getEstado());
+        }
+        verify(sancionDispatcherService, never()).registrarSancionPorPedidoFantasma(any(), any());
+    }
+
+    // D2.2 — La orden de mostrador (RECOJO con canalOrigen=SALON creada por personal) se guarda con clienteId=0L
+    @Test
+    void crearMostradorPorPersonalGuardaClienteIdCeroYConservaUsuarioEnOtrosEscenarios() {
+        ArgumentCaptor<Orden> guardada = guardar();
+
+        // 1) Venta en mostrador creada por el cajero (usuarioId=9L, checkoutPublico=false, RECOJO + SALON)
+        CrearOrdenRequest mostrador = crearRequest(OrdenEstado.PENDIENTE_PAGO);
+        mostrador.setCanalOrigen(CanalOrigen.SALON);
+        mostrador.setNombreCliente("Mostrador");
+        mostrador.setTelefonoCliente(null);
+
+        OrdenResponse respMostrador = ordenService.crear(mostrador, 9L, false);
+
+        assertEquals(0L, guardada.getValue().getClienteId(), "D2.2: mostrador se guarda con clienteId=0L");
+        assertEquals(0L, respMostrador.getClienteId());
+        assertEquals(CanalOrigen.SALON, guardada.getValue().getCanalOrigen());
+        assertNull(guardada.getValue().getMozoId(), "mostrador es RECOJO y no asigna mozoId");
+
+        // 2) Recojo web normal creado por usuario autenticado conserva su clienteId
+        CrearOrdenRequest recojoWeb = crearRequest(OrdenEstado.PENDIENTE_PAGO);
+        recojoWeb.setCanalOrigen(CanalOrigen.WEB);
+
+        OrdenResponse respWeb = ordenService.crear(recojoWeb, 15L, true);
+
+        assertEquals(15L, guardada.getValue().getClienteId(), "recojo web conserva el clienteId del usuario");
+        assertEquals(15L, respWeb.getClienteId());
+    }
+
     // requiereCobroEfectivo en crear
     @Test
     void crearContraPagoMarcaRequiereCobroEfectivo() {
