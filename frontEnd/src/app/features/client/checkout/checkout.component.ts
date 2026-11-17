@@ -13,6 +13,11 @@ import { Order, OrderType, PaymentMethod } from '../../../core/models/order.mode
 import { PaymentService } from '../../../core/services/payment.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { parsePositiveIntId } from '../../../core/utils/id';
+import {
+  esCelularValido as validarCelular,
+  mensajeErrorCelular as obtenerMensajeErrorCelular,
+  normalizarCelular
+} from '../../../core/utils/celular';
 
 /** sessionStorage key of the checkout form a guest leaves to log in (S1). */
 const CLAVE_BORRADOR = 'polleria_checkout_borrador';
@@ -222,16 +227,33 @@ interface BorradorCheckout {
 
             <!-- Input Celular: notificaciones de WhatsApp -->
             <div class="space-y-1">
-              <input 
-                type="tel" 
-                [(ngModel)]="celular" 
-                (ngModelChange)="onCelularChange($event)"
-                inputmode="numeric"
-                maxlength="9"
-                placeholder="Celular para WhatsApp (ej. 912345678)"
-                class="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-polleria-gold transition"
-              />
-              <p class="text-[10px] text-white/50 px-1">Te avisaremos por WhatsApp el estado del pedido y cuando esté en tu puerta o listo para recoger.</p>
+              <div class="relative flex items-center">
+                <input 
+                  type="tel" 
+                  [(ngModel)]="celular" 
+                  #celularCtrl="ngModel"
+                  (input)="onCelularInput($event)"
+                  (ngModelChange)="onCelularChange($event)"
+                  inputmode="numeric"
+                  maxlength="9"
+                  pattern="^9[0-9]{8}$"
+                  autocomplete="tel-national"
+                  placeholder="Celular para WhatsApp (ej. 912345678)"
+                  class="w-full pl-3.5 pr-12 py-2.5 rounded-xl bg-black/30 border text-white placeholder:text-white/50 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 transition"
+                  [ngClass]="mostrarErrorCelular(celularCtrl.touched) ? 'border-rose-500 focus:ring-rose-500' : 'border-white/15 focus:ring-polleria-gold'"
+                />
+                <span
+                  class="absolute right-3 text-[11px] font-semibold tabular-nums"
+                  [ngClass]="esCelularValido(celular) ? 'text-emerald-400' : 'text-white/40'"
+                >
+                  {{ celular.length }}/9
+                </span>
+              </div>
+              @if (mostrarErrorCelular(celularCtrl.touched)) {
+                <p class="text-[11px] text-rose-400 px-1">{{ mensajeErrorCelular() }}</p>
+              } @else {
+                <p class="text-[10px] text-white/50 px-1">Te avisaremos por WhatsApp el estado del pedido y cuando esté en tu puerta o listo para recoger.</p>
+              }
             </div>
           </div>
 
@@ -429,6 +451,7 @@ export class CheckoutComponent implements OnInit {
 
   direccion = '';
   celular = '';
+  intentoEnvio = false;
   instrucciones = '';
 
   // Específico Efectivo
@@ -485,11 +508,29 @@ export class CheckoutComponent implements OnInit {
     });
   }
 
-  onCelularChange(nuevoCelular: string): void {
-    let limpio = (nuevoCelular || '').replace(/\D/g, '');
-    if (limpio.length === 11 && limpio.startsWith('51')) {
-      limpio = limpio.substring(2);
+  onCelularInput(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const limpio = normalizarCelular(input.value);
+    this.celular = limpio;
+    if (input.value !== limpio) {
+      input.value = limpio;
     }
+  }
+
+  esCelularValido(valor: string): boolean {
+    return validarCelular(valor);
+  }
+
+  mostrarErrorCelular(touched: boolean | null): boolean {
+    return (!!touched || this.intentoEnvio) && !this.esCelularValido(this.celular);
+  }
+
+  mensajeErrorCelular(): string {
+    return obtenerMensajeErrorCelular(this.celular);
+  }
+
+  onCelularChange(nuevoCelular: string): void {
+    const limpio = normalizarCelular(nuevoCelular);
     if (limpio.length === 9) {
       this.verificarSancionCliente(limpio);
     }
@@ -625,13 +666,16 @@ export class CheckoutComponent implements OnInit {
       return;
     }
 
+    this.intentoEnvio = true;
+
     if (this.tipoPedido() === 'DELIVERY' && !this.direccion.trim()) {
       this.notify.showError('Ingresa la dirección de entrega');
       return;
     }
 
-    const celularLimpio = this.celular.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
-    if (!/^9\d{8}$/.test(celularLimpio)) {
+    const celularLimpio = normalizarCelular(this.celular);
+    this.celular = celularLimpio;
+    if (!validarCelular(celularLimpio)) {
       this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9 (ej. 912345678)');
       return;
     }

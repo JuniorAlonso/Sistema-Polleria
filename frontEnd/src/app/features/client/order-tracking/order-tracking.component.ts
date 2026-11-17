@@ -12,6 +12,12 @@ import { AuthService } from '../../../core/services/auth.service';
 import { etiquetaPedido, ticketRecojo } from '../../../core/utils/pedido';
 import { parsePositiveIntId } from '../../../core/utils/id';
 import { mensajeError } from '../../../core/utils/api-error';
+import {
+  esCelularValido as validarCelular,
+  mensajeErrorCelular as obtenerMensajeErrorCelular,
+  normalizarCelular,
+  sanitizarDigitos
+} from '../../../core/utils/celular';
 import { PaymentService } from '../../../core/services/payment.service';
 import { Subscription, interval } from 'rxjs';
 
@@ -598,24 +604,51 @@ const MAX_COMPROBANTE_BYTES = 5 * 1024 * 1024;
                 </div>
 
                 @if (pasoSeguimiento() === 'CELULAR') {
-                  <form (ngSubmit)="enviarCodigo()" class="flex flex-col sm:flex-row gap-2">
-                    <input type="tel" inputmode="numeric" maxlength="12" [(ngModel)]="celularSeguimiento" name="celularSeguimiento"
-                      placeholder="Celular, ej. 912345678"
-                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-polleria-gold" />
-                    <button type="submit" [disabled]="procesandoSeguimiento()"
-                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
-                      {{ procesandoSeguimiento() ? 'Enviando...' : 'Enviar código' }}
-                    </button>
+                  <form (ngSubmit)="enviarCodigo()" class="space-y-1.5">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                      <div class="relative flex-1 flex items-center">
+                        <input type="tel" inputmode="numeric" maxlength="9" pattern="^9[0-9]{8}$"
+                          autocomplete="tel-national"
+                          [(ngModel)]="celularSeguimiento" #celularSegCtrl="ngModel"
+                          (input)="onCelularSeguimientoInput($event)"
+                          name="celularSeguimiento"
+                          placeholder="Celular, ej. 912345678"
+                          class="w-full pl-4 pr-12 py-2.5 rounded-xl bg-black/30 border text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2"
+                          [ngClass]="mostrarErrorCelularSeguimiento(celularSegCtrl.touched) ? 'border-rose-500 focus:ring-rose-500' : 'border-white/15 focus:ring-polleria-gold'" />
+                        <span
+                          class="absolute right-3 text-[11px] font-semibold tabular-nums"
+                          [ngClass]="esCelularValido(celularSeguimiento) ? 'text-emerald-400' : 'text-slate-500'"
+                        >
+                          {{ celularSeguimiento.length }}/9
+                        </span>
+                      </div>
+                      <button type="submit" [disabled]="procesandoSeguimiento()"
+                        class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
+                        {{ procesandoSeguimiento() ? 'Enviando...' : 'Enviar código' }}
+                      </button>
+                    </div>
+                    @if (mostrarErrorCelularSeguimiento(celularSegCtrl.touched)) {
+                      <p class="text-[11px] text-rose-400">{{ mensajeErrorCelularSeguimiento() }}</p>
+                    }
                   </form>
                 } @else {
-                  <form (ngSubmit)="verificarCodigo()" class="flex flex-col sm:flex-row gap-2">
-                    <input type="text" inputmode="numeric" maxlength="4" [(ngModel)]="codigoSeguimiento" name="codigoSeguimiento"
-                      placeholder="Código de 4 dígitos" autocomplete="one-time-code"
-                      class="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/15 text-sm text-white tracking-[0.4em] font-mono placeholder:tracking-normal placeholder:font-sans placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-polleria-gold" />
-                    <button type="submit" [disabled]="procesandoSeguimiento()"
-                      class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
-                      {{ procesandoSeguimiento() ? 'Verificando...' : 'Ver mis pedidos' }}
-                    </button>
+                  <form (ngSubmit)="verificarCodigo()" class="space-y-1.5">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                      <input type="text" inputmode="numeric" maxlength="4" pattern="^[0-9]{4}$"
+                        [(ngModel)]="codigoSeguimiento" #codigoSegCtrl="ngModel"
+                        (input)="onCodigoSeguimientoInput($event)"
+                        name="codigoSeguimiento"
+                        placeholder="Código de 4 dígitos" autocomplete="one-time-code"
+                        class="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border text-sm text-white tracking-[0.4em] font-mono placeholder:tracking-normal placeholder:font-sans placeholder:text-slate-500 focus:outline-none focus:ring-2"
+                        [ngClass]="mostrarErrorCodigoSeguimiento(codigoSegCtrl.touched) ? 'border-rose-500 focus:ring-rose-500' : 'border-white/15 focus:ring-polleria-gold'" />
+                      <button type="submit" [disabled]="procesandoSeguimiento()"
+                        class="px-5 py-2.5 rounded-xl bg-polleria-gold hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase transition cursor-pointer">
+                        {{ procesandoSeguimiento() ? 'Verificando...' : 'Ver mis pedidos' }}
+                      </button>
+                    </div>
+                    @if (mostrarErrorCodigoSeguimiento(codigoSegCtrl.touched)) {
+                      <p class="text-[11px] text-rose-400">Ingresa el código numérico de 4 dígitos.</p>
+                    }
                   </form>
                   <div class="flex gap-4 text-[11px]">
                     <button type="button" (click)="enviarCodigo()" class="text-slate-400 hover:text-white underline cursor-pointer">Reenviar código</button>
@@ -1037,6 +1070,8 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   readonly procesandoSeguimiento = signal<boolean>(false);
   celularSeguimiento = '';
   codigoSeguimiento = '';
+  intentoCelularSeguimiento = false;
+  intentoCodigoSeguimiento = false;
 
   private refrescoSub?: Subscription;
   private relojSub?: Subscription;
@@ -1173,9 +1208,44 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
 
   // ================= SEGUIMIENTO SIN CUENTA =================
 
+  onCelularSeguimientoInput(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const limpio = normalizarCelular(input.value);
+    this.celularSeguimiento = limpio;
+    if (input.value !== limpio) {
+      input.value = limpio;
+    }
+  }
+
+  onCodigoSeguimientoInput(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const limpio = sanitizarDigitos(input.value, 4);
+    this.codigoSeguimiento = limpio;
+    if (input.value !== limpio) {
+      input.value = limpio;
+    }
+  }
+
+  esCelularValido(valor: string): boolean {
+    return validarCelular(valor);
+  }
+
+  mostrarErrorCelularSeguimiento(touched: boolean | null): boolean {
+    return (!!touched || this.intentoCelularSeguimiento) && !this.esCelularValido(this.celularSeguimiento);
+  }
+
+  mensajeErrorCelularSeguimiento(): string {
+    return obtenerMensajeErrorCelular(this.celularSeguimiento);
+  }
+
+  mostrarErrorCodigoSeguimiento(touched: boolean | null): boolean {
+    return (!!touched || this.intentoCodigoSeguimiento) && !/^\d{4}$/.test(this.codigoSeguimiento);
+  }
+
   enviarCodigo(): void {
-    const celular = this.celularSeguimiento.replace(/\D/g, '').replace(/^51(?=\d{9}$)/, '');
-    if (!/^9\d{8}$/.test(celular)) {
+    this.intentoCelularSeguimiento = true;
+    const celular = normalizarCelular(this.celularSeguimiento);
+    if (!validarCelular(celular)) {
       this.notify.showError('Ingresa un celular válido', 'Debe tener 9 dígitos y empezar con 9');
       return;
     }
@@ -1185,6 +1255,7 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
       next: mensaje => {
         this.procesandoSeguimiento.set(false);
         this.codigoSeguimiento = '';
+        this.intentoCodigoSeguimiento = false;
         this.pasoSeguimiento.set('CODIGO');
         this.notify.showInfo('Revisa tu WhatsApp', mensaje);
       },
@@ -1196,7 +1267,10 @@ export class OrderTrackingComponent implements OnInit, OnDestroy {
   }
 
   verificarCodigo(): void {
-    if (!/^\d{4}$/.test(this.codigoSeguimiento)) {
+    this.intentoCodigoSeguimiento = true;
+    const codigo = sanitizarDigitos(this.codigoSeguimiento, 4);
+    this.codigoSeguimiento = codigo;
+    if (!/^\d{4}$/.test(codigo)) {
       this.notify.showError('El código tiene 4 dígitos');
       return;
     }

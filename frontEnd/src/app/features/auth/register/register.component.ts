@@ -5,6 +5,11 @@ import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { rutaDeRetornoSegura } from '../../../core/utils/return-url';
+import {
+  esCelularValido as validarCelular,
+  mensajeErrorCelular as obtenerMensajeErrorCelular,
+  normalizarCelular as limpiarCelular
+} from '../../../core/utils/celular';
 import { AuthHeroComponent } from '../../../shared/components/auth-hero/auth-hero.component';
 
 @Component({
@@ -267,7 +272,6 @@ export class RegisterComponent {
   mostrarPassword = false;
   intentoEnvio = false;
 
-  private readonly celularRegex = /^9\d{8}$/;
   private readonly emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   // Deben coincidir con las validaciones de RegisterRequest en auth-service
@@ -278,8 +282,7 @@ export class RegisterComponent {
   ];
 
   normalizarCelular(valor: string): string {
-    const soloDigitos = (valor || '').replace(/\D/g, '').replace(/^51(?=9\d{8}$)/, '');
-    return soloDigitos.slice(0, 9);
+    return limpiarCelular(valor);
   }
 
   onCelularInput(event: Event): void {
@@ -297,7 +300,7 @@ export class RegisterComponent {
   }
 
   esCelularValido(valor: string): boolean {
-    return this.celularRegex.test(this.normalizarCelular(valor));
+    return validarCelular(valor);
   }
 
   esCorreoValido(valor: string): boolean {
@@ -317,14 +320,7 @@ export class RegisterComponent {
   }
 
   mensajeErrorCelular(): string {
-    const limpio = this.normalizarCelular(this.celular);
-    if (!limpio) {
-      return 'El número de celular es obligatorio.';
-    }
-    if (!limpio.startsWith('9')) {
-      return 'El celular debe empezar con el dígito 9.';
-    }
-    return 'El celular debe tener exactamente 9 dígitos.';
+    return obtenerMensajeErrorCelular(this.celular);
   }
 
   handleRegister(): void {
