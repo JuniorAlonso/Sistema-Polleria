@@ -72,7 +72,9 @@ public class OrdenService {
                 .tipo(request.getTipo())
                 .canalOrigen(resolverCanalOrigen(request))
                 .estado(estadoInicial)
-                .clienteId(usuarioId)
+                // D2.2: mostrador orders (RECOJO created by staff from SALON) are anonymous.
+                .clienteId((request.getTipo() == OrdenTipo.RECOJO
+                        && resolverCanalOrigen(request) == CanalOrigen.SALON) ? 0L : usuarioId)
                 // En salón el usuario autenticado es el mozo que toma la comanda: se registra
                 // también en mozoId para que la ventana del mozo y el admin lo muestren.
                 .mozoId(usuarioId != null && usuarioId > 0 && request.getTipo() == OrdenTipo.SALON
@@ -412,7 +414,9 @@ public class OrdenService {
         log.info("Orden #{} → {} (usuario: {})", id, request.getEstado(), usuarioId);
         notificationService.notificarCambioEstado(orden, request.getEstado());
 
-        if (request.getEstado() == OrdenEstado.PEDIDO_FANTASMA && sancionDispatcherService != null) {
+        // D2.7: only sanction abandonment when the order required cash payment.
+        if (request.getEstado() == OrdenEstado.PEDIDO_FANTASMA && sancionDispatcherService != null
+                && Boolean.TRUE.equals(orden.getRequiereCobroEfectivo())) {
             sancionDispatcherService.registrarSancionPorPedidoFantasma(orden, orden.getMotivoFantasma());
         }
 
@@ -669,6 +673,15 @@ public class OrdenService {
         if (orden.getEstado() != OrdenEstado.PENDIENTE_CONFIRMACION) {
             throw new ConflictoDeEstadoException(
                     "El pedido #" + id + " no está en PENDIENTE_CONFIRMACION (estado actual: " + orden.getEstado() + ")");
+        }
+        // D2.9: at least 5 minutes between attempts, computed from actualizadoEn.
+        if (orden.getActualizadoEn() != null
+                && LocalDateTime.now().isBefore(orden.getActualizadoEn().plusMinutes(5))) {
+            throw new ConflictoDeEstadoException(
+                    "Deben pasar al menos 5 minutos entre intentos de llamada (disponible a las "
+                    + orden.getActualizadoEn().plusMinutes(5)
+                             .toLocalTime().truncatedTo(java.time.temporal.ChronoUnit.MINUTES)
+                    + ").");
         }
         int intentos = (orden.getIntentosLlamada() != null ? orden.getIntentosLlamada() : 0) + 1;
         orden.setIntentosLlamada(intentos);

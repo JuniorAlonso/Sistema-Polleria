@@ -25,6 +25,7 @@ import { CajeroLlamadasTabComponent } from './components/cajero-llamadas-tab.com
 import { CajeroLiquidacionesTabComponent } from './components/cajero-liquidaciones-tab.component';
 import { CajeroDevolucionesTabComponent } from './components/cajero-devoluciones-tab.component';
 import { CajeroCobroModalComponent } from './components/cajero-cobro-modal.component';
+import { CajeroMostradorModalComponent } from './components/cajero-mostrador-modal.component';
 import { CajeroTicketModalComponent } from './components/cajero-ticket-modal.component';
 import { CajeroMovimientoModalComponent } from './components/cajero-movimiento-modal.component';
 import { CajeroCierreModalComponent } from './components/cajero-cierre-modal.component';
@@ -64,7 +65,8 @@ export type { CajeroTab, MetodoCobro };
     CajeroNuevaLiquidacionModalComponent,
     CajeroRecargaFondoModalComponent,
     CajeroCierreLiquidacionModalComponent,
-    CajeroCobroRepartidorModalComponent
+    CajeroCobroRepartidorModalComponent,
+    CajeroMostradorModalComponent
   ],
   template: `
     <div class="min-h-screen bg-[#0d0e11] text-slate-100 font-sans selection:bg-polleria-gold selection:text-slate-900 flex flex-col md:flex-row">
@@ -100,6 +102,12 @@ export type { CajeroTab, MetodoCobro };
         <div class="p-4 sm:p-6 flex-1 space-y-6">
 
           @if (activeTab() === 'POS') {
+            <div class="flex justify-end mb-4">
+              <button type="button" (click)="mostrarModalMostrador.set(true)"
+                class="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-lg">
+                <span>+</span> Venta en Mostrador
+              </button>
+            </div>
             <app-cajero-pos-tab
               [cajaAbierta]="cajaAbierta()"
               [totalPorCobrar]="comandasPorCobrar().length"
@@ -163,6 +171,7 @@ export type { CajeroTab, MetodoCobro };
               [ordenes]="ordenesRecojo()"
               [now]="now()"
               [procesando]="procesandoAccion()"
+              [cajaAbierta]="cajaAbierta()"
               (entregar)="entregarRecojo($event)"
               (fantasma)="declararFantasmaRecojo($event)"
             />
@@ -301,6 +310,15 @@ export type { CajeroTab, MetodoCobro };
           [(repartidorId)]="repartidorIdCobroInput"
           (cancelar)="mostrarModalCobroRepartidor.set(false)"
           (cobroExitoso)="mostrarModalCobroRepartidor.set(false); refrescarTodo()"
+        />
+      }
+
+      <!-- MODAL: VENTA EN MOSTRADOR -->
+      @if (mostrarModalMostrador()) {
+        <app-cajero-mostrador-modal
+          [cajaAbierta]="cajaAbierta()"
+          (cerrar)="mostrarModalMostrador.set(false)"
+          (confirmado)="mostrarModalMostrador.set(false); refrescarTodo()"
         />
       }
 
@@ -738,19 +756,21 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       next: () => {
         this.procesandoAccion.set(false);
         this.notify.showSuccess(`Pedido #${codigo} confirmado`, 'Pasa a la cola de cocina: cocina lo inicia.');
-        // The cash receipt (boleta) is issued in finance-service; if it fails the cashier must know.
-        this.financeService.emitirComprobante({
-          ordenId: Number(o.id),
-          tipo: 'BOLETA',
-          clienteNombre: o.cliente.nombre || 'Cliente General',
-          clienteDireccion: o.cliente.direccion,
-          total: o.total,
-          pagadoDigitalmente: false,
-          vueltoEstimado: o.vueltoEstimado
-        }).subscribe({
-          error: (err) => this.notify.showError('No se emitió la boleta',
-            `El pedido #${codigo} sí quedó confirmado. ${mensajeError(err, 'Emítela desde Arqueo.')}`.trim())
-        });
+        // D2.6: for RECOJO, the receipt is issued at delivery, not at call confirmation.
+        if (o.tipo !== 'RECOJO_EN_TIENDA') {
+          this.financeService.emitirComprobante({
+            ordenId: Number(o.id),
+            tipo: 'BOLETA',
+            clienteNombre: o.cliente.nombre || 'Cliente General',
+            clienteDireccion: o.cliente.direccion,
+            total: o.total,
+            pagadoDigitalmente: false,
+            vueltoEstimado: o.vueltoEstimado
+          }).subscribe({
+            error: (err) => this.notify.showError('No se emitió la boleta',
+              `El pedido #${codigo} sí quedó confirmado. ${mensajeError(err, 'Emítela desde Arqueo.')}`.trim())
+          });
+        }
         this.refrescarTodo();
       },
       error: (err) => {
@@ -871,13 +891,22 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
               monto: orden.total,
               motivo: `Cobro recojo #${codigo} (${orden.cliente.nombre})`
             }).subscribe({
-              // The cash is already collected: the cashier must record the income by hand.
               error: (err) => this.notify.showError(
                 'No se registró el ingreso en caja',
                 `El cobro del pedido #${codigo} sí se registró. Registra el ingreso de S/ ${orden.total.toFixed(2)} manualmente en caja. ${mensajeError(err, err?.message || '')}`.trim()
               )
             });
           }
+          // D2.6: emit receipt at delivery.
+          this.financeService.emitirComprobante({
+            ordenId: Number(String(orden.id).replace(/^ord-/, '')),
+            tipo: 'BOLETA',
+            clienteNombre: orden.cliente.nombre || 'Cliente Recojo',
+            total: orden.total,
+            pagadoDigitalmente: false,
+          }).subscribe({
+            error: (err) => this.notify.showError('No se emitió el comprobante', mensajeError(err, ''))
+          });
           this.procesandoAccion.set(false);
           this.notify.showSuccess(`Pedido #${codigo} cobrado y entregado`, `Vuelto: S/ ${vuelto.toFixed(2)}`);
           this.refrescarTodo();
@@ -892,6 +921,16 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
     this.ordersService.updateOrderStatus(orden.id, 'COMPLETADO', undefined, codigoTicket).subscribe({
       next: () => {
+        // D2.6: emit receipt at delivery for prepaid RECOJO orders.
+        this.financeService.emitirComprobante({
+          ordenId: Number(String(orden.id).replace(/^ord-/, '')),
+          tipo: 'BOLETA',
+          clienteNombre: orden.cliente.nombre || 'Cliente Recojo',
+          total: orden.total,
+          pagadoDigitalmente: true,
+        }).subscribe({
+          error: (err) => this.notify.showError('No se emitió el comprobante', mensajeError(err, ''))
+        });
         this.procesandoAccion.set(false);
         this.notify.showSuccess(`Pedido #${codigo} entregado`);
         this.refrescarTodo();
@@ -1040,6 +1079,9 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
       }
     });
   }
+
+  // --- Mostrador ---
+  readonly mostrarModalMostrador = signal<boolean>(false);
 
   // --- Incidente Operativo (Cajero) ---
   readonly mostrarModalIncidente = signal<boolean>(false);

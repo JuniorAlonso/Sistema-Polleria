@@ -63,7 +63,7 @@ import { MINUTOS_ESPERA_RECOJO, minutosRestantes } from '../models/cajero-plazos
 
             <div class="space-y-2 text-xs">
               <label class="block text-slate-400 font-bold">Código del ticket del cliente</label>
-              <input type="text" [(ngModel)]="codigos[o.id]" placeholder="Ej: POL-0042"
+              <input type="text" [(ngModel)]="codigos[o.id]" placeholder="Ej: POL-42"
                      class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono focus:outline-none focus:border-emerald-400" />
               @if (o.requiereCobroEfectivo) {
                 <label class="block text-slate-400 font-bold">Efectivo recibido (S/)</label>
@@ -111,6 +111,7 @@ export class CajeroRecojoTabComponent {
   readonly ordenes = input.required<Order[]>();
   readonly now = input.required<number>();
   readonly procesando = input<boolean>(false);
+  readonly cajaAbierta = input<boolean>(false);
 
   readonly entregar = output<EntregaRecojoEvent>();
   readonly fantasma = output<Order>();
@@ -127,6 +128,9 @@ export class CajeroRecojoTabComponent {
   protected motivoBloqueo(o: Order): string | null {
     if (!(this.codigos[o.id] || '').trim()) {
       return 'Escribe el código del ticket del cliente para entregar.';
+    }
+    if (o.requiereCobroEfectivo && !this.cajaAbierta()) {
+      return 'Abre la caja antes de cobrar en efectivo.';
     }
     const recibido = Number(this.efectivo[o.id]) || 0;
     if (o.requiereCobroEfectivo && recibido < o.total) {
