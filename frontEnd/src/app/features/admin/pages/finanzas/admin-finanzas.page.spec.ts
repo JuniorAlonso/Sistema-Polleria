@@ -5,9 +5,11 @@ import { of, throwError } from 'rxjs';
 import { AdminFinanzasPage } from './admin-finanzas.page';
 import { AuthService } from '../../../../core/services/auth.service';
 import { FinanceService } from '../../../../core/services/finance.service';
+import { FacturacionSunatService } from '../../../../core/services/facturacion-sunat.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { RepartidoresService } from '../../../../core/services/repartidores.service';
 import { ArqueoCaja, BalanceDiario, MovimientoCaja } from '../../../../core/models/finance.model';
+import { EnvioSunatResponse } from '../../../../core/api/facturacion-sunat-api.service';
 
 describe('AdminFinanzasPage', () => {
   let fixture: ComponentFixture<AdminFinanzasPage>;
@@ -18,9 +20,21 @@ describe('AdminFinanzasPage', () => {
     cargarCajaActual: jasmine.Spy;
     cargarBalanceDiario: jasmine.Spy;
     cargarMovimientos: jasmine.Spy;
+    listarComprobantes: jasmine.Spy;
     cerrarCaja: jasmine.Spy;
     abrirCaja: jasmine.Spy;
     registrarMovimiento: jasmine.Spy;
+  };
+  let facturacionStub: {
+    envios: ReturnType<typeof signal<EnvioSunatResponse[]>>;
+    cargandoListado: ReturnType<typeof signal<boolean>>;
+    errorListado: ReturnType<typeof signal<string | null>>;
+    enviandoOrdenIds: ReturnType<typeof signal<Set<number>>>;
+    cargarEnvios: jasmine.Spy;
+    enviarASunat: jasmine.Spy;
+    abrirTicketSunat: jasmine.Spy;
+    descargarXml: jasmine.Spy;
+    descargarCdr: jasmine.Spy;
   };
   let notifyStub: jasmine.SpyObj<NotificationService>;
 
@@ -71,9 +85,21 @@ describe('AdminFinanzasPage', () => {
       cargarCajaActual: jasmine.createSpy('cargarCajaActual'),
       cargarBalanceDiario: jasmine.createSpy('cargarBalanceDiario'),
       cargarMovimientos: jasmine.createSpy('cargarMovimientos'),
+      listarComprobantes: jasmine.createSpy('listarComprobantes').and.returnValue(of([])),
       cerrarCaja: jasmine.createSpy('cerrarCaja'),
       abrirCaja: jasmine.createSpy('abrirCaja'),
       registrarMovimiento: jasmine.createSpy('registrarMovimiento')
+    };
+    facturacionStub = {
+      envios: signal<EnvioSunatResponse[]>([]),
+      cargandoListado: signal<boolean>(false),
+      errorListado: signal<string | null>(null),
+      enviandoOrdenIds: signal<Set<number>>(new Set()),
+      cargarEnvios: jasmine.createSpy('cargarEnvios'),
+      enviarASunat: jasmine.createSpy('enviarASunat').and.returnValue(of({})),
+      abrirTicketSunat: jasmine.createSpy('abrirTicketSunat'),
+      descargarXml: jasmine.createSpy('descargarXml'),
+      descargarCdr: jasmine.createSpy('descargarCdr')
     };
     notifyStub = jasmine.createSpyObj<NotificationService>('NotificationService', ['showSuccess', 'showError', 'showWarning']);
 
@@ -81,6 +107,7 @@ describe('AdminFinanzasPage', () => {
       imports: [AdminFinanzasPage],
       providers: [
         { provide: FinanceService, useValue: financeStub },
+        { provide: FacturacionSunatService, useValue: facturacionStub },
         { provide: NotificationService, useValue: notifyStub },
         { provide: AuthService, useValue: { currentUser: signal({ nombre: 'Admin' }) } },
         { provide: RepartidoresService, useValue: { repartidores: signal([]), cargar: jasmine.createSpy('cargar') } }
@@ -153,5 +180,23 @@ describe('AdminFinanzasPage', () => {
     expect(financeStub.cargarBalanceDiario).toHaveBeenCalledTimes(2);
     expect(financeStub.cargarCajaActual).toHaveBeenCalledTimes(2);
     expect(financeStub.cargarMovimientos).toHaveBeenCalledTimes(2);
+  });
+
+  it('cambia a la pestaña Facturación SUNAT, carga envíos/comprobantes y muestra errores combinados', () => {
+    financeStub.listarComprobantes.and.returnValue(throwError(() => new HttpErrorResponse({
+      status: 503, error: { error: 'finance-service no disponible' }
+    })));
+    facturacionStub.errorListado.set('facturacion-sunat-service caído');
+
+    const btnSunat = Array.from(el().querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Facturación SUNAT')) as HTMLButtonElement;
+    btnSunat.click();
+    fixture.detectChanges();
+
+    expect(facturacionStub.cargarEnvios).toHaveBeenCalledTimes(1);
+    expect(financeStub.listarComprobantes).toHaveBeenCalledTimes(1);
+    const panelText = el().querySelector('app-sunat-billing-panel')?.textContent ?? '';
+    expect(panelText).toContain('facturacion-sunat-service caído');
+    expect(panelText).toContain('finance-service no disponible');
   });
 });

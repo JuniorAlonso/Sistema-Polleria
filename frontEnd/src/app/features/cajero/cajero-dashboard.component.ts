@@ -5,13 +5,16 @@ import { Subscription, interval } from 'rxjs';
 import { OrdersService } from '../../core/services/orders.service';
 import { PaymentService } from '../../core/services/payment.service';
 import { FinanceService } from '../../core/services/finance.service';
+import { FacturacionSunatService } from '../../core/services/facturacion-sunat.service';
+import { EnvioSunatResponse } from '../../core/api/facturacion-sunat-api.service';
+import { parsePositiveIntId } from '../../core/utils/id';
+import { BackendComprobanteResponse, BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { Order } from '../../core/models/order.model';
 import { TipoMovimiento } from '../../core/models/finance.model';
 import { RepartidoresService } from '../../core/services/repartidores.service';
 import { SalonService } from '../../core/services/salon.service';
-import { BackendEfectivoPendienteLiquidacion, BackendLiquidacionResponse } from '../../core/models/api-contracts.model';
 import { CajeroTab, CapturaPendiente, EntregaRecojoEvent, MetodoCobro, RechazarCapturaEvent } from './models/cajero.models';
 import { normalizarCodigoTicket } from './models/cajero-plazos.helpers';
 import { PagoOrdenAdmin } from '../../core/models/payment.model';
@@ -74,7 +77,7 @@ export type { CajeroTab, MetodoCobro };
       <!-- ================= SIDEBAR LATERAL CAJERO ================= -->
       <app-cajero-sidebar
         [activeTab]="activeTab()"
-        (tabChange)="activeTab.set($event)"
+        (tabChange)="cambiarTab($event)"
         [cajaAbierta]="cajaAbierta()"
         [fondoApertura]="financeService.cajaActual()?.montoApertura || 0"
         [totalPorCobrar]="comandasPorCobrar().length"
@@ -132,7 +135,14 @@ export type { CajeroTab, MetodoCobro };
             <app-cajero-historial-tab
               [cobros]="cobrosDelDia()"
               [totalCobrado]="totalCobradoHoy()"
+              [enviosPorOrden]="facturacionSunat.enviosPorOrden()"
+              [enviandoOrdenIds]="facturacionSunat.enviandoOrdenIds()"
+              [comprobantesPorOrden]="comprobantesPorOrden()"
               (reimprimir)="reimprimirTicket($event)"
+              (enviarSunat)="enviarOrdenASunat($event)"
+              (verTicketSunat)="facturacionSunat.abrirTicketSunat($event)"
+              (descargarXml)="facturacionSunat.descargarXml($event)"
+              (descargarCdr)="facturacionSunat.descargarCdr($event)"
             />
           }
 
@@ -227,8 +237,14 @@ export type { CajeroTab, MetodoCobro };
       @if (ticketEmitido(); as ticket) {
         <app-cajero-ticket-modal
           [ticket]="ticket"
+          [envioSunat]="envioSunatTicketActual()"
+          [enviandoSunat]="enviandoTicketActual()"
           (imprimir)="imprimirTicket()"
           (cerrar)="ticketEmitido.set(null)"
+          (enviarSunat)="enviarOrdenASunat($event)"
+          (verTicketSunat)="facturacionSunat.abrirTicketSunat($event)"
+          (descargarXml)="facturacionSunat.descargarXml($event)"
+          (descargarCdr)="facturacionSunat.descargarCdr($event)"
         />
       }
 
@@ -326,6 +342,7 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   readonly ordersService = inject(OrdersService);
   readonly paymentService = inject(PaymentService);
   readonly financeService = inject(FinanceService);
+  readonly facturacionSunat = inject(FacturacionSunatService);
   readonly repartidoresService = inject(RepartidoresService);
   readonly salonService = inject(SalonService);
   private notifiedMesas = new Set<string>();
@@ -358,6 +375,17 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
   // Ticket emitido
   readonly ticketEmitido = signal<any | null>(null);
   readonly datosFiscalesCobro = signal<DatosFiscales>(consumidorFinal());
+  readonly comprobantesPorOrden = signal<Map<number, BackendComprobanteResponse> | null>(null);
+  readonly envioSunatTicketActual = computed<EnvioSunatResponse | null>(() => {
+    const t = this.ticketEmitido();
+    const id = parsePositiveIntId(t?.comprobante?.ordenId ?? t?.ordenId);
+    return id ? (this.facturacionSunat.enviosPorOrden().get(id) ?? null) : null;
+  });
+  readonly enviandoTicketActual = computed<boolean>(() => {
+    const t = this.ticketEmitido();
+    const id = parsePositiveIntId(t?.comprobante?.ordenId ?? t?.ordenId);
+    return id ? this.facturacionSunat.estaEnviando(id) : false;
+  });
 
   // Modales de Caja
   montoAperturaInput = 200;
@@ -574,6 +602,9 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
     this.cargarCapturas();
     this.verificarAlertasMesasPorCobrar();
     this.feedbackService.cargarDevolucionesPendientes();
+    if (this.activeTab() === 'HISTORIAL') {
+      this.cargarDatosSunatHistorial();
+    }
     setTimeout(() => this.cargando.set(false), 800);
   }
 
@@ -775,9 +806,37 @@ export class CajeroDashboardComponent implements OnInit, OnDestroy {
 
   reimprimirTicket(cobro: any): void {
     this.financeService.obtenerComprobantePorOrden(cobro.ordenId).subscribe({
-      next: (comprobante) => this.ticketEmitido.set({ ...cobro, comprobante }),
+      next: (comprobante) => {
+        this.ticketEmitido.set({ ...cobro, comprobante });
+        this.facturacionSunat.consultarEstadoOrden(cobro.ordenId).subscribe();
+      },
       error: () => this.ticketEmitido.set({ ...cobro, comprobante: null })
     });
+  }
+
+  cambiarTab(tab: CajeroTab): void {
+    this.activeTab.set(tab);
+    if (tab === 'HISTORIAL') {
+      this.cargarDatosSunatHistorial();
+    }
+  }
+
+  private cargarDatosSunatHistorial(): void {
+    this.facturacionSunat.cargarEnvios();
+    this.financeService.listarComprobantes().subscribe({
+      next: (lista) => {
+        const mapa = new Map<number, BackendComprobanteResponse>();
+        for (const c of lista) {
+          mapa.set(c.ordenId, c);
+        }
+        this.comprobantesPorOrden.set(mapa);
+      },
+      error: () => {}
+    });
+  }
+
+  enviarOrdenASunat(ordenId: number): void {
+    this.facturacionSunat.enviarASunat(ordenId).subscribe({ error: () => {} });
   }
 
   // --- Operaciones de Caja ---

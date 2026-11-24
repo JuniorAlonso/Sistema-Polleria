@@ -1,0 +1,25 @@
+FROM maven:3.9.9-eclipse-temurin-21-alpine AS builder
+WORKDIR /workspace
+COPY pom.xml ./
+COPY auth-service/pom.xml auth-service/pom.xml
+COPY orders-service/pom.xml orders-service/pom.xml
+COPY payments-service/pom.xml payments-service/pom.xml
+COPY feedback-service/pom.xml feedback-service/pom.xml
+COPY finance-service/pom.xml finance-service/pom.xml
+COPY incident-service/pom.xml incident-service/pom.xml
+COPY facturacion-sunat-service/pom.xml facturacion-sunat-service/pom.xml
+RUN mvn -B -pl facturacion-sunat-service -am dependency:go-offline
+COPY facturacion-sunat-service/src facturacion-sunat-service/src
+RUN mvn -B -pl facturacion-sunat-service package -DskipTests
+
+FROM eclipse-temurin:21.0.5_11-jre-alpine
+RUN apk add --no-cache tzdata && addgroup -S spring && adduser -S spring -G spring
+WORKDIR /app
+COPY --from=builder --chown=spring:spring /workspace/facturacion-sunat-service/target/*.jar app.jar
+USER spring:spring
+ENV TZ=America/Lima
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
+EXPOSE 8089
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD sh -c 'nc -z 127.0.0.1 "${PORT:-8089}" || exit 1'
+ENTRYPOINT ["java", "-jar", "app.jar"]

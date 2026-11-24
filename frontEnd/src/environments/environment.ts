@@ -6,6 +6,7 @@ export const environment = {
   feedbackApiUrl: '/api',
   financeApiUrl: '/api',
   incidentApiUrl: '/api',
+  facturacionApiUrl: '/api',
   notificationApiUrl: '/api/notificaciones',
   wsUrl: '/ws-polleria',
   appBaseUrl: '',
@@ -16,6 +17,7 @@ export const environment = {
     payments: '/api/pagos',
     feedback: '/api/feedback',
     finance: '/api/finanzas',
-    incidents: '/api/incidentes'
+    incidents: '/api/incidentes',
+    facturacion: '/api/facturacion'
   }
 };

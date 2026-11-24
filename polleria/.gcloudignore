@@ -16,3 +16,11 @@ target/**
 **/*.jar
 .idea/
 *.iml
+
+# Certificados digitales SUNAT (nunca subir al bucket de Cloud Build)
+facturacion-sunat-service/certificado/
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.pem
+!facturacion-sunat-service/src/test/resources/certificado-prueba.p12

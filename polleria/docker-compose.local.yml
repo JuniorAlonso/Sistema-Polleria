@@ -251,6 +251,54 @@ services:
       - polleria-network
 
   # ============================================================
+  # 1.9 Microservicio de Facturación Electrónica SUNAT (:8089)
+  # ============================================================
+  facturacion-sunat-service:
+    build:
+      context: .
+      dockerfile: facturacion-sunat-service/Dockerfile
+    container_name: polleria-facturacion-sunat-service
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8089:8089"
+    environment:
+      PORT: 8089
+      TZ: America/Lima
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-polleria}
+      DB_USERNAME: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:80,http://localhost}
+      FINANCE_SERVICE_URL: http://finance-service:8087
+      ORDERS_SERVICE_URL: http://orders-service:8082
+      SUNAT_URL: ${SUNAT_URL:-https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService}
+      SUNAT_USUARIO_SOL: ${SUNAT_USUARIO_SOL:-MODDATOS}
+      SUNAT_CLAVE_SOL: ${SUNAT_CLAVE_SOL:-moddatos}
+      SUNAT_CERT_BASE64: ${SUNAT_CERT_BASE64:-}
+      SUNAT_CERT_RUTA: ${SUNAT_CERT_RUTA:-/app/certificado/certificado-beta.p12}
+      SUNAT_CERT_PASSWORD: ${SUNAT_CERT_PASSWORD:-}
+      SUNAT_FIRMA_ALGORITMO: ${SUNAT_FIRMA_ALGORITMO:-SHA1}
+      SUNAT_RUC: ${SUNAT_RUC:-20608945123}
+      SUNAT_RAZON_SOCIAL: ${SUNAT_RAZON_SOCIAL:-POLLERIA SAN POLLO DE ICA S.A.C.}
+      SUNAT_NOMBRE_COMERCIAL: ${SUNAT_NOMBRE_COMERCIAL:-POLLERIA SAN POLLO DE ICA}
+      SUNAT_DIRECCION: ${SUNAT_DIRECCION:-AV. SAN MARTIN 456}
+      SUNAT_UBIGEO: ${SUNAT_UBIGEO:-110101}
+      SUNAT_DEPARTAMENTO: ${SUNAT_DEPARTAMENTO:-ICA}
+      SUNAT_PROVINCIA: ${SUNAT_PROVINCIA:-ICA}
+      SUNAT_DISTRITO: ${SUNAT_DISTRITO:-ICA}
+    volumes:
+      - ./facturacion-sunat-service/certificado:/app/certificado:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      finance-service:
+        condition: service_started
+      orders-service:
+        condition: service_started
+    networks:
+      - polleria-network
+
+  # ============================================================
   # Fase 3 - Almacenamiento de comprobantes (S7)
   # API S3: http://127.0.0.1:9000 · Consola: http://127.0.0.1:9001
   # ============================================================

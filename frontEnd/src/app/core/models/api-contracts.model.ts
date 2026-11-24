@@ -227,6 +227,9 @@ export interface BackendComprobanteResponse {
   vueltoEntregado?: number;
   emitidoEn: string;
   emitidoPor?: number;
+  anulado?: boolean;
+  anuladoEn?: string | null;
+  motivoAnulacion?: string | null;
 }
 
 export interface BackendLiquidacionResponse {

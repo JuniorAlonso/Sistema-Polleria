@@ -18,3 +18,12 @@
 .codegraph/
 .atl/
 odd/
+
+# Certificados digitales SUNAT (nunca subir a git)
+*.p12
+*.pfx
+*.jks
+*.pem
+polleria/facturacion-sunat-service/certificado/
+!polleria/facturacion-sunat-service/certificado/.gitkeep
+!polleria/facturacion-sunat-service/src/test/resources/certificado-prueba.p12

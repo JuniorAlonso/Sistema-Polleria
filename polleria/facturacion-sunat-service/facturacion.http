@@ -1,0 +1,44 @@
+###############################################################################
+# facturacion-sunat-service — prueba manual de facturación electrónica (SUNAT beta)
+# Extensión: REST Client (VS Code). Requisitos: finance, orders y facturacion-sunat levantados.
+#
+# 1. Inicia sesión como CAJERO o ADMIN en el frontend (o con auth-service) y pega
+#    el token en @TOKEN.
+# 2. Usa una orden que YA tenga comprobante emitido en caja (POST /finanzas/comprobantes).
+###############################################################################
+
+@FACTURACION_URL = http://localhost:8089
+@TOKEN = pega_aqui_el_jwt
+@ORDEN = 1
+
+### 1. Enviar a SUNAT (genera XML, firma, ZIP, envía y guarda el CDR)
+# Esperado: 200 con "estado": "ACEPTADO" y "codigoRespuesta": "0"
+POST {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}/enviar
+Authorization: Bearer {{TOKEN}}
+
+### 2. Volver a enviar: NO se reenvía, devuelve lo guardado (mismo resultado)
+POST {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}/enviar
+Authorization: Bearer {{TOKEN}}
+
+### 3. Estado del envío
+GET {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}
+Authorization: Bearer {{TOKEN}}
+
+### 4. XML firmado (ábrelo y busca <ds:Signature>)
+GET {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}/xml
+Authorization: Bearer {{TOKEN}}
+
+### 5. CDR de SUNAT (.zip con R-....xml adentro)
+GET {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}/cdr
+Authorization: Bearer {{TOKEN}}
+
+### 6. Ticket imprimible con QR (HTML; requiere estado ACEPTADO u OBSERVADO)
+GET {{FACTURACION_URL}}/facturacion/orden/{{ORDEN}}/ticket
+Authorization: Bearer {{TOKEN}}
+
+### 7. Listado de envíos (opcional: ?estado=ACEPTADO|OBSERVADO|RECHAZADO|ERROR|ENVIANDO)
+GET {{FACTURACION_URL}}/facturacion
+Authorization: Bearer {{TOKEN}}
+
+### 8. Sin token: 401
+GET {{FACTURACION_URL}}/facturacion

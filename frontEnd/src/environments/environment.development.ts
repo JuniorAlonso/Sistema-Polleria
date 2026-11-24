@@ -6,6 +6,7 @@ export const environment = {
   feedbackApiUrl: 'http://localhost:8085',
   financeApiUrl: 'http://localhost:8087',
   incidentApiUrl: 'http://localhost:8088',
+  facturacionApiUrl: 'http://localhost:8089',
   notificationApiUrl: 'http://localhost:3001/api/notificaciones',
   wsUrl: 'http://localhost:8082/ws-polleria',
   appBaseUrl: 'http://localhost:4200',
@@ -16,6 +17,7 @@ export const environment = {
     payments: 'http://localhost:8083/pagos',
     feedback: 'http://localhost:8085',
     finance: 'http://localhost:8087',
-    incidents: 'http://localhost:8088'
+    incidents: 'http://localhost:8088',
+    facturacion: 'http://localhost:8089/facturacion'
   }
 };

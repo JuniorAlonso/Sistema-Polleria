@@ -7,6 +7,7 @@ COPY payments-service/pom.xml payments-service/pom.xml
 COPY feedback-service/pom.xml feedback-service/pom.xml
 COPY finance-service/pom.xml finance-service/pom.xml
 COPY incident-service/pom.xml incident-service/pom.xml
+COPY facturacion-sunat-service/pom.xml facturacion-sunat-service/pom.xml
 COPY incident-service/src incident-service/src
 RUN mvn -B -pl incident-service package -DskipTests
 

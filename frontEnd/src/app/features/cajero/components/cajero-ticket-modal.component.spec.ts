@@ -78,6 +78,88 @@ describe('CajeroTicketModalComponent (S8: real receipt values)', () => {
     expect(texto).not.toContain('OP. GRAVADA');
     expect(texto).not.toContain('I.G.V.');
     expect(texto).not.toContain('ELECTRÓNICA');
+    expect(texto).not.toContain('Enviar a SUNAT');
     expect(texto).toContain('S/ 50.00');
+  });
+
+  it('muestra acciones SUNAT cuando hay comprobante emitido y descarga QR/XML/CDR cuando fue aceptado', () => {
+    const textoSinEnviar = render(ticket({ comprobante: comprobante() }));
+    expect(textoSinEnviar).toContain('Sin enviar a SUNAT');
+    expect(textoSinEnviar).toContain('Enviar a SUNAT');
+
+    fixture = TestBed.createComponent(CajeroTicketModalComponent);
+    fixture.componentRef.setInput('ticket', ticket({ comprobante: comprobante() }));
+    fixture.componentRef.setInput('envioSunat', {
+      ordenId: 77,
+      comprobanteId: 9,
+      tipo: 'BOLETA',
+      serieNumero: 'B001-123',
+      nombreArchivo: '20608945123-03-B001-123',
+      estado: 'ACEPTADO',
+      codigoRespuesta: '0',
+      descripcion: 'La Boleta numero B001-123, ha sido aceptada',
+      observaciones: null,
+      hash: 'abc==',
+      total: 50,
+      intentos: 1,
+      enviadoEn: '2026-11-23T20:00:00',
+      tieneCdr: true
+    });
+    fixture.detectChanges();
+    const textoAceptado = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(textoAceptado).toContain('ACEPTADO');
+    expect(textoAceptado).toContain('Ticket SUNAT (QR)');
+    expect(textoAceptado).toContain('XML');
+    expect(textoAceptado).toContain('CDR');
+    expect(textoAceptado).not.toContain('ELECTRÓNICA');
+  });
+
+  it('muestra ANULADO y oculta envío SUNAT cuando el comprobante está anulado, y permite reintentar en ERROR o ENVIANDO', () => {
+    const anuladoTexto = render(ticket({ comprobante: comprobante({ anulado: true }) }));
+    expect(anuladoTexto).toContain('ANULADO');
+    expect(anuladoTexto).not.toContain('Enviar a SUNAT');
+
+    fixture = TestBed.createComponent(CajeroTicketModalComponent);
+    fixture.componentRef.setInput('ticket', ticket({ comprobante: comprobante() }));
+    fixture.componentRef.setInput('envioSunat', {
+      ordenId: 77,
+      comprobanteId: 9,
+      tipo: 'BOLETA',
+      serieNumero: 'B001-123',
+      nombreArchivo: '20608945123-03-B001-123',
+      estado: 'OBSERVADO',
+      codigoRespuesta: '0',
+      descripcion: 'Aceptada con observaciones',
+      observaciones: 'Obs 4001',
+      hash: 'abc==',
+      total: 50,
+      intentos: 1,
+      enviadoEn: '2026-11-23T20:00:00',
+      tieneCdr: false
+    });
+    fixture.detectChanges();
+    const obsTexto = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(obsTexto).toContain('OBSERVADO');
+    expect(obsTexto).toContain('Obs 4001');
+    expect(obsTexto).not.toContain('CDR');
+
+    fixture.componentRef.setInput('envioSunat', {
+      ordenId: 77,
+      comprobanteId: 9,
+      tipo: 'BOLETA',
+      serieNumero: 'B001-123',
+      nombreArchivo: '20608945123-03-B001-123',
+      estado: 'ENVIANDO',
+      codigoRespuesta: null,
+      descripcion: null,
+      observaciones: null,
+      hash: null,
+      total: 50,
+      intentos: 1,
+      enviadoEn: '2026-11-23T20:00:00',
+      tieneCdr: false
+    });
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Reintentar envío SUNAT');
   });
 });

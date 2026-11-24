@@ -1,9 +1,11 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../../core/services/auth.service';
 import { FinanceService } from '../../../../core/services/finance.service';
+import { FacturacionSunatService } from '../../../../core/services/facturacion-sunat.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { TipoMovimiento } from '../../../../core/models/finance.model';
+import { BackendComprobanteResponse } from '../../../../core/models/api-contracts.model';
 import { mensajeError } from '../../../../core/utils/api-error';
 import { CashHeaderComponent } from '../../components/finanzas/cash-header.component';
 import { CashSummaryComponent } from '../../components/finanzas/cash-summary.component';
@@ -11,10 +13,11 @@ import { CashMovementsTableComponent } from '../../components/finanzas/cash-move
 import { CashOpenModalComponent } from '../../components/finanzas/cash-open-modal.component';
 import { CashCloseModalComponent } from '../../components/finanzas/cash-close-modal.component';
 import { CashMovementModalComponent } from '../../components/finanzas/cash-movement-modal.component';
+import { SunatBillingPanelComponent } from '../../components/finanzas/sunat-billing-panel.component';
 import { CajeroCobroRepartidorModalComponent } from '../../../cajero/components/cajero-cobro-repartidor-modal.component';
 import { RepartidoresService } from '../../../../core/services/repartidores.service';
 
-/** Contenedor (smart) de la pestaña FINANZAS & CAJA: turno, arqueo y caja menor. */
+/** Contenedor (smart) de la pestaña FINANZAS & CAJA: turno, arqueo, caja menor y SUNAT. */
 @Component({
   selector: 'app-admin-finanzas-page',
   standalone: true,
@@ -26,26 +29,65 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
     CashOpenModalComponent,
     CashCloseModalComponent,
     CashMovementModalComponent,
+    SunatBillingPanelComponent,
     CajeroCobroRepartidorModalComponent
   ],
   host: { class: 'contents' },
   template: `
     <main class="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-      <app-cash-header
-        [cajaActual]="financeService.cajaActual()"
-        (cobroRepartidorRequested)="abrirCobroRepartidor()"
-        (movementRequested)="showMovimientoCajaModal = true"
-        (closeRequested)="abrirModalCierreCaja()"
-        (openRequested)="showAbrirCajaModal = true"
-      />
+      <div class="flex items-center gap-2 border-b border-white/10 pb-3">
+        <button
+          type="button"
+          (click)="vistaActiva.set('CAJA')"
+          class="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+          [ngClass]="vistaActiva() === 'CAJA'
+            ? 'bg-polleria-gold text-slate-950'
+            : 'bg-white/5 text-slate-300 hover:bg-white/10'"
+        >
+          Caja y Movimientos
+        </button>
+        <button
+          type="button"
+          (click)="abrirVistaSunat()"
+          class="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+          [ngClass]="vistaActiva() === 'SUNAT'
+            ? 'bg-polleria-gold text-slate-950'
+            : 'bg-white/5 text-slate-300 hover:bg-white/10'"
+        >
+          Facturación SUNAT
+        </button>
+      </div>
 
-      <app-cash-summary
-        [cajaActual]="financeService.cajaActual()"
-        [balanceDiario]="financeService.balanceDiario()"
-        [userName]="authService.currentUser()?.nombre"
-      />
+      @if (vistaActiva() === 'CAJA') {
+        <app-cash-header
+          [cajaActual]="financeService.cajaActual()"
+          (cobroRepartidorRequested)="abrirCobroRepartidor()"
+          (movementRequested)="showMovimientoCajaModal = true"
+          (closeRequested)="abrirModalCierreCaja()"
+          (openRequested)="showAbrirCajaModal = true"
+        />
 
-      <app-cash-movements-table [movimientos]="financeService.movimientos()" />
+        <app-cash-summary
+          [cajaActual]="financeService.cajaActual()"
+          [balanceDiario]="financeService.balanceDiario()"
+          [userName]="authService.currentUser()?.nombre"
+        />
+
+        <app-cash-movements-table [movimientos]="financeService.movimientos()" />
+      } @else {
+        <app-sunat-billing-panel
+          [comprobantesEmitidos]="comprobantesEmitidos()"
+          [envios]="facturacionSunat.envios()"
+          [cargando]="facturacionSunat.cargandoListado() || cargandoComprobantes()"
+          [error]="errorSunatPanel()"
+          [enviandoOrdenIds]="facturacionSunat.enviandoOrdenIds()"
+          (refrescar)="cargarDatosSunat()"
+          (enviarSunat)="enviarASunat($event)"
+          (verTicketSunat)="facturacionSunat.abrirTicketSunat($event)"
+          (descargarXml)="facturacionSunat.descargarXml($event)"
+          (descargarCdr)="facturacionSunat.descargarCdr($event)"
+        />
+      }
     </main>
 
     <!-- Modal: cobrar efectivo a motorizado -->
@@ -94,13 +136,49 @@ import { RepartidoresService } from '../../../../core/services/repartidores.serv
 export class AdminFinanzasPage implements OnInit {
   readonly authService = inject(AuthService);
   readonly financeService = inject(FinanceService);
+  readonly facturacionSunat = inject(FacturacionSunatService);
   readonly repartidoresService = inject(RepartidoresService);
   readonly notify = inject(NotificationService);
+
+  readonly vistaActiva = signal<'CAJA' | 'SUNAT'>('CAJA');
+  readonly comprobantesEmitidos = signal<BackendComprobanteResponse[]>([]);
+  readonly cargandoComprobantes = signal<boolean>(false);
+  readonly errorComprobantes = signal<string | null>(null);
+  readonly errorSunatPanel = computed<string | null>(() => {
+    const errores = [this.facturacionSunat.errorListado(), this.errorComprobantes()]
+      .filter((msg): msg is string => !!msg);
+    return errores.length > 0 ? errores.join(' · ') : null;
+  });
 
   ngOnInit(): void {
     this.financeService.cargarCajaActual();
     this.financeService.cargarBalanceDiario();
     this.financeService.cargarMovimientos();
+  }
+
+  abrirVistaSunat(): void {
+    this.vistaActiva.set('SUNAT');
+    this.cargarDatosSunat();
+  }
+
+  cargarDatosSunat(): void {
+    this.facturacionSunat.cargarEnvios();
+    this.cargandoComprobantes.set(true);
+    this.errorComprobantes.set(null);
+    this.financeService.listarComprobantes().subscribe({
+      next: (lista) => {
+        this.comprobantesEmitidos.set(lista);
+        this.cargandoComprobantes.set(false);
+      },
+      error: (err: unknown) => {
+        this.cargandoComprobantes.set(false);
+        this.errorComprobantes.set(mensajeError(err, 'No se pudieron cargar los comprobantes emitidos.'));
+      }
+    });
+  }
+
+  enviarASunat(ordenId: number): void {
+    this.facturacionSunat.enviarASunat(ordenId).subscribe({ error: () => {} });
   }
 
   showCobroRepartidorModal = false;

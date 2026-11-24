@@ -12,3 +12,11 @@
 **/.wwebjs_*
 **/whatsapp-session
 **/uploads
+
+# Certificados digitales SUNAT (nunca incluir en el contexto Docker)
+facturacion-sunat-service/certificado/
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.pem
+!facturacion-sunat-service/src/test/resources/certificado-prueba.p12

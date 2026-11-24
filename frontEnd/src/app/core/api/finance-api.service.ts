@@ -61,6 +61,10 @@ export class FinanceApiService {
     return this.http.get<BackendComprobanteResponse>(`${this.API_URL}/finanzas/comprobantes/orden/${ordenId}`);
   }
 
+  listarComprobantes(): Observable<BackendComprobanteResponse[]> {
+    return this.http.get<BackendComprobanteResponse[]>(`${this.API_URL}/finanzas/comprobantes`);
+  }
+
   abrirLiquidacion(req: AbrirLiquidacionRequest): Observable<BackendLiquidacionResponse> {
     return this.http.post<BackendLiquidacionResponse>(`${this.API_URL}/finanzas/liquidaciones/apertura`, req);
   }

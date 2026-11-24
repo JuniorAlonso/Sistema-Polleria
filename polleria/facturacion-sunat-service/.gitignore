@@ -1,0 +1,12 @@
+target/
+.env
+# El certificado digital es secreto: nunca a git
+certificado/
+!certificado/.gitkeep
+*.p12
+*.pfx
+*.jks
+*.pem
+
+# Excepción: certificado autofirmado SOLO para pruebas unitarias
+!src/test/resources/certificado-prueba.p12

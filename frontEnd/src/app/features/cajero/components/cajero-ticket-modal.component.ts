@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { CurrencyPENPipe } from '../../../shared/pipes/currency-pen.pipe';
 import { TicketVista } from '../models/cajero.models';
 import { BackendComprobanteResponse } from '../../../core/models/api-contracts.model';
+import { EnvioSunatResponse } from '../../../core/api/facturacion-sunat-api.service';
 
 /** Ticket data plus the receipt the backend emitted (null/absent when emission failed). */
 export type TicketComprobanteVista = TicketVista & { comprobante?: BackendComprobanteResponse | null };
@@ -14,8 +15,8 @@ export type TicketComprobanteVista = TicketVista & { comprobante?: BackendCompro
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'contents' },
   template: `
-        <div class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-          <div class="w-full max-w-sm bg-white text-slate-950 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4 print:p-0 print:m-0 print:shadow-none">
+        <div class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div class="w-full max-w-sm max-h-[90vh] overflow-y-auto print:max-h-none print:overflow-visible bg-white text-slate-950 rounded-2xl shadow-2xl p-6 space-y-4 print:p-0 print:m-0 print:shadow-none">
             
             <!-- Encabezado Ticket -->
             <div class="text-center space-y-1 border-b border-dashed border-slate-300 pb-4">
@@ -34,6 +35,11 @@ export type TicketComprobanteVista = TicketVista & { comprobante?: BackendCompro
                     {{ c.tipo === 'FACTURA' ? 'FACTURA' : 'BOLETA DE VENTA' }}
                   </span>
                   <p class="text-xs font-mono font-bold mt-1">{{ c.serieCorrelativo }}</p>
+                  @if (c.anulado) {
+                    <span class="inline-block mt-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-bold uppercase">
+                      ANULADO
+                    </span>
+                  }
                 } @else {
                   <span class="text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-3 py-1 rounded-md">
                     Comprobante pendiente
@@ -130,6 +136,79 @@ export type TicketComprobanteVista = TicketVista & { comprobante?: BackendCompro
               <p class="text-[10px]">Conserve este comprobante para cualquier reclamo.</p>
             </div>
 
+            <!-- Facturación SUNAT (bajo demanda, oculto al imprimir) -->
+            @if (comprobante; as c) {
+              @if (!c.anulado) {
+                <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 print:hidden">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                      Comprobante SUNAT
+                    </span>
+                    <span
+                      class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+                      [ngClass]="claseEstadoSunat()"
+                    >
+                      {{ etiquetaEstadoSunat() }}
+                    </span>
+                  </div>
+
+                  @if (envioSunat(); as envio) {
+                    @if (envio.descripcion) {
+                      <p class="text-[11px] text-slate-600 leading-snug">
+                        @if (envio.codigoRespuesta) {
+                          <span class="font-mono font-bold">[{{ envio.codigoRespuesta }}]</span>
+                        }
+                        {{ envio.descripcion }}
+                      </p>
+                    }
+                    @if (envio.observaciones) {
+                      <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                        {{ envio.observaciones }}
+                      </p>
+                    }
+                  }
+
+                  <div class="flex flex-wrap gap-1.5">
+                    @if (puedeEnviarSunat()) {
+                      <button
+                        type="button"
+                        [disabled]="enviandoSunat()"
+                        (click)="enviarSunat.emit(c.ordenId)"
+                        class="flex-1 py-2 px-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold text-[11px] uppercase tracking-wider rounded-lg transition cursor-pointer"
+                      >
+                        {{ enviandoSunat() ? 'Enviando...' : (envioSunat() ? 'Reintentar envío SUNAT' : 'Enviar a SUNAT') }}
+                      </button>
+                    }
+                    @if (esAceptadoSunat()) {
+                      <button
+                        type="button"
+                        (click)="verTicketSunat.emit(c.ordenId)"
+                        class="flex-1 py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-lg transition cursor-pointer"
+                      >
+                        Ticket SUNAT (QR)
+                      </button>
+                      <button
+                        type="button"
+                        (click)="descargarXml.emit(c.ordenId)"
+                        class="py-1.5 px-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                      >
+                        XML
+                      </button>
+                      @if (envioSunat()?.tieneCdr) {
+                        <button
+                          type="button"
+                          (click)="descargarCdr.emit(c.ordenId)"
+                          class="py-1.5 px-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[11px] rounded-lg transition cursor-pointer"
+                        >
+                          CDR
+                        </button>
+                      }
+                    }
+                  </div>
+                </div>
+              }
+            }
+
             <!-- Botones Imprimir y Cerrar (Ocultos al imprimir) -->
             <div class="flex items-center gap-2 pt-2 print:hidden">
               <button
@@ -158,13 +237,46 @@ export type TicketComprobanteVista = TicketVista & { comprobante?: BackendCompro
 })
 export class CajeroTicketModalComponent {
   readonly ticket = input.required<TicketComprobanteVista>();
+  readonly envioSunat = input<EnvioSunatResponse | null>(null);
+  readonly enviandoSunat = input<boolean>(false);
 
   readonly imprimir = output<void>();
   readonly cerrar = output<void>();
+  readonly enviarSunat = output<number>();
+  readonly verTicketSunat = output<number>();
+  readonly descargarXml = output<number>();
+  readonly descargarCdr = output<number>();
 
   /** Receipt emitted by the backend; null when emission failed or is unknown. */
   protected get comprobante(): BackendComprobanteResponse | null {
     return this.ticket().comprobante ?? null;
+  }
+
+  protected esAceptadoSunat(): boolean {
+    const estado = this.envioSunat()?.estado;
+    return estado === 'ACEPTADO' || estado === 'OBSERVADO';
+  }
+
+  protected puedeEnviarSunat(): boolean {
+    const estado = this.envioSunat()?.estado;
+    return !estado || estado === 'RECHAZADO' || estado === 'ERROR' || estado === 'ENVIANDO';
+  }
+
+  protected etiquetaEstadoSunat(): string {
+    if (this.enviandoSunat()) return 'ENVIANDO...';
+    return this.envioSunat()?.estado ?? 'Sin enviar a SUNAT';
+  }
+
+  protected claseEstadoSunat(): string {
+    if (this.enviandoSunat()) return 'bg-sky-100 text-sky-800';
+    switch (this.envioSunat()?.estado) {
+      case 'ACEPTADO': return 'bg-emerald-100 text-emerald-800';
+      case 'OBSERVADO': return 'bg-amber-100 text-amber-800';
+      case 'RECHAZADO':
+      case 'ERROR': return 'bg-rose-100 text-rose-800';
+      case 'ENVIANDO': return 'bg-sky-100 text-sky-800';
+      default: return 'bg-slate-200 text-slate-700';
+    }
   }
 
   protected get clienteNombre(): string {

@@ -89,6 +89,18 @@ steps:
       - 'notification-service/Dockerfile'
       - 'notification-service'
 
+  # 9. Construir imagen de facturacion-sunat-service
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/facturacion-sunat-service:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/facturacion-sunat-service:latest'
+      - '-f'
+      - 'facturacion-sunat-service/Dockerfile'
+      - '.'
+
 images:
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:${_TAG}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:latest'
@@ -104,6 +116,8 @@ images:
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/incident-service:latest'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:${_TAG}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/notification-service:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/facturacion-sunat-service:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/facturacion-sunat-service:latest'
 
 substitutions:
   _REGION: 'us-central1'

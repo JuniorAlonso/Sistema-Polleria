@@ -31,3 +31,26 @@ export function mensajeError(err: unknown, porDefecto: string): string {
   }
   return porDefecto;
 }
+
+/**
+ * Extrae el mensaje JSON {"error": "..."} cuando la petición usó responseType: 'blob'.
+ */
+export async function mensajeErrorBlob(err: unknown, porDefecto: string): Promise<string> {
+  const errorObj = (err as { error?: unknown } | null)?.error;
+  if (typeof Blob !== 'undefined' && errorObj instanceof Blob) {
+    try {
+      const texto = (await errorObj.text()).trim();
+      if (texto) {
+        try {
+          const parsed = JSON.parse(texto) as unknown;
+          return mensajeError({ error: parsed }, porDefecto);
+        } catch {
+          return texto;
+        }
+      }
+    } catch {
+      return porDefecto;
+    }
+  }
+  return mensajeError(err, porDefecto);
+}

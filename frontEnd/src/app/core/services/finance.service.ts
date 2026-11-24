@@ -212,6 +212,11 @@ export class FinanceService {
     return this.api.obtenerComprobantePorOrden(ordenId);
   }
 
+  /** Lista los últimos comprobantes emitidos; los errores se propagan al contenedor. */
+  listarComprobantes(): Observable<BackendComprobanteResponse[]> {
+    return this.api.listarComprobantes();
+  }
+
   // --- Liquidaciones de Repartidores ---
 
   abrirLiquidacion(req: AbrirLiquidacionRequest): Observable<BackendLiquidacionResponse> {

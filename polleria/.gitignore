@@ -42,3 +42,10 @@ build/
 **/*.env.*
 !.env.example
 !.env.production.example
+*.p12
+*.pfx
+*.jks
+*.pem
+facturacion-sunat-service/certificado/
+!facturacion-sunat-service/certificado/.gitkeep
+!facturacion-sunat-service/src/test/resources/certificado-prueba.p12

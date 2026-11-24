@@ -79,6 +79,14 @@
       "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes/:path*"
     },
     {
+      "source": "/api/facturacion",
+      "destination": "https://facturacion-sunat-service-264198079598.us-central1.run.app/facturacion"
+    },
+    {
+      "source": "/api/facturacion/:path*",
+      "destination": "https://facturacion-sunat-service-264198079598.us-central1.run.app/facturacion/:path*"
+    },
+    {
       "source": "/api/notificaciones",
       "destination": "https://notification-service-264198079598.us-central1.run.app/api/notificaciones"
     },
@@ -157,6 +165,14 @@
     {
       "source": "/incidentes/:path*",
       "destination": "https://incident-service-264198079598.us-central1.run.app/incidentes/:path*"
+    },
+    {
+      "source": "/facturacion",
+      "destination": "https://facturacion-sunat-service-264198079598.us-central1.run.app/facturacion"
+    },
+    {
+      "source": "/facturacion/:path*",
+      "destination": "https://facturacion-sunat-service-264198079598.us-central1.run.app/facturacion/:path*"
     },
     {
       "source": "/notificaciones",
